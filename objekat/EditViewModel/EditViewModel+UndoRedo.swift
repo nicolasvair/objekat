@@ -303,6 +303,7 @@ extension EditViewModel {
         probe.channelMode   = new.channelMode
         probe.label         = new.label
         probe.colorIndex    = new.colorIndex
+        probe.colorHex      = new.colorHex
         probe.pianoRollOpen = new.pianoRollOpen
         // `automationOpen` is purely visual (like `pianoRollOpen`): opening/closing a band
         // must not rebuild the object on the engine side. `automation` (the points) has become

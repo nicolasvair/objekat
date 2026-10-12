@@ -408,6 +408,9 @@ extension EditViewModel {
         // The group's bus may have changed the scope of a send (it is read from the stem at the
         // top level). resyncAllSends reconciles both ways. @see canRouteSend
         resyncAllSends()
+        // The new group stays selected, like the two other grouping paths (the time selection and
+        // the sub-group in `createGroup(from:in:)`): ⌘G leaves you holding what you just made.
+        selectedIDs = [group.id]
         isDirty = true
     }
 

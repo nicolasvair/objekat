@@ -54,9 +54,9 @@ extension View {
     /// The glyph's COLOUR, and nothing else — no font, so every site keeps the size its band was
     /// built for. The name's own colour, so a missing file takes the icon red along with the word
     /// and the white halo that makes red legible on a red stem band (@see `MissingFileLabel`).
-    func blockIconStyle(missingFile: Bool) -> some View {
+    func blockIconStyle(missingFile: Bool, lightInk: Bool = false) -> some View {
         self
-            .foregroundStyle(missingFile ? MissingFileLabel.color : Color.black)
+            .foregroundStyle(missingFile ? MissingFileLabel.color : BlockInk.color(light: lightInk))
             .shadow(color: missingFile ? MissingFileLabel.haloColor : .clear,
                     radius: missingFile ? MissingFileLabel.haloRadius : 0)
     }

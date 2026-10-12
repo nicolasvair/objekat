@@ -49,8 +49,8 @@ nonisolated enum ObjectMenuAction: Equatable {
     case createAux
     /// A MIDI clip over the range (zone scope, no object under the point).
     case createMidiClip
-    /// A custom colour (nil = the stem's).
-    case setColor(Int?)
+    /// A custom colour (nil = the stem's): a free colour from the menu, or a pastel by index (API).
+    case setColor(ObjectColorValue?)
     /// The objects come to share ONE bin of plugins.
     case createFXLink
     /// An installed script declared for the object context.
@@ -88,7 +88,7 @@ struct ObjectMenuEntry: Equatable {
     /// `setColor(nil)` only: the stem's colour is the current one.
     var isChecked: Bool = false
     /// `setColor(nil)` only: the clicked object's own colour, for the palette that follows it.
-    var currentColorIndex: Int? = nil
+    var currentColor: ObjectColorValue? = nil
 }
 
 extension EditViewModel {
@@ -210,8 +210,8 @@ extension EditViewModel {
         // A custom colour (a clip / MIDI clip / group / aux), independent of the stem: it paints
         // the scope. The entry is 'stem colour'; the palette it comes with is the menu's.
         out.append(ObjectMenuEntry(action: .setColor(nil), title: L("menu.context.stemColor"),
-                                   isChecked: item.colorIndex == nil,
-                                   currentColorIndex: item.colorIndex))
+                                   isChecked: item.colorValue == nil,
+                                   currentColor: item.colorValue))
 
         // 'Create an FX link' — the very last entry, on a MULTIPLE scope the clicked object belongs
         // to (or, in `.zone` scope, that the range crosses): the objects come to share ONE bin of
@@ -279,12 +279,12 @@ extension EditViewModel {
             createGroupFromSelection(ids)
         case .createAux, .createMidiClip, .baking:
             break   // zone scope only / informational
-        case .setColor(let index):
+        case .setColor(let value):
             // It paints the whole selection if the object under the cursor is part of it,
             // otherwise that object alone — the same convention as 'Group the selection'.
             let targets: Set<UUID>
             if let id = clickedID, !(ids.contains(id) && ids.count > 1) { targets = [id] } else { targets = ids }
-            setObjectColor(ids: targets, colorIndex: index)
+            setObjectColor(ids: targets, value: value)
         case .createFXLink:
             _ = createFXLinkFromObjects(Array(ids))
         case .runScript(let pluginID, let entryIndex):

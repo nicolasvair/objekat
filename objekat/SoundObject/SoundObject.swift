@@ -470,6 +470,11 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// assignable through the context menu on a clip / MIDI clip / group / aux. `nil` = no colour
     /// of its own, and the object keeps only its stem's colour. See `customColor` below.
     var colorIndex: Int?
+    /// A FREE custom colour, 0xRRGGBB (the context menu's seven base colours, or one the hand added).
+    /// When present it wins over `colorIndex`; `setObjectColor` writes the one and clears the other,
+    /// so an object never carries both. A project written before it only has `colorIndex` — the old
+    /// pastel — and keeps it (no migration). Written as "#RRGGBB" (format 24).
+    var colorHex: Int?
     /// Post-fader sends towards AUX objects (clips and groups can send;
     /// an aux carries no sends, it only receives).
     var sends: [AuxSend]
@@ -616,7 +621,28 @@ struct SoundObject: Identifiable, Codable, Equatable {
     }
     /// True if the object really is an infinite bus (the flag set AND a compatible type).
     var isInfiniteBus: Bool { isInfinite && canBeInfinite }
-    var customColor: Color? { colorIndex.map(ObjectColorPalette.color(at:)) }
+    /// The object's own colour as 0xRRGGBB: the free colour if it has one, otherwise the old pastel
+    /// its `colorIndex` points at. nil = none (the stem's).
+    var customColorRGB: Int? {
+        if let colorHex { return colorHex }
+        if let colorIndex { return ObjekatPalette.objectHex(colorIndex) }
+        return nil
+    }
+    var customColor: Color? {
+        guard let rgb = customColorRGB else { return nil }
+        return ObjekatPalette.color(rgb: rgb)
+    }
+    /// The colour as stored (the free one first), for the menu's ring and the API.
+    var colorValue: ObjectColorValue? {
+        if let h = colorHex { return .hex(h) }
+        return colorIndex.map(ObjectColorValue.index)
+    }
+    /// True if the NAME written on the object's band must be white: the band's own colour, drawn at
+    /// the shared opacity over its white base, is dark. Always false with no colour of its own.
+    func bandWantsLightInk(selected: Bool) -> Bool {
+        guard let rgb = customColorRGB else { return false }
+        return ObjectColorChoice.prefersLightInk(rgb, alpha: ObjectColorChoice.bandOpacity(selected: selected))
+    }
     /// True if the object's FX chain has something to compile on the engine side: plugins, OR only
     /// start/end trim gains (the rack then has to be materialised anyway — chain ObjGains do not
     /// exist without a compile), OR an AUTOMATION of those gains: a trim curve laid on an object
@@ -1101,7 +1127,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
          fadeInCurve: FadeCurve = .linear, fadeOutCurve: FadeCurve = .linear,
          isMuted: Bool = false, stemID: UUID? = nil,
          plugins: [ObjectPlugin] = [], instruments: [ObjectPlugin] = [],
-         label: String? = nil, colorIndex: Int? = nil,
+         label: String? = nil, colorIndex: Int? = nil, colorHex: Int? = nil,
          sends: [AuxSend] = [], baseBPM: Double? = nil,
          consolidateID: UUID? = nil,
          independentAttrs: ConsolidateAttrLinks = [],
@@ -1132,6 +1158,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.instruments = instruments
         self.label      = label
         self.colorIndex = colorIndex
+        self.colorHex   = colorHex
         self.sends      = sends
         self.baseBPM    = baseBPM
         self.consolidateID = consolidateID
@@ -1217,7 +1244,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     fadeOutCurve: fadeOutCurve ?? self.fadeOutCurve,
                     isMuted: isMuted, stemID: stemID,
                     plugins: plugins, instruments: instruments,
-                    label: label, colorIndex: colorIndex,
+                    label: label, colorIndex: colorIndex, colorHex: colorHex,
                     sends: derivedSends, baseBPM: baseBPM,
                     consolidateID: consolidateID,
                     independentAttrs: independentAttrs,
@@ -1271,7 +1298,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, startTime, duration, lane, volume, pan, fadeIn, fadeOut
         case fadeInCurve, fadeOutCurve
-        case isMuted, stemID, plugins, instruments, label, colorIndex, sends, baseBPM, kind
+        case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen, independentAttrs
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
         case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource
@@ -1302,6 +1329,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if !instruments.isEmpty { try c.encode(instruments, forKey: .instruments) }
         try c.encodeIfPresent(label,      forKey: .label)
         try c.encodeIfPresent(colorIndex, forKey: .colorIndex)
+        // A readable "#RRGGBB" rather than a decimal integer: the file is meant to be read.
+        if let colorHex { try c.encode(ObjectColorChoice.format(colorHex), forKey: .colorHex) }
         if !sends.isEmpty { try c.encode(sends, forKey: .sends) }
         try c.encodeIfPresent(baseBPM, forKey: .baseBPM)
         try c.encodeIfPresent(consolidateID, forKey: .consolidateID)
@@ -1347,6 +1376,15 @@ struct SoundObject: Identifiable, Codable, Equatable {
         instruments = try c.decodeIfPresent([ObjectPlugin].self, forKey: .instruments) ?? []
         label      = try c.decodeIfPresent(String.self, forKey: .label)
         colorIndex = try c.decodeIfPresent(Int.self,    forKey: .colorIndex)
+        // "#RRGGBB" (what is written); a plain integer is tolerated, as is a text that does not parse
+        // (a hand-edited file): the object then has no free colour rather than a failed load.
+        if let text = try? c.decodeIfPresent(String.self, forKey: .colorHex) {
+            colorHex = ObjectColorChoice.parse(text)
+        } else if let n = try? c.decodeIfPresent(Int.self, forKey: .colorHex), (0...0xFFFFFF).contains(n) {
+            colorHex = n
+        } else {
+            colorHex = nil
+        }
         sends      = try c.decodeIfPresent([AuxSend].self, forKey: .sends) ?? []
         baseBPM    = try c.decodeIfPresent(Double.self, forKey: .baseBPM)
         consolidateID = try c.decodeIfPresent(UUID.self, forKey: .consolidateID)

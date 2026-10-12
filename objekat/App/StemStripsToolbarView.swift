@@ -792,18 +792,3 @@ private struct StemColorMenuOverlay: NSViewRepresentable {
         }
     }
 }
-
-private final class RightClickCaptureView: NSView {
-    var menuProvider: ((RightClickCaptureView) -> NSMenu)?
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let event = NSApp.currentEvent,
-              event.type == .rightMouseDown || event.type == .rightMouseUp else { return nil }
-        return super.hitTest(point)
-    }
-
-    override func rightMouseDown(with event: NSEvent) {
-        guard let menuProvider else { return }
-        NSMenu.popUpContextMenu(menuProvider(self), with: event, for: self)
-    }
-}

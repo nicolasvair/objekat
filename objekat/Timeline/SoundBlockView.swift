@@ -109,6 +109,9 @@ struct SoundBlockView: View {
     /// colour whatever happens: it reads on the block's body, which is precisely the stem's zone
     /// (and that is already what a group does, see GroupBlockView).
     private var effectiveColor: Color { object.customColor ?? stemColor }
+    /// The name, its glyph and its meta summary are written in WHITE when the object's own colour
+    /// makes a dark band (@see `SoundObject.bandWantsLightInk`; the Canvas reads the same rule).
+    private var lightInk: Bool { object.bandWantsLightInk(selected: isSelected) }
     /// Rounded corners: an AUX takes the same radius as groups; otherwise the clip's radius.
     /// Defined on the model so that the link halos draw the same radius as the block
     /// (see SoundObject.blockCornerRadius).
@@ -146,7 +149,7 @@ struct SoundBlockView: View {
             if let custom = object.customColor {
                 VStack(spacing: 0) {
                     UnevenRoundedRectangle(topLeadingRadius: cornerRadius, topTrailingRadius: cornerRadius)
-                        .fill(custom.opacity(isSelected ? 0.55 : 0.30))
+                        .fill(custom.opacity(ObjectColorChoice.bandOpacity(selected: isSelected)))
                         .frame(height: max(3, blockHeight * 0.20))
                     UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
                         .fill(stemColor.opacity(isSelected ? 0.55 : 0.30))
@@ -412,11 +415,11 @@ struct SoundBlockView: View {
                         // (@see LinkOverlay in TimelineView).
                         Image(systemName: ObjectKindIcon.name(for: object))
                             .font(.system(size: TimelineLabelMetrics.clipIconSize, weight: .bold))
-                            .blockIconStyle(missingFile: isMissingFile)
+                            .blockIconStyle(missingFile: isMissingFile, lightInk: lightInk)
                         if isRenaming {
                             TextField(noLabel, text: $editLabel)
                                 .font(.system(size: MissingFileLabel.size, weight: .medium))
-                                .foregroundStyle(.black)
+                                .foregroundStyle(BlockInk.color(light: lightInk))
                                 .textFieldStyle(.plain)
                                 .focused($renameFocused)
                                 .onSubmit { onRename(editLabel) }
@@ -424,7 +427,7 @@ struct SoundBlockView: View {
                                 .onAppear { beginRename(object.label) }
                         } else {
                             Text(object.displayName)
-                                .blockNameStyle(missingFile: isMissingFile)
+                                .blockNameStyle(missingFile: isMissingFile, lightInk: lightInk)
                                 .lineLimit(1)
                                 .layoutPriority(1)
                         }
@@ -433,7 +436,7 @@ struct SoundBlockView: View {
                             if !meta.isEmpty {
                                 Text(meta)
                                     .font(.system(size: 9, weight: .regular))
-                                    .foregroundStyle(.black.opacity(0.5))
+                                    .foregroundStyle(BlockInk.metaColor(light: lightInk))
                                     .lineLimit(1)
                             }
                         }

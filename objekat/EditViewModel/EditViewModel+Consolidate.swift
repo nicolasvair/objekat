@@ -670,7 +670,7 @@ extension EditViewModel {
             && a.duration == b.duration
             && a.volume == b.volume && a.pan == b.pan && a.isMuted == b.isMuted
             && a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut
-            && a.stemID == b.stemID && a.colorIndex == b.colorIndex
+            && a.stemID == b.stemID && a.colorIndex == b.colorIndex && a.colorHex == b.colorHex
             && a.sends == b.sends
     }
 
@@ -741,7 +741,7 @@ extension EditViewModel {
             lane: live.lane, volume: live.volume, pan: live.pan,
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: live.isMuted,
             stemID: live.stemID, plugins: [],
-            label: live.label ?? live.displayName, colorIndex: live.colorIndex,
+            label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
             sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             automationTouchOrder: live.automationTouchOrder,
@@ -775,7 +775,7 @@ extension EditViewModel {
                 lane: other.lane, volume: other.volume, pan: other.pan,
                 fadeIn: other.fadeIn, fadeOut: other.fadeOut, isMuted: other.isMuted,
                 stemID: other.stemID, plugins: [],
-                label: other.label ?? other.displayName, colorIndex: other.colorIndex,
+                label: other.label ?? other.displayName, colorIndex: other.colorIndex, colorHex: other.colorHex,
                 sends: otherSends, baseBPM: nil,
                 consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,
@@ -1080,7 +1080,7 @@ extension EditViewModel {
             lane: live.lane, volume: snap?.volume ?? live.volume, pan: snap?.pan ?? live.pan,
             fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: snap?.isMuted ?? live.isMuted,
             stemID: live.stemID, plugins: snap?.plugins ?? [],
-            label: live.label ?? live.displayName, colorIndex: live.colorIndex,
+            label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
             sends: liveSends, baseBPM: nil,
             consolidateID: defID,
             independentAttrs: snap?.independentAttrs ?? [],

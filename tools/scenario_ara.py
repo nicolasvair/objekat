@@ -21,6 +21,9 @@ plays THROUGH it, ahead of its chain. This scenario asserts, with no screen:
   O  cost (Q3)         1, 10 and 40 Melodyne objects: load time, RSS, pushUndo with stale archives
   P  the "+" door      place -> remove -> place again through the picker's own logic (debug.ara_picker),
                        also after undo / redo of a removal, of a placement, and after a false-positive pick
+  Q  bypass            the card's power button (object.ara.set_enabled): OFF = the source is unloaded
+                       from the engine, the model keeps it and its archive; ON = same archive again;
+                       undo / redo, save / reopen, copy / cut of a bypassed object, export == dry file
   Z  end               no window on the headless pid; no duplicated plugin id
 
 It launches ITS OWN instance (`--headless --api --no-recent`, `--no-audio` unless --audio) on its own
@@ -355,6 +358,13 @@ try:
         def audit():
             return send("debug.plugin_id_audit")["count"]
 
+        def _accepts(fn):
+            try:
+                fn()
+                return True
+            except ObjekatError:
+                return False
+
         def near(a, b, tol):
             return abs(a - b) <= tol
 
@@ -526,7 +536,7 @@ try:
             audio_before = render_iso(a, "g_before")
             send("project.save")
             doc = json.load(open(manifest))
-            check("version == 23", doc.get("version") == 23, doc.get("version"))
+            check("version == 24", doc.get("version") == 24, doc.get("version"))
 
             def find_ara(o):
                 if isinstance(o, dict):
@@ -1178,6 +1188,168 @@ try:
                 check("a pick on %s leaves Melodyne offered" % os.path.basename(ident),
                       mel["identifier"] in offered(d), d)
             pick_mel("placement after the picks on other candidates")
+
+        # ══════════════════════════════════════════════════════════════════════ Q
+        if want("Q"):
+            section("Q  bypass (object.ara.set_enabled)")
+            # A file whose rate differs from the app's, so that "export == the dry file" proves the bypassed
+            # clip takes the ordinary file path (resampling included), not the plugin's.
+            app_rate = int(send("app.info").get("sample_rate") or SR)
+            file_rate = 44100 if app_rate != 44100 else 48000
+            QFILE = os.path.join(WORK, "q_%d.wav" % file_rate)
+            make_sine(QFILE, seconds=6.0, hz=220.0, rate=file_rate)
+            info("app rate %s, file rate %d" % (app_rate, file_rate))
+
+            # the dry reference: the same file, no source
+            fresh("q_ref")
+            r_id = add_clip(QFILE, lane=0)
+            ref = export_mix("q_ref", 0.0, 4.0)
+
+            fresh("q_bypass")
+            manifest_q = os.path.join(WORK, "q_bypass.objekat")
+            a = add_clip(QFILE, lane=0)
+            add_ara(a)
+            wait_ara(a)
+            plug_q = send("plugin.list", {"host": a})["plugins"][0]["id"]
+            cap = send("object.ara.capture", {"id": a})
+            sha0 = cap["sha1"]
+            notes0 = notes(a)
+            st = status(a)
+            check("on at first: enabled, valid", st["enabled"] is True and st["engine_valid"], st)
+            rep_on = send("debug.ara_report")
+
+            # OFF
+            r = send("object.ara.set_enabled", {"id": a, "enabled": False})
+            check("set_enabled false answers enabled=false, changed", r["enabled"] is False and r["changed"] is True, r)
+            st = status(a)
+            check("off: the model keeps the source", st["has_source"] and st["enabled"] is False, st)
+            check("off: the source is absent from the engine", st["engine_valid"] is False and st["mode"] != "ara", st)
+            check("off: the plugin payload says enabled=false", st["plugin"]["enabled"] is False, st["plugin"])
+            check("off: the model keeps the archive (sha1 unchanged)", st["model_archive_sha1"] == sha0,
+                  (st["model_archive_sha1"], sha0))
+            rep_off = send("debug.ara_report")
+            check("off: no Melodyne instance runs for it", rep_off["instances"] == rep_on["instances"] - 1 and rep_off["objects"] == 1,
+                  (rep_on, rep_off))
+            check("off: object.ara.wait_analysis refuses (switched off)",
+                  not _accepts(lambda: send("object.ara.wait_analysis", {"id": a, "timeout_ms": 500})))
+            refused(lambda: send("object.ara.capture", {"id": a}), "off: capture has nothing to read")
+            lst = send("plugin.list", {"host": a})["plugins"][0]
+            check("off: plugin.list still shows the source first, enabled=false",
+                  lst["slot"] == "ara_source" and lst["enabled"] is False, lst)
+            refused(lambda: send("plugin.toggle", {"host": a, "plugin": plug_q}),
+                    "plugin.toggle still refuses the source (the door is object.ara.set_enabled)")
+            again = send("object.ara.set_enabled", {"id": a, "enabled": False})
+            check("off again: nothing changes", again["changed"] is False, again)
+
+            # the sound: export == the dry file
+            wait()
+            byp = export_mix("q_bypassed", 0.0, 4.0)
+            n_ = min(len(byp), len(ref))
+            dpeak = float(np.abs(byp[:n_] - ref[:n_]).max())
+            info("export bypassed vs dry reference: peak diff %.2e (%d vs %d frames)" % (dpeak, len(byp), len(ref)))
+            check("off: the export is the dry file (peak diff < -100 dBFS)", n_ > 0 and dpeak < 10 ** (-100 / 20.0), dpeak)
+            check("off: ... and audible", rms_db(byp) > -30, rms_db(byp))
+
+            # ON again
+            r = send("object.ara.set_enabled", {"id": a, "enabled": True})
+            check("set_enabled true answers enabled=true, changed", r["enabled"] is True and r["changed"] is True, r)
+            st = wait_ara(a)
+            check("on again: valid, enabled", st["engine_valid"] and st["enabled"] is True, st)
+            check("on again: the SAME archive, byte for byte (model sha1)", st["model_archive_sha1"] == sha0,
+                  (st["model_archive_sha1"], sha0))
+            check("on again: the same plugin id", send("plugin.list", {"host": a})["plugins"][0]["id"] == plug_q)
+            n1 = notes(a)
+            check("on again: the same notes (%d vs %d)" % (len(notes0), len(n1)),
+                  len(n1) == len(notes0) and all(x["pitch"] == y["pitch"] and abs(x["start"] - y["start"]) < 0.001
+                                                 for x, y in zip(notes0, n1)))
+            check("on again: exactly one playback region", st["regions"] == 1, st)
+            check("on again: debug.plugin_id_audit = 0", audit() == 0)
+
+            # undo / redo
+            send("edit.undo")                       # the ON  ->  back to OFF
+            wait()
+            st = status(a)
+            check("undo of the ON: bypassed again, no instance", st["enabled"] is False and st["engine_valid"] is False
+                  and st["has_source"], st)
+            check("undo of the ON: the archive is still the model's (sha1)", st["model_archive_sha1"] == sha0,
+                  st["model_archive_sha1"])
+            send("edit.redo")                       # OFF -> ON
+            wait()
+            st = wait_ara(a)
+            check("redo: on again, valid", st["enabled"] is True and st["engine_valid"], st)
+            send("edit.undo")                       # back to OFF for what follows
+            wait()
+            check("back to off", status(a)["enabled"] is False)
+            send("edit.undo")                       # the OFF itself  ->  ON
+            wait()
+            st = wait_ara(a)
+            check("undo of the OFF: on again, valid", st["enabled"] is True and st["engine_valid"], st)
+            send("edit.redo")                       # ON -> OFF
+            wait()
+            check("redo of the OFF: bypassed", status(a)["enabled"] is False and status(a)["engine_valid"] is False, status(a))
+
+            # save / reopen while bypassed
+            send("project.save")
+            doc = json.load(open(manifest_q))
+            def find_src(o):
+                if isinstance(o, dict):
+                    if o.get("araSource"):
+                        return o["araSource"]
+                    for v in o.values():
+                        r_ = find_src(v)
+                        if r_:
+                            return r_
+                elif isinstance(o, list):
+                    for v in o:
+                        r_ = find_src(v)
+                        if r_:
+                            return r_
+                return None
+            src = find_src(doc)
+            check("the file keeps the source with isEnabled=false and its archive",
+                  bool(src) and src["plugin"].get("isEnabled") is False and src.get("archive", {}).get("bytes", 0) > 0, src and src["plugin"])
+            send("project.new")
+            send("project.open", {"path": manifest_q})
+            wait(120000)
+            st = status(a)
+            check("reopened bypassed: source kept, off, no instance",
+                  st["has_source"] and st["enabled"] is False and st["engine_valid"] is False, st)
+            check("reopened bypassed: sha1 unchanged", st["model_archive_sha1"] == sha0, st["model_archive_sha1"])
+            send("object.ara.set_enabled", {"id": a, "enabled": True})
+            st = wait_ara(a)
+            check("reopened then ON: valid, same archive", st["engine_valid"] and st["model_archive_sha1"] == sha0, st)
+            send("object.ara.set_enabled", {"id": a, "enabled": False})
+            # (going off reads the live instance again: after a restore Melodyne may serialise the same
+            # retouches into other bytes, so the copies below are compared with THIS off, not with sha0)
+            sha_off = status(a)["model_archive_sha1"]
+            info("archive sha1: first capture %s, after the reopen + on + off %s" % (sha0[:10], sha_off[:10]))
+
+            # copy / duplicate / cut of a bypassed object: they stay bypassed, with the archive
+            send("selection.set", {"ids": [a]})
+            send("clipboard.copy")
+            send("transport.seek", {"seconds": 8.0})
+            pasted = send("clipboard.paste")["ids"]
+            dup = send("object.duplicate", {"ids": [a]})["ids"]
+            cut = send("object.split_at", {"seconds": 2.0, "ids": [a]})["ids"]
+            wait()
+            every = list(dict.fromkeys([a] + pasted + dup + cut))
+            ids_ = {}
+            for oid in every:
+                st = status(oid)
+                check("%s: still bypassed, source and archive kept" % oid[:8],
+                      st["has_source"] and st["enabled"] is False and st["engine_valid"] is False
+                      and st["model_archive_sha1"] == sha_off, st)
+                ids_[oid] = send("plugin.list", {"host": oid})["plugins"][0]["id"]
+            check("every bypassed copy has its own plugin id", len(set(ids_.values())) == len(ids_), ids_)
+            check("cut: two halves, both bypassed", len([o for o in cut if status(o)["enabled"] is False]) >= 2, cut)
+            check("no instance anywhere", send("debug.ara_report")["instances"] == 0, send("debug.ara_report"))
+            check("debug.plugin_id_audit = 0", audit() == 0)
+            # a half goes back on: it alone loads
+            half = cut[-1]
+            send("object.ara.set_enabled", {"id": half, "enabled": True})
+            st = wait_ara(half)
+            check("one half switched on: valid; the others stay off", st["engine_valid"] and st["enabled"]
+                  and all(status(o)["enabled"] is False for o in every if o != half), st)
 
         # ══════════════════════════════════════════════════════════════════════ Z
         if want("Z") or SECTIONS is None:

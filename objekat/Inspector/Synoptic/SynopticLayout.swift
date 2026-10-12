@@ -66,11 +66,11 @@ enum SynopticLayout {
     static let cardNameFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
     /// The ARA source card's width: its whole name, from `cardW` up to the 'audio file' frame's width, like
-    /// any card (@see cardWidth). It has no on/off column; its chrome is padding 8+8 · the analysis spinner
-    /// ~12 + gap 6 · ✕ ~9 + gap 6 · 4 of slack.
+    /// any card (@see cardWidth). Its chrome is a plugin card's (on/off 26 · padding 8+8 · ✕ ~9 + gap 6 ·
+    /// 4 of slack) plus the analysis spinner ~12 + gap 6; it never has a link badge.
     static func araCardWidth(name: String) -> CGFloat {
         let nameW = ceil((name as NSString).size(withAttributes: [.font: cardNameFont]).width)
-        return min(audioZoneW, max(cardW, nameW + 16 + 18 + 15 + 4))
+        return min(audioZoneW, max(cardW, nameW + 26 + 16 + 18 + 15 + 4))
     }
 
     /// A bin's header card width: its name whole, from `cardW` up to the 'audio file' zone's width, like a

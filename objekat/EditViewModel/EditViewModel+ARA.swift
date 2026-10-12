@@ -17,6 +17,12 @@ import AppKit
 //             an engine clip from a model value (grouping, a paste, a split) reads it there.
 //   copies    every site that clones an object for a NEW one asks `copiedARASource(of:)`: a fresh plugin
 //             id (never share an instance), the archive read LIVE, never linked.
+//   on/off    the source's `plugin.isEnabled` (the card's power button, `object.ara.set_enabled`). OFF = the
+//             object plays its dry file: the engine's source is UNLOADED (no Melodyne instance, no cost),
+//             while the model KEEPS `araSource` — plugin, and the archive captured on the way out — so the
+//             retouches are not lost. ON loads the source again from that archive. Every path that rebuilds
+//             an engine clip goes through `syncARASource`, which skips a source that is off: a bypassed
+//             object stays bypassed through a cut, a paste, an undo, a save.
 
 extension EditViewModel {
 
@@ -92,13 +98,60 @@ extension EditViewModel {
         isDirty = true
     }
 
+    // MARK: - On / off of the source
+
+    /// False when the object carries a source that is switched off (it plays its dry file).
+    func araIsEnabled(_ id: UUID) -> Bool {
+        find(id: id)?.araSource?.plugin.isEnabled ?? true
+    }
+
+    /// The power button of the ARA card.
+    func toggleARABypass(objectID: UUID) {
+        guard let src = find(id: objectID)?.araSource else { return }
+        setARAEnabled(objectID: objectID, enabled: !src.plugin.isEnabled)
+    }
+
+    /// Switches the source of `objectID` on or off, in ONE undo step (pushed BEFORE anything changes).
+    /// Returns false, touching nothing, when the object has no source or is already in that state.
+    ///
+    /// OFF: the freshest archive is read from the live instance into the MODEL (the retouches must
+    /// outlive the instance), the editor is closed, the engine's source is removed (the clip plays its
+    /// file again, the plugin is unloaded), and the view-model forgets the engine side. The model keeps
+    /// `araSource` with `isEnabled == false` and that archive.
+    /// ON: the source is placed again from the model's archive (`syncARASource`). If the engine cannot
+    /// (plugin gone), the object stays dry with the reason in `araSyncFailures`, as after a load.
+    @discardableResult
+    func setARAEnabled(objectID: UUID, enabled: Bool) -> Bool {
+        guard let src = find(id: objectID)?.araSource, src.plugin.isEnabled != enabled else { return false }
+        pushUndo()
+        if enabled {
+            update(id: objectID) { $0.araSource?.plugin.isEnabled = true }
+            if let updated = find(id: objectID) { syncARASource(updated) }
+        } else {
+            _ = forceCaptureARAArchive(for: objectID)      // nil when nothing runs: the model's copy stays
+            closeARAEditor(objectID: objectID)
+            update(id: objectID) { $0.araSource?.plugin.isEnabled = false }
+            engine?.removeARASource(forObjectID: objectID.uuidString)
+            araForget(objectID)
+        }
+        isDirty = true
+        return true
+    }
+
     /// Pushes the model's source to the engine. Called when an engine clip is (re)created
     /// (`engineAddClip`, through `scheduleChainCompile(.ara)`), so every path that rebuilds a clip
     /// gets its source back. A source that cannot be set up (plugin not installed, file refused) leaves
     /// the object playing DRY: the model and its archive stay intact, a save writes them back as they were.
+    /// A source that is switched OFF (`plugin.isEnabled == false`) is not placed at all: the object plays
+    /// its file, the view-model forgets the engine side (@see `setARAEnabled`).
     func syncARASource(_ object: SoundObject) {
         guard let engine, let src = object.araSource else { return }
         let id = object.id
+        guard src.plugin.isEnabled else {
+            engine.removeARASource(forObjectID: id.uuidString)   // idempotent: a clip that never had one
+            araForget(id)
+            return
+        }
         araSynced.insert(id)
         let info: [String: Any] = ["identifier": src.plugin.identifier, "format": "VST3",
                                    "name": src.plugin.name, "manufacturer": src.plugin.manufacturer]

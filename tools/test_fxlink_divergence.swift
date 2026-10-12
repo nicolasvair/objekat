@@ -14,6 +14,7 @@
 //         ../objekat/SoundObject/ChannelMode.swift \
 //         ../objekat/SoundObject/FXLink.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/FXLinkDivergence.swift \

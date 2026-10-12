@@ -18,6 +18,7 @@
 //         ../objekat/SoundObject/ComposedName.swift \
 //         ../objekat/SoundObject/FXLink.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
@@ -53,6 +54,10 @@ func clip(source: ARASource? = nil, id: UUID = UUID()) -> SoundObject {
     return o
 }
 
+extension ObjectPlugin {
+    func with(enabled: Bool) -> ObjectPlugin { var p = self; p.isEnabled = enabled; return p }
+}
+
 @main
 enum ARAModelTest {
     static func main() throws {
@@ -80,7 +85,7 @@ enum ARAModelTest {
         let noKey = try JSONSerialization.data(withJSONObject: dict)
         check("format-19 style JSON decodes with araSource == nil",
               (try? JSONDecoder().decode(SoundObject.self, from: noKey))?.araSource == nil)
-        check("session format is 20", SessionSchema.formatVersion == 20)
+        check("session format is 24", SessionSchema.formatVersion == 24)
 
         // 3. derivedCopy: the source follows, with a NEW plugin id, never linked.
         var linked = src
@@ -135,6 +140,29 @@ enum ARAModelTest {
         if case .group(let kids, _) = ARAUndoPolicy.adoptingLive([grp], live: [grpLive])[0].kind {
             check("Q1: a child of a group is adopted too", kids[0].araSource?.archive == arch("LIVE"))
         } else { check("Q1: group kept", false) }
+
+        // 6. On/off of the source (the card's power button): `plugin.isEnabled`, the archive kept.
+        var off = ARASource(plugin: melodyne(), archive: arch("KEPT"))
+        off.plugin.isEnabled = false
+        let offObj = clip(source: off)
+        let offBack = try JSONDecoder().decode(SoundObject.self, from: JSONEncoder().encode(offObj))
+        check("bypass: a source that is off round-trips off", offBack.araSource?.plugin.isEnabled == false)
+        check("bypass: ...with its archive intact", offBack.araSource?.archive == arch("KEPT"))
+        check("bypass: a source written before the button decodes ON",
+              try JSONDecoder().decode(SoundObject.self, from: JSONEncoder().encode(clip(source: src))).araSource?.plugin.isEnabled == true)
+        check("bypass: a copy of a bypassed object stays bypassed (cut, paste, duplicate)",
+              off.copiedForNewObject().plugin.isEnabled == false && off.copiedForNewObject().plugin.id != off.plugin.id)
+        check("bypass: ...and keeps the archive", off.copiedForNewObject().archive == arch("KEPT"))
+        let offDerived = offObj.derivedCopy(startTime: 2, duration: 1, lane: 1, fadeIn: 0, fadeOut: 0, plugins: [], kind: offObj.kind)
+        check("bypass: derivedCopy keeps the source off", offDerived.araSource?.plugin.isEnabled == false)
+        check("bypass: on and off are two different states for the differential undo",
+              offObj != clip(source: ARASource(plugin: off.plugin.with(enabled: true), archive: off.archive), id: offObj.id))
+        // Q1 with a bypassed live object: the snapshot (ON) takes the live archive, stays ON.
+        let onSnap = clip(source: ARASource(plugin: melodyne(id: off.plugin.id), archive: arch("OLD")), id: offObj.id)
+        let adoptedOff = ARAUndoPolicy.adoptingLive([onSnap], live: [offObj])[0]
+        check("bypass: undo of an off -> the snapshot's state is kept (ON)", adoptedOff.araSource?.plugin.isEnabled == true)
+        check("bypass: ...and wears the archive kept by the model", adoptedOff.araSource?.archive == arch("KEPT"))
+
 
         print(fails.isEmpty ? "ALL OK (\(total))" : "\(fails.count) FAIL / \(total)")
         exit(fails.isEmpty ? 0 : 1)

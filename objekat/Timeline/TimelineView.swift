@@ -3322,8 +3322,10 @@ struct TimelineView: View {
                 // the same predicate, so none is drawn twice or lost.
                 var labelCache = CanvasLabelCache()
                 func resolvedLabel(_ s: String, icon: String, missing: Bool,
-                                   meta: String, muteBadge: Bool) -> GraphicsContext.ResolvedText {
-                    labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta, muteBadge: muteBadge)
+                                   meta: String, muteBadge: Bool,
+                                   lightInk: Bool = false) -> GraphicsContext.ResolvedText {
+                    labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta,
+                                       muteBadge: muteBadge, lightInk: lightInk)
                 }
                 // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
                 // dictionary lookup — that is exactly why it may be read from a drawing pass at
@@ -3381,7 +3383,11 @@ struct TimelineView: View {
                                           icon: ObjectKindIcon.name(for: item),
                                           missing: missing,
                                           meta: hasMeta ? item.timelineMetaSummary : "",
-                                          muteBadge: w >= 30 && item.isMuted),
+                                          muteBadge: w >= 30 && item.isMuted,
+                                          // White over a dark band of the object's own colour
+                                          // (@see `SoundObject.bandWantsLightInk`).
+                                          lightInk: item.bandWantsLightInk(
+                                              selected: selectedIDs.contains(item.id))),
                             // The same top inset as the rich views (@see TimelineLabelMetrics).
                             at: CGPoint(x: labelX,
                                         y: rect.minY + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
@@ -3481,9 +3487,11 @@ struct TimelineView: View {
                     guard !groups.isEmpty else { return }
                     var c = ctx; c.opacity = opacity
                     let tint = selected ? 0.55 : 0.30
+                    // The band in the object's own colour has ITS opacity (@see `ObjectColorChoice`).
+                    let bandAlpha = ObjectColorChoice.bandOpacity(selected: selected)
                     for (key, batch) in groups {
                         c.fill(batch.full, with: .color(.white))
-                        c.fill(batch.band, with: .color(key.custom.opacity(tint)))
+                        c.fill(batch.band, with: .color(key.custom.opacity(bandAlpha)))
                         c.fill(batch.body, with: .color(key.stem.opacity(tint)))
                         c.stroke(batch.full, with: .color(key.custom.opacity(selected ? 0.9 : 0.3)), lineWidth: 1.5)
                     }

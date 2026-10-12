@@ -247,6 +247,31 @@ extension EditViewModel {
         return link.id
     }
 
+    /// A NEW bin with nothing in it, laid on `hostID` at `place` (the signal view's "+" browser, "New FX
+    /// link"): the host gets an empty block, its "+" fills the DEFINITION later (@see `fxAddPlugin`),
+    /// and every other host can join it. ONE undo point. nil (nothing touched) for a send's chain, a
+    /// place inside a bin's block (a bin does not hold a bin), or an unknown host.
+    ///
+    /// An empty bin is no new state: a bin whose last plugin was dragged out or removed is the same
+    /// thing (@see `simplifyTree`: "an emptied bin is the bin's business"); the registry only writes
+    /// the bins some block refers to, and this one has its block.
+    @discardableResult
+    func createEmptyFXLink(on hostID: UUID, at place: (SeriesLocation, Int), name: String? = nil,
+                           undo: Bool = true) -> UUID? {
+        guard engine != nil, chainPlugins(hostID) != nil else { return nil }
+        guard !(isSendChainHost(hostID) && find(id: hostID) == nil) else { return nil }   // a send holds no bin
+        if case .block = place.0 { return nil }                                          // a bin does not hold a bin
+        if undo { pushUndo() }
+        let link = FXLink(name: uniqueFXLinkName(name), plugins: [])
+        fxLinks.append(link)
+        guard attachFXLink(link.id, to: hostID, at: place, undo: false) != nil else {
+            fxLinks.removeAll { $0.id == link.id }
+            if undo { _ = undoStack.popLast() }                                          // nothing was written
+            return nil
+        }
+        return link.id
+    }
+
     /// The bin of several OBJECTS (the timeline menu's last entry): the first of them — in timeline
     /// order — that has plugins gives the bin its definition (the first run of plain plugins of its
     /// chain), and every OTHER object receives a block of it at the END of its chain, its own

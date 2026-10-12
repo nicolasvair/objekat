@@ -248,8 +248,8 @@ extension CommandRegistry {
                         + "nothing else (then the selection is those pieces). In zone scope "
                         + "dissolve / deconsolidate / colour / FX link are ONE undo step; "
                         + "consolidating and scripts isolate with an undo step of their own, then "
-                        + "act (two steps). `args`: `color_index` (int, or null = the stem's) for "
-                        + "`set_color`; `plugin` (the script's name) and `entry` (its index, "
+                        + "act (two steps). `args`: `color_hex` (\"#RRGGBB\") or `color_index` (int, or null = the stem's) "
+                        + "for `set_color`; `plugin` (the script's name) and `entry` (its index, "
                         + "default 0) for `run_script`. `dry_run` checks that the entry is "
                         + "offered and says what it WOULD apply to (`target_ids`: the objects the "
                         + "range crosses, `needs_isolation`) without touching anything. "
@@ -259,7 +259,7 @@ extension CommandRegistry {
                           ParamSpec("id", "uuid", required: false,
                                     "The object under the click; omit it for an empty lane."),
                           ParamSpec("args", "object", required: false,
-                                    "`color_index`, or `plugin` / `entry` (see above)."),
+                                    "`color_hex`, `color_index`, or `plugin` / `entry` (see above)."),
                           ParamSpec("apply_to_zone", "bool", required: false,
                                     "Apply to the time selection instead of the selection."),
                           ParamSpec("dry_run", "bool", required: false,
@@ -313,9 +313,15 @@ extension CommandRegistry {
             var action = chosen.action
             if case .setColor = action {
                 let raw = args["color_index"]
-                if raw == nil || raw == .null { action = .setColor(nil) }
+                let rawHex = args["color_hex"]
+                if let hexText = rawHex, hexText != .null {
+                    guard let text = hexText.stringValue, let rgb = ObjectColorChoice.parse(text) else {
+                        throw CommandError(code: .bad_params, message: "'args.color_hex': \"#RRGGBB\", or null")
+                    }
+                    action = .setColor(.hex(rgb))
+                } else if raw == nil || raw == .null { action = .setColor(nil) }
                 else if let i = raw?.intValue, i >= 0, i < ObjectColorPalette.palette.count {
-                    action = .setColor(i)
+                    action = .setColor(.index(i))
                 } else {
                     throw CommandError(code: .bad_params, message: "'args.color_index': an index of the palette, or null")
                 }
@@ -630,7 +636,8 @@ extension CommandRegistry {
         switch e.action {
         case .setColor:
             o["checked"] = .bool(e.isChecked)
-            o["color_index"] = e.currentColorIndex.map { .int($0) } ?? .null
+            if case .index(let i)? = e.currentColor { o["color_index"] = .int(i) } else { o["color_index"] = .null }
+            if case .hex(let h)? = e.currentColor { o["color_hex"] = .string(ObjectColorChoice.format(h)) } else { o["color_hex"] = .null }
         case .runScript(let pluginID, let index):
             if let plugin = ScriptPluginRegistry.shared.plugins.first(where: { $0.id == pluginID }) {
                 o["plugin"] = .string(plugin.displayName)

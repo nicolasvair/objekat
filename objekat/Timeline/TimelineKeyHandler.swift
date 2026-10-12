@@ -1013,6 +1013,9 @@ extension TimelineView {
             // A script canvas's window has its own keys (⌘Z walks ITS history, Space plays its audio):
             // this monitor is app-wide, and ⌘Z there would have undone the PROJECT.
             if event.window is ScriptCanvasPanel { return event }
+            // The plugin browser is a modal sheet: its keys are its own (modifier changes still go
+            // through, so that a ⌘ / ⌥ held across its opening is not left "held" in the view-model).
+            if vm.pluginBrowserOpen && event.type != .flagsChanged { return event }
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             if event.type == .flagsChanged {
                 let held = event.modifierFlags.contains(.command)
@@ -1346,7 +1349,7 @@ extension TimelineView {
                 menu.addItem(scriptsItem)
             }
 
-            // A custom colour: a 16-colour palette, independent of the stem, straight at the
+            // A custom colour: a row of colours, independent of the stem, straight at the
             // menu's first level (no 'Colour' submenu): one right click is enough to see the
             // palette. It paints the scope — the whole selection if the object is part of it,
             // otherwise that object alone; the pieces inside the range in `.zone` scope.
@@ -1358,11 +1361,26 @@ extension TimelineView {
                 // No separator between 'Stem colour' and the palette: the entry is part of the
                 // colour choice (the object's own colour, or none = the stem's).
                 let swatchItem = NSMenuItem()
-                swatchItem.view = ColorSwatchGridView(currentColorIndex: colorEntry.currentColorIndex) { picked in
-                    Task { @MainActor in
-                        await vm.performObjectMenuAction(.setColor(picked), clickedID: clickedID, scope: scope)
-                    }
-                }
+                // The object's own palette: the seven base colours, the ones the hand added, then a
+                // "+" that opens a second, small menu of hues. A pick there paints the scope AND
+                // joins the list (kept in the app's preferences, for every project).
+                swatchItem.view = ColorSwatchGridView(
+                    objectColor: colorEntry.currentColor,
+                    addedColors: UserObjectColors.load(),
+                    onPick: { hex in
+                        Task { @MainActor in
+                            await vm.performObjectMenuAction(.setColor(.hex(hex)), clickedID: clickedID, scope: scope)
+                        }
+                    },
+                    onPlus: {
+                        let screenPoint = NSEvent.mouseLocation
+                        HueGridView.popUpLater(at: screenPoint) { hex in
+                            Task { @MainActor in
+                                UserObjectColors.add(hex)
+                                await vm.performObjectMenuAction(.setColor(.hex(hex)), clickedID: clickedID, scope: scope)
+                            }
+                        }
+                    })
                 menu.addItem(swatchItem)
             }
 
@@ -1405,71 +1423,208 @@ final class MenuActionProxy: NSObject {
 
 // MARK: - Colour palette (a custom view inside an NSMenuItem)
 
-/// A grid of `ObjectColorPalette` swatches inside a submenu (2 rows by default: 8 columns for
-/// the 16 object/plugin hues). AppKit does not fire the standard action of an NSMenuItem
-/// carrying a custom `view`: it is the view itself that detects the click and closes the menu
-/// through `enclosingMenuItem` (the official pattern for colour menus, as in Notes/Mail).
-/// couleur, ex. Notes/Mail).
+/// A grid of swatches inside a menu. Two modes:
+///
+/// • the PALETTE mode — a fixed list of colours (`ObjectColorPalette` by default: 8 columns for the
+///   16 hues of the markers' and comments' menus, the 10 stems', the plugin browser's) and the
+///   index picked comes back;
+/// • the OBJECT mode (`init(objectColor:addedColors:…)`) — an object's colour: the seven base
+///   colours, then the ones the hand added, then a "+" LAST (wrapping to the next row when the row
+///   is full, @see `ObjectColorChoice.swatchLayout`). A swatch gives its 0xRRGGBB back; the "+"
+///   closes this menu and, on the next turn of the run loop, opens a second small one (`HueGridView`)
+///   where ONE click picks a hue and a lightness.
+///
+/// AppKit does not fire the standard action of an NSMenuItem carrying a custom `view`: it is the
+/// view itself that detects the click and closes the menu through `enclosingMenuItem` (the official
+/// pattern for colour menus, as in Notes/Mail).
 /// Not `private`: reused by StemStripsToolbarView for the 'stem colour' context menu.
 final class ColorSwatchGridView: NSView {
-    private let columns: Int
-    private let swatchSize: CGFloat = 18
-    private let spacing: CGFloat = 6
-    private let padding: CGFloat = 8
-    private let palette: [Color]
-    private let currentColorIndex: Int?
-    private let onPick: (Int) -> Void
+    private struct Cell {
+        let column: Int
+        let row: Int
+        /// nil = the "+".
+        let fill: NSColor?
+    }
+    private let geometry = ObjectColorChoice.Geometry()
+    private let cells: [Cell]
+    /// The cell to ring as the current one.
+    private let ringedCell: Int?
+    private let onPickCell: (Int) -> Void
+    private let onPlus: (() -> Void)?
 
     override var isFlipped: Bool { true }
 
-    /// `palette` defaults to the 16-hue palette (`ObjectColorPalette`). `columns` defaults to
-    /// 8, so 2 rows for those 16 hues; to be adjusted for a palette of another size
+    /// Palette mode. `palette` defaults to the 16-hue palette (`ObjectColorPalette`). `columns`
+    /// defaults to 8, so 2 rows for those 16 hues; to be adjusted for a palette of another size
     /// (the 10 stem hues, say, see StemStripsToolbarView).
     init(currentColorIndex: Int?,
          palette: [Color] = ObjectColorPalette.palette,
          columns: Int = 8,
          onPick: @escaping (Int) -> Void) {
-        self.palette = palette
-        self.columns = columns
-        self.currentColorIndex = currentColorIndex
-        self.onPick = onPick
-        let count = palette.count
-        let rows  = (count + columns - 1) / columns
-        let w = padding * 2 + CGFloat(columns) * swatchSize + CGFloat(columns - 1) * spacing
-        let h = padding * 2 + CGFloat(rows) * swatchSize + CGFloat(rows - 1) * spacing
-        super.init(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        let cols = max(1, columns)
+        self.cells = palette.enumerated().map {
+            Cell(column: $0.offset % cols, row: $0.offset / cols, fill: NSColor($0.element))
+        }
+        self.ringedCell = currentColorIndex
+        self.onPickCell = onPick
+        self.onPlus = nil
+        let rows = (palette.count + cols - 1) / cols
+        let size = geometry.size(columns: cols, rows: rows)
+        super.init(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height))
+    }
+
+    /// Object mode. `onPick` receives a 0xRRGGBB; `onPlus` is called when the "+" is clicked, after
+    /// this menu has been asked to close (the caller opens the second menu — @see `HueGridView.popUp`).
+    init(objectColor current: ObjectColorValue?,
+         addedColors: [Int],
+         onPick: @escaping (Int) -> Void,
+         onPlus: @escaping () -> Void) {
+        let layout = ObjectColorChoice.swatchLayout(base: ObjectColorChoice.baseHex, custom: addedColors)
+        self.cells = layout.cells.map { cell in
+            switch cell.kind {
+            case .color(let rgb):
+                return Cell(column: cell.column, row: cell.row, fill: NSColor(ObjekatPalette.color(rgb: rgb)))
+            case .plus:
+                return Cell(column: cell.column, row: cell.row, fill: nil)
+            }
+        }
+        let colors = layout.colors
+        if case .hex(let h)? = current { self.ringedCell = colors.firstIndex(of: h) } else { self.ringedCell = nil }
+        self.onPickCell = { onPick(colors[$0]) }
+        self.onPlus = onPlus
+        let size = geometry.size(columns: layout.columns, rows: layout.rowCount)
+        super.init(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height))
+        // The "+" explains itself: a tooltip over its swatch only.
+        let plus = layout.plusCell
+        let o = geometry.origin(column: plus.column, row: plus.row)
+        addToolTip(NSRect(x: o.x, y: o.y, width: geometry.swatch, height: geometry.swatch), owner: self, userData: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    private func rect(for index: Int) -> NSRect {
-        let col = index % columns
-        let row = index / columns
-        let x = padding + CGFloat(col) * (swatchSize + spacing)
-        let y = padding + CGFloat(row) * (swatchSize + spacing)
-        return NSRect(x: x, y: y, width: swatchSize, height: swatchSize)
+    /// NSToolTipOwner: the "+" swatch's tooltip (the only rect registered).
+    @objc(view:stringForToolTip:point:userData:)
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint,
+              userData data: UnsafeMutableRawPointer?) -> String {
+        L("menu.context.color.add.help")
+    }
+
+    private func rect(of cell: Cell) -> NSRect {
+        let o = geometry.origin(column: cell.column, row: cell.row)
+        return NSRect(x: o.x, y: o.y, width: geometry.swatch, height: geometry.swatch)
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        for i in palette.indices {
-            let r = rect(for: i)
-            NSColor(palette[i]).setFill()
-            NSBezierPath(ovalIn: r).fill()
-            if currentColorIndex == i {
-                NSColor.labelColor.setStroke()
-                let ring = NSBezierPath(ovalIn: r.insetBy(dx: -2.5, dy: -2.5))
-                ring.lineWidth = 1.5
-                ring.stroke()
+        for (i, cell) in cells.enumerated() {
+            let r = rect(of: cell)
+            if let fill = cell.fill {
+                fill.setFill()
+                NSBezierPath(ovalIn: r).fill()
+                // A hairline so that white — and black on a dark menu — still reads as a swatch.
+                NSColor.labelColor.withAlphaComponent(0.28).setStroke()
+                let edge = NSBezierPath(ovalIn: r.insetBy(dx: 0.25, dy: 0.25))
+                edge.lineWidth = 0.5
+                edge.stroke()
+                if ringedCell == i {
+                    NSColor.labelColor.setStroke()
+                    let ring = NSBezierPath(ovalIn: r.insetBy(dx: -2.5, dy: -2.5))
+                    ring.lineWidth = 1.5
+                    ring.stroke()
+                }
+            } else {
+                // The "+": an empty circle with a cross.
+                NSColor.secondaryLabelColor.setStroke()
+                let circle = NSBezierPath(ovalIn: r.insetBy(dx: 0.5, dy: 0.5))
+                circle.lineWidth = 1
+                circle.stroke()
+                let cross = NSBezierPath()
+                let c = NSPoint(x: r.midX, y: r.midY), a: CGFloat = 4
+                cross.move(to: NSPoint(x: c.x - a, y: c.y)); cross.line(to: NSPoint(x: c.x + a, y: c.y))
+                cross.move(to: NSPoint(x: c.x, y: c.y - a)); cross.line(to: NSPoint(x: c.x, y: c.y + a))
+                cross.lineWidth = 1.2
+                cross.stroke()
             }
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        for i in palette.indices where rect(for: i).insetBy(dx: -2, dy: -2).contains(p) {
-            onPick(i)
+        for (i, cell) in cells.enumerated() where rect(of: cell).insetBy(dx: -2, dy: -2).contains(p) {
+            if cell.fill == nil {
+                onPlus?()
+            } else {
+                onPickCell(i)
+            }
             enclosingMenuItem?.menu?.cancelTracking()
             return
+        }
+    }
+}
+
+// MARK: - The small menu of the "+" (a grid of hues, one click)
+
+/// 8 hues × 5 lightnesses (@see `ObjectColorChoice.hueGrid`), under a one-line title. ONE click
+/// picks a colour and closes the menu: the caller applies it to the object AND adds it to the list
+/// of added colours.
+final class HueGridView: NSView {
+    private let geometry = ObjectColorChoice.Geometry()
+    private let onPick: (Int) -> Void
+
+    override var isFlipped: Bool { true }
+
+    init(onPick: @escaping (Int) -> Void) {
+        self.onPick = onPick
+        let size = geometry.size(columns: ObjectColorChoice.hueColumns, rows: ObjectColorChoice.lightnessRows)
+        super.init(frame: NSRect(x: 0, y: 0, width: size.width, height: size.height))
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func rect(_ index: Int) -> NSRect {
+        let o = geometry.origin(column: index % ObjectColorChoice.hueColumns,
+                                row: index / ObjectColorChoice.hueColumns)
+        return NSRect(x: o.x, y: o.y, width: geometry.swatch, height: geometry.swatch)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        for (i, rgb) in ObjectColorChoice.hueGrid.enumerated() {
+            let r = rect(i)
+            NSColor(ObjekatPalette.color(rgb: rgb)).setFill()
+            NSBezierPath(ovalIn: r).fill()
+            NSColor.labelColor.withAlphaComponent(0.2).setStroke()
+            let edge = NSBezierPath(ovalIn: r.insetBy(dx: 0.25, dy: 0.25))
+            edge.lineWidth = 0.5
+            edge.stroke()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        for (i, rgb) in ObjectColorChoice.hueGrid.enumerated() where rect(i).insetBy(dx: -2, dy: -2).contains(p) {
+            onPick(rgb)
+            enclosingMenuItem?.menu?.cancelTracking()
+            return
+        }
+    }
+
+    /// Opens the small menu at `screenPoint`, on the NEXT turn of the run loop: the menu that held
+    /// the "+" is still tracking when the click lands, `cancelTracking()` only asks it to close, and
+    /// a second `popUp` started inside the first one's event would be swallowed by it.
+    static func popUpLater(at screenPoint: NSPoint, onPick: @escaping (Int) -> Void) {
+        // NOT `DispatchQueue.main.async`: the main queue is drained in the common run loop modes, and
+        // menu tracking is one of them — the block ran while the first menu was still up, and the
+        // second `popUp` was swallowed (the "+" seemed dead). `.default` only comes back once the
+        // first menu has really closed.
+        RunLoop.main.perform(inModes: [.default, .modalPanel]) {
+            let menu = NSMenu(title: L("menu.context.color.add.title"))
+            menu.autoenablesItems = false
+            let header = NSMenuItem(title: L("menu.context.color.add.title"), action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            let item = NSMenuItem()
+            item.view = HueGridView(onPick: onPick)
+            menu.addItem(item)
+            menu.popUp(positioning: nil, at: screenPoint, in: nil)
         }
     }
 }
