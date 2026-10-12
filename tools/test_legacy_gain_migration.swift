@@ -59,28 +59,34 @@ func decoded<T: Decodable>(_ type: T.Type, _ dict: [String: Any]) -> T {
     let data = try! JSONSerialization.data(withJSONObject: dict)
     return try! JSONDecoder().decode(T.self, from: data)
 }
-/// An object with old trims (and optionally its children replaced by legacy ones).
+/// An object with old trims (and optionally its children replaced by legacy ones). Since M.4 the
+/// old values live in DECODE-ONLY `legacy…` fields, never encoded: a fixture sets them directly (a JSON
+/// round trip would drop them — and the old touch entries, which no longer resolve). The decoding
+/// itself is asserted on its own, from raw JSON ("the legacy keys are decode-only").
 func legacy(_ o: SoundObject, trimIn: Float? = nil, trimOut: Float? = nil,
             children: [SoundObject]? = nil) -> SoundObject {
-    var d = jsonObject(o)
-    if let t = trimIn { d["chainInGainDb"] = t }
-    if let t = trimOut { d["chainOutGainDb"] = t }
-    if let children, var kind = d["kind"] as? [String: Any] {
-        kind["children"] = children.map { jsonObject($0) }
-        d["kind"] = kind
-    }
-    return decoded(SoundObject.self, d)
+    var o = o
+    if let t = trimIn { o.legacyChainInGainDb = t }
+    if let t = trimOut { o.legacyChainOutGainDb = t }
+    if let children, case .group(_, let expanded) = o.kind { o.kind = .group(children: children, isExpanded: expanded) }
+    return o
 }
 func legacyStem(_ s: Stem, trimIn: Float? = nil, trimOut: Float? = nil) -> Stem {
-    var d = jsonObject(s)
-    if let t = trimIn { d["chainInGainDb"] = t }
-    if let t = trimOut { d["chainOutGainDb"] = t }
-    return decoded(Stem.self, d)
+    var s = s
+    if let t = trimIn { s.legacyChainInGainDb = t }
+    if let t = trimOut { s.legacyChainOutGainDb = t }
+    return s
 }
 func legacyLink(_ l: FXLink, gainDb: Float, pan: Float = 0, muted: Bool = false, enabled: Bool = true) -> FXLink {
-    var d = jsonObject(l)
-    d["gainDb"] = gainDb; d["pan"] = pan; d["muted"] = muted; d["isEnabled"] = enabled
-    return decoded(FXLink.self, d)
+    var l = l
+    l.legacyGainDb = gainDb; l.legacyPan = pan; l.legacyMuted = muted; l.isEnabled = enabled
+    return l
+}
+/// A detached block's legacy output section.
+func legacyLocal(enabled: Bool = true, gainDb: Float = 0, pan: Float = 0, muted: Bool = false) -> FXLinkOutput {
+    var o = FXLinkOutput(isEnabled: enabled)
+    o.legacyGainDb = gainDb; o.legacyPan = pan; o.legacyMuted = muted
+    return o
 }
 /// The legacy `ParamRef`s, written by name (they will stay decodable, never produced).
 func legacyLane(_ type: String, _ points: [(Double, Float)]) -> AutomationLane {
@@ -139,7 +145,7 @@ enum LegacyGainMigrationTest {
             check("trim out +3 → a gain stage at the END", p.last?.gainStageFace == .gain && gainOf(p[4]) == 3)
             check("…after the trailing marker", p[3].isSendMarker && p[3].sendMarker?.auxID == auxB.id)
             check("the plugin keeps its place between the two markers", p[2].id == comp.id)
-            check("the trims are left neutral", doc.items[0].chainInGainDb == 0 && doc.items[0].chainOutGainDb == 0)
+            check("the trims are left neutral", doc.items[0].legacyChainInGainDb == 0 && doc.items[0].legacyChainOutGainDb == 0)
             check("report: 2 trims", r == .init(trims: 2, fxOutputs: 0, automationLanes: 0, clamped: 0), "\(r)")
         }
 
@@ -194,7 +200,7 @@ enum LegacyGainMigrationTest {
                   && s.plugins[1].gainStageFace == nil)
             check("the Main: trim in → a stage", m.plugins.count == 1 && gainOf(m.plugins[0]) == -1)
             check("the stems' trims are neutral",
-                  s.chainInGainDb == 0 && s.chainOutGainDb == 0 && m.chainInGainDb == 0)
+                  s.legacyChainInGainDb == 0 && s.legacyChainOutGainDb == 0 && m.legacyChainInGainDb == 0)
             guard case .group(let ch, _) = doc.items[0].kind, case .group(let gch, _) = ch[1].kind else {
                 check("group shape kept", false); return
             }
@@ -221,7 +227,7 @@ enum LegacyGainMigrationTest {
             let link = legacyLink(FXLink(id: binID, name: "Kick", plugins: [defComp]), gainDb: -4.5, pan: 0.25)
             let a = clip(lane: 0, plugins: [block()])
             let b = clip(lane: 1, plugins: [plug(), block()])
-            let c = clip(lane: 2, plugins: [block(detached: true, local: FXLinkOutput(gainDb: -6, muted: true))])
+            let c = clip(lane: 2, plugins: [block(detached: true, local: legacyLocal(gainDb: -6, muted: true))])
             let d = clip(lane: 3, plugins: [block(detached: true)])
             let rack = ObjectPlugin(id: UUID(), name: "rack", manufacturer: "", identifier: "", formatName: "",
                                     rack: PluginRack(voices: [[block()], [plug()]]))
@@ -237,7 +243,7 @@ enum LegacyGainMigrationTest {
             check("…with the output's gain and pan",
                   def.gainStageStoredValues == GainStageValues(gainDb: -4.5, pan: 0.25, muted: false),
                   "\(String(describing: def.gainStageStoredValues))")
-            check("the bin's output is neutral, its on/off kept", L.gainDb == 0 && L.pan == 0 && !L.muted && L.isEnabled)
+            check("the bin's output is neutral, its on/off kept", !L.hasLegacyOutput && L.isEnabled)
             func lastInBlock(_ o: SoundObject) -> ObjectPlugin? { o.plugins.last { $0.isFXBlock }?.fxBlock?.plugins.last }
             for (n, o) in [("A", doc.items[0]), ("B", doc.items[1])] {
                 let i = lastInBlock(o)
@@ -277,7 +283,7 @@ enum LegacyGainMigrationTest {
             let link = legacyLink(FXLink(id: binID, name: "Kick", plugins: [defComp]), gainDb: -40, muted: true,
                                   enabled: false)
             let off = clip(lane: 1, plugins: [block(detached: true,
-                                                     local: FXLinkOutput(isEnabled: false, gainDb: 30))])
+                                                     local: legacyLocal(enabled: false, gainDb: 30))])
             var doc = ProjectDocument(items: [legacy(clip(plugins: [block()]), trimIn: -30), off], stems: [])
             doc.fxLinks = [link]
             let r = LegacyGainMigration.migrate(&doc)
@@ -304,7 +310,7 @@ enum LegacyGainMigrationTest {
 
         // MARK: a sidecar subtree (no registry): frozen outputs of attached blocks
         do {
-            let frozen = FXLinkOutput(isEnabled: true, gainDb: -4.5, pan: 0.25)
+            let frozen = legacyLocal(gainDb: -4.5, pan: 0.25)
             let m1 = clip(lane: 0, plugins: [block(local: frozen)])
             let m2 = clip(lane: 1, plugins: [block(local: frozen)])
             var sub = legacy(SoundObject(startTime: 0, duration: 4, lane: 0,
@@ -323,6 +329,29 @@ enum LegacyGainMigrationTest {
             check("sidecar: the group's own trim too", gainOf(sub.plugins.last!) == -2)
             check("sidecar report: 1 trim, 1 FX output", r == .init(trims: 1, fxOutputs: 1, automationLanes: 0, clamped: 0), "\(r)")
             check("sidecar: idempotent", LegacyGainMigration.migrate(&sub).isEmpty)
+        }
+
+        // MARK: the legacy keys are decode-only (M.4): read, never written back
+        do {
+            var ld = jsonObject(FXLink(id: binID, name: "Kick", plugins: [defComp]))
+            ld["gainDb"] = -3; ld["pan"] = 0.5; ld["muted"] = true
+            let link = decoded(FXLink.self, ld)
+            let local = decoded(FXLinkOutput.self, ["isEnabled": false, "gainDb": -6])
+            var od = jsonObject(clip()); od["chainInGainDb"] = -6; od["chainOutGainDb"] = 2
+            let obj = decoded(SoundObject.self, od)
+            var sd = jsonObject(Stem(id: UUID(), name: "S", colorIndex: 0, format: .stereo)); sd["chainInGainDb"] = -1
+            let stem = decoded(Stem.self, sd)
+            check("decoded: the legacy values are read",
+                  link.legacyGainDb == -3 && link.legacyPan == 0.5 && link.legacyMuted && local.legacyGainDb == -6
+                  && obj.legacyChainInGainDb == -6 && obj.legacyChainOutGainDb == 2 && stem.legacyChainInGainDb == -1)
+            func text<T: Encodable>(_ v: T) -> String { String(data: try! JSONEncoder().encode(v), encoding: .utf8)! }
+            check("encoded without migration: a bin writes no gainDb / pan / muted",
+                  !text(link).contains("gainDb") && !text(link).contains("\"pan\"") && !text(link).contains("muted"), text(link))
+            check("encoded: a detached block's local writes its on/off only",
+                  text(local) == "{\"isEnabled\":false}", text(local))
+            check("encoded: an object and a stem write no trim key",
+                  !text(obj).contains("chainInGainDb") && !text(obj).contains("chainOutGainDb")
+                  && !text(stem).contains("chainInGainDb"))
         }
 
         // MARK: what a file written now carries

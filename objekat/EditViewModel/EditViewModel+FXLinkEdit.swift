@@ -347,7 +347,7 @@ extension EditViewModel {
     }
 
     /// Takes a host's block out of the bin without moving it: the host keeps an INDEPENDENT copy of
-    /// the chain as it is now — instances, settings, and the bin's output section (`local`). The
+    /// the chain as it is now — instances, settings, and the bin's common on/off (`local`). The
     /// bin can be rejoined with `reattachFXBlock`.
     @discardableResult
     func detachFXBlock(hostID: UUID, blockID: UUID, undo: Bool = true) -> Bool {
@@ -375,7 +375,7 @@ extension EditViewModel {
     }
 
     /// Puts a detached block back on its bin: the host REALIGNS on the definition — its order, its
-    /// membership, its output section — and its instances adopt the settings of the group (it is the
+    /// membership, its common on/off — and its instances adopt the settings of the group (it is the
     /// host that aligns, never the members that stayed: coming back must not crush what they set).
     @discardableResult
     func reattachFXBlock(hostID: UUID, blockID: UUID, undo: Bool = true) -> Bool {
@@ -421,8 +421,8 @@ extension EditViewModel {
     }
 
     /// The host leaves the bin for good and KEEPS its plugins: the block is replaced, inline, by its
-    /// instances — independent, no link of any kind. The bin's output section is not carried over
-    /// (a bypass is: the plugins stay as silent as the block was).
+    /// instances — independent, no link of any kind. The bin's common bypass is carried over (the
+    /// plugins stay as silent as the block was); a gain stage of the bin comes along as a plugin.
     @discardableResult
     func releaseFXBlock(hostID: UUID, blockID: UUID, undo: Bool = true) -> Bool {
         guard let engine, let chain = chainPlugins(hostID),
@@ -750,7 +750,7 @@ extension EditViewModel {
         return true
     }
 
-    /// The bin's COMMON on/off: off bypasses every attached member's block, output section included.
+    /// The bin's COMMON on/off: off bypasses every attached member's block.
     @discardableResult
     func fxSetEnabled(linkID: UUID, enabled: Bool, undo: Bool = true) -> Bool {
         guard let link = fxLink(linkID), link.isEnabled != enabled else { return false }
@@ -760,34 +760,15 @@ extension EditViewModel {
         return true
     }
 
-    /// The bin's output section. `nil` leaves a field as it is. Hot: no recompile, so it can run
-    /// at the pace of a drag (`undo: false` from the second frame on).
+    /// The common on/off of a DETACHED block — its own copy of the bin's rules. (A bin has no output
+    /// section any more, format 25: a level, pan or mute is a gain stage among its plugins.)
     @discardableResult
-    func fxSetOutput(linkID: UUID, gainDb: Float? = nil, pan: Float? = nil, muted: Bool? = nil,
-                     undo: Bool = true) -> Bool {
-        guard fxLink(linkID) != nil else { return false }
-        if undo { pushUndo() }
-        updateFXLink(linkID) { l in
-            if let g = gainDb { l.gainDb = min(max(g, -96), 40) }
-            if let p = pan { l.pan = min(max(p, -1), 1) }
-            if let m = muted { l.muted = m }
-        }
-        pushFXLinkOutput(linkID)
-        return true
-    }
-
-    /// The output section of a DETACHED block — its own copy.
-    @discardableResult
-    func fxSetLocalOutput(hostID: UUID, blockID: UUID, gainDb: Float? = nil, pan: Float? = nil,
-                          muted: Bool? = nil, enabled: Bool? = nil, undo: Bool = true) -> Bool {
+    func fxSetLocalEnabled(hostID: UUID, blockID: UUID, enabled: Bool, undo: Bool = true) -> Bool {
         guard let chain = chainPlugins(hostID), let block = Self.findBlock(blockID, in: chain),
               let fb = block.fxBlock, fb.isDetached else { return false }
         if undo { pushUndo() }
         var out = fb.local ?? FXLinkOutput()
-        if let g = gainDb { out.gainDb = min(max(g, -96), 40) }
-        if let p = pan { out.pan = min(max(p, -1), 1) }
-        if let m = muted { out.muted = m }
-        if let e = enabled { out.isEnabled = e }
+        out.isEnabled = enabled
         updateChainPlugins(hostID) { c in
             c = Self.updatingBlock(blockID, in: c) { $0.fxBlock?.local = out }
         }

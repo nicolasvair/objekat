@@ -19,9 +19,11 @@ enum ParamRef: Codable, Equatable, Hashable {
     case volume
     /// The object's pan, -1 (left) … +1 (right).
     case pan
-    /// The INPUT trim of the plugin chain, in dB.
+    /// The INPUT trim of the plugin chain, in dB — DECODABLE ONLY (a file written before format 25):
+    /// `LegacyGainMigration` moves such a curve onto a gain stage's `gain` at load, and nothing
+    /// produces this case any more (the engine has no trim to aim it at).
     case chainInGain
-    /// The OUTPUT trim of the plugin chain, in dB.
+    /// The OUTPUT trim of the plugin chain, in dB — decodable only, like `chainInGain`.
     case chainOutGain
     /// The level of a send towards an aux, in dB. `auxID` = the receiving aux (`AuxSend.auxID`).
     case send(auxID: UUID)

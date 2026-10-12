@@ -108,22 +108,6 @@ extension EditViewModel {
         return update(id: hostID) { f(&$0.plugins) }
     }
 
-    /// The host's chain start/end gains (0 dB if it cannot be found).
-    func chainGains(_ hostID: UUID) -> (inDb: Float, outDb: Float) {
-        if let i = stemIndex(hostID) { return (stems[i].chainInGainDb, stems[i].chainOutGainDb) }
-        if let o = find(id: hostID) { return (o.chainInGainDb, o.chainOutGainDb) }
-        return (0, 0)
-    }
-
-    /// Writes a chain gain (start/end) into the host's model.
-    func setChainGainModel(_ hostID: UUID, output: Bool, dB: Float) {
-        if let i = stemIndex(hostID) {
-            if output { stems[i].chainOutGainDb = dB } else { stems[i].chainInGainDb = dB }
-            isDirty = true; return
-        }
-        update(id: hostID) { if output { $0.chainOutGainDb = dB } else { $0.chainInGainDb = dB } }
-    }
-
     // MARK: - Plugins
 
     func loadCachedPlugins() {
@@ -298,14 +282,6 @@ extension EditViewModel {
         if let k = sendChainKey(objectID), find(id: objectID) == nil { return compileRack(objectID: k.sender) }
         guard let plugins = chainPlugins(objectID) else { return [] }
         return compileRack(objectID: objectID, plugins: plugins)
-    }
-
-    /// The chain start (output:false) / end (output:true) gain in dB — the MODEL only. The engine has
-    /// no trims any more (format 25, plan_synoptic_rework B.0.3): a gain before / after the plugins is
-    /// a gain stage (@see insertGainStage). Transitional: this door and the fields it writes go in M.4.
-    func setChainGain(objectID: UUID, output: Bool, dB: Float) {
-        setChainGainModel(objectID, output: output, dB: dB)
-        isDirty = true
     }
 
     /// The display names ("Name [FORMAT]") of the plugins whose id is in `ids`, looked up

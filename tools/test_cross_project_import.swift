@@ -324,7 +324,7 @@ enum CrossProjectImportTest {
         do {
             // Two objects sharing ONE bin (defs d1, d2), plus a third holding another bin.
             let d1 = plugin(stateXML: "<d1/>"), d2 = plugin(stateXML: "<d2/>")
-            let link = FXLink(name: "Bus", colorIndex: 3, plugins: [d1, d2], gainDb: -6, pan: 0.25, muted: true)
+            let link = FXLink(name: "Bus", colorIndex: 3, plugins: [d1, d2], isEnabled: false)
             func member(_ lane: Int) -> SoundObject {
                 let insts = [plugin(stateXML: "<i1/>", linkGroupID: d1.id), plugin(stateXML: "<i2/>", linkGroupID: d2.id)]
                 return clip(startTime: 0, lane: lane,
@@ -343,8 +343,9 @@ enum CrossProjectImportTest {
             check("its definition plugins are fresh, same count, same state",
                   nl.plugins.count == 2 && nl.plugins[0].id != d1.id && nl.plugins[1].id != d2.id
                   && nl.plugins[0].stateXML == "<d1/>")
-            check("its name, colour and output section are the source's",
-                  nl.name == "Bus" && nl.colorIndex == 3 && nl.gainDb == -6 && nl.pan == 0.25 && nl.muted)
+            // (format 25: a bin has no output section — a level is a gain stage among the definitions)
+            check("its name, colour and common on/off are the source's",
+                  nl.name == "Bus" && nl.colorIndex == 3 && nl.isEnabled == false)
             let b1 = plan.clips[0].plugins[0], b2 = plan.clips[1].plugins[0]
             check("both pasted blocks name the new bin, with fresh block ids",
                   b1.fxBlock?.linkID == nl.id && b2.fxBlock?.linkID == nl.id && b1.id != m1.plugins[0].id)

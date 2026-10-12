@@ -65,7 +65,6 @@ struct SynopticBoundView: View {
         // a bus has neither a MIDI clip nor an instrument → isMIDI=false, midiInstrument=nil.
         let obj = viewModel.find(id: objectID)
         let model = viewModel.chainPlugins(objectID) ?? []
-        let gains = viewModel.chainGains(objectID)
         let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
                                                        fxLinkInfo: { viewModel.synopticFXInfo($0) })
 
@@ -202,9 +201,10 @@ struct SynopticBoundView: View {
 
         return SynopticView(root: root, selection: pluginSelection,
                             selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
-                            chainInDb: gains.inDb, chainOutDb: gains.outDb,
-                            chainInAutomated:  viewModel.isAutomated(.chainInGain, on: objectID),
-                            chainOutAutomated: viewModel.isAutomated(.chainOutGain, on: objectID),
+                            // No trims any more (format 25, plan_synoptic_rework M.4): the view's trim
+                            // boxes are fed neutral and wired to nothing until L2 / L8 take them out.
+                            chainInDb: 0, chainOutDb: 0,
+                            chainInAutomated: false, chainOutAutomated: false,
                             isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
                             audioFile: audioFile, mix: mix, stems: stems,
                             groupRouting: groupRouting,
@@ -274,9 +274,6 @@ struct SynopticBoundView: View {
                     viewModel.setVoiceMute(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, muted: muted)
                 }
             },
-            onSetChainGain: { isOutput, dB in
-                viewModel.setChainGain(objectID: objectID, output: isOutput, dB: dB)
-            },
             onBeginGainEdit: { viewModel.pushUndo() },
             onAddInstrument: { activeSheet = .instrument },
             onRemoveInstrument: {
@@ -307,6 +304,8 @@ struct SynopticBoundView: View {
             // inversion as `onSetSendLevel`, failing which we would remember the touch on the wrong
             // object.
             onTouchParam: { ref in
+                // The old trims are decodable only (format 25): a touch on the neutral boxes names nothing.
+                if ref == .chainInGain || ref == .chainOutGain { return }
                 let isAux = viewModel.find(id: objectID)?.isAux ?? false
                 if isAux, case .send(let senderID) = ref {
                     viewModel.recordAutomationTouch(senderID, .send(auxID: objectID))
@@ -416,9 +415,8 @@ struct SynopticBoundView: View {
             // FX links. The block's id is what every one of these carries; the model resolves the
             // bin (attached) or the block's own copy (detached) itself.
             onFXToggleEnabled: { blockID in fxToggleEnabled(blockID) },
-            onFXSetGain: { blockID, dB in fxSetOutput(blockID, gain: dB) },
-            onFXSetPan: { blockID, pan in fxSetOutput(blockID, pan: Float((pan * 10).rounded() / 10)) },
-            onFXToggleMute: { blockID in fxSetOutput(blockID, toggleMute: true) },
+            // No output section on a bin any more (format 25): its mix box is fed neutral and wired to
+            // nothing until L8 takes it out — a level on a bin is a gain stage among its plugins.
             onFXBeginEdit: { viewModel.pushUndo() },
             onFXRename: { blockID, name in
                 if let id = fxLinkID(of: blockID) { viewModel.renameFXLink(id, to: name) }
@@ -514,24 +512,9 @@ struct SynopticBoundView: View {
         guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
         let now = viewModel.fxOutput(of: block).isEnabled
         if fb.isDetached {
-            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, enabled: !now)
+            viewModel.fxSetLocalEnabled(hostID: objectID, blockID: blockID, enabled: !now)
         } else {
             viewModel.fxSetEnabled(linkID: fb.linkID, enabled: !now)
-        }
-    }
-
-    /// The output section (volume / pan / mute) — the bin's while attached, the block's own while
-    /// detached. No undo point of its own: the control asked for one when the gesture began
-    /// (`onFXBeginEdit`).
-    private func fxSetOutput(_ blockID: UUID, gain: Float? = nil, pan: Float? = nil,
-                             toggleMute: Bool = false) {
-        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
-        let muted: Bool? = toggleMute ? !viewModel.fxOutput(of: block).muted : nil
-        if fb.isDetached {
-            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, gainDb: gain, pan: pan,
-                                       muted: muted, undo: false)
-        } else {
-            viewModel.fxSetOutput(linkID: fb.linkID, gainDb: gain, pan: pan, muted: muted, undo: false)
         }
     }
 

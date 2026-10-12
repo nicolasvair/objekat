@@ -11,7 +11,9 @@ import SwiftUI
 extension EditViewModel {
 
     /// What the signal view draws round a bin's block: the frame's colour, the header's name and
-    /// on/off, the mix box's output section (the bin's while attached, the block's own while detached).
+    /// on/off (the bin's while attached, the block's own while detached). The mix box's output fields
+    /// are fed NEUTRAL: a bin has no output section any more (format 25, plan_synoptic_rework M.4 —
+    /// the fields and the box go in L8).
     func synopticFXInfo(_ block: ObjectPlugin) -> SynopticFXLink? {
         guard let fb = block.fxBlock else { return nil }
         let link = fxLink(fb.linkID)
@@ -21,9 +23,9 @@ extension EditViewModel {
                               color: ObjekatPalette.plugin(link?.colorIndex ?? 0),
                               isDetached: fb.isDetached,
                               isEnabled: out.isEnabled,
-                              gainDb: out.gainDb,
-                              pan: out.pan,
-                              muted: out.muted,
+                              gainDb: 0,
+                              pan: 0,
+                              muted: false,
                               memberCount: fxLinkMembers(fb.linkID).count)
     }
 

@@ -56,7 +56,6 @@ extension CommandRegistry {
             guard let plugins = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
-            let gains = vm.chainGains(host)
             let status = vm.bridgeStatusNow()
             // An audio object's ARA source (Melodyne) comes FIRST, `slot: "ara_source"`: it is what the
             // clip plays through, ahead of its chain.
@@ -68,8 +67,6 @@ extension CommandRegistry {
                 "host": .string(host.uuidString),
                 "is_stem": .bool(vm.isStemHost(host)),
                 "plugins": .array(entries),
-                "chain_in_db": .number(Double(gains.inDb)),
-                "chain_out_db": .number(Double(gains.outDb)),
             ]
             // A send's mini-chain (INC 3): who it belongs to.
             if vm.find(id: host) == nil, let key = vm.sendChainKey(host) {
@@ -1006,24 +1003,6 @@ extension CommandRegistry {
                 _ = engine.debugSetPluginProperty("ceilingDb", value: db, forPlugin: added.id.uuidString)
             }
             return .object(["plugin": .string(added.id.uuidString)])
-        }
-
-        register("debug.set_chain_gain",
-                 summary: "DEBUG. Sets a host's chain IN and/or OUT gain (dB) through the normal model path — "
-                        + "the gains the position proof of a send stacks up (no public command sets them).",
-                 params: [ParamSpec("host", "uuid", "Object or stem."),
-                          ParamSpec("in_db", "number", required: false, "Chain start gain."),
-                          ParamSpec("out_db", "number", required: false, "Chain end gain.")],
-                 undo: .bus) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let host = try p.uuid("host")
-            guard vm.chainPlugins(host) != nil else {
-                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
-            }
-            if let v = try p.optionalDouble("in_db") { vm.setChainGain(objectID: host, output: false, dB: Float(v)) }
-            if let v = try p.optionalDouble("out_db") { vm.setChainGain(objectID: host, output: true, dB: Float(v)) }
-            let g = vm.chainGains(host)
-            return .object(["host": .string(host.uuidString), "in_db": .number(Double(g.inDb)), "out_db": .number(Double(g.outDb))])
         }
 
         register("debug.set_plugin_property",

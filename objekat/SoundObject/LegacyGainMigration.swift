@@ -20,7 +20,9 @@ import Foundation
 // A trim's automation (`ParamRef.chainInGain` / `.chainOutGain`) moves to the stage's gain
 // (`ParamRef.plugin(stage, "gain")`), each point mapped onto the stage's normalised range, and the
 // object's touch memory follows. The old fields are then left NEUTRAL (the bin's common on/off,
-// `isEnabled`, is not an output setting and stays where it is).
+// `isEnabled`, is not an output setting and stays where it is). Since M.4 the old fields exist only as
+// DECODE-ONLY `legacy…` values (`SoundObject` / `Stem.legacyChainIn/OutGainDb`, `FXLink` /
+// `FXLinkOutput.legacyGainDb / legacyPan / legacyMuted`): nothing else reads them, nothing encodes them.
 //
 // PRESENCE-DRIVEN and IDEMPOTENT: it acts on what it finds non-neutral, whatever the file's format
 // number, and a second run finds nothing. A neutral trim (0 dB, no curve) and a neutral output
@@ -70,13 +72,13 @@ enum LegacyGainMigration {
         var newDefinitionForLink: [UUID: ObjectPlugin] = [:]
         if var links = doc.fxLinks {
             for i in links.indices {
-                let out = links[i].output
-                guard !isNeutral(out) else { continue }
-                let (values, clamped) = stageValues(out)
+                guard links[i].hasLegacyOutput else { continue }
+                let (values, clamped) = stageValues(gainDb: links[i].legacyGainDb, pan: links[i].legacyPan,
+                                                    muted: links[i].legacyMuted)
                 report.clamped += clamped
                 let def = ObjectPlugin.makeGainStage(face: .gainPanMute, values: values)
                 links[i].plugins.append(def)
-                links[i].gainDb = 0; links[i].pan = 0; links[i].muted = false
+                links[i].legacyGainDb = 0; links[i].legacyPan = 0; links[i].legacyMuted = false
                 newDefinitionForLink[links[i].id] = def
                 report.fxOutputs += 1
             }
@@ -92,15 +94,15 @@ enum LegacyGainMigration {
             for i in stems.indices {
                 var plugins = stems[i].plugins
                 migrateBlocks(in: &plugins, &ctx, &report)
-                if let stage = trimStage(stems[i].chainInGainDb, hasCurve: false, &report) {
+                if let stage = trimStage(stems[i].legacyChainInGainDb, hasCurve: false, &report) {
                     plugins.insert(stage, at: 0)
                 }
-                if let stage = trimStage(stems[i].chainOutGainDb, hasCurve: false, &report) {
+                if let stage = trimStage(stems[i].legacyChainOutGainDb, hasCurve: false, &report) {
                     plugins.append(stage)
                 }
                 stems[i].plugins = plugins
-                stems[i].chainInGainDb = 0
-                stems[i].chainOutGainDb = 0
+                stems[i].legacyChainInGainDb = 0
+                stems[i].legacyChainOutGainDb = 0
             }
             doc.stems = stems
         }
@@ -147,17 +149,17 @@ enum LegacyGainMigration {
         let outHasCurve = outLane.map { !o.automation[$0].points.isEmpty } ?? false
 
         var retarget: [ParamRef: ParamRef] = [:]
-        if let stage = trimStage(o.chainInGainDb, hasCurve: inHasCurve, &report) {
+        if let stage = trimStage(o.legacyChainInGainDb, hasCurve: inHasCurve, &report) {
             plugins.insert(stage, at: 0)
             retarget[.chainInGain] = .plugin(pluginKey: stage.id, paramID: GainStageValues.gainParamID)
         }
-        if let stage = trimStage(o.chainOutGainDb, hasCurve: outHasCurve, &report) {
+        if let stage = trimStage(o.legacyChainOutGainDb, hasCurve: outHasCurve, &report) {
             plugins.append(stage)
             retarget[.chainOutGain] = .plugin(pluginKey: stage.id, paramID: GainStageValues.gainParamID)
         }
         o.plugins = plugins
-        o.chainInGainDb = 0
-        o.chainOutGainDb = 0
+        o.legacyChainInGainDb = 0
+        o.legacyChainOutGainDb = 0
 
         // The curves follow their trim; a lane left with no point is simply dropped ('no point = no
         // automation'), and so is a touch-memory entry naming a trim that no longer exists.
@@ -207,7 +209,7 @@ enum LegacyGainMigration {
 
             if fb.isDetached {
                 // Its own output section, `local` (absent = neutral).
-                if let local = fb.local, !isNeutral(local) {
+                if let local = fb.local, local.hasLegacyOutput {
                     let (values, clamped) = stageValues(local)
                     report.clamped += clamped
                     fb.plugins.append(ObjectPlugin.makeGainStage(face: .gainPanMute, values: values))
@@ -216,7 +218,7 @@ enum LegacyGainMigration {
                 }
             } else if var frozen = ctx.frozenDefinitionForLink {
                 // A sidecar: the bin's output frozen into `local` (@see migrate(_: inout SoundObject)).
-                if let local = fb.local, !isNeutral(local) {
+                if let local = fb.local, local.hasLegacyOutput {
                     let (values, clamped) = stageValues(local)
                     let defID: UUID
                     if let known = frozen[fb.linkID] {
@@ -245,13 +247,12 @@ enum LegacyGainMigration {
 
     // MARK: - Values
 
-    private static func isNeutral(_ out: FXLinkOutput) -> Bool {
-        out.gainDb == 0 && out.pan == 0 && !out.muted
-    }
-
-    /// An output section as a stage's values, and how many of them had to be clamped.
+    /// A legacy output section as a stage's values, and how many of them had to be clamped.
     private static func stageValues(_ out: FXLinkOutput) -> (GainStageValues, Int) {
-        let raw = GainStageValues(gainDb: out.gainDb, pan: out.pan, muted: out.muted)
+        stageValues(gainDb: out.legacyGainDb, pan: out.legacyPan, muted: out.legacyMuted)
+    }
+    private static func stageValues(gainDb: Float, pan: Float, muted: Bool) -> (GainStageValues, Int) {
+        let raw = GainStageValues(gainDb: gainDb, pan: pan, muted: muted)
         let v = raw.clamped
         return (v, (v.gainDb != raw.gainDb ? 1 : 0) + (v.pan != raw.pan ? 1 : 0))
     }

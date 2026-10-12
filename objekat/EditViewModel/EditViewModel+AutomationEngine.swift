@@ -21,7 +21,7 @@ import Foundation
 // THE COROLLARY, which is the whole wiring job: the object's geometry is part of the
 // curve pushed. Anything that moves, trims, or rebuilds an object must push its
 // curves again — the same call sites as `pushMix` / `syncPosition`, plus the paths that recreate
-// the carrying plugins (compileRack for the trims, resyncAllSends for the sends).
+// the carrying plugins (compileRack for the plugins, gain stages included; resyncAllSends for the sends).
 //
 // A STATIC FADER VS A CURVE: no offset, no composition. As soon as a parameter carries a
 // point, the curve is the authority and the model's static setting is no longer heard — it stays written,

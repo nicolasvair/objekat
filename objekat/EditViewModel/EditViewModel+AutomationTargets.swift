@@ -7,7 +7,7 @@ import Foundation
 //
 //   • THE CAPTURE — "this parameter has just been touched on this object". Two sources, because
 //     there are two ways of setting a parameter in Objekat:
-//       - the MODEL parameters (fader, pan, chain trims, send level) all go through
+//       - the MODEL parameters (fader, pan, send level) all go through
 //         a view-model setter, which calls `recordAutomationTouch`; nothing to listen to;
 //       - PLUGIN parameters only go through the model for built-ins (whose editor
 //         is in SwiftUI, hence `setPluginParam`). A knob turned in the native GUI of an AU/VST

@@ -28,9 +28,6 @@ extension CommandRegistry {
             "name": .string(link.name),
             "color_index": .int(link.colorIndex),
             "enabled": .bool(link.isEnabled),
-            "gain_db": .number(Double(link.gainDb)),
-            "pan": .number(Double(link.pan)),
-            "muted": .bool(link.muted),
             "plugins": .array(link.plugins.map { d in
                 .object(["id": .string(d.id.uuidString),
                          "name": .string(d.name),
@@ -54,8 +51,7 @@ extension CommandRegistry {
                     }),
                 ]
                 if fb?.isDetached == true, let l = fb?.local {
-                    o["local"] = .object(["enabled": .bool(l.isEnabled), "gain_db": .number(Double(l.gainDb)),
-                                          "pan": .number(Double(l.pan)), "muted": .bool(l.muted)])
+                    o["local"] = .object(["enabled": .bool(l.isEnabled)])
                 }
                 return .object(o)
             }),
@@ -288,30 +284,12 @@ extension CommandRegistry {
         }
 
         register("fxlink.set_enabled",
-                 summary: "The bin's COMMON on/off: off bypasses every attached member's block, its "
-                        + "output section included.",
+                 summary: "The bin's COMMON on/off: off bypasses every attached member's block.",
                  params: [ParamSpec("link", "uuid", "The link."), ParamSpec("enabled", "bool", "On or off.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             vm.fxSetEnabled(linkID: link.id, enabled: try p.bool("enabled"))
-            return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
-        }
-
-        register("fxlink.set_output",
-                 summary: "The bin's output section — an end-of-series gain stage on every attached "
-                        + "member: volume (dB), pan (-1…1) and mute. Omitted fields are left as they are.",
-                 params: [ParamSpec("link", "uuid", "The link."),
-                          ParamSpec("gain_db", "number", required: false, "Volume, -96…+40 dB."),
-                          ParamSpec("pan", "number", required: false, "Pan, -1…+1."),
-                          ParamSpec("muted", "bool", required: false, "Mute.")],
-                 undo: .handled) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let link = try self.requireFXLink(p, in: vm)
-            vm.fxSetOutput(linkID: link.id,
-                           gainDb: try p.optionalDouble("gain_db").map { Float($0) },
-                           pan: try p.optionalDouble("pan").map { Float($0) },
-                           muted: p.raw["muted"] == nil ? nil : try p.bool("muted"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
         }
 
@@ -413,24 +391,23 @@ extension CommandRegistry {
         }
 
         register("fxlink.set_local_output",
-                 summary: "The output section of a DETACHED block (its own copy): enabled, volume, pan, mute.",
+                 summary: "The common on/off of a DETACHED block (its own copy of the bin's rules). A bin "
+                        + "has no output section since format 25: `gain_db` / `pan` / `muted` are refused "
+                        + "(a level on a bin is a gain stage among its plugins, `plugin.add_gain_stage`).",
                  params: [ParamSpec("host", "uuid", "The host."),
                           ParamSpec("block", "uuid", required: false, "The host's block."),
                           ParamSpec("link", "uuid", required: false, "Or the bin it belongs to."),
-                          ParamSpec("enabled", "bool", required: false, "Common on/off of the copy."),
-                          ParamSpec("gain_db", "number", required: false, "Volume, -96…+40 dB."),
-                          ParamSpec("pan", "number", required: false, "Pan, -1…+1."),
-                          ParamSpec("muted", "bool", required: false, "Mute.")],
+                          ParamSpec("enabled", "bool", "Common on/off of the copy.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            if p.raw["gain_db"] != nil || p.raw["pan"] != nil || p.raw["muted"] != nil {
+                throw CommandError(code: .bad_params,
+                                   message: "a bin has no output section since format 25: use a gain stage")
+            }
             let host = try p.uuid("host")
             let block = try self.requireBlock(p, on: host, in: vm)
-            guard vm.fxSetLocalOutput(hostID: host, blockID: block.id,
-                                      gainDb: try p.optionalDouble("gain_db").map { Float($0) },
-                                      pan: try p.optionalDouble("pan").map { Float($0) },
-                                      muted: p.raw["muted"] == nil ? nil : try p.bool("muted"),
-                                      enabled: p.raw["enabled"] == nil ? nil : try p.bool("enabled"))
-            else { throw self.refused("only a detached block has an output section of its own") }
+            guard vm.fxSetLocalEnabled(hostID: host, blockID: block.id, enabled: try p.bool("enabled"))
+            else { throw self.refused("only a detached block has an on/off of its own") }
             return .object(["block": .string(block.id.uuidString)])
         }
 
