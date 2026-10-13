@@ -129,6 +129,16 @@ struct SynopticView: View {
             if let cz = d.clipZone, let m = mix {
                 ClipMixZoneView(rect: cz, mix: m, actions: actions)
             }
+            // The object frame's LINE, over the head and the mixer: the whole outline in the object's colour,
+            // the two boxes inside it as intro and outro. Deaf to the mouse.
+            if let f = d.objectFrame {
+                RoundedRectangle(cornerRadius: SynopticLayout.objectFrameCorner)
+                    .strokeBorder((frameColor ?? Color.secondary).opacity(0.95),
+                                  lineWidth: SynopticLayout.objectFrameLineWidth)
+                    .frame(width: f.width, height: f.height)
+                    .position(x: f.midX, y: f.midY)
+                    .allowsHitTesting(false)
+            }
             if let sz = d.stemsZone, let gr = groupRouting {
                 GroupRoutingZoneView(rect: sz, routing: gr)
             } else if let sz = d.stemsZone, let stemList = stems {
@@ -709,15 +719,13 @@ struct SynopticView: View {
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
 
     private func draw(_ ctx: GraphicsContext, diagram d: SynopticLayout.Diagram) {
-        // The object's FRAME (§B.5): drawn like an FX link's body, in the object's colour, UNDER everything.
-        // Its top edge runs through the head zone's middle and its bottom edge through the mixer's; both
-        // are opaque views laid over it, so they read as straddling the edges.
+        // The object's FRAME (§B.5): its FILL here, UNDER everything; its line is laid ABOVE the head and the
+        // mixer (@see objectFrameLine), whose outer outline it is.
         if let f = d.objectFrame {
             let color = frameColor ?? Color.secondary
             let path = Path(roundedRect: SynopticLayout.objectFrameStrokeRect(f),
                             cornerRadius: SynopticLayout.objectFrameCorner)
             ctx.fill(path, with: .color(color.opacity(0.10)))
-            ctx.stroke(path, with: .color(color.opacity(0.95)), lineWidth: SynopticLayout.objectFrameLineWidth)
         }
 
         for s in d.placement.scopes.sorted(by: { $0.depth < $1.depth }) {

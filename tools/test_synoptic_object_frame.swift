@@ -2,7 +2,7 @@ import SwiftUI
 
 // Standalone geometry test of the signal view's OBJECT FRAME and of the '+' laid on the wire
 // (docs/plan_synoptic_rework.md §B.2, §B.3, §B.5, §B.7):
-//  - the frame runs from the head zone's midline to the mixer's midline; its left/right edges ARE the head
+//  - the frame runs from the head zone's top edge to the mixer's bottom edge; its left/right edges ARE the head
 //    zone's and the mixer's (to the pixel, the FX link rule), its line is drawn inside so the outer edges
 //    coincide; the chain sits fxPad inside; the stems and the sends lie outside; no frame for a stem / the
 //    Main; the trims' 56 pt gaps are gone;
@@ -82,11 +82,11 @@ struct Main {
             check(samePixel(head.minX, f.minX) && samePixel(head.maxX, f.maxX), "\(tag): the head's left/right edges are the frame's")
             check(samePixel(clip.minX, f.minX) && samePixel(clip.maxX, f.maxX), "\(tag): the mixer's left/right edges are the frame's")
             check(samePixel(head.width, clip.width), "\(tag): the head and the mixer have one width")
-            // the frame crosses each box at its vertical centre
-            check(samePixel(f.minY, head.midY), "\(tag): the frame's top edge runs through the head's vertical centre")
-            check(samePixel(f.maxY, clip.midY), "\(tag): the frame's bottom edge runs through the mixer's vertical centre")
-            check(head.minY < f.minY && head.maxY > f.minY, "\(tag): the head straddles the top edge")
-            check(clip.minY < f.maxY && clip.maxY > f.maxY, "\(tag): the mixer straddles the bottom edge")
+            // the frame's outline IS the boxes' outer outline: top = the head's top, bottom = the mixer's bottom
+            check(samePixel(f.minY, head.minY), "\(tag): the frame's top edge is the head's top edge")
+            check(samePixel(f.maxY, clip.maxY), "\(tag): the frame's bottom edge is the mixer's bottom edge")
+            check(f.contains(head.insetBy(dx: 0.5, dy: 0.5)), "\(tag): the head sits inside the frame (its intro)")
+            check(f.contains(clip.insetBy(dx: 0.5, dy: 0.5)), "\(tag): the mixer sits inside the frame (its outro)")
             // the head zone the view draws is that rect
             if let z = d.audioZone { check(z == head, "\(tag): the audio zone is the head rect") }
             if let z = d.midiZone {
@@ -143,7 +143,7 @@ struct Main {
         // the one the frame's bottom crosses, so it takes the frame's sides
         let footOnly = object(trunk, mix: false)
         check(samePixel(footOnly.outPill.minX, footOnly.objectFrame!.minX) && samePixel(footOnly.outPill.maxX, footOnly.objectFrame!.maxX)
-              && samePixel(footOnly.objectFrame!.maxY, footOnly.outPill.midY), "no mixer: the foot box takes the frame's sides")
+              && samePixel(footOnly.objectFrame!.maxY, footOnly.outPill.maxY), "no mixer: the foot box takes the frame's sides")
         // the frame never moves the content DOWN
         let withF = object(trunk), withoutF = object(trunk, frame: false)
         check(zip(withF.placement.cards, withoutF.placement.cards).allSatisfy { near($0.frame.minY, $1.frame.minY) },

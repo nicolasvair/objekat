@@ -631,12 +631,13 @@ enum SynopticLayout {
         /// The head of a bus's chain (aux / group): a widened 'source' box carrying the infinite
         /// option and, for an aux, the sends it receives. nil when the head is the plain pill.
         var busHeadZone: CGRect? = nil
-        /// The object's FRAME (§B.5): from the head zone's midline to the mixer's midline. Its left and right
-        /// edges ARE the head zone's and the mixer's (same x, same width — the FX link rule): those two boxes
-        /// straddle its top and bottom edges; the chain sits `fxPad` (at least) inside its sides; the stems
-        /// and the sends lie outside it. nil for a stem / the Main (their popover has no object).
-        /// Drawn with `objectFrameLineWidth` INSIDE this rectangle (@see objectFrameStrokeRect), as the
-        /// boxes' own borders are, so the outer edges coincide to the pixel.
+        /// The object's FRAME (§B.5): from the head zone's TOP edge to the mixer's BOTTOM edge, its left and
+        /// right edges the two boxes' (same x, same width): its outline IS their outer outline, the head and
+        /// the mixer sitting inside it as the object's intro and outro. Its FILL is drawn behind everything,
+        /// its LINE above the two boxes (the whole outline shows in the object's colour). The chain sits
+        /// `fxPad` (at least) inside its sides; the stems and the sends lie outside it. nil for a stem / the
+        /// Main (their popover has no object). The line is drawn INSIDE this rectangle (@see
+        /// objectFrameStrokeRect), as the boxes' own borders are, so the outer edges coincide to the pixel.
         var objectFrame: CGRect? = nil
         /// The '+' on the wire mixer → stems (a send after the fader). nil when this object does not send.
         var postFaderPlus: PostFaderPlus? = nil
@@ -800,15 +801,16 @@ enum SynopticLayout {
     static let clipZoneW: CGFloat = 224          // the 'clip' zone (pan / volume / mute on one line)
     static let clipZoneWWide: CGFloat = 328      // the same plus the attribute link icons (a linked consolidated object)
     static let clipZoneH: CGFloat = 36
-    /// The object frame's corner radius: an FX link body's (§B.5).
-    static let objectFrameCorner: CGFloat = fxBodyCorner
+    /// The object frame's corner radius: the head's and the mixer's (`SynopticZoneBox`), whose outer corners
+    /// ARE the frame's.
+    static let objectFrameCorner: CGFloat = 10
     /// The object frame's line: an FX link body's.
     static let objectFrameLineWidth: CGFloat = 1.5
     /// The path the frame's line is stroked along: `frame` inset by half the line on its sides, so that the
     /// line's OUTER edge lies on the frame's sides — where the head and the mixer, whose borders are drawn
     /// inside their rect (`strokeBorder`), have theirs. (A Canvas stroke is centred on its path.)
     static func objectFrameStrokeRect(_ frame: CGRect) -> CGRect {
-        frame.insetBy(dx: objectFrameLineWidth / 2, dy: 0)
+        frame.insetBy(dx: objectFrameLineWidth / 2, dy: objectFrameLineWidth / 2)
     }
 
     // The 'stems' zone (output): a title plus the stem's drop-down menu, on one line.
@@ -1007,12 +1009,13 @@ enum SynopticLayout {
                 hoverRect: CGRect(x: centerX - cardW / 2, y: wireTop, width: cardW, height: outPill.minY - wireTop))
         }
 
-        // The frame: from the head's midline to the mixer's midline (the foot's, with no mixer).
+        // The frame: from the head's TOP edge to the mixer's BOTTOM edge (the foot's, with no mixer) — its outline
+        // IS the two boxes' outer outline, so they read as the object's intro and outro inside it.
         var frame: CGRect? = nil
         if objectFrame {
-            let bottom = (clipZone ?? outPill).midY
-            frame = CGRect(x: leadRect.minX, y: leadRect.midY, width: leadRect.width,
-                           height: bottom - leadRect.midY)
+            let bottom = (clipZone ?? outPill).maxY
+            frame = CGRect(x: leadRect.minX, y: leadRect.minY, width: leadRect.width,
+                           height: bottom - leadRect.minY)
         }
 
         // The send columns: stacked BELOW the foot, lowest tap first (top) — the highest tap takes the lowest
