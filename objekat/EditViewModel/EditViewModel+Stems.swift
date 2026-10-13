@@ -127,6 +127,7 @@ extension EditViewModel {
         guard stems[i].name != newName else { return }
         pushUndo()
         stems[i].name = newName
+        followRename(of: [id], to: newName)       // the FX link bins made from this stem (B.9)
         isDirty = true
     }
 
