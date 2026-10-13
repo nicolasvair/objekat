@@ -635,3 +635,56 @@ M.5 (part), `d31f65f7` engine patch 0041, `767de7d4` M.5 tests. Debug build OK, 
   bakes identical, 0 LSB). So option A holds and the bakes that now differ are: consolidating a GROUP that
   carried non-neutral trims (and the re-bakes / edit commits of such a definition) — they now sound like the
   group did before the bake.
+
+**L8 (integration)** — branch `feat/synoptic-rework`, 13 October. Wave 2 merged no-ff: `14734b3c` L3,
+`44844dd4` L4, `09e99f94` L5, `74d3e403` L6, `a4977a02` L7 (one conflict, `Localizable.xcstrings`, merged key by
+key). Then the wiring and the cleanup in one commit (see below), and the docs. Debug build green, no new warning
+(the one warning in a touched file, `SynopticCardViews.swift:648` — `PluginDragPayload`'s Decodable conformance —
+predates the lot, L0 `b7fbb3ec`). i18n 746 keys, nothing missing; the only orphan is `plugins.section.external`,
+older than the rework (left).
+- **One send wire, one tap handle**: L7's (`SendWire.draw` in the canvas' draw pass, `SendTapDotView(placement:rank:)`
+  in its ZStack, blockers from `SendWire.handleRect`); L4's private copy and its curve deleted. The handle sits
+  LEFT of the "+" ring, so the "+" never hides it.
+- **Folded FX link**: the canvas no longer draws the "N plugins" summary (the header does); `fxHeaderW` counts
+  the chevron (+18).
+- **SynopticBoundView**: `frameColor` = `customColor ?? stemColor`; `onPlusGesture` → `insertGainStage` at the
+  series' location (a refusal is journaled and beeps); `onSendPlusGesture` → the send's mini-chain;
+  `onSetGainStage` → `setGainStage(…, undo: false)`, the undo point being `onBeginGainEdit`'s at each gesture's start; `gainStageValues` with the
+  automated flags (`isAutomated(.plugin(…))`); `onToggleClipOptions`; `onToggleFXFold` →
+  `SynopticUIState.toggleFXFold(linkID ?? blockID)`; `onRenameFXLink` → `beginRenamingFXLink`; `actions:` on
+  every card (canvas and send box); a send's plugins mapped with their colour and gain-stage face;
+  `SendDrop.decide(_:trunkCount:)` fed the trunk's non-marker count at both sites.
+- **Mapping**: `plugin.gainStage` filled (`synopticFace(of:)`), `isFolded` / `memberCount` / `linkID` from the
+  model and `SynopticUIState`. **The series ids of a parallel block's branches are now STABLE**
+  (`voiceSeriesID(blockID:voiceIndex:)`, derived from the block id). The canvas' stable-name workaround in
+  `SynopticPlusPresentation` was NOT removed: it still serves trees built with the constructors (the demo, the
+  tests), and costs nothing on the bound view — deliberate, said here.
+- **Header single click** selects the bin's block (`setPluginSelection([blockID])`), which is what the
+  contextual ⌘R reads. Side effect checked: ⌫ / ⌘C / ⌘D / on-off read LEAVES only (`flattenLeaves`), so with a
+  block id selected they do nothing — no block is removed by ⌫.
+- **Deleted**: `FXBlockMixView`; `onFXSetGain/SetPan/ToggleMute/BeginEdit`, `onSetChainGain`; `SynopticFXLink`'s
+  `gainDb/pan/muted`; `Diagram.chainInGain/chainOutGain`, `ChainGain`, the `diagram(chainInDb:chainOutDb:)`
+  parameters and the four `chainIn…/chainOut…` props; `fxMixH/fxMixGap/fxMixTopCorner/fxPanW/fxVolumeW/fxMuteW/
+  fxSlotGap/fxSlotH`, `FXBlockPlacement.mixRect` and its slots, `chainGainGap`, `gainHalfGap`, `sendColumnGap`;
+  the keys `synoptic.newBranch` and `synoptic.send.tapDot.help`. `fxMixW` stays (the gain · pan card's width);
+  `GainDbControl` stays (the branches' gains and the clip volume use it; only its stale comments changed).
+- **L5 points**: `objectFrame` / `clipOptionsExpanded` were already passed by L4's layout call; `folded:` now
+  reaches `AudioFileZoneView`. The MIDI zone and the Source pill were ALREADY opaque — nothing to do.
+- **L3 points**: `CrossProjectImport` carries `userNamed` and re-aims `nameSourceID` at the pasted copy of the
+  source (nil when the source is not in the batch); `deepFreshCopy` (bake / consolidate) keeps `userNamed` and
+  re-aims `nameSourceID` inside the copied subtree, keeping it as it is otherwise (same project — the
+  sidechain's convention). `command_api.md` documents `user_named`, `name_source`, the naming rule and
+  `debug.rename_shortcut`.
+- **`diagnosePlugin`** (`EditViewModel+Plugins.swift:144`) is LEFT in place: its last UI caller went with B.10,
+  the decision to delete it is the user's.
+- **Docs**: `architecture_decisions.md` (no trims nor FX output; gain stage = leaf; send anchors = segment
+  bounds), `glossary.md` (étage de gain / gain stage / etapa de ganancia; the output section marked gone),
+  `CLAUDE.md` entry.
+- **D.2 + D.3, measured** (one execution, nothing dropped): the 12 pure suites in parallel **14 s** —
+  plus_gesture 241, object_frame 260, fxblock 536, send_cards 135, send_drop 36, marquee 28, send_wire 39,
+  zone_pills 23, plus_presentation 64, legacy_gain_migration 61/61, cross_project_import 66/66,
+  send_position 153/153 · `scenario_gain_stage` **12 s** 42/0 · `scenario_gain_migration` **42 s** 80/0 (every
+  section 0.00 LSB, NEW2 == NEW) · `scenario_fxlink` **15 s** 188/0 · `scenario_plugin_selection` **< 1 s** 64 ·
+  `smoke.jsonl` 15/15 ok (the process stays up — killed) · `scenario_send_plugins_reopen` **63 s** 53/0 →
+  ≈ **2 min 30 s of work** (3 min 30 s wall with smoke's kill wait). No window on the headless pids checked
+  (gain_stage, fxlink, plugin_selection; the two scenarios that launch their own instances were not checked).

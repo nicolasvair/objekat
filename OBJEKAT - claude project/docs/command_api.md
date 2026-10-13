@@ -1080,6 +1080,23 @@ knowing before driving one:
   block at the place of the first (nothing reloads). `fxlink.create {objects}` — the timeline menu's
   last entry — takes the first object (timeline order) with plain plugins as the source, and the
   others receive a block of it at the END of their chain, their own plugins untouched.
+- **Naming** (format 25, `plan_synoptic_rework.md` B.9). A new bin takes the name of the host it is made
+  from (an object's `displayName`, a stem's name; `fxlink.create {objects}` → the FIRST object in time; a
+  cut / paste's automatic bin → the copied object, its source being the ORIGINAL), made unique among the
+  bins still in use: "Kick", "Kick 2", "Kick 3"… With no host name, "FX link N". The bin REMEMBERS that host
+  (`name_source`) and FOLLOWS its renaming (`object.rename`, `stem.rename`) in the same undo point,
+  through the same uniqueness — in registry order, so two bins of "Kick" renamed "Kik" come out "Kik" and
+  "Kik 2". A group whose COMPOSED name changes because its children changed is not a rename: not followed.
+  A deleted source freezes the name. An explicit `name` on `fxlink.create`, `fxlink.rename` and the
+  signal view's inline field set `user_named: true` for good: the bin never follows an object again.
+  Every bin payload carries `user_named` (bool) and `name_source` (uuid or null). A paste into another
+  project re-aims `name_source` at the pasted copy of the source, or drops it when the source is not in
+  the batch; a consolidation's fresh copy keeps `user_named` and re-aims `name_source` inside the copied
+  subtree.
+  DEBUG builds add `debug.rename_shortcut {}`: presses ⌘R as the timeline would. While the signal view
+  holds the keyboard and its plugin selection designates ONE bin (its header clicked, or every selected
+  card inside one bin), the bin's inline rename opens; otherwise the one selected object / marker is put
+  in rename. Answers `{target: "fxlink"|"object"|"annotation"|"none", id, renaming_fxlink}`.
 - **Automatic creation.** A cut / split, a duplicate, ⌥-copy, a paste or an overlap's fragment of an
   object whose plugins are plain no longer writes a `link_group` on them: the copy joins a NEW bin and
   the original joins it too. (The old manual ⌘-links and their `link_group` are untouched, and cohabit.)

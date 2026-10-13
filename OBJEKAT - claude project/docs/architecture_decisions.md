@@ -728,8 +728,8 @@ trunk), `pre_fader`, `post_fader` (the default, and the INC 1 behaviour). Author
 
 The trunk position is held in the MODEL by a `SendMarker {auxID}` entry in `ObjectPlugin`s (a third container
 kind beside the parallel block and the FX link bin: `isContainer`, no child series, no rack, no plugin identity).
-It is not an engine plugin: the engine's list holds `[channelMode?|instrument?|trimIn|FX...|trimOut|fader|
-ObjWindowFade|sends...]` and the one place that decides where a send plugin sits is
+It is not an engine plugin: the engine's list held `[channelMode?|instrument?|trimIn|FX...|trimOut|fader|
+ObjWindowFade|sends...]` (no trims since format 25, see "The signal view rework" below) and the one place that decides where a send plugin sits is
 `applySendPositionsForKey:` (OBJEngineCore), told a position code per send (0 post, 1 pre, 2 input, 3 chain).
 Why a marker and not a field on the neighbouring plugin ("after plugin X"): a marker rides every transformation of
 the array (drag, delete a neighbour, copy, split, group, undo) for free, where an id reference dangles the day
@@ -861,6 +861,45 @@ Both halves of a cut aux must sound the same: `SoundObject.duplicatingSend` copi
 the lane of the send's LEVEL and the lanes aimed at its plugins, re-aimed at the COPIES' ids (by rank; never a
 shared id, never a link). Pure; inside the cut's undo point. Before, the new half was fed at the static level and
 through un-automated copies.
+
+## The signal view rework: no trims, no FX output — a gain stage is a LEAF (October 2026)
+
+Branch `feat/synoptic-rework` (session format **25**, engine patch `0041` on the local engine branch
+`objekat-gainstage-0041`). Authority for the design, the lots and the numbers: `plan_synoptic_rework.md`.
+
+### Decision: the chain's trims and the FX link's output section are gone
+
+`ObjectChain.trimIn` / `trimOut` (the two `ObjGain`s that framed every user segment), their automation targets,
+`debug.set_chain_gain`, and an FX link's output section (`gainDb` / `pan` / `muted`, a detached block's `local`
+levels, `fxlink.set_output`) no longer exist, in the model or in the engine. Why: two fixed gain slots per chain,
+drawn as boxes of their own, were the one part of the signal view the hand could neither move, copy, remove nor
+put where it wanted — and the FX output was a second, different gain control living on a bin. One mechanism
+replaces both.
+
+### Decision: a gain stage is an ordinary plugin leaf
+
+`ObjGainStagePlugin` (`objekat/OBJGainStagePlugin.h`, app code, no engine patch for it) is registered under two
+type names, `objGainStage` (face "gain") and `objGainPanMute` (face "gain · pan"), with ONE parameter list
+(0 gain −24…+24 dB linear, 1 pan, 2 mute) so the link mirror's match by index can never mismatch. In the model
+it is a plain `ObjectPlugin` leaf (`TracktionInternal`), so every existing walker carries it with no new code:
+copies, cut, FX link auto-creation and mirroring, cross-project paste, consolidate / bake, undo patching, the id
+audit, the sends' mini-chains, automation (`ParamRef.plugin`). What sets it apart is only what it refuses: it is
+never in the browser, has no editor and NO bypass (`gain_stage_no_bypass`; a bin's common on/off still bypasses
+it with the rest of the bin), and the hand is clamped to ±20 dB. It counts in the 20-entry engine list.
+An old file is migrated at load by ONE pure function (`LegacyGainMigration`): a non-neutral trim (or one with a
+curve) becomes a stage at index 0 / at the end of `plugins`, an FX output a `gain · pan` stage in the bin's
+definition plus one mirrored instance per attached member; presence-driven and idempotent, the load stays clean.
+Proven by a null test against the format-24 build (`scenario_gain_migration.py`: every section 0 LSB).
+
+### Decision: the send anchors are the user segment's bounds
+
+With no trims to anchor them, the positions that used to say "before trimIn" / "after trimOut" are the bounds of
+the user segment: `input` sits immediately before its first entry, `pre_fader` immediately before the fader
+(after every user entry, a trailing stage included), `chain(i)` unchanged; the engine's insertion anchor is
+`userSegmentEndAnchorForKey:in:` (fader → stem gain → master anchor → end). Migration lays the stages at array
+INDEX 0 / the end, so a marker keeps its side of each former trim — the same signal at every tap. The roles
+audit reports `segmentStart` / `segmentEnd` instead of the trims. The engine bug this exposed (a mono chain
+doubled once the first `ObjGain` was gone: `ChannelRemappingNode` adding into its own input) is patch `0041`.
 
 ## The phases to come — decisions to take
 
