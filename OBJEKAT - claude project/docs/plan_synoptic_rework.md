@@ -688,3 +688,47 @@ older than the rework (left).
   `smoke.jsonl` 15/15 ok (the process stays up — killed) · `scenario_send_plugins_reopen` **63 s** 53/0 →
   ≈ **2 min 30 s of work** (3 min 30 s wall with smoke's kill wait). No window on the headless pids checked
   (gain_stage, fxlink, plugin_selection; the two scenarios that launch their own instances were not checked).
+
+**2nd correction round (after the user's first look on screen)** — branch `feat/synoptic-rework`, 13 October,
+directly in the repo. Five requests, one commit each; Debug build after each, no new warning (the only warning
+in a synoptic file, `SynopticCardViews.swift` `PluginDragPayload` / `Decodable`, predates the round — its line
+moved). Nothing pushed, nothing merged. **This round SUPERSEDES** B.2's "up-right = send" and B.6 / L7's
+"send box" (the "Plugins on a send" row of the table at the top describes the old state).
+- `bba1939e` **1. The frame's edges ARE the head zone's and the mixer's**: the frame's width is computed first
+  (the widest of chain + 2·fxPad, ARA card, head zone, mixer), and the two straddling boxes take exactly that
+  width and left edge (the FX link header rule); the line is stroked inset by half its width. No frame (stem /
+  Main popover): unchanged. `test_synoptic_object_frame` → 574.
+- `c7934451` **2. A send is dragged LEFT** out of a "+" (180° ± 15°, the 6 pt click threshold); up-right now
+  asks for nothing; the mixer → stems "+" follows. Ghost `arrow.turn.down.left`; tooltips fr/en/es say "left".
+- `9ed2e034` **3. Direction zones round a dragged "+"**: past the click threshold the directions the "+"
+  offers are drawn as faint wedges with their icon, the one under the hand lit. Pure geometry
+  (`SynopticPlusGesture.sectors`), sampled by the test so that every point of a zone classifies to its result;
+  the gain / gain·pan·mute cut is the classifier's vertical 80 pt line. A direction not offered has NO zone.
+- `101b615e` **4. Parallel branch rules** (`SynopticBranchRun`, pure): a "+" with no selection branches the
+  element under it (the one above for the tail "+"); a selected element under the "+" takes the selected run
+  that follows it in the same series (the tail "+" walks up); a "+" with nothing under it makes an EMPTY branch
+  (`[[ ], [ ]]` round nothing: the trunk and an empty branch); the card menu "Create a parallel branch" takes
+  the selected run round the card, else the card alone. A non-contiguous selection keeps the part touching the
+  start; a send's marker is a barrier; a bin refuses. API `plugin.branch`; `scenario_plugin_selection` 126.
+- `9e8b8151` **5. A send's plugins drawn like the object's**: a send is a COLUMN — its wire leaves the trunk to
+  the left, goes down its gutter, comes in at the column's top ON ITS AXIS and runs down through real cards
+  (`SynopticCardView`, the trunk's size) to the send's line (name, dB, on/off, menu, ×) at the BOTTOM. A "+" on
+  every segment, hover only, gestures gain / gain·pan·mute only (no branch, no FX link, no send from a send:
+  `SynopticLayout.sendChainGestures`, `InsertRole.sendChain`, keys `.sendChain(aux:index:)` dispatched by the
+  diagram like the trunk's). A plugin-less send: its line under a 30 pt stub (`sendStubH`) with a hover "+"
+  above it (hovering the line shows it too). Arrows point DOWN; the column's segments are dashed in the wire's
+  accent. A drop lands at the "+" nearest in y; a click on any "+" opens the browser AT that index
+  (`onSendPluginAdd(aux, index)`). Kept: moving a send by its line or its tap point, the reversed order, no
+  wire crossing (1580 slot mixes swept). `sendCardGap` 6 → 10. Removed: `SendBoxView`, `SendPlusGhost` /
+  `SendPlusIntent`, the three `synoptic.send.plus.*` keys (744 keys, `check` clean; `orphans` still lists
+  `plugins.section.external`, orphaned since `381454d9`, not this round's). The isolated "Aux" line above the
+  box and the overflowing yellow border of capture 2 belonged to the old box (its header row and the
+  `SendBoxView` card drawn inside a 22 pt row): both views are gone — to be confirmed on screen.
+- **D.2 + D.3, measured** (one execution, nothing dropped, wall **3 min 11 s**): 13 pure suites in parallel
+  **17 s** — plus_gesture 374, object_frame 574, fxblock 536, send_cards 183/183, send_drop 36, marquee 28,
+  send_wire 56/56, zone_pills 23, plus_presentation 70, branch_run 52, legacy_gain_migration 61/61,
+  cross_project_import 66/66, send_position 153/153 · `scenario_gain_stage` 42/0 (12 s of work) ·
+  `scenario_gain_migration` 80/0 (50 s, every section ≤ 1 LSB, NEW2 == NEW) · `scenario_fxlink` 188/0 (15 s) ·
+  `scenario_plugin_selection` 126 (< 1 s) · `smoke.jsonl` 15/15 ok (killed after its 15 answers) ·
+  `scenario_send_plugins_reopen` 53/0 (67 s). No window on the three headless pids checked (gain_stage, fxlink,
+  plugin_selection).
