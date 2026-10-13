@@ -280,7 +280,17 @@ struct SynopticView: View {
                     .position(x: b.midX, y: b.midY)
             }
 
-            // The ghost of a drag out of a '+': what letting go here would make. Deaf to the mouse.
+            // The zones round a dragged '+' (one per direction it offers, each with its icon; the one the hand
+            // is in lights up), then the ghost of what letting go here would make. Both deaf to the mouse.
+            if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names),
+               let key = currentKey(drag.key, in: d, names: names),
+               !SynopticPlusGesture.isClick(drag.translation) {
+                let zones = SynopticPlusPresentation.sectors(allowed: d.allowedGestures(for: key), key: key,
+                                                            availability, translation: drag.translation)
+                SynopticPlusSectorsView(center: from, sectors: zones.sectors, highlighted: zones.highlighted)
+                    .frame(width: d.canvasSize.width, height: d.canvasSize.height)
+                    .allowsHitTesting(false)
+            }
             if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names) {
                 let command = SynopticPlusPresentation.available(
                     currentKey(drag.key, in: d, names: names).map { d.command(for: $0, translation: drag.translation) } ?? .none,
@@ -813,12 +823,14 @@ private struct SynopticPlusGhostView: View {
             .strokeBorder(tint.opacity(valid ? 0.9 : 0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
     }
 
+    /// The zone's icon (@see SynopticPlusPresentation.symbol), "not here" aside.
     private var symbol: String {
         switch ghost {
-        case .gain, .gainPanMute, .none: return "dial.medium"
-        case .branch:                    return "arrow.triangle.branch"
-        case .send:                      return "arrow.turn.down.left"   // the app's send arrow, leaving LEFT
-        case .notHere:                   return "nosign"
+        case .gain, .none:  return SynopticPlusPresentation.symbol(for: .gain)
+        case .gainPanMute:  return SynopticPlusPresentation.symbol(for: .gainPanMute)
+        case .branch:       return SynopticPlusPresentation.symbol(for: .branch)
+        case .send:         return SynopticPlusPresentation.symbol(for: .send)
+        case .notHere:      return "nosign"
         }
     }
 
@@ -830,6 +842,39 @@ private struct SynopticPlusGhostView: View {
         case .send:        return L("synoptic.plus.ghost.send")
         case .notHere:     return L("synoptic.plus.ghost.notHere")
         }
+    }
+}
+
+/// The zones round a '+' while a drag leaves it (@see SynopticPlusGesture.sectors): each a faint wedge with
+/// its icon, the one the hand is in lit up softly. A direction the '+' does not offer has no zone. Pure
+/// display, laid under the ghost.
+private struct SynopticPlusSectorsView: View {
+    let center: CGPoint
+    let sectors: [PlusSector]
+    let highlighted: PlusGestureResult?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(sectors.indices, id: \.self) { i in
+                let s = sectors[i]
+                let on = s.result == highlighted
+                let shape = Path { p in
+                    let pts = s.outline().map { CGPoint(x: center.x + $0.width, y: center.y + $0.height) }
+                    guard let first = pts.first else { return }
+                    p.move(to: first)
+                    for q in pts.dropFirst() { p.addLine(to: q) }
+                    p.closeSubpath()
+                }
+                shape.fill(Color.accentColor.opacity(on ? 0.14 : 0.04))
+                shape.stroke(Color.accentColor.opacity(on ? 0.45 : 0.15),
+                             style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+                Image(systemName: SynopticPlusPresentation.symbol(for: s.result))
+                    .font(.system(size: 10, weight: on ? .semibold : .regular))
+                    .foregroundStyle(on ? Color.accentColor : Color.secondary.opacity(0.7))
+                    .position(x: center.x + s.iconOffset.width, y: center.y + s.iconOffset.height)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: highlighted)
     }
 }
 

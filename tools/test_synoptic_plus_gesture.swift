@@ -100,6 +100,56 @@ struct Main {
         // intent ignores `allowed`
         check(G.intent(polar(60, -30)) == .branch && G.intent(polar(60, 180)) == .send, "intent is the raw direction")
 
+        // MARK: the zones drawn round a dragged "+" ARE the classifier
+        let zones = G.sectors(allowed: every)
+        check(zones.map(\.result) == [.gain, .gainPanMute, .branch, .send], "the trunk draws four zones, in order")
+        check(G.sectors(allowed: [.gain, .gainPanMute]).map(\.result) == [.gain, .gainPanMute], "a send's chain: the two gain zones only")
+        check(G.sectors(allowed: [.send]).map(\.result) == [.send], "mixer -> stems: the send zone only")
+        check(G.sectors(allowed: [.gain, .gainPanMute, .branch]).allSatisfy { $0.result != .send }, "a branch's '+': no send zone (absent)")
+        check(G.sectors(allowed: []).isEmpty, "nothing offered: no zone")
+        var sampled = 0
+        for z in zones {
+            check(z.fromAngle < z.toAngle, "\(z.result): a proper angular range")
+            // every point strictly inside the zone classifies to the zone's result
+            for ai in 0...20 {
+                let deg = z.fromAngle + 0.5 + (z.toAngle - z.fromAngle - 1) * Double(ai) / 20
+                let rIn = z.inner.distance(at: deg) + 0.5, rOut = z.outer.distance(at: deg) - 0.5
+                check(rIn < rOut, "\(z.result) @\(deg)°: the inner boundary is inside the outer one")
+                for ri in 0...10 {
+                    let r = rIn + (rOut - rIn) * CGFloat(ri) / 10
+                    let t = PlusSector.offset(deg, r)
+                    sampled += 1
+                    if G.classify(t, allowed: every) != z.result {
+                        check(false, "\(z.result): the point \(t) inside the zone classifies to \(G.classify(t, allowed: every))")
+                    }
+                    if G.highlighted(t, in: zones) != z.result {
+                        check(false, "\(z.result): the point \(t) lights up its zone")
+                    }
+                }
+            }
+            // the icon is inside its zone, and the outline closes round it
+            check(G.classify(z.iconOffset, allowed: every) == z.result, "\(z.result): its icon sits in its zone")
+            let o = z.outline(steps: 8)
+            check(o.count == 16, "\(z.result): the outline = inner + outer boundaries")
+            check(o.allSatisfy { hypot($0.width, $0.height) >= G.sectorInnerRadius - 1e-6 }, "\(z.result): never over the '+' disc")
+            check(o.allSatisfy { hypot($0.width, $0.height) <= G.sectorOuterRadius / CGFloat(cos(G.angleTolerance * .pi / 180)) + 1e-6 },
+                  "\(z.result): within the outer radius")
+        }
+        // the gain / gain+pan+mute cut is the classifier's vertical line at 80 pt
+        let gz = zones[0], pz = zones[1]
+        check(gz.outer == .vertical(G.panMuteThreshold) && pz.inner == .vertical(G.panMuteThreshold), "the cut is the 80 pt line")
+        check(abs(gz.outer.distance(at: 10) * CGFloat(cos(10 * Double.pi / 180)) - 80) < 1e-6, "the 80 pt line, at 10°")
+        // placement: gain right, branch down-right, send left (screen coordinates, y down)
+        check(gz.iconOffset.width > 0 && abs(gz.iconOffset.height) < 1e-6, "the gain icon: right of the '+'")
+        check(zones[2].iconOffset.width > 0 && zones[2].iconOffset.height > 0, "the branch icon: down-right")
+        check(zones[3].iconOffset.width < 0 && abs(zones[3].iconOffset.height) < 1e-6, "the send icon: left")
+        // the highlight: nothing for a click or a direction with no zone; the zone's result otherwise
+        check(G.highlighted(CGSize(width: 3, height: 0), in: zones) == nil, "a click lights nothing")
+        check(G.highlighted(polar(60, 30), in: zones) == nil, "up-right lights nothing")
+        check(G.highlighted(polar(60, 180), in: G.sectors(allowed: [.gain])) == nil, "a send where only a gain is offered lights nothing")
+        check(G.highlighted(CGSize(width: 100, height: 0), in: zones) == .gainPanMute, "past 80 pt: the gain + pan + mute zone")
+        print("  zones: \(sampled) points sampled")
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

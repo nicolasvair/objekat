@@ -145,6 +145,28 @@ struct Main {
         check(P.stable(.postFader, names: n1) == .postFader, "post-fader")
         check(P.stable(.sendChain(aux: aux, index: 3), names: n1) == .sendChain(aux, 3), "a send's chain")
 
+        // The zones round a dragged "+": what it offers HERE (a missing closure takes its zone away).
+        let trunkZones = P.sectors(allowed: [.gain, .gainPanMute, .branch, .send], key: k, all,
+                                   translation: CGSize(width: -50, height: 0))
+        check(trunkZones.sectors.map(\.result) == [.gain, .gainPanMute, .branch, .send] && trunkZones.highlighted == .send,
+              "the trunk: four zones, left lights the send")
+        var noBranch = SynopticPlusAvailability.all; noBranch.branch = false
+        let nb = P.sectors(allowed: [.gain, .gainPanMute, .branch, .send], key: k, noBranch,
+                           translation: CGSize(width: 50, height: 29))
+        check(!nb.sectors.contains { $0.result == .branch } && nb.highlighted == nil,
+              "no onBranch: no branch zone, and down-right lights nothing")
+        let sc = P.sectors(allowed: [.gain, .gainPanMute], key: .sendChain(aux: aux, index: 0), all,
+                           translation: CGSize(width: 90, height: 0))
+        check(sc.sectors.map(\.result) == [.gain, .gainPanMute] && sc.highlighted == .gainPanMute, "a send's chain: the gain zones")
+        check(P.sectors(allowed: [.send], key: .postFader, all, translation: CGSize(width: 2, height: 0)).highlighted == nil,
+              "a click lights nothing")
+        // one icon per result, shared by the zones and the ghost
+        let icons = [PlusGestureResult.gain, .gainPanMute, .branch, .send].map { P.symbol(for: $0) }
+        check(Set(icons).count == 4, "four distinct icons")
+        check(P.symbol(for: .send) == "arrow.turn.down.left" && P.symbol(for: .branch) == "arrow.triangle.branch"
+              && P.symbol(for: .gain) == "dial.medium" && P.symbol(for: .gainPanMute) == "slider.horizontal.3",
+              "the app's own symbols")
+
         print(failures == 0 ? "ALL PASS (\(total) checks)" : "\(failures) FAILED of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

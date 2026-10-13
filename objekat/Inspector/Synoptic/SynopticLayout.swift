@@ -663,6 +663,18 @@ enum SynopticLayout {
             }
         }
 
+        /// The gestures the '+' `key` offers, as laid now (empty when it no longer exists).
+        func allowedGestures(for key: SynopticPlusKey) -> Set<PlusGestureResult> {
+            switch key {
+            case .postFader:
+                return postFaderPlus?.allowedGestures ?? []
+            case .sendChain(let aux, _):
+                return sendCards.contains { $0.send.id == aux } ? SynopticLayout.sendChainGestures : []
+            case .series:
+                return placement.inserts.first { $0.key == key }?.allowedGestures ?? []
+            }
+        }
+
         /// The '+' shown whatever the hand does: those of an empty series.
         var alwaysVisiblePlusKeys: Set<SynopticPlusKey> {
             Set(placement.inserts.filter(\.alwaysVisible).map(\.key))

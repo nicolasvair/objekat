@@ -206,6 +206,10 @@ struct Main {
             check(d.command(for: z.key, translation: CGSize(width: 60, height: 35)) == .branch(elementID: z.branchTargetID!),
                   "the diagram dispatches the same command by key")
         }
+        // the gestures each '+' offers, by key, as the canvas asks for its zones
+        for z in ri { check(d.allowedGestures(for: z.key) == z.allowedGestures, "'+' \(z.insertIndex): allowed gestures by key") }
+        check(d.allowedGestures(for: .postFader) == [.send], "the post-fader '+' by key: the send")
+        check(d.allowedGestures(for: .series(UUID(), 0)).isEmpty, "a '+' that is gone: nothing")
         // off the wire, no '+'
         check(d.plusTarget(at: CGPoint(x: d.objectFrame!.minX + 1, y: ri[1].center.y)) == nil, "far left of the wire: no '+'")
         check(d.plusTarget(at: CGPoint(x: d.placement.cards[1].frame.midX, y: d.placement.cards[1].frame.midY)) == nil,

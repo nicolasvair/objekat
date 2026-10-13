@@ -142,6 +142,27 @@ enum SynopticPlusPresentation {
         }
     }
 
+    /// The SF Symbol of a result — the zone drawn round a dragged "+" and the ghost beside the pointer say
+    /// it with the same icon. The app's own: the gain knob, the pan sliders (the timeline's pan tool), the
+    /// branch, and the send's turning arrow (the send rows and "+ Send to…") leaving LEFT, as the send does.
+    static func symbol(for result: PlusGestureResult) -> String {
+        switch result {
+        case .gain, .none:  return "dial.medium"
+        case .gainPanMute:  return "slider.horizontal.3"
+        case .branch:       return "arrow.triangle.branch"
+        case .send:         return "arrow.turn.down.left"
+        }
+    }
+
+    /// The zones to draw round the "+" `key` while a drag of `translation` leaves it: one per gesture it
+    /// really offers here (`offered` — a direction it does not offer has no zone), and the one the hand is
+    /// in (nil = none: a click, or a direction with no zone).
+    static func sectors(allowed: Set<PlusGestureResult>, key: SynopticPlusKey, _ a: SynopticPlusAvailability,
+                        translation: CGSize) -> (sectors: [PlusSector], highlighted: PlusGestureResult?) {
+        let zones = SynopticPlusGesture.sectors(allowed: offered(allowed, key: key, a))
+        return (zones, SynopticPlusGesture.highlighted(translation, in: zones))
+    }
+
     /// What the ghost says for a drag of `translation` that would carry out `command` (already filtered
     /// by `available`).
     static func ghost(for command: SynopticPlusCommand, translation: CGSize) -> SynopticPlusGhost {
