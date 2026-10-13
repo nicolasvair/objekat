@@ -88,6 +88,21 @@ enum SendDrop {
         case .elsewhere:      return .refuse(.refusedElsewhere)
         }
     }
+
+    /// The same table, knowing the trunk holds `trunkCount` top-level entries (signal view rework, §B.6):
+    /// the trunk's HEAD insert point is the input slot and its TAIL the pre-fader one (the '+' carry the
+    /// same slots, @see SynopticSendSlot.forTrunkInsert), so a send let go there reads as taken at the
+    /// input / before the fader. Everything else is `decide(_:)`.
+    static func decide(_ aim: SendDropAim, trunkCount: Int) -> SendDropDecision {
+        if case .trunk(let index) = aim {
+            switch SynopticSendSlot.forTrunkInsert(index: index, count: trunkCount) {
+            case .input:    return decide(.slot(.input))
+            case .preFader: return decide(.slot(.preFader))
+            default:        break
+            }
+        }
+        return decide(aim)
+    }
 }
 
 // A PLUGIN let go on a send's box (INC 3). What it does is the plugin resolver's business

@@ -28,6 +28,8 @@
 //         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/Localization.swift \
+//         ../objekat/SoundObject/GainStage.swift \
+//         ../objekat/SoundObject/LegacyGainMigration.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
@@ -261,7 +263,7 @@ enum ObjectColorChoiceTest {
     check("derivedCopy keeps the free colour",
           clip(colorHex: 0xFF8A00).derivedCopy(startTime: 0, duration: 1, lane: 0, fadeIn: 0, fadeOut: 0,
                                                plugins: [], kind: clip().kind).colorHex == 0xFF8A00)
-    check("the session format moved to 24 for it", SessionSchema.formatVersion == 24)
+    check("the session format moved to 24 for it (25 since the gain stages)", SessionSchema.formatVersion >= 24)
     check("the notice describes colorHex", SessionSchema.note.contains { $0.hasPrefix("colorHex") })
 
     print("\n\(total - fails.count)/\(total) assertions passed")

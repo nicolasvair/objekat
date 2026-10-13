@@ -12,16 +12,17 @@ import SwiftUI
 //    instance of a bin's plugin carries `linkGroupID == <the definition plugin's id>`, so the engine
 //    side needed no new synchronisation at all.
 //  • A BLOCK IN THE CHAIN. In a host's chain the bin is ONE entry (`ObjectPlugin.fxBlock`), placed
-//    anywhere between the trims and reorderable with the host's other plugins, exactly as a
+//    anywhere in the chain and reorderable with the host's other plugins, exactly as a
 //    parallel block (`rack`) is. The entry carries the host's own instances, in the definition's
 //    order.
 //  • THE DEFINITION IS THE REGISTRY'S (`FXLink`, `ProjectDocument.fxLinks`): order, membership,
-//    on/off of each plugin, the bin's common on/off, and its OUTPUT SECTION (volume, pan, mute) —
-//    an end-of-series gain stage, after the model of a parallel branch's gain (`wetDb`,
-//    `voiceMutes`). Editing any of it edits every member.
+//    on/off of each plugin and the bin's common on/off. Editing any of it edits every member. A bin
+//    has NO output section any more (format 25, plan_synoptic_rework D1): a level, pan or mute on a
+//    bin is a GAIN STAGE among its plugins (`objGainPanMute`, @see GainStage.swift) — the old
+//    `gainDb / pan / muted` are decoded only, for `LegacyGainMigration`.
 //  • DETACHING is per host and works like the legacy plugin link's: the block stays where it is
 //    but stops following (`isDetached`); the host keeps an INDEPENDENT copy of the chain with the
-//    settings of the moment (and of the output section, `local`). Reattaching realigns the host on
+//    settings of the moment (and of the common on/off, `local`). Reattaching realigns the host on
 //    the bin — it adopts the bin's settings, never the reverse.
 //  • Manual ⌘-links (`linkGroupID` on a plain plugin) are untouched and live beside the bins.
 //  • DRAGGING (@see EditViewModel+PluginDrop, one resolver for the cursor, the band and the drop):
@@ -31,27 +32,33 @@ import SwiftUI
 //    outside its bin LEAVES it for every member and stays here as a plain plugin (⌥: a copy; ⌘ is
 //    refused). An instance never moves to another host on its own: ⌘ makes that host join the bin.
 
-/// The output section of a bin, as a detached block keeps its own copy of it.
+/// What a detached block keeps of its bin's rules: the common on/off. Until format 24 it was the bin's
+/// whole OUTPUT SECTION (volume, pan, mute); those three are now decoded only — `legacy…`, never
+/// encoded, read by `LegacyGainMigration` alone, which turns a non-neutral one into a gain stage.
 struct FXLinkOutput: Codable, Equatable {
     var isEnabled: Bool = true
-    var gainDb: Float = 0
-    var pan: Float = 0
-    var muted: Bool = false
+    var legacyGainDb: Float = 0
+    var legacyPan: Float = 0
+    var legacyMuted: Bool = false
 
-    /// The gain actually heard: exact silence when muted (the same convention as a branch's mute).
-    var effectiveGainDb: Float { muted ? objGainSilenceDb : gainDb }
-
-    init(isEnabled: Bool = true, gainDb: Float = 0, pan: Float = 0, muted: Bool = false) {
-        self.isEnabled = isEnabled; self.gainDb = gainDb; self.pan = pan; self.muted = muted
+    init(isEnabled: Bool = true) {
+        self.isEnabled = isEnabled
     }
+
+    /// True when the legacy output section carried something audible (the migration's test).
+    var hasLegacyOutput: Bool { legacyGainDb != 0 || legacyPan != 0 || legacyMuted }
 
     enum CodingKeys: String, CodingKey { case isEnabled, gainDb, pan, muted }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        gainDb    = try c.decodeIfPresent(Float.self, forKey: .gainDb) ?? 0
-        pan       = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
-        muted     = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        isEnabled    = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        legacyGainDb = try c.decodeIfPresent(Float.self, forKey: .gainDb) ?? 0
+        legacyPan    = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
+        legacyMuted  = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(isEnabled, forKey: .isEnabled)
     }
 }
 
@@ -63,31 +70,38 @@ struct FXLink: Identifiable, Codable, Equatable {
     /// An index into `ObjekatPalette.plugins`: the colour of the block's rounded rectangle.
     var colorIndex: Int
     var plugins: [ObjectPlugin]
-    /// The bin's common on/off: off = every member's block is bypassed, output section included.
+    /// The bin's common on/off: off = every member's block is bypassed.
     var isEnabled: Bool = true
-    var gainDb: Float = 0
-    var pan: Float = 0
-    var muted: Bool = false
+    /// DECODE-ONLY: the output section of a file written before format 25 (@see FXLinkOutput).
+    var legacyGainDb: Float = 0
+    var legacyPan: Float = 0
+    var legacyMuted: Bool = false
+    /// The object whose name the bin FOLLOWS (B.0.6 of plan_synoptic_rework): set when a bin is
+    /// created from an object, cleared once the user names the bin. nil = follows nobody.
+    var nameSourceID: UUID? = nil
+    /// True once the user has named the bin by hand: its name then never follows an object again.
+    var userNamed: Bool = false
 
+    /// The bin's rules as a detached block copies them (its common on/off).
     var output: FXLinkOutput {
-        get { FXLinkOutput(isEnabled: isEnabled, gainDb: gainDb, pan: pan, muted: muted) }
-        set { isEnabled = newValue.isEnabled; gainDb = newValue.gainDb; pan = newValue.pan; muted = newValue.muted }
+        get { FXLinkOutput(isEnabled: isEnabled) }
+        set { isEnabled = newValue.isEnabled }
     }
 
+    /// True when the legacy output section carried something audible (the migration's test).
+    var hasLegacyOutput: Bool { legacyGainDb != 0 || legacyPan != 0 || legacyMuted }
+
     init(id: UUID = UUID(), name: String, colorIndex: Int? = nil, plugins: [ObjectPlugin],
-         isEnabled: Bool = true, gainDb: Float = 0, pan: Float = 0, muted: Bool = false) {
+         isEnabled: Bool = true) {
         self.id = id
         self.name = name
         self.colorIndex = colorIndex ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
         self.plugins = plugins
         self.isEnabled = isEnabled
-        self.gainDb = gainDb
-        self.pan = pan
-        self.muted = muted
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, colorIndex, plugins, isEnabled, gainDb, pan, muted
+        case id, name, colorIndex, plugins, isEnabled, gainDb, pan, muted, nameSourceID, userNamed
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -96,9 +110,24 @@ struct FXLink: Identifiable, Codable, Equatable {
         colorIndex = try c.decodeIfPresent(Int.self, forKey: .colorIndex) ?? 0
         plugins    = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []
         isEnabled  = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
-        gainDb     = try c.decodeIfPresent(Float.self, forKey: .gainDb) ?? 0
-        pan        = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
-        muted      = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        legacyGainDb = try c.decodeIfPresent(Float.self, forKey: .gainDb) ?? 0
+        legacyPan    = try c.decodeIfPresent(Float.self, forKey: .pan) ?? 0
+        legacyMuted  = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+        nameSourceID = try c.decodeIfPresent(UUID.self, forKey: .nameSourceID)
+        userNamed  = try c.decodeIfPresent(Bool.self, forKey: .userNamed) ?? false
+    }
+
+    /// The legacy output section is never written (format 25: it is a gain stage, @see
+    /// LegacyGainMigration).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encode(plugins, forKey: .plugins)
+        try c.encode(isEnabled, forKey: .isEnabled)
+        try c.encodeIfPresent(nameSourceID, forKey: .nameSourceID)
+        if userNamed   { try c.encode(true, forKey: .userNamed) }
     }
 
     var color: Color { ObjekatPalette.plugin(colorIndex) }
@@ -147,7 +176,8 @@ struct FXLinkBlock: Codable, Equatable {
     /// THIS host's instances of the bin's plugins, in the definition's order (attached), or the
     /// host's own copy of the chain (detached).
     var plugins: [ObjectPlugin] = []
-    /// The output section as this host keeps it while DETACHED; nil while attached (the bin's rules).
+    /// The bin's rules as this host keeps them while DETACHED — the common on/off (format 25; until
+    /// format 24 the output section too, decoded only); nil while attached (the bin's rules).
     var local: FXLinkOutput? = nil
 
     init(linkID: UUID, isDetached: Bool = false, plugins: [ObjectPlugin] = [], local: FXLinkOutput? = nil) {

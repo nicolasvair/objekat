@@ -29,8 +29,10 @@ enum SeriesLocation: Hashable {
 enum SynopticMapping {
     /// Builds the signal graph from the `[ObjectPlugin]` tree (recursive over the voices of a
     /// `rack` block) plus the `seriesID → SeriesLocation` table that lets the insertion actions
-    /// find the right series again. The series/branch ids are regenerated on every build: the
-    /// action closures capture the table from the SAME build, so it is consistent.
+    /// find the right series again. Every series id is STABLE across builds (the bound view rebuilds
+    /// the tree at every VU poll, ~70 ms): the root is the host's id, a bin's series its block's id, and
+    /// a parallel's branch an id DERIVED from its block's id and its index (@see voiceSeriesID) — so a
+    /// '+' named by its series survives a rebuild, and a hover or a drag in flight does not lose it.
     static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:],
                       fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)? = nil)
         -> (node: SynopticNode, locations: [UUID: SeriesLocation]) {
@@ -53,7 +55,7 @@ enum SynopticMapping {
                 let gains = EditViewModel.paddedWetDb(rack.wetDb, count: rack.voices.count)
                 let mutes = EditViewModel.paddedMutes(rack.voiceMutes, count: rack.voices.count)
                 let voices: [SynopticNode] = rack.voices.enumerated().map { vi, voice in
-                    var vnode = buildSeries(voice, seriesID: UUID(),
+                    var vnode = buildSeries(voice, seriesID: voiceSeriesID(blockID: p.id, voiceIndex: vi),
                                             location: .voice(blockID: p.id, voiceIndex: vi),
                                             locations: &locations, levels: levels,
                                             fxLinkInfo: fxLinkInfo)
@@ -88,12 +90,35 @@ enum SynopticMapping {
         return SynopticNode(id: seriesID, kind: .series(children))
     }
 
+    /// The id of branch `voiceIndex` of the parallel block `blockID`: the block's id with a few bits
+    /// flipped by the index — the same at every build (the block's id is the rack carrier's, stable), and
+    /// never one of the model's ids (a random UUID is not reached by flipping a tagged byte pattern).
+    static func voiceSeriesID(blockID: UUID, voiceIndex: Int) -> UUID {
+        var u = blockID.uuid
+        let i = UInt16(truncatingIfNeeded: voiceIndex + 1)
+        u.0 ^= 0x5A
+        u.1 ^= 0xC3
+        u.14 ^= UInt8(i >> 8)
+        u.15 ^= UInt8(i & 0xFF)
+        return UUID(uuid: u)
+    }
+
     static func leaf(_ p: ObjectPlugin, vu: Double = 0) -> SynopticPlugin {
         SynopticPlugin(id: p.id, name: p.name, category: .infer(from: p),
                        isEnabled: p.isEnabled, vu: vu,
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
-                       color: p.color)
+                       color: p.color,
+                       gainStage: synopticFace(of: p))
+    }
+
+    /// A gain stage's face as the signal view names it (nil = not a stage).
+    static func synopticFace(of p: ObjectPlugin) -> SynopticGainStageFace? {
+        switch p.gainStageFace {
+        case .gain?:        return .gain
+        case .gainPanMute?: return .gainPanMute
+        case nil:           return nil
+        }
     }
 }
 
@@ -156,16 +181,121 @@ extension EditViewModel {
         isDirty = true
     }
 
-    /// The signal view's '//': puts the element in parallel with an EMPTY BRANCH (just a gain at
-    /// the end plus a '+' to add a plugin to it). No picker. A plugin → a 2-branch block (the
-    /// element plus an empty branch); an existing block → one more empty branch.
-    func synopticBranch(objectID: UUID, elementID: UUID) {
+    /// A parallel branch out of the '+' at view index `index` of the series `location` (a drag down-right),
+    /// taking the run @see SynopticBranchRun.forPlus reads from `selection`: the element under the '+', or the
+    /// selected run that starts there; an EMPTY series gets an empty branch. ONE undo point.
+    /// - Returns: the ids put in the branch ([] = an empty branch), nil = refused (nothing changed).
+    @discardableResult
+    func synopticBranch(objectID: UUID, location: SeriesLocation, at index: Int,
+                        selection: Set<UUID>) -> [UUID]? {
         guard let plugins = chainPlugins(objectID),
-              fxDefinition(ofInstance: elementID, on: objectID) == nil else { return }   // a bin's instance is not put in parallel on its own
+              let series = Self.seriesEntries(location, in: plugins) else { return nil }
+        if case .block = location { return nil }   // inside a bin: the bin's order is the definition's
+        let run = SynopticBranchRun.forPlus(at: index, in: Self.branchRunElements(series, selection: selection))
+        return applyBranch(objectID: objectID, run: run, location: location, insertIndex: index, plugins: plugins)
+    }
+
+    /// "Create a parallel branch" from a card's context menu: the selected run round the card when it is in
+    /// `selection`, the card alone otherwise (@see SynopticBranchRun.around). ONE undo point.
+    /// - Returns: the ids put in the branch, nil = refused (a bin's instance, an unknown card).
+    @discardableResult
+    func synopticBranch(objectID: UUID, pluginID: UUID, selection: Set<UUID>) -> [UUID]? {
+        guard let plugins = chainPlugins(objectID),
+              let (location, _) = Self.locate(pluginID, in: plugins) else { return nil }
+        if case .block = location { return nil }   // a bin's instance is not put in parallel on its own
+        guard let series = Self.seriesEntries(location, in: plugins),
+              let run = SynopticBranchRun.around(pluginID, in: Self.branchRunElements(series, selection: selection))
+        else { return nil }
+        return applyBranch(objectID: objectID, run: run, location: location, insertIndex: 0, plugins: plugins)
+    }
+
+    /// The one door both gestures go through: one undo point, the tree, the engine.
+    private func applyBranch(objectID: UUID, run: [UUID], location: SeriesLocation, insertIndex: Int,
+                             plugins: [ObjectPlugin]) -> [UUID]? {
+        // A bin's instance is never put in parallel on its own (its block is, whole).
+        if run.contains(where: { fxDefinition(ofInstance: $0, on: objectID) != nil }) { return nil }
+        guard let next = Self.branching(run: run, at: location, insertIndex: insertIndex, in: plugins) else { return nil }
         pushUndo()
-        updateChainPlugins(objectID) { $0 = Self.branchingEmpty(plugins, elementID: elementID) }
+        updateChainPlugins(objectID) { $0 = next }
         compileRack(objectID: objectID)
         isDirty = true
+        return run
+    }
+
+    /// The tree with a parallel branch made of `run` — consecutive entries of the series `location`, in
+    /// order: one entry that is a block → one more (empty) branch on it; one plugin or a bin's block → a
+    /// 2-branch block (it, and an empty branch); several → a 2-branch block (the run as ONE series, and an
+    /// empty branch), laid where the run was. An empty run → a 2-branch block of two EMPTY branches at
+    /// `insertIndex` (view index). nil = the run is not consecutive in that series.
+    static func branching(run: [UUID], at location: SeriesLocation, insertIndex: Int,
+                          in plugins: [ObjectPlugin]) -> [ObjectPlugin]? {
+        if run.isEmpty {
+            return inserting(rackCarrier(voices: [[], []]), into: location, at: insertIndex, plugins: plugins)
+        }
+        if run.count == 1 { return branchingEmpty(plugins, elementID: run[0]) }
+        guard let series = seriesEntries(location, in: plugins) else { return nil }
+        let idx = run.compactMap { id in series.firstIndex { $0.id == id } }
+        guard idx.count == run.count, let lo = idx.min(), let hi = idx.max(), hi - lo + 1 == run.count,
+              idx == Array(lo...hi) else { return nil }
+        return mappingSeries(location, in: plugins) { s in
+            var a = s
+            let carrier = rackCarrier(voices: [Array(s[lo...hi]), []])
+            a.replaceSubrange(lo...hi, with: [carrier])
+            return a
+        }
+    }
+
+    /// A series' entries as the run reads them: a send's marker is a barrier; a container is selected when
+    /// its id is, or when every leaf it holds is.
+    static func branchRunElements(_ series: [ObjectPlugin], selection: Set<UUID>) -> [SynopticBranchRun.Element] {
+        series.map { p in
+            let leaves = p.isContainer && !p.isSendMarker ? flattenLeaves([p]) : []
+            let selected = selection.contains(p.id)
+                || (!leaves.isEmpty && leaves.allSatisfy { selection.contains($0.id) })
+            return SynopticBranchRun.Element(id: p.id, isBarrier: p.isSendMarker, isSelected: selected)
+        }
+    }
+
+    /// The entries of the series `location` in MODEL order (markers included at the root). nil = no such
+    /// series in this tree.
+    static func seriesEntries(_ location: SeriesLocation, in plugins: [ObjectPlugin]) -> [ObjectPlugin]? {
+        switch location {
+        case .root:
+            return plugins
+        case .voice(let blockID, let vi):
+            guard let b = findEntry(blockID, in: plugins), let rack = b.rack, rack.voices.indices.contains(vi)
+            else { return nil }
+            return rack.voices[vi]
+        case .block(let blockID):
+            return findBlock(blockID, in: plugins)?.fxBlock?.plugins
+        }
+    }
+
+    /// The tree with `transform` applied to the series `location` (and nothing else).
+    static func mappingSeries(_ location: SeriesLocation, in plugins: [ObjectPlugin],
+                              _ transform: ([ObjectPlugin]) -> [ObjectPlugin]) -> [ObjectPlugin] {
+        switch location {
+        case .root:
+            return transform(plugins)
+        case .voice(let blockID, let vi):
+            return plugins.map { p in
+                if p.id == blockID, var rack = p.rack, rack.voices.indices.contains(vi) {
+                    rack.voices[vi] = transform(rack.voices[vi])
+                    var np = p; np.rack = rack; return np
+                }
+                if p.isContainer { return p.mappingChildSeries { mappingSeries(location, in: $0, transform) } }
+                return p
+            }
+        case .block(let blockID):
+            return plugins.map { p in
+                if p.id == blockID, var block = p.fxBlock {
+                    block.plugins = transform(block.plugins)
+                    var np = p; np.fxBlock = block; return np
+                }
+                if p.isContainer { return p.mappingChildSeries { mappingSeries(location, in: $0, transform) } }
+                return p
+            }
+        }
     }
 
     /// Removes a branch from a parallel block (along with its gain). If the block falls below 2

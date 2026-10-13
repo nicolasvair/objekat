@@ -269,6 +269,11 @@ extension CommandRegistry {
                 lastPayload["fx_link_divergences"] = .array(last.fxLinkDivergences.map(Self.fxLinkDivergenceJSON))
                 lastPayload["fx_link_divergence_report"] = last.fxLinkDivergences.isEmpty ? .null
                     : .string(FXLinkDivergence.report(filePath: last.path ?? "", details: last.fxLinkDivergences))
+                // The old trims and FX link outputs turned into gain stages at load (format 25).
+                let m = last.legacyGainMigration
+                lastPayload["legacy_gain_migration"] = .object([
+                    "trims": .int(m.trims), "fx_outputs": .int(m.fxOutputs),
+                    "automation_lanes": .int(m.automationLanes), "clamped": .int(m.clamped)])
                 if let msg = last.errorMessage { lastPayload["error"] = .string(msg) }
                 payload["last_load"] = .object(lastPayload)
             }

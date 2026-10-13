@@ -71,7 +71,8 @@ source, not a translation.
 | onglet | tab | pestaña | onglet de projet |
 | fx link (bac de plugins partagé) | FX link (shared plugin bin) | fx link (bin de plugins compartido) | the name stays « fx link » in the three languages; a shared bin of plugins, one block in each member's chain |
 | détacher / rattacher (un fx link) | detach / reattach | desvincular / volver a vincular | per host: the host keeps an independent copy, then realigns on the bin |
-| section de sortie (d'un fx link) | output section | sección de salida | volume, pan, mute of the bin, after its plugins |
+| section de sortie (d'un fx link) | output section | sección de salida | GONE since format 25 (signal view rework): an old file's output section becomes a « gain · pan » gain stage at the end of the bin |
+| étage de gain | gain stage | etapa de ganancia | a built-in leaf of the chain, never in the browser: face « gain » (one dB box) or « gain · pan » (pan · volume · mute); no bypass, no editor. Replaces the chain's trims and the fx link's output section (format 25) |
 | clé (sidechain) | key (sidechain) | clave (sidechain) | the signal of another object or stem that feeds a plugin's sidechain input; the word « sidechain » stays in the three languages for the feature, « clé / key / clave » names the source |
 | toile (d'un script) | script canvas | lienzo | the resizable plot a script asks the app to draw (`script.canvas.*`): an image with axes, gestures, a history, layers, a transport |
 | calque | layer | capa | an image a script lays over a canvas's base image; always covers the whole world |

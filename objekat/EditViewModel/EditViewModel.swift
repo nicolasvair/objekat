@@ -1569,6 +1569,8 @@ final class EditViewModel {
         }
         // The DEFINITION's name follows too (it stayed frozen until the next re-bake).
         if let defID, let newLabel { consolidateDefinitions[defID]?.name = newLabel }
+        // The FX link bins made from this object take its new name — same undo point (B.9).
+        if let shown = find(id: id)?.displayName { followRename(of: targets, to: shown) }
         isDirty = true
     }
 

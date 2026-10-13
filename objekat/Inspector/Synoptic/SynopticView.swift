@@ -3,358 +3,6 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-// MARK: - The signal view's actions
-//
-// The view is 'dumb': it renders a `SynopticNode` and delegates every mutation to
-// these closures. They are wired either onto a mock (a local @State, the phase A demo),
-// or onto `EditViewModel`/the engine (phase B — step 1: a real series).
-
-/// Where in the signal view a plugin drag is aimed. A drop target knows only what it is laid on — a
-/// cable (a series and an index), a card, a bin's header — and the bound view resolves it to a
-/// `PluginDropSite` of the host's chain.
-/// Where a send card is aimed in the signal view: a place of the chain (what a plugin is aimed at) or
-/// one of the three fixed slots. The bound view resolves it to a `SendDropAim`.
-enum SynopticSendTarget: Equatable {
-    case place(SynopticDropTarget)
-    case slot(SynopticSendSlot)
-}
-
-extension SynopticActions {
-    /// Opens the "Send to…" menu at the mouse: for a NEW send taken at `slot`, or (`retargeting`) to change
-    /// the target of that card's send. The data is read now, at the click.
-    @MainActor
-    func presentSendMenu(slot: SynopticSendSlot, retargeting: UUID? = nil) {
-        guard let sections = sendTargetSections?(retargeting) else { return }
-        SendTargetMenuPresenter.present(
-            sections: sections,
-            onPick: { aux in
-                if let old = retargeting { onRetargetSend?(old, aux) } else { onCreateSend?(aux, slot) }
-            },
-            onChoose: { onPickSendTarget?(slot, retargeting) })
-    }
-}
-
-enum SynopticDropTarget: Equatable {
-    /// A cable or a '+': the series `seriesID`, at `index`.
-    case series(UUID, Int)
-    /// A card: just before it, in the series it sits in.
-    case beforeCard(UUID)
-    /// A bin's header: the end of the bin's block.
-    case blockEnd(UUID)
-}
-
-struct SynopticActions {
-    var onOpenEditor: ((UUID) -> Void)? = nil
-    /// The double click on a card that belongs to a MULTIPLE selection: opens the editors of the
-    /// whole selection (`clicked` decides open vs close). nil = falls back to `onOpenEditor`.
-    var onOpenEditors: ((_ clicked: UUID, _ ids: Set<UUID>) -> Void)? = nil
-    var onToggleBypass: (UUID) -> Void = { _ in }
-    var onRemove: (UUID) -> Void = { _ in }
-    var onInsertSeries: (_ seriesID: UUID, _ index: Int) -> Void = { _, _ in }
-    var onBranch: ((UUID) -> Void)? = nil   // nil = parallel branching disabled (not routed)
-
-    // Carried over from the chips (step 1.x):
-    var instanceState: ((UUID) -> Int)? = nil       // 0 unknown · 1 loading · 2 ready · 3 error
-    var loadError: ((UUID) -> String?)? = nil
-    var onDiagnose: ((UUID) -> Void)? = nil
-    var onUnlink: ((UUID) -> Void)? = nil
-    var onRelink: ((UUID) -> Void)? = nil
-    var linkSiblingCount: ((UUID) -> Int)? = nil
-
-    // The audio bridge (sidechain): a card's key, as one line (nil = none). The key is CHOSEN in the
-    // plugin editor's Sidechain strip (@see SidechainStripView), not from the card.
-    var sidechainBadge: ((UUID) -> SidechainBadge?)? = nil
-
-    // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
-    var dragProvider: ((UUID) -> NSItemProvider)? = nil
-    // What a release at `target` would do with the drag in flight, for the cursor and the band
-    // (@see PluginDropOutcome). nil = no drag in flight to answer for → the legacy reading.
-    var dropOutcome: ((_ target: SynopticDropTarget, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
-    // A plugin (or a whole bin's block) let go at `target`: the view-model resolves it and carries it out —
-    // reorder, move, copy, join a bin, leave one. nil = the view does not receive (the demo).
-    var onDrop: ((_ target: SynopticDropTarget, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
-
-    // The dB gain at the end of a parallel branch (drag ↑/↓).
-    var onSetVoiceGain: ((_ blockID: UUID, _ voiceIndex: Int, _ dB: Float) -> Void)? = nil
-    // Removing a parallel branch (along with its gain).
-    var onRemoveVoice: ((_ blockID: UUID, _ voiceIndex: Int) -> Void)? = nil
-    // Muting a parallel branch (listen to one / the other / both; no solo).
-    var onSetVoiceMute: ((_ blockID: UUID, _ voiceIndex: Int, _ muted: Bool) -> Void)? = nil
-    // The dB gain at the start (isOutput=false) / end (isOutput=true) of the chain.
-    var onSetChainGain: ((_ isOutput: Bool, _ dB: Float) -> Void)? = nil
-    // The start of a gain drag (a branch or the chain): push an undo point,
-    // the same convention as onBeginMixEdit / onBeginSpeedEdit.
-    var onBeginGainEdit: (() -> Void)? = nil
-
-    // MIDI zone (a MIDI clip): the instrument at the head of the chain.
-    var onAddInstrument: (() -> Void)? = nil           // the '+' of an empty MIDI zone
-    var onRemoveInstrument: (() -> Void)? = nil
-    var onOpenInstrumentEditor: (() -> Void)? = nil
-    // Bypassing the instrument — an action separate from `onToggleBypass`: the instrument does
-    // not live in the model's FX chain but in `instruments` (@see toggleInstrumentEnabled).
-    var onToggleInstrumentBypass: (() -> Void)? = nil
-
-    // The 'audio file' zone (an audio clip): speed / semitones / bpm.
-    var onSetSpeed: ((Double) -> Void)? = nil          // the new speed ratio
-    var onSetBaseBPM: ((Double?) -> Void)? = nil       // the base bpm (nil = clear)
-    var onToggleReverse: (() -> Void)? = nil
-    var onToggleLoop: (() -> Void)? = nil
-    var onSetChannelMode: ((ChannelMode) -> Void)? = nil   // stereo files only (LR / L / R / C)
-    var onBeginSpeedEdit: (() -> Void)? = nil          // push an undo point before a drag
-
-    /// A parameter control has just been TOUCHED — clicked, taken in a drag, or received from the
-    /// keyboard — without necessarily having changed value. That is what names the object's
-    /// 'future automation' row (@see SoundObject.pendingAutomationParam): you choose what you are
-    /// about to automate by laying a finger on it, not by knocking it off its value first.
-    var onTouchParam: ((ParamRef) -> Void)? = nil
-
-    // The 'clip' zone (the output mix): volume / pan / mute.
-    var onSetVolume: ((Float) -> Void)? = nil
-    var onSetPan: ((Float) -> Void)? = nil
-    var onToggleMute: (() -> Void)? = nil
-    var onToggleSolo: (() -> Void)? = nil
-    var onBeginMixEdit: (() -> Void)? = nil
-    /// A double click on the link icon of a mix attribute (a consolidated object): toggles synced/independent.
-    var onToggleAttrSync: ((SynopticMixAttr) -> Void)? = nil
-
-    // The 'stems' zone (output): assigning the stem.
-    var onAssignStem: ((UUID) -> Void)? = nil
-
-    // The 'sends' zone (the foot): the level / on-off of a departure towards an aux. `id` = the
-    // target aux for a departure, the sending object for a received send (an aux's head).
-    var onSetSendLevel: ((UUID, Float) -> Void)? = nil
-    var onToggleSend: ((UUID) -> Void)? = nil
-    var onBeginSendEdit: (() -> Void)? = nil
-    /// A send card's ✕ / menu "Delete": removes the send of that aux (its marker goes with it).
-    var onRemoveSend: ((UUID) -> Void)? = nil
-    /// A send card's menu "Fold to post-fader": moves the send of that aux to a slot (undoable).
-    var onMoveSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
-    /// The card of the send towards `aux` is taken in the hand (nil = cards are not draggable).
-    var sendDragProvider: ((UUID) -> NSItemProvider)? = nil
-    /// The sections of the "Send to…" menu for this object (`retargeting`: the aux of the card whose target is
-    /// being changed, left out). Asked when the menu is OPENED, never while rendering.
-    var sendTargetSections: ((_ retargeting: UUID?) -> [SendTargetMenu.Section])? = nil
-    /// A menu entry: make the send towards `aux` at `slot`.
-    var onCreateSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
-    /// "Choose an object on the timeline…": arms the pick for a send at `slot` (or re-aims `retargeting`).
-    var onPickSendTarget: ((_ slot: SynopticSendSlot, _ retargeting: UUID?) -> Void)? = nil
-    /// "Change target…": re-aims the send towards `old` at `new`.
-    var onRetargetSend: ((_ old: UUID, _ new: UUID) -> Void)? = nil
-    /// A send card let go at `target` (a place of the chain or one of the three fixed slots).
-    var onSendDrop: ((_ target: SynopticSendTarget, _ payload: SendDragPayload) -> Void)? = nil
-    /// What a send card let go at `target` would do, for the cursor and the band (@see SendDrop). nil = no
-    /// send in flight to answer for.
-    var sendDropOutcome: ((_ target: SynopticSendTarget) -> PluginDropOutcome?)? = nil
-
-    // The plugins ON a send (INC 3): the rows of its box. Every closure names the send by its AUX (the
-    // card's id); the plugin by its own id. The chain behind them is a chain host like any other
-    // (@see SendChain.hostID), so these are the trunk's gestures aimed at another host.
-    /// The selected rows of that send's box (empty when the plugin selection is elsewhere).
-    var sendPluginSelection: ((_ aux: UUID) -> Set<UUID>)? = nil
-    /// A click on a row: plain = that row alone, ⌘ = toggle it, ⇧ = extend, inside the box.
-    var onSendPluginClick: ((_ aux: UUID, _ plugin: UUID, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
-    /// A double click on a row's name: its editor (open / close).
-    var onSendPluginOpen: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
-    /// The row's dot (bypass) and its cross: a row IN the selection speaks for the whole selection.
-    var onSendPluginToggle: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
-    var onSendPluginRemove: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
-    /// The box's "+" and the card's menu entry: the plugin picker, aimed at that send.
-    var onSendPluginAdd: ((_ aux: UUID) -> Void)? = nil
-    /// A row taken in the hand (nil = rows are not draggable).
-    var sendPluginDragProvider: ((_ aux: UUID, _ plugin: UUID) -> NSItemProvider)? = nil
-    /// What the drag in flight would do let go on that box at insertion slot `index` (counted from the
-    /// top). nil = no drag in flight to answer for.
-    var sendBoxDropOutcome: ((_ aux: UUID, _ index: Int, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
-    /// A plugin let go on that box at slot `index`. nil = the boxes do not receive (the demo).
-    var onSendBoxDrop: ((_ aux: UUID, _ index: Int, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
-
-    // A bus's chain head: the 'infinite' toggle (a top-level aux / group).
-    var onToggleInfinite: (() -> Void)? = nil
-
-    // FX links (a bin's block). Every closure that takes a UUID takes the BLOCK's id.
-    /// The common on/off of the block.
-    var onFXToggleEnabled: ((UUID) -> Void)? = nil
-    var onFXSetGain: ((UUID, Float) -> Void)? = nil
-    var onFXSetPan: ((UUID, Float) -> Void)? = nil
-    var onFXToggleMute: ((UUID) -> Void)? = nil
-    /// The start of a drag on the block's output section: push an undo point.
-    var onFXBeginEdit: (() -> Void)? = nil
-    var onFXRename: ((UUID, String) -> Void)? = nil
-    /// "Next colour" of the header's right-click menu: the next colour of the palette.
-    var onFXCycleColor: ((UUID) -> Void)? = nil
-    /// Detach / reattach (the same button: the state says which).
-    var onFXToggleDetach: ((UUID) -> Void)? = nil
-    /// Leave the bin and keep the plugins as plain, independent ones.
-    var onFXRelease: ((UUID) -> Void)? = nil
-    /// Drop the block and its plugins from THIS host.
-    var onFXRemove: ((UUID) -> Void)? = nil
-    /// Dissolve the bin on every host.
-    var onFXDelete: ((UUID) -> Void)? = nil
-    /// Right click → 'Create an FX link' from these plugins (nil = never offered).
-    var canCreateFXLink: (([UUID]) -> Bool)? = nil
-    var onCreateFXLink: (([UUID]) -> Void)? = nil
-    /// The bins this host does not hold yet, and joining one.
-    var joinableFXLinks: (() -> [(id: UUID, name: String)])? = nil
-    var onJoinFXLink: ((UUID) -> Void)? = nil
-
-    /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
-    var onOpenARAEditor: (() -> Void)? = nil
-    var onRemoveARA: (() -> Void)? = nil
-    /// The power button of the ARA card: the source plays / the object plays its dry file. Not a
-    /// plugin bypass (@see `EditViewModel.setARAEnabled`): the source is unloaded while it is off.
-    var onToggleARABypass: (() -> Void)? = nil
-}
-
-/// The ARA source an audio object plays THROUGH. It is drawn as a CARD, the first one out of the 'audio file'
-/// frame (@see SynopticLayout.Diagram.araCard); the frame itself only needs to know it is there, to lock the
-/// speed / reverse / loop controls.
-struct SynopticARA: Equatable {
-    var name: String
-    /// The plugin is still analysing the audio (a spinner on the card, and the editor cannot be opened yet).
-    var analysing: Bool
-    /// False = the source is switched off: the object plays its dry file, the card is dimmed with a grey
-    /// power button, and the editor cannot be opened (there is no instance).
-    var isEnabled: Bool = true
-    /// The source's identity colour, like any plugin card's halo.
-    var color: Color = .gray
-}
-
-/// The data of the 'audio file' zone (an audio clip), carried over into the signal view.
-struct SynopticAudioFile: Equatable {
-    var speedRatio: Double
-    var baseBPM: Double?
-    var isReversed: Bool
-    /// True ⇒ the content repeats for as long as the object's window exceeds its source range.
-    var isLooping: Bool
-    /// Non-nil ⇒ the source is a STEREO file (exactly two channels) and the zone carries the
-    /// LR / L / R / C selector, holding the current choice. nil for a mono file (or one that cannot
-    /// be read): no selector, and the zone keeps its original height.
-    var channelMode: ChannelMode? = nil
-    /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
-    /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
-    var ara: SynopticARA? = nil
-}
-
-/// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
-enum SynopticMixAttr { case volume, pan, mute }
-
-/// The synced/independent state of a consolidated object instance's mix attributes (`true` = synced
-/// with the other instances). nil on `SynopticMix.attrLinks` = an unlinked object (no icons).
-struct SynopticMixLinks: Equatable {
-    var volumeSynced: Bool
-    var panSynced: Bool
-    var muteSynced: Bool
-}
-
-/// What makes an object audible on its own, in ONE state — the two solo layers add up, but a
-/// button has only one look: held wins, since that is the one that will outlive the gesture.
-enum SynopticSoloState: Equatable {
-    case off
-    /// The temporary layer ('s' held, or an audition): it clears itself.
-    case temporary
-    /// The committed layer: held until it is cleared.
-    case hold
-}
-
-/// The data of the 'clip' zone (the output mix), carried over into the signal view.
-struct SynopticMix: Equatable {
-    var title: String        // 'clip' / 'group' / 'aux'
-    var volumeDb: Float
-    var pan: Float
-    var isMuted: Bool
-    var solo: SynopticSoloState = .off
-    /// Volume / pan driven by an automation CURVE (their static setting is neutralised).
-    var volumeAutomated: Bool = false
-    var panAutomated: Bool = false
-    /// Non-nil ⇒ a consolidated object instance: it shows the per-attribute link icons.
-    var attrLinks: SynopticMixLinks? = nil
-}
-
-/// A stem badge ('stems' zone) carried over into the signal view.
-struct SynopticStem: Identifiable, Equatable {
-    let id: UUID
-    let name: String
-    let color: Color
-    let isCurrent: Bool
-}
-
-/// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.
-struct SynopticInfinite: Equatable {
-    let isOn: Bool
-    /// 'aux' / 'group' — used in the tooltip.
-    let kindLabel: String
-}
-
-/// A group's 'loop' option (the chain head, @see BusHeadZoneView) or a MIDI clip's (the MIDI
-/// zone, @see midiZoneView). Non-nil ⇔ `SoundObject.canLoop` — audio has its own badge in
-/// `AudioFileZoneView` (@see [[loop-item-plan]]).
-struct SynopticLoop: Equatable {
-    let isOn: Bool
-}
-
-/// The output of a group's CHILD: routed to its parent group (no direct stem assignment —
-/// the stem is carried by the group; routing a child to a stem while staying inside the group
-/// = the 'edit group' case, planned for later). It replaces the 'stems' zone.
-struct SynopticGroupRouting: Equatable {
-    let groupName: String
-    /// The colour of the effective stem (the root group's) — a visual hint of the final bus.
-    let stemColor: Color
-}
-
-extension View {
-    /// Greys out and neutralises a STATIC setting an automation curve has taken over.
-    ///
-    /// A decision from the automation work: no offset, no composition — as soon as a parameter
-    /// carries a point, the curve is what counts and the static setting is no longer heard. A
-    /// control that still answered the gesture without changing the sound would look like a
-    /// fault: we grey it out, like the FX of a closed consolidated object just above.
-    @ViewBuilder
-    func automationLocked(_ locked: Bool) -> some View {
-        if locked {
-            self.disabled(true)
-                .opacity(0.4)
-                .help(L("synoptic.lockedByAutomation"))
-        } else {
-            self
-        }
-    }
-
-    /// A conditional tooltip: `nil` or empty ⇒ NO `.help` is applied at all.
-    ///
-    /// To be used whenever a tooltip is only worth having in one case. A tooltip laid on an
-    /// ancestor overrides those of its descendants — an EMPTY tooltip included: `.help("")`
-    /// 'to say nothing' does not let the children speak, it gags them. That is what deprived
-    /// the signal view's plugin cards (bypass, name, link, ✕) and the inspector's Speed /
-    /// Semitones boxes of a tooltip for months. Applying nothing is the only way to say
-    /// nothing.
-    @ViewBuilder
-    func helpIf(_ text: String?) -> some View {
-        if let text, !text.isEmpty { self.help(text) } else { self }
-    }
-
-    /// Greys out and neutralises the FX of a CLOSED consolidated object, saying why they do not answer.
-    func fxReadOnlyLocked(_ readOnly: Bool) -> some View {
-        disabled(readOnly)
-            .opacity(readOnly ? 0.45 : 1)
-            .helpIf(readOnly ? L("synoptic.openToEdit") : nil)
-    }
-
-    /// Applies `.onDrag` only if a provider is supplied (otherwise it leaves the view untouched).
-    @ViewBuilder
-    func onDragIf(_ provider: (() -> NSItemProvider)?) -> some View {
-        if let provider { self.onDrag(provider) } else { self }
-    }
-
-    /// Same as `onDragIf(_:)`, with a custom drag image instead of AppKit's default "grabbed
-    /// view" snapshot — used by a plugin card, whose default preview (the bare name, cropped to
-    /// its label's own frame) said nothing about what dropping it does.
-    @ViewBuilder
-    func onDragIf<Preview: View>(_ provider: (() -> NSItemProvider)?,
-                                  @ViewBuilder preview: () -> Preview) -> some View {
-        if let provider { self.onDrag(provider, preview: preview) } else { self }
-    }
-}
-
 // MARK: - Signal view (pure rendering)
 
 struct SynopticView: View {
@@ -369,11 +17,10 @@ struct SynopticView: View {
     /// cannot touch, and ⌫ would then eat the key to do nothing.
     @Binding var selectedInstrumentID: UUID?
     var scrolls = true              // false = embedded (the parent handles the scrolling)
-    var chainInDb: Float = 0
-    var chainOutDb: Float = 0
-    /// Chain trims driven by an automation curve (@see automationLocked).
-    var chainInAutomated: Bool = false
-    var chainOutAutomated: Bool = false
+    /// The colour of the object's FRAME (§B.5, D7: `customColor ?? stemColor`). The frame is laid for an
+    /// OBJECT host only — one that has a mixer (`mix != nil`): a clip, a MIDI clip, a group, an aux; never
+    /// for a stem or the Main (their popover). nil = a neutral grey until the caller passes the colour.
+    var frameColor: Color? = nil
     /// A MIDI clip: shows the 'MIDI' zone (the instrument) at the head instead of the Source pill.
     var isMIDI: Bool = false
     var midiInstrument: SynopticPlugin? = nil
@@ -417,15 +64,21 @@ struct SynopticView: View {
     /// the name's double tap): without this the double click would only ever see one card.
     @State private var collapsedSelection: (ids: Set<UUID>, at: TimeInterval)? = nil
 
+    // The '+' (§B.2, §B.3). Both are held by a STABLE name (@see SynopticStablePlus): the bound view
+    // rebuilds the graph several times a second (the VU poll) and a parallel's branches get fresh series
+    // ids at every build, so a key of the build would forget the hover and cancel a drag in flight.
+    /// The '+' whose line is under the pointer (the ONE hover hit test, @see SynopticHoverTracker).
+    @State private var hoveredPlus: SynopticStablePlus? = nil
+    /// The drag in flight out of a '+': which one, and how far the hand has gone.
+    @State private var plusDrag: PlusDrag? = nil
+
+    private struct PlusDrag: Equatable {
+        let key: SynopticStablePlus
+        var translation: CGSize
+    }
+
     var body: some View {
-        let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
-                                       midi: isMIDI, audioFile: audioFile != nil,
-                                       audioStereo: audioFile?.channelMode != nil,
-                                       araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
-                                       mixWide: mix?.attrLinks != nil,
-                                       stems: stems != nil || groupRouting != nil,
-                                       sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
-                                       infiniteOption: infinite != nil)
+        let d = currentDiagram
         Group {
             if scrolls {
                 ScrollView([.horizontal, .vertical]) { canvas(d).padding(20) }
@@ -439,6 +92,9 @@ struct SynopticView: View {
 
     @ViewBuilder
     private func canvas(_ d: SynopticLayout.Diagram) -> some View {
+        // The stable names of this build's series, and the '+' shown whatever the hand does (empty series).
+        let names = SynopticPlusPresentation.seriesNames(of: root)
+        let alwaysShown = Set(d.alwaysVisiblePlusKeys.map { stablePlus($0, names: names) })
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
@@ -446,7 +102,7 @@ struct SynopticView: View {
             if let mz = d.midiZone {
                 midiZoneView(mz, slot: d.instrumentSlot)
             } else if let az = d.audioZone, let af = audioFile {
-                audioFileZoneView(az, file: af)
+                audioFileZoneView(az, file: af, folded: d.audioZoneFolded)
             } else if let bh = d.busHeadZone {
                 BusHeadZoneView(rect: bh, infinite: infinite, loop: loop, received: receivedSends,
                                 actions: actions)
@@ -472,6 +128,16 @@ struct SynopticView: View {
             }
             if let cz = d.clipZone, let m = mix {
                 ClipMixZoneView(rect: cz, mix: m, actions: actions)
+            }
+            // The object frame's LINE, over the head and the mixer: the whole outline in the object's colour,
+            // the two boxes inside it as intro and outro. Deaf to the mouse.
+            if let f = d.objectFrame {
+                RoundedRectangle(cornerRadius: SynopticLayout.objectFrameCorner)
+                    .strokeBorder((frameColor ?? Color.secondary).opacity(0.95),
+                                  lineWidth: SynopticLayout.objectFrameLineWidth)
+                    .frame(width: f.width, height: f.height)
+                    .position(x: f.midX, y: f.midY)
+                    .allowsHitTesting(false)
             }
             if let sz = d.stemsZone, let gr = groupRouting {
                 GroupRoutingZoneView(rect: sz, routing: gr)
@@ -509,73 +175,55 @@ struct SynopticView: View {
             }
 
             // A bin's block: its header card (on/off · name · link badge · ✕) straddling the top of the
-            // body, and its mix box (pan · volume · mute) nested at the body's foot. The wire stops at
-            // each and starts again on the other side, so neither is laid over it (@see draw).
+            // body. The wire stops at it and starts again at its foot, so it is never laid over it (@see
+            // draw). No mix box any more (§B.8): a gain on a bin is a stage dragged out of the bin's '+'.
             ForEach(d.placement.fxBlocks) { b in
                 FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
-                                  actions: actions)
+                                  actions: actions,
+                                  onSelect: { selectedInstrumentID = nil; selection = [b.link.blockID] })
                     .position(x: b.headerRect.midX, y: b.headerRect.midY)
-                FXBlockMixView(link: b.link, block: b, actions: actions)
-                    .position(x: b.mixRect.midX, y: b.mixRect.midY)
             }
 
             ForEach(d.placement.cards) { c in
-                SynopticCardView(
-                    plugin: c.plugin,
-                    isSelected: selection.contains(c.plugin.id),
-                    onSelect: { clickCard(c.plugin.id, cards: d.placement.cards) },
-                    onOpenEditor: actions.onOpenEditor.map { _ in { openEditorFromCard(c.plugin.id) } },
-                    onToggleBypass: { actions.onToggleBypass(c.plugin.id) },
-                    onRemove: { actions.onRemove(c.plugin.id) },
-                    dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
-                    dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
-                    dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
-                    onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
-                    onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
-                    onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
-                    onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
-                    sidechainBadge: actions.sidechainBadge?(c.plugin.id)
-                )
-                .contextMenu {
-                    // A card outside the selection speaks for itself alone (the drag's own rule).
-                    fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
-                }
-                .position(x: c.frame.midX, y: c.frame.midY)
-            }
-
-            // '+': insert a plugin in series at this point.
-            ForEach(d.placement.inserts) { z in
-                Button { actions.onInsertSeries(z.seriesID, z.insertIndex) } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .frame(width: SynopticLayout.plusW, height: SynopticLayout.plusW)
-                        .background(
-                            Circle().strokeBorder(Color.secondary.opacity(0.6),
-                                                  style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(L("synoptic.addPluginSeries"))
-                // On the TRUNK's own insert points (not a branch's): right click = take a send right here.
-                .contextMenu {
-                    if z.seriesID == root.id, actions.sendTargetSections != nil {
-                        Button(L("send.menu.sendHere")) { actions.presentSendMenu(slot: .chain(z.insertIndex)) }
+                pluginCard(c, cards: d.placement.cards)
+                    .contextMenu {
+                        // A card outside the selection speaks for itself alone (the drag's own rule).
+                        fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
+                        // A parallel branch of this card — of the selected run round it when it is selected
+                        // (@see SynopticBranchRun.around). Never for a bin's instance: its block is branched whole.
+                        if !fxReadOnly, !c.plugin.inFXBlock, let branch = actions.onBranch {
+                            Button(L("synoptic.menu.createBranch")) { branch(.plugin(c.plugin.id)) }
+                        }
                     }
-                }
-                // No `.onDrop` here: the drop is handled by the `CableDropView` (the preview
-                // rectangle) centred on this '+'. The '+' serves only for the click (insertion).
-                .position(z.center)
+                    .position(x: c.frame.midX, y: c.frame.midY)
             }
 
-            // The parallel icon, to the RIGHT of the '+': a branch from this point (before the element).
-            ForEach(d.placement.inserts.filter { $0.branchElementID != nil }) { z in
-                ParallelBranchButton(enabled: actions.onBranch != nil) {
-                    if let f = actions.onBranch, let bid = z.branchElementID { f(bid) }
-                }
-                .position(x: z.center.x + 26, y: z.center.y)
+            // '+' on the wire (§B.2, §B.3): shown while its line is hovered, always in an empty series, and
+            // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for a
+            // gain stage (right), a parallel branch (down-right) or a send (left) (@see SynopticPlusGesture), with a
+            // ghost under way.
+            // Drawn OPAQUE over the wire, which runs through it. Laid after the cable drop zones, so that a
+            // shown '+' is what the hand grabs; no `.onDrop` on it (the `CableDropView` under it receives).
+            ForEach(d.placement.inserts, id: \.key) { z in
+                let sk = stablePlus(z.key, names: names)
+                let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                             alwaysVisible: alwaysShown)
+                SynopticPlusButton(active: plusDrag?.key == sk,
+                                   onChanged: { plusMoved(sk, $0) },
+                                   onEnded: { plusReleased(sk, $0) })
+                    .help(plusHelp(z))
+                    // On the TRUNK's own insert points (not a branch's): right click = take a send right here,
+                    // at the slot this '+' stands for (head ≡ input, tail ≡ pre-fader, between ≡ chain(i)).
+                    .contextMenu {
+                        if z.role == .trunk, actions.sendTargetSections != nil {
+                            Button(L("send.menu.sendHere")) {
+                                actions.presentSendMenu(slot: z.sendSlot ?? .chain(z.insertIndex))
+                            }
+                        }
+                    }
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .position(z.center)
             }
 
             // The dB gain at the end of each parallel branch (drag ↑/↓).
@@ -600,47 +248,90 @@ struct SynopticView: View {
                 .help(L("synoptic.removeBranch"))
                 .position(x: vg.center.x + 48, y: vg.center.y)
             }
-
-            // The start / end chain gains (always present, even without a parallel).
-            if let cin = d.chainInGain {
-                GainDbControl(dB: cin.dB,
-                              onTouch: { actions.onTouchParam?(.chainInGain) },
-                              onBegin: { actions.onBeginGainEdit?() }) {
-                    actions.onSetChainGain?(false, $0)
-                }
-                .automationLocked(chainInAutomated)
-                .position(cin.center)
-            }
-            if let cout = d.chainOutGain {
-                GainDbControl(dB: cout.dB,
-                              onTouch: { actions.onTouchParam?(.chainOutGain) },
-                              onBegin: { actions.onBeginGainEdit?() }) {
-                    actions.onSetChainGain?(true, $0)
-                }
-                .automationLocked(chainOutAutomated)
-                .position(cout.center)
-            }
             }   // Group FX
             .fxReadOnlyLocked(fxReadOnly)
 
-            // The outgoing sends: a card each, in a column beside the trunk (the wires are drawn in `draw`).
-            // Not in the FX group: a closed consolidated object keeps its sends interactive, as it keeps
-            // its mix. Laid LAST, over the slots' drop bands, so that a card is always the one that is
-            // grabbed; and not a plugin card: it is outside the selection and ignored by the marquee.
-            // A send that carries plugins is a BOX: its plugins' rows on top, the "+", then the card as
-            // the bottom line (the order of the signal, Q-U19).
-            ForEach(d.sendCards) { c in
-                let zone = SendBoxView.zone(of: c)
-                SendBoxView(placement: c, actions: actions)
-                    .frame(width: zone.width, height: zone.height)
-                    .position(x: zone.midX, y: zone.midY)
+            // The '+' on the wire mixer → stems: a send taken after the fader, its only gesture (D2) — a
+            // click opens the same "Send to…" menu. Not in the FX group: a closed consolidated object keeps
+            // its sends interactive, as it keeps its mix.
+            if let p = d.postFaderPlus, actions.sendTargetSections != nil {
+                let sk = SynopticStablePlus.postFader
+                let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                             alwaysVisible: alwaysShown)
+                SynopticPlusButton(active: plusDrag?.key == sk,
+                                   onChanged: { plusMoved(sk, $0) },
+                                   onEnded: { plusReleased(sk, $0) })
+                    .help(L("synoptic.plus.postFader.help"))
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .position(p.center)
             }
 
-            // "+ Send to…", in the post-fader slot after its cards: a send made there is post-fader.
+            // The outgoing sends: a COLUMN each, stacked BELOW the stems and wired by the left (the wires are
+            // drawn in `draw`), drawn like the object (request 5): the send's plugins as the trunk's own cards,
+            // a '+' on each segment of the wire, and the send's LINE at the bottom. Not in the FX group: a closed
+            // consolidated object keeps its sends interactive, as it keeps its mix. Laid over the slots' drop
+            // bands; outside the trunk's selection, and ignored by the marquee.
+            ForEach(d.sendCards) { c in
+                // The column's drop layer first (under the cards and the line, never their ancestor).
+                SendColumnDropView(placement: c, actions: actions)
+                SendCardView(send: c.send, actions: actions)
+                    .frame(width: c.lineRect.width, height: c.lineRect.height)
+                    .position(x: c.lineRect.midX, y: c.lineRect.midY)
+                ForEach(c.chain.cards) { card in
+                    SendChainCardView(card: card, send: c.send, actions: actions)
+                        .position(x: card.frame.midX, y: card.frame.midY)
+                }
+                // The '+' of the send's mini-chain: shown on hover only (even a plugin-less send's), the
+                // canvas' own button — a click = the picker aimed at the send, a drag right = a gain stage.
+                ForEach(c.chain.inserts, id: \.key) { z in
+                    let sk = stablePlus(z.key, names: names)
+                    let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                                 alwaysVisible: alwaysShown)
+                    SynopticPlusButton(active: plusDrag?.key == sk,
+                                       onChanged: { plusMoved(sk, $0) },
+                                       onEnded: { plusReleased(sk, $0) })
+                        .help(plusHelp(z))
+                        .opacity(shown ? 1 : 0)
+                        .allowsHitTesting(shown)
+                        .position(z.center)
+                }
+            }
+
+            // The HANDLES: where each send is taken on the trunk. A handle is grabbed like the line (§B.6):
+            // dragged onto another place of the chain it moves where the send is taken (the same payload as
+            // the line's, @see sendDragProvider). It sits on the wire just LEFT of the '+' ring it stands for,
+            // never under it, and sends taken at one point fan out by their rank (@see SendWire.handleCenter).
+            ForEach(d.sendCards) { c in
+                SendTapDotView(placement: c, rank: SendWire.rank(of: c, in: d.sendCards), actions: actions)
+            }
+
+            // "+ Send to…", at the bottom of the stack of columns: a send made there is post-fader.
             if let b = d.addSendButton, actions.sendTargetSections != nil {
                 AddSendButton { actions.presentSendMenu(slot: .postFader) }
                     .frame(width: b.width, height: b.height)
                     .position(x: b.midX, y: b.midY)
+            }
+
+            // The zones round a dragged '+' (one per direction it offers, each with its icon; the one the hand
+            // is in lights up), then the ghost of what letting go here would make. Both deaf to the mouse.
+            if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names),
+               let key = currentKey(drag.key, in: d, names: names),
+               !SynopticPlusGesture.isClick(drag.translation) {
+                let zones = SynopticPlusPresentation.sectors(allowed: d.allowedGestures(for: key), key: key,
+                                                            availability, translation: drag.translation)
+                SynopticPlusSectorsView(center: from, sectors: zones.sectors, highlighted: zones.highlighted)
+                    .frame(width: d.canvasSize.width, height: d.canvasSize.height)
+                    .allowsHitTesting(false)
+            }
+            if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names) {
+                let command = SynopticPlusPresentation.available(
+                    currentKey(drag.key, in: d, names: names).map { d.command(for: $0, translation: drag.translation) } ?? .none,
+                    availability)
+                SynopticPlusGhostView(from: from, translation: drag.translation,
+                                      ghost: SynopticPlusPresentation.ghost(for: command, translation: drag.translation))
+                    .frame(width: d.canvasSize.width, height: d.canvasSize.height)
+                    .allowsHitTesting(false)
             }
 
             // The marquee under the hand. Drawn last and deaf to the mouse: it is a report of
@@ -655,10 +346,157 @@ struct SynopticView: View {
             }
         }
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
+        // The ONE hover hit test of the '+' (§B.3): an AppKit tracking area deaf to clicks, since a SwiftUI
+        // hover on this container goes `.ended` as soon as the pointer enters a card or a zone.
+        .overlay(SynopticHoverTracker { point in
+            let k = point.flatMap { d.plusTarget(at: $0) }.map { stablePlus($0, names: names) }
+            if hoveredPlus != k { hoveredPlus = k }
+        })
         .contentShape(Rectangle())
         .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards,
-                                                   blockers: d.placement.fxBlocks.flatMap { [$0.headerRect, $0.mixRect] } + d.sendCards.map(\.frame)))
+                                                   blockers: marqueeBlockers(d)))
         .contextMenu { fxLinkMenu(ids: Array(selection)) }
+    }
+
+    // MARK: - The '+' (§B.2, §B.3)
+
+    /// Which wave-2 closures this view was given: a gesture whose closure is missing is offered as
+    /// "not here" (@see SynopticPlusPresentation.available).
+    private var availability: SynopticPlusAvailability {
+        SynopticPlusAvailability(gainStage: actions.onPlusGesture != nil,
+                                 sendGainStage: actions.onSendPlusGesture != nil,
+                                 branch: actions.onBranch != nil,
+                                 send: actions.sendTargetSections != nil,
+                                 sendPluginAdd: actions.onSendPluginAdd != nil)
+    }
+
+    private func stablePlus(_ key: SynopticPlusKey, names: [UUID: String]) -> SynopticStablePlus {
+        SynopticPlusPresentation.stable(key, names: names)
+    }
+
+    /// The key of THIS build that a stable name stands for (nil = that '+' is gone).
+    private func currentKey(_ sk: SynopticStablePlus, in d: SynopticLayout.Diagram,
+                            names: [UUID: String]) -> SynopticPlusKey? {
+        switch sk {
+        case .postFader:
+            return d.postFaderPlus?.key
+        case .sendChain(let aux, let i):
+            return d.sendInsert(.sendChain(aux: aux, index: i))?.key
+        case .series:
+            return d.placement.inserts.first { stablePlus($0.key, names: names) == sk }?.key
+        }
+    }
+
+    private func plusCenter(_ sk: SynopticStablePlus, in d: SynopticLayout.Diagram,
+                            names: [UUID: String]) -> CGPoint? {
+        guard let key = currentKey(sk, in: d, names: names), let r = d.plusRect(for: key) else { return nil }
+        return CGPoint(x: r.midX, y: r.midY)
+    }
+
+    private func plusMoved(_ sk: SynopticStablePlus, _ translation: CGSize) {
+        if plusDrag?.key == sk {
+            plusDrag?.translation = translation
+        } else {
+            plusDrag = PlusDrag(key: sk, translation: translation)
+        }
+    }
+
+    /// The hand lets go of a '+': what the gesture asked for, on the graph AS IT IS NOW (rebuilt since the
+    /// press, perhaps — the stable name finds the same '+' again).
+    private func plusReleased(_ sk: SynopticStablePlus, _ translation: CGSize) {
+        plusDrag = nil
+        let d = currentDiagram
+        let names = SynopticPlusPresentation.seriesNames(of: root)
+        guard let key = currentKey(sk, in: d, names: names) else { return }
+        perform(SynopticPlusPresentation.available(d.command(for: key, translation: translation), availability))
+    }
+
+    /// The command of a '+' carried out through `SynopticActions` (@see SynopticPlusCommand for the table).
+    private func perform(_ command: SynopticPlusCommand) {
+        switch command {
+        case .none:
+            break
+        case .openBrowser(let key):
+            switch key {
+            case .series(let s, let i):     actions.onInsertSeries(s, i)
+            case .sendChain(let aux, let i): actions.onSendPluginAdd?(aux, i)
+            case .postFader:                actions.presentSendMenu(slot: .postFader)
+            }
+        case .insertGainStage(let key, let face):
+            let result: PlusGestureResult = face == .gain ? .gain : .gainPanMute
+            switch key {
+            case .series(let s, let i):     actions.onPlusGesture?(s, i, result)
+            case .sendChain(let aux, let i): actions.onSendPlusGesture?(aux, i, result)
+            case .postFader:                break
+            }
+        case .branch(let key):
+            if case .series(let s, let i) = key { actions.onBranch?(.plus(seriesID: s, index: i)) }
+        case .send(let slot):
+            actions.presentSendMenu(slot: slot)
+        }
+    }
+
+    /// The diagram of the current values: what `body` lays, and what a release is resolved against.
+    private var currentDiagram: SynopticLayout.Diagram {
+        SynopticLayout.diagram(for: root,
+                               midi: isMIDI, audioFile: audioFile != nil,
+                               audioStereo: audioFile?.channelMode != nil,
+                               araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
+                               mixWide: mix?.attrLinks != nil,
+                               stems: stems != nil || groupRouting != nil,
+                               sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
+                               infiniteOption: infinite != nil,
+                               // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
+                               objectFrame: mix != nil,
+                               // The session's fold of the clip options (§B.7, folded by default).
+                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
+    }
+
+    /// A '+''s tooltip: the click, then each drag it really offers here.
+    private func plusHelp(_ z: SynopticLayout.InsertZone) -> String {
+        let offered = SynopticPlusPresentation.offered(z.allowedGestures, key: z.key, availability)
+        var lines = [L("synoptic.addPluginSeries")]
+        if offered.contains(.gain) || offered.contains(.gainPanMute) { lines.append(L("synoptic.plus.help.gain")) }
+        if offered.contains(.branch) { lines.append(L("synoptic.plus.help.branch")) }
+        if offered.contains(.send) { lines.append(L("synoptic.plus.help.send")) }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Where the marquee may not start: what has a gesture of its own there.
+    private func marqueeBlockers(_ d: SynopticLayout.Diagram) -> [CGRect] {
+        var r = d.placement.fxBlocks.map(\.headerRect)
+        r += d.sendCards.map(\.frame)
+        r += d.placement.inserts.map(\.plusRect)
+        if let p = d.postFaderPlus { r.append(p.plusRect) }
+        r += d.sendCards.map { SendWire.handleRect(of: $0, rank: SendWire.rank(of: $0, in: d.sendCards)) }
+        return r
+    }
+
+    /// A plugin card of the chain. A GAIN STAGE (§B.4) is laid by the same view (its face is the card's,
+    /// @see SynopticPlugin.gainStage) but has no editor to open, and no bypass (D2).
+    @ViewBuilder
+    private func pluginCard(_ c: SynopticLayout.CardPlacement, cards: [SynopticLayout.CardPlacement]) -> some View {
+        let isStage = c.plugin.gainStage != nil
+        SynopticCardView(
+            plugin: c.plugin,
+            isSelected: selection.contains(c.plugin.id),
+            onSelect: { clickCard(c.plugin.id, cards: cards) },
+            onOpenEditor: isStage ? nil : actions.onOpenEditor.map { _ in { openEditorFromCard(c.plugin.id) } },
+            onToggleBypass: { if !isStage { actions.onToggleBypass(c.plugin.id) } },
+            onRemove: { actions.onRemove(c.plugin.id) },
+            dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
+            dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
+            dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
+            onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
+            onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
+            onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
+            onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
+            linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
+            sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id),
+            // A gain stage's faces read and write their values through the bound view (@see
+            // SynopticGainStageControls); a plugin card ignores it.
+            actions: actions
+        )
     }
 
     /// The FX link entries of the right-click menus: make a bin of the plugins in hand, or join one
@@ -801,8 +639,10 @@ struct SynopticView: View {
     @ViewBuilder
     private func midiZoneView(_ rect: CGRect, slot: CGRect?) -> some View {
         ZStack(alignment: .top) {
+            // OPAQUE: the zone straddles the object frame's top edge (§B.5), which must not show through.
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.accentColor.opacity(0.06))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
                 .frame(width: rect.width, height: rect.height)
@@ -872,13 +712,22 @@ struct SynopticView: View {
     }
 
     /// The 'audio file' zone at the head of the chain (an audio clip): speed / semitones / bpm.
-    private func audioFileZoneView(_ rect: CGRect, file: SynopticAudioFile) -> some View {
-        AudioFileZoneView(rect: rect, file: file, actions: actions)
+    private func audioFileZoneView(_ rect: CGRect, file: SynopticAudioFile, folded: Bool) -> some View {
+        AudioFileZoneView(rect: rect, file: file, actions: actions, folded: folded)
     }
 
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
 
     private func draw(_ ctx: GraphicsContext, diagram d: SynopticLayout.Diagram) {
+        // The object's FRAME (§B.5): its FILL here, UNDER everything; its line is laid ABOVE the head and the
+        // mixer (@see objectFrameLine), whose outer outline it is.
+        if let f = d.objectFrame {
+            let color = frameColor ?? Color.secondary
+            let path = Path(roundedRect: SynopticLayout.objectFrameStrokeRect(f),
+                            cornerRadius: SynopticLayout.objectFrameCorner)
+            ctx.fill(path, with: .color(color.opacity(0.10)))
+        }
+
         for s in d.placement.scopes.sorted(by: { $0.depth < $1.depth }) {
             let path = Path(roundedRect: s.rect, cornerRadius: 14)
             ctx.fill(path, with: .color(Color.gray.opacity(0.06 + Double(s.depth) * 0.05)))
@@ -927,2965 +776,183 @@ struct SynopticView: View {
                      with: .color(Color.secondary.opacity(0.8)))
         }
 
-        // The sends' wires: a branch leaves the trunk at the card's anchor, sideways, and arrives at the
-        // box's left edge, at its TOP — the first plugin's row, or the card itself when the send carries
-        // none (the main signal carries on down the trunk). Dashed: it is a TAP, not the
-        // flow. A refused send is dimmer.
-        for c in d.sendCards {
-            let from = CGPoint(x: c.anchor.x + SynopticLayout.plusW / 2 + 2, y: c.anchor.y)
-            let to = c.entry
-            var path = Path()
-            path.move(to: from)
-            let midX = (from.x + to.x) / 2
-            path.addCurve(to: to, control1: CGPoint(x: midX, y: from.y), control2: CGPoint(x: midX, y: to.y))
-            let live = c.send.enabled && c.send.refusal == nil
-            ctx.stroke(path, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
-                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [4, 3]))
-            var head = Path()
-            head.move(to: CGPoint(x: to.x - 6, y: to.y - 4))
-            head.addLine(to: to)
-            head.addLine(to: CGPoint(x: to.x - 6, y: to.y + 4))
-            ctx.stroke(head, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
-                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-            ctx.fill(Path(ellipseIn: CGRect(x: c.anchor.x - 2.5 + SynopticLayout.plusW / 2 + 2, y: c.anchor.y - 2.5, width: 5, height: 5)),
-                     with: .color((live ? Color.accentColor : Color.secondary).opacity(0.8)))
-        }
+        // The sends' wires (§B.6): from the tap point on the trunk, out to the LEFT of the frame, down the
+        // send's own gutter, in at the column's top and down it — the geometry and the stroke are lot L7's
+        // (@see SendWire.draw, asserted by tools/test_synoptic_send_wire.swift). The handle that moves a send
+        // is a view laid over this (@see SendTapDotView).
+        SendWire.draw(ctx, cards: d.sendCards)
     }
 }
 
-// MARK: - FX link block (header card and mix box)
+// MARK: - A '+' on the wire (§B.2): a click opens the browser, a drag asks for a gain, a branch or a send
 
-/// The card that straddles the top edge of a bin's block — a plugin card's sibling, built on
-/// `SynopticCardView`'s model: an opaque body with square-edged on/off at the left (the bin's common
-/// on/off), then the name (the drag handle: it moves the whole block; a double click renames it), the
-/// link badge (solid = follows the bin, hollow = detached; a click flips it), the ✕ and a thin level
-/// line under the name. The ✕ is a small menu rather than a delete, because a bin is shared: removing
-/// it from THIS object, leaving it while keeping the plugins, and dissolving it everywhere are three
-/// different gestures. The colour is the card's rim; there is no colour dot — "next colour" is in the
-/// right-click menu.
-struct FXBlockHeaderView: View {
-    let link: SynopticFXLink
-    let rect: CGRect
-    let pluginCount: Int
-    let actions: SynopticActions
-
-    @State private var renaming = false
-    @State private var draft = ""
-    @FocusState private var fieldFocused: Bool
-    @State private var dropTargeted = false
-    @State private var dropHintID = UUID()
-
-    private let toggleW: CGFloat = 26
-    private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
+/// The '+' itself: an OPAQUE disc laid over the wire. Its gesture is a `DragGesture(minimumDistance: 0)`
+/// so that the click (< 6 pt, @see SynopticPlusGesture.isClick) and the drags are ONE gesture, whose
+/// meaning is decided at the release by the layout. The view reports, it decides nothing.
+private struct SynopticPlusButton: View {
+    /// A drag is in flight from this '+'.
+    let active: Bool
+    let onChanged: (CGSize) -> Void
+    let onEnded: (CGSize) -> Void
 
     var body: some View {
-        HStack(spacing: 0) {
-            // on/off — a REAL button, full height, square edges (the bin's colour = on)
-            Button { actions.onFXToggleEnabled?(link.blockID) } label: {
-                ZStack {
-                    Rectangle().fill(link.isEnabled ? link.color : Color.secondary.opacity(0.18))
-                    Image(systemName: "power")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(link.isEnabled ? .white : .secondary)
-                }
-                .frame(width: toggleW)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("fxlink.help.power"))
-
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    if renaming {
-                        TextField(noLabel, text: $draft)
-                            .textFieldStyle(.plain)
-                            .font(Font(SynopticLayout.cardNameFont))
-                            .focused($fieldFocused)
-                            .onSubmit { commitRename() }
-                            .onExitCommand { renaming = false }
-                            .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text(link.name)
-                            .font(Font(SynopticLayout.cardNameFont))
-                            .foregroundStyle(link.isEnabled ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { beginRename() }
-                            .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } }) {
-                                FXBlockDragPreview(link: link, pluginCount: pluginCount)
-                            }
-                            .help(help)
-                    }
-
-                    // 🔗 — solid: follows the bin; hollow: detached. A click flips it. The same badge
-                    // (size and look) as a plugin card's.
-                    Button { actions.onFXToggleDetach?(link.blockID) } label: {
-                        Image(systemName: "link")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(link.isDetached ? link.color.opacity(0.8) : .white)
-                            .padding(3)
-                            .background {
-                                if link.isDetached {
-                                    Circle().strokeBorder(link.color.opacity(0.55), lineWidth: 1.5)
-                                } else {
-                                    Circle().fill(link.color)
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .help(link.isDetached ? L("fxlink.help.detached") : L("fxlink.help.attached"))
-
-                    // ✕ — a small menu: remove from this object / leave and keep the plugins / dissolve.
-                    Menu {
-                        Button(L("fxlink.menu.remove")) { actions.onFXRemove?(link.blockID) }
-                        Button(L("fxlink.menu.release")) { actions.onFXRelease?(link.blockID) }
-                        Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 12, height: 14)
-                            .contentShape(Rectangle())
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help(L("fxlink.help.close"))
-                }
-
-                Spacer(minLength: 0)
-
-                // A thin level line under the name, like a card's — the track only for now: the bin has
-                // no level of its own to read yet.
-                Capsule()
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(height: 2)
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 5)
-            .padding(.bottom, 4)
-        }
-        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-        .background(Color(nsColor: .controlBackgroundColor))   // OPAQUE: it straddles the body's edge
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(link.color.opacity(link.isDetached ? 0.6 : 1), lineWidth: 1.5)
-        )
-        // A bin that is OFF reads like a card of a disabled container: greyed and dimmed.
-        .saturation(link.isEnabled ? 1 : 0.25)
-        .opacity(link.isEnabled ? 1 : 0.6)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        // A plugin let go on the header goes to the END of the bin; a place where nothing would happen
-        // does not light up (@see PluginDropDelegate). The drop layer is a SIBLING behind the content,
-        // like the cards': the name carrying the `.onDrag` is a descendant of this view.
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
-        )
-        .background(dropLayer)
-        .contextMenu { menuItems }
-    }
-
-    @ViewBuilder private var dropLayer: some View {
-        if let onDrop = actions.onDrop {
-            let target = SynopticDropTarget.blockEnd(link.blockID)
-            Color.clear
-                .contentShape(Rectangle())
-                .onDrop(of: [.plainText],
-                        delegate: PluginDropDelegate(isTargeted: $dropTargeted,
-                                                     hintKey: "header:\(dropHintID.uuidString)",
-                                                     outcome: { actions.dropOutcome?(target, $0) },
-                                                     onDrop: { payload, flags in onDrop(target, payload, flags) }))
-        }
-    }
-
-    @ViewBuilder private var menuItems: some View {
-        Button(L("fxlink.menu.rename")) { beginRename() }
-        Button(L("fxlink.menu.next_color")) { actions.onFXCycleColor?(link.blockID) }
-        Button(link.isDetached ? L("fxlink.menu.reattach") : L("fxlink.menu.detach")) {
-            actions.onFXToggleDetach?(link.blockID)
-        }
-        Divider()
-        Button(L("fxlink.menu.release")) { actions.onFXRelease?(link.blockID) }
-        Button(L("fxlink.menu.remove")) { actions.onFXRemove?(link.blockID) }
-        Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
-    }
-
-    private func beginRename() {
-        draft = link.name
-        renaming = true
-        fieldFocused = true
-    }
-
-    private func commitRename() {
-        guard renaming else { return }
-        renaming = false
-        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty, name != link.name { actions.onFXRename?(link.blockID, name) }
+        let tint = active ? Color.accentColor : Color.secondary
+        Image(systemName: "plus")
+            .font(.system(size: 10, weight: active ? .bold : .regular))
+            .foregroundStyle(tint)
+            .frame(width: SynopticLayout.plusW, height: SynopticLayout.plusW)
+            .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(Circle().strokeBorder(active ? tint : tint.opacity(0.6),
+                                           style: StrokeStyle(lineWidth: 1, dash: active ? [] : [2, 2])))
+            .contentShape(Circle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { onChanged($0.translation) }
+                .onEnded { onEnded($0.translation) })
     }
 }
 
-/// The image under the pointer while a bin's block is dragged by its header: its name, its colour and
-/// how many plugins it carries. Same constraint as `PluginDragPreview` — rendered outside the view
-/// hierarchy, so explicit colours throughout.
-struct FXBlockDragPreview: View {
-    let link: SynopticFXLink
-    let pluginCount: Int
+/// What a drag out of a '+' would make if the hand let go here: a dashed line from the '+' to the pointer,
+/// and beside the pointer a ghost card naming the result — or "not here" (§B.2). Pure display.
+private struct SynopticPlusGhostView: View {
+    let from: CGPoint
+    let translation: CGSize
+    let ghost: SynopticPlusGhost
 
-    private var width: CGFloat { SynopticLayout.fxHeaderW(name: link.name) }
-
-    var body: some View {
-        VStack(spacing: 1) {
-            Text(link.name)
-                .font(Font(SynopticLayout.cardNameFont))
-                .foregroundStyle(Color.primary)
-                .lineLimit(1)
-            Text(Ln("fxlink.drag.plugins", pluginCount, pluginCount))
-                .font(.system(size: 10))
-                .foregroundStyle(Color.secondary)
-        }
-        .padding(.horizontal, 10)
-        .frame(width: width, height: SynopticLayout.fxHeaderCardH)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(link.color, lineWidth: 1.5))
-    }
-}
-
-/// The bin's OUTPUT SECTION, as a rounded box nested at the foot of its block — pan · volume · mute,
-/// left to right, in the order and the style of the 'clip' zone (@see ClipMixZoneView) but with no title:
-/// the box has nothing to name, the block already does. While the block follows the bin these are the
-/// bin's (every member moves together); once detached they are the block's own. The wire stops at the
-/// box's head and starts again at its foot, so the controls sit on a plain background.
-struct FXBlockMixView: View {
-    let link: SynopticFXLink
-    let block: SynopticLayout.FXBlockPlacement
-    let actions: SynopticActions
-
-    private func panLabel(_ p: Double) -> String {
-        if abs(p) < 0.01 { return "C" }
-        return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
-    }
-
-    /// A slot's centre in the box's own coordinates.
-    private func local(_ slot: CGRect) -> CGPoint {
-        CGPoint(x: slot.midX - block.mixRect.minX, y: slot.midY - block.mixRect.minY)
-    }
+    private static let labelH: CGFloat = SynopticLayout.cardH - 6
 
     var body: some View {
+        let to = CGPoint(x: from.x + translation.width, y: from.y + translation.height)
+        let valid = ghost != .notHere
+        let tint = valid ? Color.accentColor : Color.secondary
         ZStack(alignment: .topLeading) {
-            // Flush with the body's bottom edge: the bottom corners are the body's own radius.
-            UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
-                                   bottomLeadingRadius: SynopticLayout.fxBodyCorner,
-                                   bottomTrailingRadius: SynopticLayout.fxBodyCorner,
-                                   topTrailingRadius: SynopticLayout.fxMixTopCorner)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
-                                                bottomLeadingRadius: SynopticLayout.fxBodyCorner,
-                                                bottomTrailingRadius: SynopticLayout.fxBodyCorner,
-                                                topTrailingRadius: SynopticLayout.fxMixTopCorner)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-
-            DragValueBox(value: Double(link.pan),
-                         format: { panLabel($0) },
-                         range: -1...1, pointsPerStep: 80, snap: false, width: block.panSlot.width,
-                         keyStep: 0.1,
-                         parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
-                         help: L("help.drag.pan"),
-                         onBegin: { actions.onFXBeginEdit?() },
-                         onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
-                         onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
-                .position(local(block.panSlot))
-
-            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
-                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
-                actions.onFXSetGain?(link.blockID, newDB)
-            }
-            .position(local(block.volumeSlot))
-
-            muteButton
-                .position(local(block.muteSlot))
-        }
-        .frame(width: block.mixRect.width, height: block.mixRect.height)
-        .opacity(link.isEnabled ? 1 : 0.5)
-    }
-
-    /// The same button as the 'clip' zone's (@see ClipMixZoneView.muteButton).
-    private var muteButton: some View {
-        Button {
-            actions.onFXBeginEdit?()
-            actions.onFXToggleMute?(link.blockID)
-        } label: {
-            Image(systemName: link.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(link.muted ? Color.red : Color.secondary)
-                .frame(width: block.muteSlot.width, height: block.muteSlot.height)
-                .background(RoundedRectangle(cornerRadius: 4)
-                    .fill(link.muted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder((link.muted ? Color.red : Color.secondary).opacity(0.45)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L("common.mute"))
-    }
-}
-
-// MARK: - Plugin card
-
-struct SynopticCardView: View {
-    let plugin: SynopticPlugin
-    let isSelected: Bool
-    let onSelect: () -> Void
-    var onOpenEditor: (() -> Void)? = nil
-    let onToggleBypass: () -> Void
-    let onRemove: () -> Void
-    var dragProvider: (() -> NSItemProvider)? = nil
-    /// How many plugins this drag actually carries — the same count `dragProvider`'s own payload
-    /// carries (a card taken FROM the selection drags the whole selection, one taken from outside
-    /// drags itself alone), so the preview's "+N-1" badge never disagrees with what a drop receives.
-    var dragCount: Int = 1
-    /// What a release on this card would do, for the cursor and the band (@see PluginDropOutcome).
-    var dropOutcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
-    /// Dropping ANOTHER plugin on this card (the branch's axis): the payload and the modifiers held at the
-    /// release. nil = the card does not receive (the demo).
-    var onDropPlugin: ((_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
-    /// A send card let go on this card (just before it, in its series).
-    var onDropSend: ((_ payload: SendDragPayload) -> Void)? = nil
-    /// Unlinks this instance from its group (nil = the card cannot be driven, e.g. the demo).
-    var onUnlink: (() -> Void)? = nil
-    var onRelink: (() -> Void)? = nil
-    /// The number of linked instances (for the tooltip). 0 if unlinked.
-    var linkSiblingCount: Int = 0
-    /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
-    var sidechainBadge: SidechainBadge? = nil
-
-    @State private var dropTargeted = false
-    @State private var dropHintID = UUID()
-
-    /// nil = sized on its own name (@see SynopticLayout.cardWidth); the MIDI zone's instrument
-    /// slot passes its fixed width.
-    var width: CGFloat? = nil
-    /// Non-nil = this card is the ARA SOURCE of the object (Melodyne), not an FX: the SAME card as any
-    /// plugin's (on/off column, name, ✕, VU line), minus what a source has no business with — no link, no
-    /// drag, no selection, nothing dropped on it — plus an "ARA" tag and, while the plugin analyses the
-    /// audio, a spinner. The power button switches the source off WITHOUT losing its retouches (the
-    /// object then plays its dry file; @see `EditViewModel.setARAEnabled`); the ✕ takes the source off for
-    /// good. The VU line is the one every card has: a plugin's level, still 0 for a source.
-    var ara: SynopticARA? = nil
-    private var isARA: Bool { ara != nil }
-    private var cardW: CGFloat { width ?? SynopticLayout.cardWidth(for: plugin) }
-    private let cardH = SynopticLayout.cardH
-
-    private let toggleW: CGFloat = 26
-
-    private var linkHelp: String {
-        // `linkSiblings` already excludes the plugin itself: that count IS the others'.
-        let others = linkSiblingCount
-        if plugin.isLinked {
-            return others > 0
-                ? L("synoptic.link.linkedWithOthers", others)
-                : L("synoptic.link.linked")
-        }
-        return others > 0
-            ? L("synoptic.link.unlinkedWithOthers", others)
-            : L("synoptic.link.unlinked")
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            // on/off — a REAL button, full height, square edges (the identity colour = active)
-            Button(action: onToggleBypass) {
-                ZStack {
-                    Rectangle()
-                        .fill(plugin.isEnabled ? plugin.color : Color.secondary.opacity(0.18))
-                    Image(systemName: "power")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(plugin.isEnabled ? .white : .secondary)
-                }
-                .frame(width: toggleW)
-                .frame(maxHeight: .infinity)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isARA ? L("synoptic.ara.bypass") : L("synoptic.bypass"))
-
-            // Content: NAME (the drag area) · ✕  +  a thin VU meter
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    // NAME — the ONLY drag area (reorder / move) plus a double click for the editor
-                    Text(plugin.name)
-                        .font(Font(SynopticLayout.cardNameFont))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(plugin.isEnabled ? .primary : .secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { (onOpenEditor ?? onSelect)() }
-                        .onDragIf(dragProvider) {
-                            PluginDragPreview(plugin: plugin, dragCount: dragCount)
-                        }
-                        .help(isARA ? L("synoptic.ara.open") : L("synoptic.openPlugin"))
-
-                    // 🔗 — the link toggle. Linked: a solid badge, tinted by the group's colour.
-                    // DETACHED: the badge REMAINS, hollow and in the same tint — the group left is
-                    // therefore recognisable by eye, and a click takes it back (@see relinkPlugin).
-                    // Never inside a bin's block: the block's header carries the link.
-                    if plugin.showsLinkBadge {
-                        Button(action: { plugin.isLinked ? onUnlink?() : onRelink?() }) {
-                            Image(systemName: "link")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(plugin.isLinked ? .white : plugin.color.opacity(0.8))
-                                .padding(3)
-                                .background {
-                                    if plugin.isLinked {
-                                        Circle().fill(plugin.color)
-                                    } else {
-                                        Circle().strokeBorder(plugin.color.opacity(0.55), lineWidth: 1.5)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .help(linkHelp)
-                    }
-
-                    // Melodyne is still reading the audio: the editor will open once it is done.
-                    if let ara, ara.analysing {
-                        ProgressView().controlSize(.mini)
-                            .help(L("synoptic.ara.analysing"))
-                    }
-
-                    // ✕ — remove the fx (always visible)
-                    Button(action: onRemove) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help(isARA ? L("synoptic.ara.remove") : L("synoptic.removePlugin"))
-                }
-
-                Spacer(minLength: 0)
-
-                // VU meter: a very thin horizontal line, right at the bottom
-                Capsule()
-                    .fill(Color.secondary.opacity(0.2))
-                    .frame(height: 2)
-                    .overlay(alignment: .leading) {
-                        GeometryReader { g in
-                            Capsule().fill(Color.green)
-                                .frame(width: max(0, g.size.width * plugin.vu))
-                        }
-                    }
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 5)
-            .padding(.bottom, 4)
-        }
-        .frame(width: cardW, height: cardH, alignment: .topLeading)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        // The halo = the instance's identity colour, always visible (not only when linked): it is
-        // what allows finding an open plugin's card at a glance. Linked → a thicker line plus a glow,
-        // so as to tell 'this group moves together' from plain identity.
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : plugin.color.opacity(plugin.showsLinkedStyle ? 1 : 0.7),
-                              lineWidth: isSelected ? 2 : (plugin.showsLinkedStyle ? 2 : 1))
-        )
-        .shadow(color: plugin.showsLinkedStyle ? plugin.color.opacity(0.6) : .clear,
-                radius: plugin.showsLinkedStyle ? 5 : 0)
-        .opacity(plugin.isEnabled ? 1 : 0.5)
-        // A card of a bin that is switched OFF: its own state (on / off) and its identity colours
-        // stay, but the whole card is greyed and dimmed — the look of a state inherited from a
-        // disabled container. A plugin that is itself off is already at half opacity with a grey
-        // button, so the two remain tellable apart: on-and-greyed keeps a filled button.
-        .saturation(plugin.greyedByBlock ? 0.25 : 1)
-        .opacity(plugin.greyedByBlock ? 0.6 : 1)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture { onSelect() }
-        // Highlighted when a plugin card hovers this card (the axis accepts the drop).
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.accentColor, lineWidth: dropTargeted ? 2 : 0)
-        )
-        // Dropping a plugin ONTO the card (a branch's axis): reorders/moves/copies into this
-        // branch, without having to aim at the small '+'. ⌥ = a copy.
-        //
-        // The `.onDrop` is laid on a `.background` layer (a SIBLING layer, behind the content) and
-        // NOT on the card itself: the card is the ANCESTOR of the `Text` carrying the `.onDrag`, and
-        // macOS does not deliver a drop to an ancestor of a drag source — which is why the '+'
-        // (with no descendant source) received drops but the axis did not. The background steals no
-        // click from the buttons (bypass / ✕ / link), which stay above it.
-        .background(dropLayer)
-        // The sidechain key, OUTSIDE the card: a small tag hanging above its top-left corner, in the
-        // gap of the series (the wire arrives at the card's centre). Orange when the key is refused.
-        .overlay(alignment: .topLeading) {
-            if let badge = sidechainBadge {
-                HStack(spacing: 3) {
-                    Image(systemName: "waveform.path")
-                        .font(.system(size: 8, weight: .bold))
-                    Text(verbatim: badge.text)
-                        .font(.system(size: 9, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-                .foregroundStyle(badge.active ? plugin.color : Color.orange)
-                .padding(.horizontal, 5)
-                .frame(height: 13)
-                .frame(maxWidth: cardW / 2 - 8, alignment: .leading)
-                .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
-                .overlay(Capsule().strokeBorder((badge.active ? plugin.color : Color.orange).opacity(0.6), lineWidth: 1))
-                .fixedSize(horizontal: false, vertical: true)
-                .offset(x: 4, y: -15)
-                .help(badge.text)
-            }
-        }
-        // The ARA source's tag: the sidechain's capsule, in the same spot above the top-left corner.
-        .overlay(alignment: .topLeading) {
-            if isARA {
-                Text(verbatim: "ARA")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(plugin.color)
-                    .padding(.horizontal, 5)
-                    .frame(height: 13)
-                    .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
-                    .overlay(Capsule().strokeBorder(plugin.color.opacity(0.6), lineWidth: 1))
+            if ghost != .none {
+                Path { p in p.move(to: from); p.addLine(to: to) }
+                    .stroke(tint.opacity(0.7), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [3, 3]))
+                label(tint: tint, valid: valid)
                     .fixedSize()
-                    .offset(x: 4, y: -15)
-                    .help(L("synoptic.ara.source"))
+                    // Left-aligned on the pointer, a little to its right: the hand never covers it. An
+                    // OFFSET (the label's height is fixed), which does not move the stack's own bounds.
+                    .offset(x: to.x + 10, y: to.y - Self.labelH / 2)
             }
         }
     }
 
-    @ViewBuilder private var dropLayer: some View {
-        if let onDropPlugin {
-            Color.clear
-                .contentShape(Rectangle())
-                .onDrop(of: [.plainText],
-                        delegate: PluginDropDelegate(isTargeted: $dropTargeted,
-                                                     hintKey: "card:\(dropHintID.uuidString)",
-                                                     outcome: dropOutcome,
-                                                     onDrop: onDropPlugin,
-                                                     onSendDrop: onDropSend))
-        }
-    }
-}
-
-/// The image AppKit shows under the pointer while a plugin card is being dragged, in place of its
-/// default "grabbed view" snapshot — the bare name cropped to its own label frame, which said
-/// nothing about what letting go does. Rendered OUTSIDE the view hierarchy (AppKit snapshots it
-/// once, off to the side), hence explicit colours throughout rather than anything that leans on
-/// an ancestor's environment.
-struct PluginDragPreview: View {
-    let plugin: SynopticPlugin
-    var dragCount: Int = 1
-
-    /// The size of the card being carried (its name whole, @see SynopticLayout.cardWidth),
-    /// nothing more — the modifiers are explained by the band at the bottom of the timeline.
-    private var width: CGFloat { SynopticLayout.cardWidth(for: plugin) }
-    /// Shared with the drop targets' link badge, which must be laid OUTSIDE this card: the drag
-    /// image is drawn by the system above every window, so nothing of ours can sit on top of it.
-    static let height: CGFloat = 32
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(plugin.color, lineWidth: 1.5)
-                )
-
-            Text(plugin.name)
-                .font(Font(SynopticLayout.cardNameFont))
-                .foregroundStyle(Color.primary)
-                .lineLimit(1)
-                .padding(.horizontal, dragCount > 1 ? 30 : 10)   // symmetric: clear of the +N-1 badge, still centred
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-            if dragCount > 1 {
-                Text(verbatim: "+\(dragCount - 1)")   // the OTHER plugins carried along, not N copies of this one
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Color.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(plugin.color))
-                    .padding(6)
-            }
-        }
-        .frame(width: width, height: Self.height)
-    }
-}
-
-/// A drop target covering the CABLE of a branch/series (a band rendered UNDER the cards):
-/// dropping a plugin on the axis inserts it into that branch — an EMPTY parallel branch
-/// included. A discreet highlight on hover. `onDrop` closes over the zone's (seriesID, insertIndex).
-struct CableDropView: View {
-    let rect: CGRect          // the DETECTION zone (wide, transparent)
-    let previewFrame: CGRect  // the PREVIEW shown on hover (card-sized, on the cable)
-    /// What a release here would do, for the cursor and the band (@see PluginDropOutcome).
-    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
-    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
-    /// A send card let go on this cable (nil = ignored).
-    var onSendDrop: ((_ payload: SendDragPayload) -> Void)? = nil
-    @State private var targeted = false
-    @State private var dropHintID = UUID()
-
-    var body: some View {
-        // The target covers the whole `rect` (easy to aim at) but stays invisible; only a
-        // card-sized rectangle, laid on the cable at `previewFrame`, lights up on hover —
-        // a preview of exactly where the plugin will land.
-        Color.clear
-            .frame(width: rect.width, height: rect.height)
-            .contentShape(Rectangle())
-            .onDrop(of: [.plainText],
-                    delegate: PluginDropDelegate(isTargeted: $targeted,
-                                                 hintKey: "cable:\(dropHintID.uuidString)",
-                                                 outcome: outcome,
-                                                 onDrop: onDrop,
-                                                 onSendDrop: onSendDrop))
-            .overlay(alignment: .topLeading) {
-                if targeted {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .overlay(RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.accentColor, lineWidth: 2))
-                        .frame(width: previewFrame.width, height: previewFrame.height)
-                        .offset(x: previewFrame.minX - rect.minX,
-                                y: previewFrame.minY - rect.minY)
-                }
-            }
-            .position(x: rect.midX, y: rect.midY)
-    }
-}
-
-/// A fixed slot of the sends as a drop target: invisible, a send card let go in the band takes that
-/// position. Only a send card is received (a plugin dropped here is refused by the cursor: the band
-/// across the trunk is for sends). The preview is a card-sized rectangle at the slot's anchor.
-struct SendSlotDropView: View {
-    let zone: SynopticLayout.SendSlotDrop
-    var outcome: () -> PluginDropOutcome? = { nil }
-    let onSendDrop: (_ payload: SendDragPayload) -> Void
-    @State private var targeted = false
-    @State private var dropHintID = UUID()
-
-    var body: some View {
-        Color.clear
-            .frame(width: zone.rect.width, height: zone.rect.height)
-            .contentShape(Rectangle())
-            .onDrop(of: [.plainText],
-                    delegate: PluginDropDelegate(isTargeted: $targeted,
-                                                 hintKey: "sendslot:\(dropHintID.uuidString)",
-                                                 outcome: { _ in outcome() },
-                                                 onDrop: { _, _ in },
-                                                 onSendDrop: onSendDrop))
-            .overlay(alignment: .topLeading) {
-                if targeted {
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color.accentColor.opacity(0.12))
-                        .overlay(RoundedRectangle(cornerRadius: 7)
-                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [4, 3])))
-                        .frame(width: zone.previewFrame.width, height: zone.previewFrame.height)
-                        .offset(x: zone.previewFrame.minX - zone.rect.minX,
-                                y: zone.previewFrame.minY - zone.rect.minY)
-                }
-            }
-            .position(x: zone.rect.midX, y: zone.rect.midY)
-    }
-}
-
-/// Reliable delivery of a plugin drop (on a card's axis, on a branch's cable or on a bin's header). We go
-/// through a `DropDelegate` — for the card, laid on a `.background` layer, because an `.onDrop` laid on
-/// an ANCESTOR of an `.onDrag` view is not delivered by macOS.
-///
-/// The CURSOR and the band say what a release would do NOW: `outcome` asks the resolver
-/// (@see EditViewModel.pluginDropOutcome) about the drag in flight (@see PluginDragSession), which is the
-/// only way a target can answer "forbidden" before the hand lets go. A forbidden place does not light up,
-/// does not show the band and shows the refusing cursor. With no drag in flight to read (nil) the legacy
-/// reading holds: ⌥ copies, anything else moves.
-struct PluginDropDelegate: DropDelegate {
-    let isTargeted: Binding<Bool>
-    /// This target's key for the band at the bottom of the timeline (@see PluginDropHint):
-    /// one per card / cable, since neighbours overlap their enter and exit.
-    let hintKey: String
-    var outcome: (_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome? = { _ in nil }
-    let onDrop: (_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
-    /// A SEND card let go here (it does not decode as a plugin payload). nil = this target ignores it.
-    var onSendDrop: ((_ payload: SendDragPayload) -> Void)? = nil
-
-    private func carriesPlugin(_ info: DropInfo) -> Bool {
-        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
-    }
-
-    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
-
-    /// Reads the drag in flight: lights the target and speaks on the band when the release would DO
-    /// something, withdraws both when it would not. Returns the cursor's proposal.
-    private func present() -> DropProposal {
-        let flags = NSEvent.modifierFlags
-        guard let o = outcome(flags) else {
-            isTargeted.wrappedValue = true
-            PluginDropHint.shared.present(hintKey, context: .sameChain)
-            return DropProposal(operation: flags.contains(.option) ? .copy : .move)
-        }
-        guard let ctx = o.hintContext(plainContext: .sameChain) else {
-            isTargeted.wrappedValue = false
-            PluginDropHint.shared.leave(hintKey)
-            return DropProposal(operation: .forbidden)
-        }
-        // A refused send speaks on the band (why) but does not light the target.
-        isTargeted.wrappedValue = !o.isRefusal
-        PluginDropHint.shared.present(hintKey, context: ctx)
-        return DropProposal(operation: o.operation)
-    }
-
-    func dropEntered(info: DropInfo) {
-        guard carriesPlugin(info) else { return }
-        _ = present()
-    }
-    func dropExited(info: DropInfo) {
-        isTargeted.wrappedValue = false
-        PluginDropHint.shared.leave(hintKey)
-    }
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard carriesPlugin(info) else {
-            isTargeted.wrappedValue = false
-            PluginDropHint.shared.leave(hintKey)
-            return DropProposal(operation: .forbidden)
-        }
-        return present()
-    }
-    func performDrop(info: DropInfo) -> Bool {
-        isTargeted.wrappedValue = false
-        PluginDropHint.shared.leave(hintKey)
-        guard let p = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries) else { return false }
-        // The modifiers are read NOW: the provider answers later, when the hand has let go of them.
-        let flags = NSEvent.modifierFlags
-        PluginDragSession.shared.end()
-        SendDragSession.shared.end()
-        let onSendDrop = self.onSendDrop
-        p.loadDataRepresentation(forTypeIdentifier: UTType.plainText.identifier) { data, _ in
-            guard let data else { return }
-            if let payload = try? JSONDecoder().decode(PluginDragPayload.self, from: data) {
-                DispatchQueue.main.async { onDrop(payload, flags) }
-            } else if let send = try? JSONDecoder().decode(SendDragPayload.self, from: data) {
-                DispatchQueue.main.async { onSendDrop?(send) }
-            }
-        }
-        return true
-    }
-}
-
-// MARK: - Parallel branch button (discreet: translucent at rest, sharp on hover)
-
-struct ParallelBranchButton: View {
-    let enabled: Bool
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            ParallelBranchGlyph(color: .secondary)
-                .frame(width: 11, height: 15)
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Color.secondary.opacity(hovering && enabled ? 0.5 : 0),
-                                      style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 5))
-                .opacity(enabled ? (hovering ? 1 : 0.3) : 0.18)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .onHover { hovering = $0 }
-        .help(L("synoptic.newBranch"))
-    }
-}
-
-// MARK: - The parallel branch icon (a vertical 'Y': a trunk splitting into two downward arrows)
-
-struct ParallelBranchGlyph: View {
-    var color: Color = .secondary
-
-    var body: some View {
-        Canvas { ctx, size in
-            let w = size.width, h = size.height
-            let cx = w / 2
-            let ty: CGFloat = 1.5          // the trunk's input (top)
-            let fy = h * 0.42             // the fork point
-            let by = h - 2.5             // the arrowheads (bottom)
-            let xLeft = w * 0.16, xRight = w * 0.84
-            let fork = CGPoint(x: cx, y: fy)
-
-            var p = Path()
-            p.move(to: CGPoint(x: cx, y: ty)); p.addLine(to: fork)         // the trunk
-            p.move(to: fork); p.addLine(to: CGPoint(x: xLeft, y: by))      // the left branch
-            p.move(to: fork); p.addLine(to: CGPoint(x: xRight, y: by))     // the right branch
-            ctx.stroke(p, with: .color(color),
-                       style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-
-            // An arrowhead at the end of each branch.
-            let ah: CGFloat = 4
-            for tip in [CGPoint(x: xLeft, y: by), CGPoint(x: xRight, y: by)] {
-                let dx = tip.x - fork.x, dy = tip.y - fork.y
-                let len = max(0.001, (dx * dx + dy * dy).squareRoot())
-                let ux = dx / len, uy = dy / len      // the branch's direction
-                let px = -uy, py = ux                 // the perpendicular
-                var head = Path()
-                head.move(to: CGPoint(x: tip.x - ux * ah + px * ah * 0.6, y: tip.y - uy * ah + py * ah * 0.6))
-                head.addLine(to: tip)
-                head.addLine(to: CGPoint(x: tip.x - ux * ah - px * ah * 0.6, y: tip.y - uy * ah - py * ah * 0.6))
-                ctx.stroke(head, with: .color(color),
-                           style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-            }
-        }
-    }
-}
-
-// MARK: - dB gain control (a parallel branch, or the start/end of the chain)
-
-/// A small dB readout: dragging ↑/↓ adjusts in 1 dB steps (without recompiling), double click = 0 dB.
-struct GainDbControl: View {
-    let dB: Float
-    var minDb: Float = -24
-    var maxDb: Float = 12
-    var unit: String = "dB"              // the unit shown next to the value
-    var muted: Bool? = nil               // nil = no mute button (parallel branches)
-    var onToggleMute: (() -> Void)? = nil
-    var onTouch: (() -> Void)? = nil     // called on TOUCH (click/drag/keyboard), before any change
-    var onBegin: (() -> Void)? = nil     // called at the start of a drag (to push an undo point, say)
-    let onChange: (Float) -> Void
-
-    private var label: String { dB == 0 ? "0 \(unit)" : String(format: "%+.0f \(unit)", dB) }
-    private var isMuted: Bool { muted == true }
-
-    var body: some View {
-        HStack(spacing: 3) {
-            // Mute — on chain gains only, to the left of the value.
-            if let muted, let onToggleMute {
-                Button(action: onToggleMute) {
-                    Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(muted ? Color.red : Color.secondary)
-                        .frame(width: 16, height: 16)
-                        .background(RoundedRectangle(cornerRadius: 4)
-                            .fill(muted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
-                            .strokeBorder((muted ? Color.red : Color.secondary).opacity(0.45)))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(L("common.mute"))
-            }
-            gainReadout
-        }
-    }
-
-    private var gainReadout: some View {
-        // Reuses the value box (drag ↑/↓, click plus arrows, Delete = 0, direct typing).
-        DragValueBox(value: Double(dB),
-                     format: { _ in label },           // a signed label with its unit
-                     range: Double(minDb)...Double(maxDb),
-                     pointsPerStep: 6, snap: true, width: 46,
-                     keyStep: 1,
-                     help: L("help.drag.volume"),
-                     onTouch: onTouch,
-                     onBegin: onBegin,
-                     onChange: { onChange(Float($0)) },
-                     onReset: { onBegin?(); onChange(0) })   // the reset (double click/Delete) is undoable too
-            .opacity(isMuted ? 0.5 : 1)
-    }
-}
-
-// MARK: - Draggable value box ('gain' style: a value plus a unit, drag ↑/↓)
-
-/// A small box showing a formatted value. Editing:
-///  · dragging ↑/↓ adjusts (a step of 1 by default, ⌘ = fine adjustment);
-///  · a click then the ↑/↓ arrows = a `keyStep` step, Delete = reset;
-///  · a click then a digit = typing the value directly (Return commits, Esc cancels);
-///  · a double click = reset.
-/// Reused for speed / semitones / bpm / pan / gains.
-struct DragValueBox: View {
-    let value: Double
-    let format: (Double) -> String
-    var range: ClosedRange<Double>
-    var pointsPerStep: CGFloat = 6
-    /// true = rounds to the whole step (⌘ = fine); false = continuous (no snapping).
-    var snap: Bool = true
-    var width: CGFloat = 56
-    /// Not applied to the keyboard's ↑/↓ arrows.
-    var keyStep: Double = 1
-    /// ↑/↓ with ⌘ / with ⇧ (nil = same as `keyStep`). The tempo boxes: ⌘ ±0.1, ⇧ ±10.
-    var fineKeyStep: Double? = nil
-    var coarseKeyStep: Double? = nil
-    /// true = the box follows the length of what it shows (`width` becomes a minimum).
-    var fitsContent: Bool = false
-    /// Reads a direct keyboard entry (nil = refuse). By default: a plain number.
-    var parse: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
-    var help: String = ""
-    /// TOUCHING the control: a click, the start of a drag, or a keystroke — before any change,
-    /// and even if there is none. Distinct from `onBegin`, which pushes an undo point and must
-    /// therefore only run when a value really is about to change.
-    var onTouch: (() -> Void)? = nil
-    var onBegin: (() -> Void)? = nil
-    var onChange: (Double) -> Void
-    var onReset: (() -> Void)? = nil
-
-    @State private var start: Double? = nil
-    @State private var typing: String? = nil   // non-nil = direct keyboard entry under way
-    @FocusState private var focused: Bool       // the container (display mode: drag / arrows / digit)
-    @FocusState private var fieldFocused: Bool  // the TextField (typing mode)
-    /// This instance's identity for `KeyboardClaim`, stable for the view's whole lifetime —
-    /// distinct from `focused`/`fieldFocused`, which are SwiftUI's own and say nothing to the
-    /// AppKit-level monitor.
-    @State private var claimID = UUID()
-
-    private var isFocused: Bool { focused || fieldFocused }
-
-    private func clamp(_ v: Double) -> Double { min(max(v, range.lowerBound), range.upperBound) }
-
-    private func bump(_ delta: Double) { onTouch?(); onBegin?(); onChange(clamp(value + delta)) }
-
-    private func keyStep(for modifiers: EventModifiers) -> Double {
-        if modifiers.contains(.command), let f = fineKeyStep { return f }
-        if modifiers.contains(.shift), let c = coarseKeyStep { return c }
-        return keyStep
-    }
-
-    private static let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-
-    /// The box's width: fixed, or measured on the text shown (typing or value) when it fits content.
-    private var boxWidth: CGFloat {
-        guard fitsContent else { return width }
-        let text = typing ?? format(value)
-        let w = (text as NSString).size(withAttributes: [.font: Self.valueFont]).width
-        return max(width, ceil(w) + 12)
-    }
-
-    /// NSDeleteCharacter — what the ⌫ key actually TYPES on macOS.
-    private static let deleteCharacter: Character = "\u{7F}"
-
-    /// ⌫ / forward delete, read by CHARACTER and not by `KeyEquivalent` alone: the constant that
-    /// carries the name does not carry the key. `.delete` is U+0008 — the old backspace character
-    /// — while the ⌫ key types U+007F, so a `case .delete, .deleteForward` matched the FORWARD
-    /// delete and nothing else, and ⌫ fell through unconsumed. Same family as the ⌥+letter trap:
-    /// what a key MEANS and what it TYPES are two different questions.
-    /// (Kept out of the body: the view builder could no longer type-check it in reasonable time.)
-    private static func isResetKey(_ press: KeyPress) -> Bool {
-        if press.key == .delete || press.key == .deleteForward { return true }
-        return press.characters.first == deleteCharacter
-    }
-
-    /// Takes keyboard focus for THIS box. The crux of the 'digit → Search field' bug:
-    /// a search/filter field ('Search…' / 'Filter…') can keep AppKit's FIRST RESPONDER while
-    /// SwiftUI has given this box no more than visual focus. The global keyboard monitor
-    /// (TimelineKeyHandler) bails as soon as the first responder is an `NSTextView` → the digit
-    /// typed goes into that field instead of starting the entry here. So we take the first
-    /// responder away from it (window → the SwiftUI hosting view) so that the keystroke reaches
-    /// `onKeyPress`. A COMPULSORY passage for a plain click as for the start of a drag: so it is
-    /// here, and only once, that 'this control has just been touched' is reported.
-    private func grabKeyFocus() {
-        onTouch?()
-        focused = true
-        if let win = NSApp.keyWindow, let fr = win.firstResponder,
-           (fr is NSTextView || fr is NSTextField), fieldFocused == false {
-            win.makeFirstResponder(nil)
-        }
-    }
-
-    /// `refocus = false` when the caller is about to give the whole box's keyboard up right
-    /// after (@see the `KeyboardClaim.revocation` handler) — deferring `focused = true` there
-    /// would only have it undone a runloop hop later.
-    private func commitTyping(refocus: Bool = true) {
-        if let t = typing, let v = parse(t.trimmingCharacters(in: .whitespaces)) {
-            onBegin?(); onChange(clamp(v))
-        }
-        typing = nil
-        guard refocus else { return }
-        // Giving focus back to the container MUST be deferred: done synchronously, it races with the
-        // TextField being torn down (having just resigned) → the first responder shoots off to the
-        // window/nowhere and the ↑/↓ arrows stop working until the view is rebuilt. One runloop hop
-        // lets the TextField unmount first, then we refocus the container (drag/arrow mode).
-        DispatchQueue.main.async { focused = true }
-    }
-
-    private func cancelTyping() {
-        typing = nil
-        DispatchQueue.main.async { focused = true }
-    }
-
-    var body: some View {
-        Group {
-            if typing != nil {
-                TextField(noLabel, text: Binding(get: { typing ?? "" }, set: { typing = $0 }))
-                    .textFieldStyle(.plain)
-                    .multilineTextAlignment(.center)
-                    .focused($fieldFocused)
-                    .onSubmit { commitTyping() }
-                    .onExitCommand { cancelTyping() }
-            } else {
-                Text(format(value))
-            }
-        }
-        .font(.system(size: 10, weight: .medium)).monospacedDigit()
-        .foregroundStyle(.primary)
-        .frame(width: boxWidth, height: 18)
-        .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
-        .overlay(RoundedRectangle(cornerRadius: 4)
-            .strokeBorder((isFocused ? Color.accentColor : Color.secondary).opacity(isFocused ? 0.9 : 0.45),
-                          lineWidth: isFocused ? 1.5 : 1))
-        .contentShape(Rectangle())
-        // Always focusable (even while typing): otherwise, the instant `typing` becomes non-nil, the
-        // box would lose focus and — the TextField only being focused on the next runloop — the first
-        // responder would shoot off to the 'Search…' field. By staying focusable, the container holds
-        // the focus until the TextField takes it back.
-        .focusable()
-        .focused($focused)
-        // Claim the keyboard for THIS box for as long as it shows any focus (container or
-        // field), release it the instant neither does. The guard against the A/B race between
-        // two boxes' focus changes lives in `KeyboardClaim.release` itself.
-        .onChange(of: isFocused) { _, f in
-            if f { KeyboardClaim.shared.claim(.valueField(claimID)) }
-            else { KeyboardClaim.shared.release(.valueField(claimID)) }
-        }
-        // The timeline took the keyboard back (a click on the canvas, Escape…) with no `release`
-        // of ours ever called. "Partir, c'est valider": a typed-but-uncommitted entry is
-        // committed rather than dropped, then the box lets go of its own visual focus too.
-        .onChange(of: KeyboardClaim.shared.revocation) { _, _ in
-            if typing != nil { commitTyping(refocus: false) }
-            focused = false
-            fieldFocused = false
-        }
-        .onDisappear { KeyboardClaim.shared.release(.valueField(claimID)) }
-        .gesture(
-            DragGesture(minimumDistance: 2)
-                .onChanged { v in
-                    if start == nil { start = value; onBegin?(); grabKeyFocus() }
-                    let s = start ?? value
-                    let fine = NSEvent.modifierFlags.contains(.command)
-                    let raw = s - Double(v.translation.height) / Double(pointsPerStep)
-                    let val = (snap && !fine) ? raw.rounded() : raw
-                    onChange(clamp(val))
-                }
-                .onEnded { _ in start = nil }
-        )
-        .onTapGesture(count: 2) { onReset?() }
-        .onTapGesture { grabKeyFocus() }
-        .onKeyPress(phases: .down) { press in
-            guard typing == nil else { return .ignored }   // typing under way → leave it to the TextField
-            if Self.isResetKey(press) { onReset?(); return .handled }
-            switch press.key {
-            case .upArrow:   bump(keyStep(for: press.modifiers));  return .handled
-            case .downArrow: bump(-keyStep(for: press.modifiers)); return .handled
-            default:
-                guard let ch = press.characters.first,
-                      ch.isNumber || ch == "-" || ch == "." || ch == "," else {
-                    return .ignored
-                }
-                typing = String(ch)
-                DispatchQueue.main.async {
-                    fieldFocused = true
-                    // AppKit selects all of the field editor's text when it becomes
-                    // first responder programmatically. We put the cursor back at the end of
-                    // text so that the next digit is added instead of replacing.
-                    DispatchQueue.main.async {
-                        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
-                            editor.selectedRange = NSRange(location: editor.string.count, length: 0)
-                        }
-                    }
-                }
-                return .handled
-            }
-        }
-        .help(help)
-    }
-}
-
-// MARK: - The 'audio file' zone (an audio clip): speed / semitones / bpm
-
-struct AudioFileZoneView: View {
-    let rect: CGRect
-    let file: SynopticAudioFile
-    let actions: SynopticActions
-    @State private var bpmBaseText: String = ""
-    @FocusState private var baseFocused: Bool
-    /// Same fallback as `TransportView`'s tempo field, and for the same reason: ⌘↑/⌘↓ risk being
-    /// eaten by the text view's own "move to beginning/end of document" binding before
-    /// `onKeyPress` ever sees them.
-    @State private var baseCommandArrowMonitor: Any?
-
-    private static let baseBpmFont = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-    private static let baseBpmCharWidth: CGFloat =
-        ("0" as NSString).size(withAttributes: [.font: baseBpmFont]).width
-
-    private func baseBpmFieldWidth(for text: String) -> CGFloat {
-        let chars = max(2, text.count)
-        return CGFloat(chars) * Self.baseBpmCharWidth + 6
-    }
-
-    private func nudgeBaseBPM(by delta: Double) {
-        let current = file.baseBPM ?? 0
-        let next = TempoText.rounded(max(0.0001, current + delta))
-        actions.onSetBaseBPM?(next)
-    }
-
-    private func installBaseCommandArrowMonitorIfNeeded() {
-        guard baseCommandArrowMonitor == nil else { return }
-        baseCommandArrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard baseFocused, event.modifierFlags.contains(.command),
-                  event.keyCode == 125 || event.keyCode == 126 else { return event }
-            nudgeBaseBPM(by: event.keyCode == 126 ? 0.1 : -0.1)
-            return nil
-        }
-    }
-
-    private func removeBaseCommandArrowMonitor() {
-        if let m = baseCommandArrowMonitor { NSEvent.removeMonitor(m); baseCommandArrowMonitor = nil }
-    }
-
-    private var semis: Double { 12 * log2(max(1e-6, file.speedRatio)) }
-    private var targetBPM: Double? { file.baseBPM.map { $0 * file.speedRatio } }
-
-    private func stLabel(_ s: Double) -> String {
-        let r = s.rounded()
-        if abs(s - r) < 0.05 { return r == 0 ? "0 st" : String(format: "%+.0f st", r) }
-        return String(format: "%+.1f st", s)
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
-                    Text(L("synoptic.audioFile"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button { actions.onToggleLoop?() } label: {
-                        Text(L("synoptic.loop.label"))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(file.isLooping ? Color.white : Color.secondary.opacity((file.isReversed || file.ara != nil) ? 0.4 : 1))
-                            .padding(.horizontal, 6).frame(height: 16)
-                            .background(RoundedRectangle(cornerRadius: 4)
-                                .fill(file.isLooping ? Color.accentColor : Color.secondary.opacity(0.18)))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(Color.secondary.opacity(0.35)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(file.isReversed || file.ara != nil)
-                    // Looping is not handled in reverse yet: the source anchor is recomputed from the
-                    // length, which becomes unbounded precisely when looping (@see [[loop-item-plan]]).
-                    .help(file.ara != nil ? L("synoptic.ara.timeLocked")
-                          : file.isReversed ? L("synoptic.loop.unavailableReversed")
-                          : file.isLooping ? L("synoptic.loop.on")
-                          : L("synoptic.loop.off"))
-                    Button { actions.onToggleReverse?() } label: {
-                        Text(L("synoptic.reverse.label"))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(file.isReversed ? Color.white : Color.secondary)
-                            .padding(.horizontal, 6).frame(height: 16)
-                            .background(RoundedRectangle(cornerRadius: 4)
-                                .fill(file.isReversed ? Color.accentColor : Color.secondary.opacity(0.18)))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(Color.secondary.opacity(0.35)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(file.ara != nil && !file.isReversed)
-                    .opacity(file.ara != nil && !file.isReversed ? 0.4 : 1)
-                    .help(file.ara != nil && !file.isReversed ? L("synoptic.ara.timeLocked")
-                          : file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
-                }
-
-                // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
-                // SynopticLayout.audioZoneStereoExtraH).
-                if let current = file.channelMode {
-                    HStack(spacing: 4) {
-                        Text(L("inspector.channelMode.title"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1).fixedSize()
-                        ForEach(ChannelMode.allCases, id: \.self) { mode in
-                            Button { actions.onSetChannelMode?(mode) } label: {
-                                Text(channelModeLabel(mode))
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(current == mode ? Color.white : Color.secondary)
-                                    .padding(.horizontal, 6).frame(height: 16)
-                                    .background(RoundedRectangle(cornerRadius: 4)
-                                        .fill(current == mode ? Color.accentColor : Color.secondary.opacity(0.18)))
-                                    .overlay(RoundedRectangle(cornerRadius: 4)
-                                        .strokeBorder(Color.secondary.opacity(0.35)))
-                            }
-                            .buttonStyle(.plain)
-                            .help(channelModeHelp(mode))
-                        }
-                        Spacer(minLength: 0)
-                    }
-                }
-
-                // 1× / st / bpm on the same line (saving height).
-                HStack(spacing: 6) {
-                    DragValueBox(value: semis,
-                                 format: { String(format: "%.2f×", pow(2.0, $0 / 12.0)) },
-                                 range: -48...48, pointsPerStep: 6, snap: false, width: 52,
-                                 keyStep: 1,
-                                 parse: { Double($0.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "×", with: "").replacingOccurrences(of: "x", with: "")).map { 12 * log2(max(1e-6, $0)) } },
-                                 help: L("help.drag.speed"),
-                                 onBegin: { actions.onBeginSpeedEdit?() },
-                                 onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
-                                 onReset: { actions.onSetSpeed?(1.0) })
-                    DragValueBox(value: semis,
-                                 format: stLabel,
-                                 range: -48...48, pointsPerStep: 6, width: 48,
-                                 keyStep: 1,
-                                 help: L("help.drag.semitones"),
-                                 onBegin: { actions.onBeginSpeedEdit?() },
-                                 onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
-                                 onReset: { actions.onSetSpeed?(1.0) })
-
-                    Spacer(minLength: 0)
-
-                    TextField(text: $bpmBaseText) { Text(verbatim: "—") }
-                        .frame(width: baseBpmFieldWidth(for: bpmBaseText)).multilineTextAlignment(.center)
-                        .font(.system(size: 10, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 3).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
-                        .focused($baseFocused)
-                        .onSubmit { commitBase() }
-                        .onChange(of: baseFocused) { _, focused in
-                            if focused { installBaseCommandArrowMonitorIfNeeded() }
-                            else { removeBaseCommandArrowMonitor() }
-                        }
-                        .onDisappear { removeBaseCommandArrowMonitor() }
-                        .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                            let step: Double = press.modifiers.contains(.command) ? 0.1
-                                : press.modifiers.contains(.shift) ? 10
-                                : 1
-                            nudgeBaseBPM(by: press.key == .upArrow ? step : -step)
-                            return .handled
-                        }
-                        .help(L("synoptic.wavBPM"))
-
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 8)).foregroundStyle(.tertiary)
-
-                    if let base = file.baseBPM, base > 0 {
-                        // Same rules as the wav BPM field and the transport tempo: up to 4 decimals shown
-                        // only when needed, ',' or '.', ⌘↑/↓ ±0.1, ⇧ ±10, width follows the text.
-                        DragValueBox(value: targetBPM ?? base,
-                                     format: { TempoText.display(TempoText.rounded($0)) },
-                                     range: 20...400, pointsPerStep: 2, width: 38,
-                                     keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
-                                     fitsContent: true,
-                                     parse: { TempoText.parse($0) },
-                                     help: L("help.drag.bpm"),
-                                     onBegin: { actions.onBeginSpeedEdit?() },
-                                     onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) },
-                                     // ⌫ / double-click: back to the wav's own BPM (speed 1).
-                                     onReset: { actions.onBeginSpeedEdit?(); actions.onSetSpeed?(1.0) })
-                    } else {
-                        Text(verbatim: "—")
-                            .font(.system(size: 10, weight: .medium)).monospacedDigit()
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 38, height: 18)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)))
-                    }
-
-                    // Never squeezed: the two BPM fields widen with their text, and without this
-                    // the unit was what gave way — shrinking, then gone.
-                    Text(verbatim: "bpm").font(.system(size: 9)).foregroundStyle(.secondary)
-                        .fixedSize()
-                        .layoutPriority(1)
-                }
-                // An ARA source needs speed 1: the speed / semitone / bpm boxes only show it then.
-                .allowsHitTesting(file.ara == nil)
-                .opacity(file.ara == nil ? 1 : 0.45)
-            }
-            .padding(.horizontal, 10).padding(.top, 8)
-            .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-            .position(x: rect.midX, y: rect.midY)
-        }
-        .onAppear { syncBaseText() }
-        .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
-    }
-
-    // One literal key per case, on purpose: `orphans` reads the code for key-shaped strings.
-    private func channelModeLabel(_ mode: ChannelMode) -> String {
-        switch mode {
-        case .lr: return L("inspector.channelMode.lr")
-        case .l:  return L("inspector.channelMode.l")
-        case .r:  return L("inspector.channelMode.r")
-        case .c:  return L("inspector.channelMode.c")
-        }
-    }
-
-    private func channelModeHelp(_ mode: ChannelMode) -> String {
-        switch mode {
-        case .lr: return L("inspector.channelMode.lr.help")
-        case .l:  return L("inspector.channelMode.l.help")
-        case .r:  return L("inspector.channelMode.r.help")
-        case .c:  return L("inspector.channelMode.c.help")
-        }
-    }
-
-    private func syncBaseText() {
-        guard !baseFocused else { return }
-        if let base = file.baseBPM {
-            bpmBaseText = TempoText.display(base)
-        } else {
-            bpmBaseText = ""
-        }
-    }
-
-    private func commitBase() {
-        let t = bpmBaseText.trimmingCharacters(in: .whitespaces)
-        if t.isEmpty { actions.onSetBaseBPM?(nil) }
-        else if let v = TempoText.parse(t), v > 0 { actions.onSetBaseBPM?(v) }
-        syncBaseText()
-    }
-}
-
-// MARK: - The 'clip' zone (the output mix): volume / pan / mute
-//
-// Reuses GainDbControl (a gain box plus a mute icon) for the volume, and adapts it through
-// DragValueBox for the pan (the C / L xx% / R xx% format).
-
-struct ClipMixZoneView: View {
-    let rect: CGRect
-    let mix: SynopticMix
-    let actions: SynopticActions
-
-    private func panLabel(_ p: Float) -> String {
-        if abs(p) < 0.01 { return "C" }
-        return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-
-            // Title plus pan / volume / mute on ONE line (saving height).
-            HStack(spacing: 6) {
-                // Never wrapped (like the 'bpm' unit): the zone widens instead (@see clipZoneW).
-                Text(mix.title)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .fixedSize()
-                    .layoutPriority(1)
-                // A 'linked consolidated object' marker (the attributes below carry a link icon).
-                if mix.attrLinks != nil {
-                    Image(systemName: "waveform.circle")
-                        .font(.system(size: 17))
-                        .foregroundStyle(LinkColor.consolidate)
-                        .help(L("synoptic.consolidate.linked"))
-                }
-                Spacer(minLength: 0)
-                // Each attribute: the value, then (tight to the right) its link icon.
-                HStack(spacing: 3) {
-                    // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
-                    // tenths, they do not halve them. The drag stays continuous here and is brought
-                    // onto the detent on the way in, by `setPanFromHand`.
-                    DragValueBox(value: Double(mix.pan),
-                                 format: { panLabel(Float($0)) },
-                                 range: -1...1, pointsPerStep: 80, snap: false, width: 52,
-                                 keyStep: 0.1,
-                                 parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
-                                 help: L("help.drag.pan"),
-                                 onTouch: { actions.onTouchParam?(.pan) },
-                                 onBegin: { actions.onBeginMixEdit?() },
-                                 onChange: { actions.onSetPan?(Float($0)) },
-                                 onReset: { actions.onSetPan?(0) })
-                        .automationLocked(mix.panAutomated)
-                    if let links = mix.attrLinks { attrLinkBadge(.pan, synced: links.panSynced) }
-                }
-                HStack(spacing: 3) {
-                    GainDbControl(dB: mix.volumeDb, minDb: -96, maxDb: 40,
-                                  onTouch: { actions.onTouchParam?(.volume) },
-                                  onBegin: { actions.onBeginMixEdit?() }) { newDB in
-                        actions.onSetVolume?(newDB)
-                    }
-                    .automationLocked(mix.volumeAutomated)
-                    if let links = mix.attrLinks { attrLinkBadge(.volume, synced: links.volumeSynced) }
-                }
-                HStack(spacing: 3) {
-                    muteButton
-                    soloButton
-                    if let links = mix.attrLinks { attrLinkBadge(.mute, synced: links.muteSynced) }
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(width: rect.width, height: rect.height, alignment: .leading)
-            .position(x: rect.midX, y: rect.midY)
-        }
-    }
-
-    /// An attribute's link icon (a consolidated object): green = synced between instances,
-    /// red = independent. Double click to flip the state.
-    private func attrLinkBadge(_ attr: SynopticMixAttr, synced: Bool) -> some View {
-        Image(systemName: "arrow.down.left.arrow.up.right.square.fill")
-            .font(.system(size: 17))
-            .foregroundStyle(synced ? Color.green : Color.red)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { actions.onToggleAttrSync?(attr) }
-            .help(synced
-                  ? L("synoptic.consolidate.attrSynced")
-                  : L("synoptic.consolidate.attrIndependent"))
-    }
-
-    private var muteButton: some View {
-        Button { actions.onToggleMute?() } label: {
-            Image(systemName: mix.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(mix.isMuted ? Color.red : Color.secondary)
-                .frame(width: 18, height: 18)
-                .background(RoundedRectangle(cornerRadius: 4)
-                    .fill(mix.isMuted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder((mix.isMuted ? Color.red : Color.secondary).opacity(0.45)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L("common.mute"))
-    }
-
-    /// The object's solo: ONE button for both layers. Tinted = temporary (it will clear itself),
-    /// solid = held (it stays). A click always writes into the held layer — it is the only one a
-    /// click can own (@see EditViewModel.toggleSoloHold).
-    private var soloButton: some View {
-        let hold = mix.solo == .hold
-        let on   = mix.solo != .off
-        return Button { actions.onToggleSolo?() } label: {
-            Image(systemName: "headphones")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(hold ? Color.black : (on ? Color.yellow : Color.secondary))
-                .frame(width: 18, height: 18)
-                .background(RoundedRectangle(cornerRadius: 4)
-                    .fill(hold ? Color.yellow
-                               : (on ? Color.yellow.opacity(0.18) : Color.secondary.opacity(0.18))))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder((on ? Color.yellow : Color.secondary).opacity(0.45)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(hold ? L("synoptic.solo.held")
-                   : (on ? L("synoptic.solo.temporary") : L("synoptic.solo")))
-    }
-}
-
-// MARK: - Sends: one row, the foot zone (departures) and a bus's head (infinite + received sends)
-//
-// Sends are no longer a column of the inspector: a departure is taken at the foot of the
-// chain (after the mix, before the stems) and reads as a branch leaving the trunk — hence the
-// 'up and to the right' arrow on each row. Symmetrically, the sends an aux RECEIVES come in
-// at the head, at the level of its source.
-
-/// One send row: the branch arrow, the name, a draggable level, a switch.
-struct SynopticSendRow: View {
-    let send: SynopticSend
-    /// true = a departure (foot); false = a received send (an aux's head) — the arrow flips.
-    let outgoing: Bool
-    let actions: SynopticActions
-
-    private var isSilent: Bool { send.levelDb <= sendMinDb }
-    private var isRouted: Bool { send.enabled && !isSilent && send.refusal == nil }
-
-    private func levelLabel(_ db: Double) -> String {
-        db <= Double(sendMinDb) ? "-∞ dB" : (db == 0 ? "0 dB" : String(format: "%+.0f dB", db))
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: outgoing ? "arrow.turn.down.right" : "arrow.turn.right.down")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
-                .frame(width: 14)
-                .help(outgoing ? L("synoptic.send.outgoing") : L("synoptic.send.incoming"))
-            Text(send.name)
-                .font(.system(size: 10))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(isRouted ? .primary : .secondary)
-                .help(send.refusal ?? "")
-            // A received row says where the sender takes the signal when it is not the usual post-fader.
-            if !outgoing, let short = send.slot.shortLabel {
-                Text(short)
-                    .font(.system(size: 8, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 3)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.secondary.opacity(0.15)))
-                    .help(send.slot.longLabel)
-            }
-            // …and that the sender's send goes through plugins before arriving (nothing editable here).
-            if !outgoing, !send.plugins.isEmpty {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .help(L("synoptic.send.hasPlugins.help"))
-            }
-            Spacer(minLength: 4)
-            DragValueBox(value: Double(send.levelDb),
-                         format: { levelLabel($0) },
-                         range: Double(sendMinDb)...Double(sendMaxDb),
-                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
-                         help: L("help.drag.sendLevel"),
-                         onTouch: { actions.onTouchParam?(.send(auxID: send.id)) },
-                         onBegin: { actions.onBeginSendEdit?() },
-                         onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
-                         onReset: {
-                             actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
-                         })
-                .opacity(send.enabled ? 1 : 0.5)
-                .automationLocked(send.isAutomated)
-            Button { actions.onToggleSend?(send.id) } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(send.enabled ? Color.accentColor : Color.secondary)
-                    .frame(width: 18, height: 18)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill((send.enabled ? Color.accentColor : Color.secondary).opacity(0.18)))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder((send.enabled ? Color.accentColor : Color.secondary).opacity(0.45)))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("common.mute"))
-        }
-        .frame(height: SynopticLayout.sendRowH)
-        .opacity(send.refusal == nil ? 1 : 0.55)
-    }
-}
-
-/// "+ Send to…": a dashed capsule at the foot of the card column.
-struct AddSendButton: View {
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "plus").font(.system(size: 9, weight: .bold))
-                Text(L("synoptic.send.add")).font(.system(size: 10, weight: .medium))
-            }
-            .foregroundStyle(hovering ? Color.accentColor : Color.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(RoundedRectangle(cornerRadius: 7)
-                .strokeBorder((hovering ? Color.accentColor : Color.secondary).opacity(0.6),
-                              style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
-            .contentShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .help(L("synoptic.send.add.help"))
-    }
-}
-
-/// A send CARD: the branch arrow, the aux's name, a draggable level, the on/off switch, a menu and the
-/// cross. Greyed, with the reason as its tooltip, when the bridge refuses the send or its aux no longer
-/// overlaps the object in time (Q-U15) — a card never disappears because an object was moved.
-struct SendCardView: View {
-    let send: SynopticSend
-    let actions: SynopticActions
-    /// true = the bottom line of a send's BOX (the send carries plugins): the box draws the ground,
-    /// the border and the greying; the card only draws the rule that parts it from the rows.
-    var boxed: Bool = false
-
-    private var isSilent: Bool { send.levelDb <= sendMinDb }
-    private var isRouted: Bool { send.enabled && !isSilent && send.refusal == nil }
-
-    private func levelLabel(_ db: Double) -> String {
-        db <= Double(sendMinDb) ? "-∞ dB" : (db == 0 ? "0 dB" : String(format: "%+.0f dB", db))
-    }
-
-    /// The position, in words (the tooltip of the arrow).
-    private var positionText: String {
-        switch send.slot {
-        case .input:      return L("synoptic.send.pos.input")
-        case .chain(let i): return L("synoptic.send.pos.chain", i + 1)
-        case .preFader:   return L("synoptic.send.pos.preFader")
-        case .postFader:  return L("synoptic.send.pos.postFader")
-        }
-    }
-
-    var body: some View {
+    @ViewBuilder
+    private func label(tint: Color, valid: Bool) -> some View {
         HStack(spacing: 5) {
-            // The grip: the arrow and the name take the card in the hand (the level, the switch and the
-            // menu keep their own gestures).
-            HStack(spacing: 5) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
-                    .frame(width: 14)
-                    .help(positionText)
-                Text(send.name)
-                    .font(.system(size: 10))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(isRouted ? .primary : .secondary)
-                    .help(send.refusal ?? positionText)
-                Spacer(minLength: 2)
-            }
-            .contentShape(Rectangle())
-            .onDragIf(actions.sendDragProvider.map { f in { f(send.id) } })
-            DragValueBox(value: Double(send.levelDb),
-                         format: { levelLabel($0) },
-                         range: Double(sendMinDb)...Double(sendMaxDb),
-                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
-                         // The level acts AFTER the send's plugins (Q-U17): said where there are some.
-                         help: send.plugins.isEmpty ? L("help.drag.sendLevel") : L("synoptic.send.level.afterPlugins"),
-                         onTouch: { actions.onTouchParam?(.send(auxID: send.id)) },
-                         onBegin: { actions.onBeginSendEdit?() },
-                         onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
-                         onReset: {
-                             actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
-                         })
-                .opacity(send.enabled ? 1 : 0.5)
-                .automationLocked(send.isAutomated)
-            Button { actions.onToggleSend?(send.id) } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(send.enabled ? Color.accentColor : Color.secondary)
-                    .frame(width: 18, height: 18)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill((send.enabled ? Color.accentColor : Color.secondary).opacity(0.18)))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder((send.enabled ? Color.accentColor : Color.secondary).opacity(0.45)))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("common.mute"))
-            Menu {
-                sendMenuItems
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(L("synoptic.send.menu.help"))
-            Button { actions.onRemoveSend?(send.id) } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 12, height: 18)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("synoptic.send.remove.help"))
-        }
-        .padding(.horizontal, 7)
-        .background {
-            if !boxed {
-                RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor))
-            }
-        }
-        .overlay {
-            if !boxed {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder((isRouted ? Color.accentColor : Color.secondary).opacity(isRouted ? 0.55 : 0.3), lineWidth: 1)
-            }
-        }
-        .overlay(alignment: .top) {
-            if boxed {
-                Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5)
-            }
-        }
-        .opacity(boxed || send.refusal == nil ? 1 : 0.55)
-        .contextMenu { sendMenuItems }
-    }
-
-    /// The card's menu (the ellipsis and the right click). "Change target…" joins it in step 2.11.
-    @ViewBuilder
-    private var sendMenuItems: some View {
-        Button(L("synoptic.send.menu.retarget")) { actions.presentSendMenu(slot: send.slot, retargeting: send.id) }
-            .disabled(actions.sendTargetSections == nil)
-        Button(L("synoptic.send.menu.fold")) { actions.onMoveSend?(send.id, .postFader) }
-            .disabled(send.slot == .postFader || actions.onMoveSend == nil)
-        Button(L("synoptic.send.menu.addPlugin")) { actions.onSendPluginAdd?(send.id) }
-            .disabled(actions.onSendPluginAdd == nil)
-        Divider()
-        Button(L("synoptic.send.menu.delete"), role: .destructive) { actions.onRemoveSend?(send.id) }
-    }
-}
-
-// MARK: - A send's box (INC 3): the plugins ON the send
-
-/// A send as the signal view draws it. With no plugin: today's card, plus a small "+" that shows above
-/// it on hover. With plugins: a BOX, read top to bottom in the order of the signal (Q-U19) — one compact
-/// row per plugin, the "+" after the last one, then the send's own line (the card: aux, level, on/off)
-/// at the bottom. The wire from the trunk arrives at the top.
-///
-/// A plugin is let go on the box, between two rows (the insertion line says where), on the "+" or on the
-/// line (= the end): nothing = move, ⌥ = copy, ⌘ = copy as well — a send's plugin is never linked. A send
-/// card let go here is refused (a box takes plugins, not sends).
-struct SendBoxView: View {
-    let placement: SynopticLayout.SendCardPlacement
-    let actions: SynopticActions
-    @State private var hovering = false
-    /// The insertion slot a plugin drag is aiming at (nil = none).
-    @State private var dropIndex: Int? = nil
-    @State private var dropHintID = UUID()
-
-    private var send: SynopticSend { placement.send }
-    private var isRouted: Bool { send.enabled && send.levelDb > sendMinDb && send.refusal == nil }
-
-    /// The rect this view fills on the canvas: the box; with no plugin, the card plus the strip above
-    /// it where the hover "+" shows.
-    static func zone(of p: SynopticLayout.SendCardPlacement) -> CGRect {
-        p.hasPlugins ? p.frame : p.frame.union(p.plusRect)
-    }
-
-    var body: some View {
-        let zone = Self.zone(of: placement)
-        let selection = actions.sendPluginSelection?(send.id) ?? []
-        VStack(spacing: 0) {
-            if placement.hasPlugins {
-                ForEach(send.plugins) { p in
-                    SendPluginRowView(
-                        plugin: p,
-                        isSelected: selection.contains(p.id),
-                        onSelect: { actions.onSendPluginClick?(send.id, p.id, NSEvent.modifierFlags) },
-                        // A refused send has no engine plugin: nothing to open.
-                        onOpen: send.refusal == nil ? actions.onSendPluginOpen.map { f in { f(send.id, p.id) } } : nil,
-                        onToggle: { actions.onSendPluginToggle?(send.id, p.id) },
-                        onRemove: { actions.onSendPluginRemove?(send.id, p.id) },
-                        dragProvider: actions.sendPluginDragProvider.map { f in { f(send.id, p.id) } })
-                        .frame(height: SynopticLayout.sendPluginRowH)
-                }
-                plusRow.frame(height: SynopticLayout.sendPlusRowH)
-            } else {
-                // No box yet: the "+" only shows while the hand is over the card (the menu has the
-                // same entry). Not hit-testable otherwise — the strip may lie over the card above.
-                plusRow.frame(height: SynopticLayout.sendPlusRowH)
-                    .opacity(hovering ? 1 : 0)
-                    .allowsHitTesting(hovering)
-            }
-            SendCardView(send: send, actions: actions, boxed: placement.hasPlugins)
-                .frame(height: SynopticLayout.sendCardH)
-        }
-        .frame(width: zone.width, height: zone.height, alignment: .top)
-        // The box's ground and border (a plugin-less send's card draws its own).
-        .background {
-            if placement.hasPlugins {
-                RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor))
-            }
-        }
-        .overlay {
-            if placement.hasPlugins {
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder((isRouted ? Color.accentColor : Color.secondary).opacity(isRouted ? 0.55 : 0.3), lineWidth: 1)
-                    .allowsHitTesting(false)
-            }
-        }
-        // The drop layer: a SIBLING behind the content, never an ancestor of the rows' drag sources
-        // (@see SynopticCardView.dropLayer). It covers the box — the card alone for a plugin-less send.
-        .background(alignment: .bottom) { dropLayer }
-        // Where the plugin in the hand would be inserted.
-        .overlay(alignment: .topLeading) {
-            if let i = dropIndex {
-                if placement.hasPlugins {
-                    Capsule().fill(Color.accentColor)
-                        .frame(width: zone.width - 8, height: 2)
-                        .offset(x: 4, y: placement.insertLineY(i) - zone.minY - 1)
-                        .allowsHitTesting(false)
-                } else {
-                    RoundedRectangle(cornerRadius: 7)
-                        .strokeBorder(Color.accentColor, lineWidth: 2)
-                        .frame(width: placement.frame.width, height: placement.frame.height)
-                        .offset(y: placement.frame.minY - zone.minY)
-                        .allowsHitTesting(false)
-                }
-            }
-        }
-        .onHover { hovering = $0 }
-        // A refused send: the whole box greyed, the reason as its tooltip (the card's own text).
-        .opacity(placement.hasPlugins && send.refusal != nil ? 0.55 : 1)
-        .helpIf(placement.hasPlugins ? send.refusal : nil)
-    }
-
-    /// The "+": the plugin picker, aimed at this send.
-    private var plusRow: some View {
-        HStack(spacing: 0) {
-            Button { actions.onSendPluginAdd?(send.id) } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 16)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(nsColor: .controlBackgroundColor)))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(actions.onSendPluginAdd == nil)
-            .help(L("synoptic.send.plugin.add.help"))
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 6)
-    }
-
-    @ViewBuilder private var dropLayer: some View {
-        if let onDrop = actions.onSendBoxDrop {
-            // Local (0, 0) of the layer, on the canvas: the box's top — the card's for a plugin-less send.
-            let top = placement.frame.minY
-            Color.clear
-                .frame(width: placement.frame.width, height: placement.frame.height)
-                .contentShape(Rectangle())
-                .onDrop(of: [.plainText],
-                        delegate: SendBoxDropDelegate(
-                            placement: placement, layerTop: top, dropIndex: $dropIndex,
-                            hintKey: "sendbox:\(dropHintID.uuidString)",
-                            outcome: { index, flags in actions.sendBoxDropOutcome?(send.id, index, flags) },
-                            onDrop: { index, payload, flags in onDrop(send.id, index, payload, flags) }))
-        }
-    }
-}
-
-/// One plugin of a send's box: the bypass dot, the name (click = select, double click = editor, drag =
-/// take it), the cross on hover. No link pastille — a send's plugin is never linked — and no VU.
-struct SendPluginRowView: View {
-    let plugin: SynopticSendPlugin
-    let isSelected: Bool
-    let onSelect: () -> Void
-    var onOpen: (() -> Void)? = nil
-    let onToggle: () -> Void
-    let onRemove: () -> Void
-    var dragProvider: (() -> NSItemProvider)? = nil
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Button(action: onToggle) {
-                Circle()
-                    .fill(plugin.enabled ? Color.accentColor : Color.secondary.opacity(0.35))
-                    .frame(width: 8, height: 8)
-                    .frame(width: 16, height: SynopticLayout.sendPluginRowH)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(L("synoptic.bypass"))
-            Text(plugin.name)
-                .font(.system(size: 10))
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(plugin.enabled ? .primary : .secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { (onOpen ?? onSelect)() }
-                .onDragIf(dragProvider)
-                .help(L("synoptic.openPlugin"))
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14, height: SynopticLayout.sendPluginRowH)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
-            .help(L("synoptic.send.plugin.remove.help"))
         }
-        .padding(.horizontal, 5)
-        .background(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-        .onHover { hovering = $0 }
+        .foregroundStyle(valid ? Color.primary : Color.secondary)
+        .padding(.horizontal, 8)
+        .frame(height: Self.labelH)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.92)))
+        .overlay(RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(tint.opacity(valid ? 0.9 : 0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+    }
+
+    /// The zone's icon (@see SynopticPlusPresentation.symbol), "not here" aside.
+    private var symbol: String {
+        switch ghost {
+        case .gain, .none:  return SynopticPlusPresentation.symbol(for: .gain)
+        case .gainPanMute:  return SynopticPlusPresentation.symbol(for: .gainPanMute)
+        case .branch:       return SynopticPlusPresentation.symbol(for: .branch)
+        case .send:         return SynopticPlusPresentation.symbol(for: .send)
+        case .notHere:      return "nosign"
+        }
+    }
+
+    private var text: String {
+        switch ghost {
+        case .gain, .none: return L("synoptic.plus.ghost.gain")
+        case .gainPanMute: return L("synoptic.plus.ghost.gainPanMute")
+        case .branch:      return L("synoptic.plus.ghost.branch")
+        case .send:        return L("synoptic.plus.ghost.send")
+        case .notHere:     return L("synoptic.plus.ghost.notHere")
+        }
     }
 }
 
-/// A plugin drag over a send's box. Like `PluginDropDelegate`, it asks the resolver about the drag in
-/// flight on every movement (the cursor, the band, the insertion line); unlike it, WHERE in the box the
-/// hand is decides the insertion slot, read from the pure layout (@see SendCardPlacement.insertIndex).
-/// Two refusals speak on the band — a non-plain plugin, a full chain (@see SendBoxPluginRefusal) — and
-/// so does a send card, which a box never takes.
-struct SendBoxDropDelegate: DropDelegate {
-    let placement: SynopticLayout.SendCardPlacement
-    /// The canvas y of the drop layer's top (`DropInfo.location` is in the layer's own coordinates).
-    let layerTop: CGFloat
-    let dropIndex: Binding<Int?>
-    let hintKey: String
-    let outcome: (_ index: Int, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?
-    let onDrop: (_ index: Int, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void
-
-    private func carriesPlugin(_ info: DropInfo) -> Bool {
-        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
-    }
-
-    /// The insertion slot under the hand (the end when the layout cannot say).
-    private func index(_ info: DropInfo) -> Int {
-        let point = CGPoint(x: placement.frame.minX + info.location.x, y: layerTop + info.location.y)
-        return placement.insertIndex(at: point) ?? placement.send.plugins.count
-    }
-
-    private func withdraw() {
-        dropIndex.wrappedValue = nil
-        PluginDropHint.shared.leave(hintKey)
-    }
-
-    private func present(_ info: DropInfo) -> DropProposal {
-        let flags = NSEvent.modifierFlags
-        let i = index(info)
-        guard let o = outcome(i, flags) else {
-            // No drag in flight to read: the legacy reading (⌥ / ⌘ copy, anything else moves).
-            dropIndex.wrappedValue = i
-            PluginDropHint.shared.present(hintKey, context: .sendChain)
-            return DropProposal(operation: flags.contains(.option) || flags.contains(.command) ? .copy : .move)
-        }
-        switch o {
-        case .refuse(let why):
-            dropIndex.wrappedValue = nil
-            if let key = SendBoxPluginRefusal.titleKey(reason: why) {
-                PluginDropHint.shared.present(hintKey, context: .refusal(key))
-            } else {
-                PluginDropHint.shared.leave(hintKey)
-            }
-            return DropProposal(operation: .forbidden)
-        case .sendTaken(let line), .sendRefused(let line):
-            dropIndex.wrappedValue = nil
-            PluginDropHint.shared.present(hintKey, context: .send(line))
-            return DropProposal(operation: .forbidden)
-        default:
-            dropIndex.wrappedValue = i
-            PluginDropHint.shared.present(hintKey, context: .sendChain)
-            return DropProposal(operation: o.operation)
-        }
-    }
-
-    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
-    func dropEntered(info: DropInfo) {
-        guard carriesPlugin(info) else { return }
-        _ = present(info)
-    }
-    func dropExited(info: DropInfo) { withdraw() }
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard carriesPlugin(info) else {
-            withdraw()
-            return DropProposal(operation: .forbidden)
-        }
-        return present(info)
-    }
-    func performDrop(info: DropInfo) -> Bool {
-        let i = index(info)
-        withdraw()
-        // The delivery itself (the modifiers read now, the sessions ended, the payload decoded) is the
-        // card's: one implementation. A send card does not decode as a plugin payload and is ignored.
-        let onDrop = self.onDrop
-        return PluginDropDelegate(isTargeted: .constant(false), hintKey: hintKey,
-                                  onDrop: { payload, flags in onDrop(i, payload, flags) })
-            .performDrop(info: info)
-    }
-}
-
-/// A bus's chain head (aux / group): 'source', the infinite option, and — for an aux —
-/// the list of the sends it receives (the incoming signal comes from there).
-struct BusHeadZoneView: View {
-    let rect: CGRect
-    let infinite: SynopticInfinite?
-    let loop: SynopticLoop?
-    let received: [SynopticSend]
-    let actions: SynopticActions
+/// The zones round a '+' while a drag leaves it (@see SynopticPlusGesture.sectors): each a faint wedge with
+/// its icon, the one the hand is in lit up softly. A direction the '+' does not offer has no zone. Pure
+/// display, laid under the ghost.
+private struct SynopticPlusSectorsView: View {
+    let center: CGPoint
+    let sectors: [PlusSector]
+    let highlighted: PlusGestureResult?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(nsColor: .controlBackgroundColor))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 0.5))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Text(L("synoptic.source"))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    if let lp = loop { loopToggle(lp) }
-                    if let inf = infinite { infiniteToggle(inf) }
+            ForEach(sectors.indices, id: \.self) { i in
+                let s = sectors[i]
+                let on = s.result == highlighted
+                let shape = Path { p in
+                    let pts = s.outline().map { CGPoint(x: center.x + $0.width, y: center.y + $0.height) }
+                    guard let first = pts.first else { return }
+                    p.move(to: first)
+                    for q in pts.dropFirst() { p.addLine(to: q) }
+                    p.closeSubpath()
                 }
-                .frame(height: SynopticLayout.pillH)
-                ForEach(received) { s in
-                    SynopticSendRow(send: s, outgoing: false, actions: actions)
-                }
+                shape.fill(Color.accentColor.opacity(on ? 0.14 : 0.04))
+                shape.stroke(Color.accentColor.opacity(on ? 0.45 : 0.15),
+                             style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+                Image(systemName: SynopticPlusPresentation.symbol(for: s.result))
+                    .font(.system(size: 10, weight: on ? .semibold : .regular))
+                    .foregroundStyle(on ? Color.accentColor : Color.secondary.opacity(0.7))
+                    .position(x: center.x + s.iconOffset.width, y: center.y + s.iconOffset.height)
             }
-            .padding(.horizontal, 10)
-            .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-            .position(x: rect.midX, y: rect.midY)
         }
-    }
-
-    private func loopToggle(_ lp: SynopticLoop) -> some View {
-        Button { actions.onToggleLoop?() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "repeat")
-                    .font(.system(size: 10, weight: .bold))
-                Text(L("synoptic.loop.label"))
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .foregroundStyle(lp.isOn ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 7).frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 5)
-                .fill((lp.isOn ? Color.accentColor : Color.secondary).opacity(lp.isOn ? 0.18 : 0.10)))
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                .strokeBorder((lp.isOn ? Color.accentColor : Color.secondary).opacity(0.45)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L("synoptic.loop"))
-    }
-
-    private func infiniteToggle(_ inf: SynopticInfinite) -> some View {
-        Button { actions.onToggleInfinite?() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "infinity")
-                    .font(.system(size: 10, weight: .bold))
-                Text(L("synoptic.infinite"))
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .foregroundStyle(inf.isOn ? Color.accentColor : Color.secondary)
-            .padding(.horizontal, 7).frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 5)
-                .fill((inf.isOn ? Color.accentColor : Color.secondary).opacity(inf.isOn ? 0.18 : 0.10)))
-            .overlay(RoundedRectangle(cornerRadius: 5)
-                .strokeBorder((inf.isOn ? Color.accentColor : Color.secondary).opacity(0.45)))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L("synoptic.infinite.help", inf.kindLabel))
+        .animation(.easeOut(duration: 0.12), value: highlighted)
     }
 }
 
-// MARK: - The 'stems' zone (output): choosing the destination stem
-//
-// It only shows and selects (creating and renaming stems happen in the toolbar). The current
-// badge is ringed in white; a click reassigns.
+// MARK: - The '+' hover (§B.3): one AppKit tracking area over the whole canvas
 
-struct StemsZoneView: View {
-    let rect: CGRect
-    let stems: [SynopticStem]
-    let onAssign: (UUID) -> Void
+/// Reports the pointer's position over the canvas (nil when it leaves), in the canvas's own coordinates,
+/// WITHOUT taking a click (`hitTest` → nil). A SwiftUI `.onContinuousHover` on the canvas would go
+/// `.ended` as soon as the pointer enters a child view (a card, a zone), which is where the lines of the
+/// '+' run between — hence AppKit, as the timeline does (@see HoverTracker).
+private struct SynopticHoverTracker: NSViewRepresentable {
+    var onHover: (CGPoint?) -> Void
 
-    private var current: SynopticStem? { stems.first { $0.isCurrent } }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-
-            // The title plus the destination stem's drop-down menu, on one line.
-            HStack(spacing: 8) {
-                Text(L("synoptic.zone.stems"))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Menu {
-                    ForEach(Array(stems.enumerated()), id: \.element.id) { idx, stem in
-                        // The number prefix = the keyboard shortcut (1 = Main, 2 = the 2nd stem…).
-                        let prefix = idx < 9 ? "\(idx + 1)  " : ""
-                        // A `String` and not a literal: see `ObjectInspectorView`, same trap.
-                        let title = "\(prefix)\(stem.name)"
-                        Button { onAssign(stem.id) } label: {
-                            if stem.isCurrent { Label(title, systemImage: "checkmark") }
-                            else { Text(verbatim: title) }
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill((current?.color ?? .secondary).opacity(0.85))
-                            .frame(width: 11, height: 11)
-                        Text(current?.name ?? "—")
-                            .font(.system(size: 10, weight: .medium))
-                            .lineLimit(1)
-                            .foregroundStyle(.primary)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 7))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal, 7).frame(height: 20)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
-                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-            }
-            .padding(.horizontal, 12)
-            .frame(width: rect.width, height: rect.height, alignment: .leading)
-            .position(x: rect.midX, y: rect.midY)
-        }
-    }
-}
-
-// MARK: - The 'output' zone of a group's child: routed to the group (read only)
-//
-// A group's child has no stem assignment of its own: its output feeds the group's submix,
-// and it is the (root) group that belongs to a stem. The colour badge is a reminder of the
-// effective stem at the end of the chain.
-
-struct GroupRoutingZoneView: View {
-    let rect: CGRect
-    let routing: SynopticGroupRouting
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-
-            HStack(spacing: 8) {
-                Text(L("synoptic.zone.output"))
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(routing.stemColor.opacity(0.85))
-                        .frame(width: 11, height: 11)
-                    Image(systemName: "rectangle.3.group")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                    Text(routing.groupName)
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
-                }
-                .padding(.horizontal, 7).frame(height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.10)))
-                .fixedSize()
-                .help(L("synoptic.routedToGroup", routing.groupName))
-            }
-            .padding(.horizontal, 12)
-            .frame(width: rect.width, height: rect.height, alignment: .leading)
-            .position(x: rect.midX, y: rect.midY)
-        }
-    }
-}
-
-// MARK: - Real model → graph adapter (step 1: a pure series)
-
-extension PluginCategory {
-    /// Guesses a category from the name/manufacturer (purely cosmetic, for the badge).
-    static func infer(from p: ObjectPlugin) -> PluginCategory {
-        let n = (p.name + " " + p.manufacturer).lowercased()
-        if n.contains("eq") || n.contains("equal") { return .eq }
-        if n.contains("comp") || n.contains("limit") || n.contains("gate") || n.contains("dyn") { return .dynamics }
-        if n.contains("sat") || n.contains("dist") || n.contains("drive") || n.contains("crush") || n.contains("amp") { return .distortion }
-        if n.contains("reverb") || n.contains("verb") || n.contains("room") || n.contains("hall") || n.contains("space") { return .space }
-        if n.contains("delay") || n.contains("chorus") || n.contains("flang") || n.contains("phas") || n.contains("mod") { return .modulation }
-        return .utility
-    }
-}
-
-// MARK: - The core wired to the engine (step 1) — reused inline AND in a window
-
-enum SynopticSheetKind: Identifiable {
-    case insert(location: SeriesLocation, index: Int)   // a series '+' inside a target series
-    case instrument                                      // the '+' of the instruments zone (a MIDI clip)
-    case insertSend(aux: UUID)                           // the '+' of a send's box (INC 3): the end of its mini-chain
-
-    var id: String {
-        switch self {
-        case .insert(let loc, let i): return "insert-\(loc.key)-\(i)"
-        case .instrument:             return "instrument"
-        case .insertSend(let aux):    return "insertSend-\(aux.uuidString)"
-        }
-    }
-}
-
-struct SynopticBoundView: View {
-    var viewModel: EditViewModel
-    let objectID: UUID
-    var scrolls: Bool = true
-
-    /// The instrument card's highlight only — the FX selection lives in the view-model, since
-    /// every gesture that acts on several cards needs the chain (@see pluginSelection).
-    @State private var selectedInstrumentID: UUID? = nil
-    @State private var activeSheet: SynopticSheetKind? = nil
-    @State private var pickerSearch: String = ""
-    // The live state of the external instances (loading/ready/error), refreshed by a timer.
-    @State private var instanceStates: [UUID: Int] = [:]
-    @State private var loadErrors: [UUID: String] = [:]
-    // VU meter levels per plugin (0..1), polled read-only.
-    @State private var levels: [UUID: Double] = [:]
-    // The ARA source of this object is still analysing (polled with the instance states).
-    @State private var araAnalysing = false
-    // An aux: the senders listed at the head (the sends it receives). A STICKY list — a row taken
-    // down to -∞ stays shown until the selection changes, otherwise it would vanish mid-drag
-    // (activeSenders filters silent sends out) and SwiftUI would re-associate the gesture with a neighbour.
-    @State private var receivedIDs: [UUID] = []
-    private let poll = Timer.publish(every: 0.6, on: .main, in: .common).autoconnect()
-    private let vuPoll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        // Builds the graph plus the seriesID→location table from the real model. The closures below
-        // capture `locations` from THIS build (consistent with the series ids being rendered).
-        // The host = a timeline object OR a stem/master bus (INC 2). `obj` is nil for a bus:
-        // a bus has neither a MIDI clip nor an instrument → isMIDI=false, midiInstrument=nil.
-        let obj = viewModel.find(id: objectID)
-        let model = viewModel.chainPlugins(objectID) ?? []
-        let gains = viewModel.chainGains(objectID)
-        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
-                                                       fxLinkInfo: { viewModel.synopticFXInfo($0) })
-
-        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
-
-        // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
-        // groups / auxes keep the Source pill).
-        let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
-            ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
-                                                       channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
-                                                       ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
-                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) }) }
-            : nil
-
-        // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
-        let mix: SynopticMix? = obj.map { o in
-            let title = L(o.isGroup ? "synoptic.mix.kind.group"
-                        : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip"))
-            let links: SynopticMixLinks? = o.isConsolidateInstance
-                ? SynopticMixLinks(volumeSynced: viewModel.isAttrSynced(o, .volume),
-                                   panSynced:    viewModel.isAttrSynced(o, .pan),
-                                   muteSynced:   viewModel.isAttrSynced(o, .mute))
-                : nil
-            // Volume / pan AUTOMATED: we show what the curve plays at the playback
-            // position, not the static setting it has replaced (@see liveAutomationValue).
-            // The control stays neutralised — it shows, it no longer sets.
-            let vol = viewModel.liveAutomationValue(.volume, on: o.id) ?? o.volume
-            let pan = viewModel.liveAutomationValue(.pan,    on: o.id) ?? o.pan
-            let solo: SynopticSoloState = viewModel.soloedIDs.contains(o.id) ? .hold
-                : ((viewModel.tempSoloRoots?.contains(o.id) ?? false) ? .temporary : .off)
-            return SynopticMix(title: title, volumeDb: vol, pan: pan, isMuted: o.isMuted,
-                               solo: solo,
-                               volumeAutomated: viewModel.isAutomated(.volume, on: o),
-                               panAutomated:    viewModel.isAutomated(.pan, on: o),
-                               attrLinks: links)
-        }
-
-        // Output zone: a group's CHILD is routed to its group (read only, the stem being
-        // carried by the group); a top-level object chooses its stem (badges for every stem,
-        // the current one ringed).
-        let parentGroup = obj.flatMap { viewModel.parentGroup(for: $0.id) }
-        let groupRouting: SynopticGroupRouting? = parentGroup.map { p in
-            SynopticGroupRouting(groupName: p.displayName,
-                                 stemColor: viewModel.stemColor(for: p.id))
-        }
-        let stems: [SynopticStem]? = (parentGroup != nil) ? nil : obj.map { o in
-            viewModel.stems.map { s in
-                let isCurrent = (o.stemID == s.id) || (o.stemID == nil && s.id == viewModel.mainStemID)
-                return SynopticStem(id: s.id, name: s.name, color: s.color, isCurrent: isCurrent)
-            }
-        }
-
-        // Sends: the departures that EXIST are cards beside the trunk (Q-U7, Q-U13), each at the slot its
-        // position names; the reachable auxes without a send are reached through "Send to…". A card whose
-        // aux no longer overlaps the object in time, or that the scope refuses, stays — greyed, with the
-        // reason (Q-U15): moving an object never makes a send vanish from the chain. An aux shows at its
-        // HEAD what it receives.
-        let canSend = obj != nil && !(obj?.isAux ?? true)
-        let sends: [SynopticSend] = canSend ? (obj?.sends ?? []).compactMap { snd in
-            guard let aux = viewModel.find(id: snd.auxID) else { return nil }
-            return SynopticSend(id: snd.auxID, name: aux.displayName,
-                                enabled: snd.enabled, levelDb: snd.levelDb,
-                                isAutomated: viewModel.isAutomated(.send(auxID: snd.auxID), on: objectID),
-                                refusal: viewModel.sendCardRefusalText(from: objectID, to: snd.auxID),
-                                slot: EditViewModel.synopticSlot(obj?.sendPosition(auxID: snd.auxID)),
-                                plugins: snd.plugins.map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
-        } : []
-        let received: [SynopticSend] = (obj?.isAux ?? false)
-            ? receivedIDs.compactMap { sid in
-                viewModel.find(id: sid).map { sender in
-                    SynopticSend(id: sid, name: sender.displayName,
-                                 enabled: viewModel.isSendEnabled(from: sid, to: objectID),
-                                 levelDb: viewModel.sendLevel(from: sid, to: objectID),
-                                 // A send lives on the SENDER: it is ITS curve we read, even
-                                 // if the row is shown at the head of the receiving aux.
-                                 isAutomated: viewModel.isAutomated(.send(auxID: objectID), on: sender),
-                                 refusal: { if case .refused(let why) = viewModel.sendStatus(from: sid, to: objectID) {
-                                                return EditViewModel.sendReasonText(why) } else { return nil } }(),
-                                 slot: EditViewModel.synopticSlot(sender.sendPosition(auxID: objectID)),
-                                 // Only their presence is shown at the aux's head (a mark on the row).
-                                 plugins: (sender.sends.first { $0.auxID == objectID }?.plugins ?? [])
-                                    .map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
-                }
-              }
-            : []
-
-        // The 'infinite' option: carried by the chain head of top-level auxes / groups.
-        let infinite: SynopticInfinite? = obj.flatMap { o in
-            guard o.canBeInfinite, viewModel.items.contains(where: { $0.id == o.id }) else { return nil }
-            return SynopticInfinite(isOn: o.isInfinite, kindLabel: o.isAux ? L("synoptic.infinite.kind.aux") : L("synoptic.infinite.kind.group"))
-        }
-        // Looping: a group (the chain head) or a MIDI clip (the MIDI zone) — audio has its own
-        // badge in `audioFile`. No top-level restriction here, unlike `infinite`.
-        let loop: SynopticLoop? = obj.flatMap { o in
-            (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
-        }
-
-        // A drop target's aim, as a place of THIS host's chain: the table of series ids is the one of the
-        // build being rendered, and a card's place is looked up in the model as it is now.
-        let dropSite: (SynopticDropTarget) -> PluginDropSite? = { target in
-            switch target {
-            case .series(let seriesID, let index):
-                return locations[seriesID].map { .series($0, index: index) }
-            case .beforeCard(let cardID):
-                return EditViewModel.locate(cardID, in: model).map { .series($0.0, index: $0.1) }
-            case .blockEnd(let blockID):
-                return EditViewModel.findBlock(blockID, in: model)?.fxBlock
-                    .map { .series(.block(blockID: blockID), index: $0.plugins.count) }
-            }
-        }
-
-        // A send card in the hand (@see SendDrop): where it is aimed, as the pure table reads it, and what a
-        // release there would do. A place of the chain is the trunk only if it is of the ROOT series.
-        let sendAim: (SynopticSendTarget) -> SendDropAim = { t in
-            switch t {
-            case .slot(let slot): return .slot(slot)
-            case .place(let target):
-                guard case .series(let loc, let index)? = dropSite(target) else { return .elsewhere }
-                switch loc {
-                case .root:  return .trunk(index: index)
-                case .voice: return .parallelBranch
-                case .block: return .fxBlock
-                }
-            }
-        }
-        let sendOutcome: (SynopticSendTarget) -> PluginDropOutcome? = { t in
-            guard let payload = SendDragSession.shared.current else { return nil }
-            if payload.sendSender != objectID { return .sendRefused(.refusedElsewhere) }
-            switch SendDrop.decide(sendAim(t)) {
-            case .move(_, let line): return .sendTaken(line)
-            case .refuse(let line):  return .sendRefused(line)
-            }
-        }
-
-        return SynopticView(root: root, selection: pluginSelection,
-                            selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
-                            chainInDb: gains.inDb, chainOutDb: gains.outDb,
-                            chainInAutomated:  viewModel.isAutomated(.chainInGain, on: objectID),
-                            chainOutAutomated: viewModel.isAutomated(.chainOutGain, on: objectID),
-                            isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
-                            audioFile: audioFile, mix: mix, stems: stems,
-                            groupRouting: groupRouting,
-                            sends: sends, canSend: canSend, receivedSends: received, infinite: infinite, loop: loop,
-                            // A closed consolidated object → read-only FX ('Open to edit'). While editing, the
-                            // placement is materialised (no longer isConsolidateInstance) so the FX become
-                            // interactive again.
-                            fxReadOnly: (obj?.isConsolidateInstance ?? false),
-                            actions: SynopticActions(
-            onOpenEditor: { openEditor($0) },
-            onOpenEditors: { openEditors(clicked: $0, ids: $1) },
-            // The power button of a card that is IN the selection speaks for the WHOLE selection;
-            // one outside it speaks for itself alone. The same rule as the drag just below and as
-            // the clips before it: what you GRAB is what decides. Without this the batch on/off
-            // existed in the model and in the API and was unreachable from the hand.
-            onToggleBypass: { id in
-                if pluginSelection.wrappedValue.contains(id) {
-                    viewModel.toggleSelectedPluginsEnabled()
-                } else {
-                    viewModel.togglePluginEnabled(objectID: objectID, pluginID: id)
-                }
-            },
-            // Same rule for the ✕: it takes the selection when the card clicked is part of it,
-            // in ONE undo step, and that card alone otherwise.
-            onRemove: { id in
-                if pluginSelection.wrappedValue.contains(id) {
-                    viewModel.removeSelectedPlugins()
-                } else {
-                    viewModel.removePlugin(objectID: objectID, pluginID: id)
-                }
-            },
-            onInsertSeries: { seriesID, index in
-                if let loc = locations[seriesID] { activeSheet = .insert(location: loc, index: index) }
-            },
-            onBranch: { elementID in viewModel.synopticBranch(objectID: objectID, elementID: elementID) },
-            instanceState: { instanceStates[$0] ?? 0 },
-            loadError: { loadErrors[$0] },
-            onDiagnose: { viewModel.diagnosePlugin(objectID: objectID, pluginID: $0) },
-            onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
-            onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
-            linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
-            sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
-            dragProvider: { dragProvider($0) },
-            dropOutcome: { target, flags in
-                // A send card in the hand is answered by the send table (a plugin never is one).
-                if SendDragSession.shared.current != nil { return sendOutcome(.place(target)) }
-                // The drag in flight says what it carries (@see PluginDragSession); with none to read,
-                // the target falls back on its legacy reading.
-                guard let payload = PluginDragSession.shared.current else { return nil }
-                if case .beforeCard(let id) = target, payload.ids.contains(id) { return .refuse("dropped on itself") }
-                guard let site = dropSite(target) else { return .refuse("no such place in the chain") }
-                return viewModel.pluginDropOutcome(payload, toHost: objectID, at: site, flags: flags)
-            },
-            onDrop: { target, payload, flags in
-                if case .beforeCard(let id) = target, payload.ids.contains(id) { return }
-                guard let site = dropSite(target) else { return }
-                viewModel.synopticDrop(payload, host: objectID, at: site, flags: flags)
-            },
-            onSetVoiceGain: { blockID, voiceIndex, dB in
-                viewModel.setVoiceGain(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, dB: dB)
-            },
-            onRemoveVoice: { blockID, voiceIndex in
-                viewModel.removeVoice(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex)
-            },
-            onSetVoiceMute: { blockID, voiceIndex, muted in
-                // A discreet toggle → one undo per flip (like the mix's toggleMute).
-                viewModel.edit {
-                    viewModel.setVoiceMute(objectID: objectID, blockID: blockID, voiceIndex: voiceIndex, muted: muted)
-                }
-            },
-            onSetChainGain: { isOutput, dB in
-                viewModel.setChainGain(objectID: objectID, output: isOutput, dB: dB)
-            },
-            onBeginGainEdit: { viewModel.pushUndo() },
-            onAddInstrument: { activeSheet = .instrument },
-            onRemoveInstrument: {
-                let instID = obj?.instruments.first?.id
-                viewModel.removeInstrument(objectID: objectID)
-                if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
-            },
-            onOpenInstrumentEditor: { if let id = obj?.instruments.first?.id { openEditor(id) } },
-            onToggleInstrumentBypass: {
-                if let id = obj?.instruments.first?.id {
-                    viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
-                }
-            },
-            onSetSpeed: { viewModel.updateSpeed(id: objectID, ratio: $0) },
-            onSetBaseBPM: { bpm in viewModel.edit { viewModel.updateBaseBPM(id: objectID, bpm: bpm) } },
-            onToggleReverse: {
-                let rev = !(obj?.isReversed ?? false)
-                viewModel.edit { viewModel.updateReversed(id: objectID, reversed: rev) }
-            },
-            onToggleLoop: {
-                let loop = !(obj?.loopEnabled ?? false)
-                viewModel.edit { viewModel.updateLoopEnabled(id: objectID, enabled: loop) }
-            },
-            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
-            onBeginSpeedEdit: { viewModel.pushUndo() },
-            // Touching a control: it names the 'future automation' row, without changing anything. An
-            // aux lists the sends it RECEIVES, so the send row belongs to the SENDER — the same
-            // inversion as `onSetSendLevel`, failing which we would remember the touch on the wrong
-            // object.
-            onTouchParam: { ref in
-                let isAux = viewModel.find(id: objectID)?.isAux ?? false
-                if isAux, case .send(let senderID) = ref {
-                    viewModel.recordAutomationTouch(senderID, .send(auxID: objectID))
-                } else {
-                    viewModel.recordAutomationTouch(objectID, ref)
-                }
-            },
-            onSetVolume: { viewModel.updateVolume(id: objectID, volume: $0) },
-            // A HAND's door, not `updatePan`: the pan lands on its tenth (@see EditViewModel+Pan).
-            onSetPan: { viewModel.setPanFromHand(id: objectID, pan: $0) },
-            onToggleMute: { viewModel.edit { viewModel.toggleMute(id: objectID) } },
-            // Solo is a session listening state, outside the model and outside undo (@see
-            // EditViewModel+Solo): no `edit {}`, no undo point, like a stem's mute — otherwise ⌘Z
-            // would replay auditions instead of undoing edits.
-            onToggleSolo: { viewModel.toggleSoloHold(objectID: objectID) },
-            onBeginMixEdit: { viewModel.pushUndo() },
-            onToggleAttrSync: { attr in
-                guard let o = viewModel.find(id: objectID) else { return }
-                let mask: ConsolidateAttrLinks
-                switch attr {
-                case .volume: mask = .volume
-                case .pan:    mask = .pan
-                case .mute:   mask = .mute
-                }
-                viewModel.setAttrSynced(mask, !viewModel.isAttrSynced(o, mask), forPlacement: objectID)
-            },
-            onAssignStem: { stemID in viewModel.edit { viewModel.assignStem(objectID: objectID, stemID: stemID) } },
-            // An aux lists the sends it RECEIVES: the row carries the SENDER's id, and so it is the
-            // sender we set (sender → this aux). Otherwise we set this object → the target aux.
-            onSetSendLevel: { rowID, db in
-                let isAux = viewModel.find(id: objectID)?.isAux ?? false
-                let from = isAux ? rowID : objectID
-                let to   = isAux ? objectID : rowID
-                guard viewModel.handMayCreateSend(from: from, to: to) else { return }
-                viewModel.setSendLevel(from: from, to: to, levelDb: db)
-            },
-            onToggleSend: { rowID in
-                let isAux = viewModel.find(id: objectID)?.isAux ?? false
-                let from = isAux ? rowID : objectID
-                let to   = isAux ? objectID : rowID
-                guard viewModel.isSendEnabled(from: from, to: to) || viewModel.handMayCreateSend(from: from, to: to) else { return }
-                viewModel.edit {
-                    viewModel.setSendEnabled(from: from, to: to,
-                                             enabled: !viewModel.isSendEnabled(from: from, to: to))
-                }
-            },
-            onBeginSendEdit: { viewModel.pushUndo() },
-            onRemoveSend: { auxID in viewModel.edit { viewModel.removeSend(from: objectID, to: auxID) } },
-            onMoveSend: { auxID, slot in
-                viewModel.setSendPositionFromHand(from: objectID, to: auxID, EditViewModel.sendPosition(of: slot))
-            },
-            sendDragProvider: { sendDragProvider($0) },
-            sendTargetSections: { viewModel.sendTargetSections(for: objectID, retargeting: $0) },
-            onCreateSend: { aux, slot in
-                viewModel.createSendFromHand(from: objectID, to: aux, at: EditViewModel.sendPosition(of: slot))
-            },
-            onPickSendTarget: { slot, retargeting in
-                viewModel.beginSendPick(sender: objectID, position: EditViewModel.sendPosition(of: slot),
-                                        retargeting: retargeting)
-            },
-            onRetargetSend: { old, new in viewModel.retargetSendFromHand(from: objectID, aux: old, to: new) },
-            onSendDrop: { target, payload in
-                guard payload.sendSender == objectID,
-                      case .move(let slot, _) = SendDrop.decide(sendAim(target)) else { return }
-                viewModel.setSendPositionFromHand(from: objectID, to: payload.sendAux,
-                                                  EditViewModel.sendPosition(of: slot))
-            },
-            sendDropOutcome: { sendOutcome($0) },
-            // The plugins ON a send: the trunk's gestures, aimed at the send's own chain host.
-            sendPluginSelection: { aux in
-                viewModel.selectedPluginHostID == sendHost(aux) ? viewModel.selectedPluginIDs : []
-            },
-            onSendPluginClick: { aux, id, flags in clickSendPlugin(aux: aux, id: id, flags: flags) },
-            onSendPluginOpen: { aux, id in openSendPluginEditor(aux: aux, id: id) },
-            // A row IN the selection speaks for the whole selection (the trunk's rule).
-            onSendPluginToggle: { aux, id in
-                let host = sendHost(aux)
-                if viewModel.selectedPluginHostID == host, viewModel.selectedPluginIDs.contains(id) {
-                    viewModel.toggleSelectedPluginsEnabled()
-                } else {
-                    viewModel.togglePluginEnabled(objectID: host, pluginID: id)
-                }
-            },
-            onSendPluginRemove: { aux, id in
-                let host = sendHost(aux)
-                if viewModel.selectedPluginHostID == host, viewModel.selectedPluginIDs.contains(id) {
-                    viewModel.removeSelectedPlugins()
-                } else {
-                    viewModel.removePlugin(objectID: host, pluginID: id)
-                }
-            },
-            onSendPluginAdd: { aux in activeSheet = .insertSend(aux: aux) },
-            sendPluginDragProvider: { aux, id in sendPluginDragProvider(aux: aux, pluginID: id) },
-            sendBoxDropOutcome: { aux, index, flags in
-                // A send card in the hand: a box takes plugins, not sends.
-                if SendDragSession.shared.current != nil {
-                    return .sendRefused(SendDrop.decide(.sendBox).banner)
-                }
-                guard let payload = PluginDragSession.shared.current else { return nil }
-                return viewModel.pluginDropOutcome(payload, toHost: sendHost(aux),
-                                                   at: .series(.root, index: index), flags: flags)
-            },
-            onSendBoxDrop: { aux, index, payload, flags in
-                viewModel.synopticDrop(payload, host: sendHost(aux), at: .series(.root, index: index), flags: flags)
-            },
-            onToggleInfinite: { viewModel.toggleObjectInfinite(id: objectID) },
-            // FX links. The block's id is what every one of these carries; the model resolves the
-            // bin (attached) or the block's own copy (detached) itself.
-            onFXToggleEnabled: { blockID in fxToggleEnabled(blockID) },
-            onFXSetGain: { blockID, dB in fxSetOutput(blockID, gain: dB) },
-            onFXSetPan: { blockID, pan in fxSetOutput(blockID, pan: Float((pan * 10).rounded() / 10)) },
-            onFXToggleMute: { blockID in fxSetOutput(blockID, toggleMute: true) },
-            onFXBeginEdit: { viewModel.pushUndo() },
-            onFXRename: { blockID, name in
-                if let id = fxLinkID(of: blockID) { viewModel.renameFXLink(id, to: name) }
-            },
-            onFXCycleColor: { blockID in
-                if let id = fxLinkID(of: blockID) { viewModel.cycleFXLinkColor(id) }
-            },
-            onFXToggleDetach: { blockID in
-                guard let block = fxBlock(blockID) else { return }
-                if block.fxBlock?.isDetached == true {
-                    viewModel.reattachFXBlock(hostID: objectID, blockID: blockID)
-                } else {
-                    viewModel.detachFXBlock(hostID: objectID, blockID: blockID)
-                }
-            },
-            onFXRelease: { viewModel.releaseFXBlock(hostID: objectID, blockID: $0) },
-            onFXRemove: { viewModel.removeFXBlock(hostID: objectID, blockID: $0) },
-            onFXDelete: { blockID in
-                if let id = fxLinkID(of: blockID) { viewModel.deleteFXLink(id) }
-            },
-            canCreateFXLink: { viewModel.canCreateFXLink(host: objectID, pluginIDs: $0) },
-            onCreateFXLink: { ids in
-                if viewModel.createFXLink(from: objectID, pluginIDs: ids) != nil {
-                    viewModel.setPluginSelection([], host: objectID)
-                }
-            },
-            joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
-            onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
-            onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
-            onRemoveARA: { viewModel.removeARASource(objectID: objectID) },
-            onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) }
-        ))
-        .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
-        .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
-        .onReceive(poll) { _ in refreshStates(); refreshReceived() }
-        .onReceive(vuPoll) { _ in refreshLevels() }
-        .sheet(item: $activeSheet) { kind in
-            switch kind {
-            case .insert(let location, let index):
-                pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index)) { available in
-                    viewModel.synopticInsert(objectID: objectID, available: available, into: location, at: index)
-                }
-            case .instrument:
-                pickerSheet(instrumentsOnly: true) { available in
-                    viewModel.setInstrument(objectID: objectID, available: available)
-                }
-            case .insertSend(let aux):
-                // The send's own chain host: the plugin lands at the END of its mini-chain. No ARA source
-                // there (a source is an object's), and instruments are left out like in any FX chain.
-                let host = sendHost(aux)
-                pickerSheet(title: L("synoptic.sheet.addPluginOnSend", viewModel.find(id: aux)?.displayName ?? ""),
-                            showsARASource: false) { available in
-                    viewModel.synopticInsert(objectID: host, available: available, into: .root,
-                                             at: viewModel.chainPlugins(host)?.count ?? 0)
-                }
-            }
-        }
+    func makeNSView(context: Context) -> TrackerView {
+        let v = TrackerView()
+        v.onHover = onHover
+        return v
     }
 
-    /// A plugin selection sheet reused by '+' (insert), '//' (branch) and the instruments zone.
-    /// `instrumentsOnly` restricts it to instruments (the MIDI zone); otherwise we ALWAYS exclude
-    /// instruments from the FX zone — an instrument needs MIDI at its input (which only a MIDI clip
-    /// provides, and through its dedicated MIDI zone), so it belongs in NO FX chain.
-    @ViewBuilder
-    private func pickerSheet(instrumentsOnly: Bool = false, title: String? = nil, showsARASource: Bool = true,
-                             insertion: PluginBrowserInsertion? = nil,
-                             onSelect: @escaping (AvailablePlugin) -> Void) -> some View {
-        let size = PluginBrowserLayout.sheetSize()
-        PluginBrowserView(
-            viewModel: viewModel,
-            objectID: objectID,
-            title: title ?? (instrumentsOnly ? L("synoptic.sheet.chooseInstrument") : L("synoptic.sheet.addPlugin")),
-            searchText: $pickerSearch,
-            dismiss: { activeSheet = nil },
-            onSelect: { available in onSelect(available); activeSheet = nil },
-            kind: instrumentsOnly ? .instrumentsOnly : .effectsOnly,
-            showsARASource: showsARASource && !instrumentsOnly,
-            insertion: insertion
-        )
-        .frame(width: size.width, height: size.height)
+    func updateNSView(_ nsView: TrackerView, context: Context) {
+        nsView.onHover = onHover
     }
 
-    // MARK: FX link helpers (a block's id → what the model needs)
+    final class TrackerView: NSView {
+        var onHover: ((CGPoint?) -> Void)?
+        private var trackingArea: NSTrackingArea?
 
-    private func fxBlock(_ blockID: UUID) -> ObjectPlugin? {
-        viewModel.chainPlugins(objectID).flatMap { EditViewModel.findBlock(blockID, in: $0) }
-    }
+        override var isFlipped: Bool { true }   // SwiftUI's coordinates (origin top-left)
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    private func fxLinkID(of blockID: UUID) -> UUID? { fxBlock(blockID)?.fxBlock?.linkID }
-
-    /// The common on/off: the bin's while the block follows it, the block's own once detached.
-    private func fxToggleEnabled(_ blockID: UUID) {
-        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
-        let now = viewModel.fxOutput(of: block).isEnabled
-        if fb.isDetached {
-            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, enabled: !now)
-        } else {
-            viewModel.fxSetEnabled(linkID: fb.linkID, enabled: !now)
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            guard trackingArea == nil else { return }
+            let t = NSTrackingArea(rect: bounds,
+                                   options: [.activeInActiveApp, .mouseMoved, .mouseEnteredAndExited,
+                                             .inVisibleRect],
+                                   owner: self, userInfo: nil)
+            addTrackingArea(t)
+            trackingArea = t
         }
-    }
 
-    /// The output section (volume / pan / mute) — the bin's while attached, the block's own while
-    /// detached. No undo point of its own: the control asked for one when the gesture began
-    /// (`onFXBeginEdit`).
-    private func fxSetOutput(_ blockID: UUID, gain: Float? = nil, pan: Float? = nil,
-                             toggleMute: Bool = false) {
-        guard let block = fxBlock(blockID), let fb = block.fxBlock else { return }
-        let muted: Bool? = toggleMute ? !viewModel.fxOutput(of: block).muted : nil
-        if fb.isDetached {
-            viewModel.fxSetLocalOutput(hostID: objectID, blockID: blockID, gainDb: gain, pan: pan,
-                                       muted: muted, undo: false)
-        } else {
-            viewModel.fxSetOutput(linkID: fb.linkID, gainDb: gain, pan: pan, muted: muted, undo: false)
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.acceptsMouseMovedEvents = true
         }
+
+        override func mouseMoved(with event: NSEvent) { onHover?(convert(event.locationInWindow, from: nil)) }
+        override func mouseEntered(with event: NSEvent) { onHover?(convert(event.locationInWindow, from: nil)) }
+        override func mouseExited(with event: NSEvent) { onHover?(nil) }
     }
-
-    /// Toggles the editor: a native window for an external plugin, a dedicated window for a
-    /// Tracktion built-in (the same path as the chip list). The double click that opens also
-    /// closes (@see EditViewModel.togglePluginEditor).
-    private func openEditor(_ pluginID: UUID) {
-        // A recursive search: the plugin may live in the branch of a parallel block, or be the
-        // instrument at the head of the chain (a MIDI clip).
-        let candidates = viewModel.leafPlugins(objectID: objectID)
-            + (viewModel.find(id: objectID)?.instruments ?? [])
-        guard let plug = candidates.first(where: { $0.id == pluginID })
-        else { return }
-        viewModel.togglePluginEditor(objectID: objectID, plug: plug)
-    }
-
-    /// The double click on a card of a multiple selection: one editor per selected plugin, each
-    /// through the SAME opening path as a single double click (an external one goes through the
-    /// engine, which prepares the unit before showing its GUI; a built-in gets its SwiftUI window).
-    /// The clicked card decides for all: its editor open → close those of the selection, otherwise
-    /// open them all (one already open is brought to the front).
-    private func openEditors(clicked: UUID, ids: Set<UUID>) {
-        let candidates = viewModel.leafPlugins(objectID: objectID)
-            + (viewModel.find(id: objectID)?.instruments ?? [])
-        let plugs = candidates.filter { ids.contains($0.id) }      // reading order
-        guard let clickedPlug = plugs.first(where: { $0.id == clicked }) else { return }
-        if viewModel.isPluginEditorOpen(plug: clickedPlug) {
-            for p in plugs where viewModel.isPluginEditorOpen(plug: p) { viewModel.closePluginEditor(plug: p) }
-            return
-        }
-        viewModel.openPluginEditors(objectID: objectID, plugs: plugs)
-    }
-
-    /// The FX selection of THIS chain, seen as a `Set`. It reads EMPTY as soon as the view-model's
-    /// selection belongs to another host — which is what makes changing object in the inspector
-    /// drop the highlight with no `onChange` anywhere: the question "is this selection mine?" is
-    /// asked at every read rather than answered once and left to go stale.
-    private var pluginSelection: Binding<Set<UUID>> {
-        Binding(get: { viewModel.selectedPluginHostID == objectID ? viewModel.selectedPluginIDs : [] },
-                set: { viewModel.setPluginSelection($0, host: objectID) })
-    }
-
-    /// A card's drag payload (the same format as the chips → it reuses the timeline drop to
-    /// move/copy/link to another object, and the '+'s to reorder).
-    ///
-    /// A card taken WHILE IT IS IN THE SELECTION carries the whole selection with it; a card taken
-    /// from outside carries itself alone. The clips' rule word for word (@see the timeline's drag
-    /// handler): what you GRAB is what decides, and grabbing something you had not chosen is a new
-    /// choice rather than a mistake to be punished by losing the old one.
-    private func dragProvider(_ pluginID: UUID) -> NSItemProvider {
-        let all = pluginSelection.wrappedValue.contains(pluginID)
-            ? viewModel.orderedSelectedPluginIDs()
-            : [pluginID]
-        let payload = PluginDragPayload(sourceObjectID: objectID, pluginID: pluginID,
-                                        pluginIDs: all)
-        let data = (try? JSONEncoder().encode(payload)) ?? Data()
-        // The drag begins: the targets read what it carries from here (@see PluginDragSession).
-        PluginDragSession.shared.begin(payload)
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                             visibility: .all) { completion in
-            completion(data, nil); return nil
-        }
-        return provider
-    }
-
-    // MARK: A send's box (INC 3): the chain host behind it and the trunk's gestures aimed at it
-
-    /// The chain host of the send from THIS object to `aux` (@see SendChain.hostID).
-    private func sendHost(_ aux: UUID) -> UUID { SendChain.hostID(sender: objectID, aux: aux) }
-
-    /// A click on a row of a send's box. Plain = that row alone; ⌘ = toggle it; ⇧ = from the rows
-    /// already held to this one, in the box's order. The selection is the view-model's, with the send
-    /// as its host — so the trunk's highlight drops by itself (@see pluginSelection) and ⌫ ⌘C ⌘V ⌘D
-    /// reach the box.
-    private func clickSendPlugin(aux: UUID, id: UUID, flags: NSEvent.ModifierFlags) {
-        let host = sendHost(aux)
-        selectedInstrumentID = nil
-        let order = (viewModel.chainPlugins(host) ?? []).map(\.id)
-        let current = viewModel.selectedPluginHostID == host ? viewModel.selectedPluginIDs : []
-        if flags.contains(.command) {
-            viewModel.selectPlugin(id, host: host, additive: true)
-        } else if flags.contains(.shift), let clicked = order.firstIndex(of: id) {
-            let held = order.indices.filter { current.contains(order[$0]) } + [clicked]
-            viewModel.setPluginSelection(Set(order[(held.min() ?? clicked)...(held.max() ?? clicked)]), host: host)
-        } else {
-            viewModel.setPluginSelection([id], host: host)
-        }
-    }
-
-    /// The double click on a row: the plugin's editor, through the same path as a trunk card's.
-    private func openSendPluginEditor(aux: UUID, id: UUID) {
-        let host = sendHost(aux)
-        guard let plug = viewModel.leafPlugins(objectID: host).first(where: { $0.id == id }) else { return }
-        viewModel.togglePluginEditor(objectID: host, plug: plug)
-    }
-
-    /// A row taken in the hand: the trunk's payload with the SEND as its source host. A row taken while
-    /// it is in the selection carries the selection (the rows of that box). Announced as coming from a
-    /// send: such a drag never links, wherever it lands (@see PluginDragSession.fromSend).
-    private func sendPluginDragProvider(aux: UUID, pluginID: UUID) -> NSItemProvider {
-        let host = sendHost(aux)
-        let all = (viewModel.selectedPluginHostID == host && viewModel.selectedPluginIDs.contains(pluginID))
-            ? viewModel.orderedSelectedPluginIDs()
-            : [pluginID]
-        let payload = PluginDragPayload(sourceObjectID: host, pluginID: pluginID, pluginIDs: all)
-        let data = (try? JSONEncoder().encode(payload)) ?? Data()
-        PluginDragSession.shared.begin(payload, fromSend: true)
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                             visibility: .all) { completion in
-            completion(data, nil); return nil
-        }
-        return provider
-    }
-
-    /// A send card taken in the hand: its payload (sender + aux), announced to the doors that read a drag
-    /// before it hovers them (@see SendDragSession) — the signal view's own targets, the timeline, a strip.
-    private func sendDragProvider(_ auxID: UUID) -> NSItemProvider {
-        let payload = SendDragPayload(sendSender: objectID, sendAux: auxID)
-        let data = (try? JSONEncoder().encode(payload)) ?? Data()
-        SendDragSession.shared.begin(payload)
-        let provider = NSItemProvider()
-        provider.registerDataRepresentation(forTypeIdentifier: UTType.plainText.identifier,
-                                             visibility: .all) { completion in
-            completion(data, nil); return nil
-        }
-        return provider
-    }
-
-    /// Refreshes the list of the sends an aux RECEIVES: we ADD the new senders without removing
-    /// those already shown (a sticky row, see `receivedIDs`); only objects that have gone from
-    /// the project are removed.
-    private func refreshReceived() {
-        guard viewModel.find(id: objectID)?.isAux == true else {
-            if !receivedIDs.isEmpty { receivedIDs = [] }
-            return
-        }
-        let live = viewModel.activeSenders(toAux: objectID)
-        var merged = receivedIDs.filter { viewModel.find(id: $0) != nil }
-        for id in live where !merged.contains(id) { merged.append(id) }
-        if merged != receivedIDs { receivedIDs = merged }
-    }
-
-    /// Polls the VU meter levels (during playback only; otherwise it decays to 0 once).
-    private func refreshLevels() {
-        guard viewModel.isTransportPlaying else {
-            if !levels.isEmpty { levels = [:] }
-            return
-        }
-        var l: [UUID: Double] = [:]
-        for p in viewModel.leafPlugins(objectID: objectID) {
-            l[p.id] = viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id)
-        }
-        levels = l
-    }
-
-    /// Polls the loading state of the external instances (built-ins ignored).
-    private func refreshStates() {
-        let analysing = viewModel.araIsAnalysing(objectID)
-        if analysing != araAnalysing { araAnalysing = analysing }
-        guard viewModel.chainPlugins(objectID) != nil else { return }   // an object OR a stem bus
-        var st: [UUID: Int] = [:]
-        var errs: [UUID: String] = [:]
-        for p in viewModel.leafPlugins(objectID: objectID) where !p.isBuiltIn {
-            let s = viewModel.pluginInstanceState(pluginID: p.id)
-            st[p.id] = s
-            if s == 3, let e = viewModel.pluginLoadError(pluginID: p.id) { errs[p.id] = e }
-        }
-        if st != instanceStates { instanceStates = st }
-        if errs != loadErrors { loadErrors = errs }
-    }
-}
-
-// MARK: - Presenting in a large window (comfortable editing)
-
-struct SynopticEditorView: View {
-    @Environment(\.dismiss) private var dismiss
-    var viewModel: EditViewModel
-    let objectID: UUID
-    let title: String
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(L("synoptic.window.title", title)).font(.headline)
-                Spacer()
-                Button(L("common.close")) { dismiss() }
-            }
-            .padding(12)
-
-            Divider()
-
-            SynopticBoundView(viewModel: viewModel, objectID: objectID, scrolls: true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Text(L("synoptic.window.legend"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-            }
-            .padding(8)
-        }
-        .frame(minWidth: 780, minHeight: 480)
-    }
-}
-
-// MARK: - Demonstration sheet (phase A: made-up data, parallel active)
-
-struct SynopticSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let title: String
-
-    @State private var root: SynopticNode = .demo
-    @State private var selection: Set<UUID> = []
-    @State private var selectedInstrumentID: UUID? = nil
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(L("synoptic.demo.title", title)).font(.headline)
-                Spacer()
-                Button(L("common.close")) { dismiss() }
-            }
-            .padding(12)
-
-            Divider()
-
-            SynopticView(root: root, selection: $selection,
-                         selectedInstrumentID: $selectedInstrumentID,
-                         actions: SynopticActions(
-                onToggleBypass: { root = root.togglingBypass($0) },
-                onRemove: {
-                    root = root.removingPluginAtRoot($0)
-                    selection.remove($0)
-                },
-                onInsertSeries: { sid, idx in root = root.insertingPlaceholder(intoSeries: sid, atIndex: idx) },
-                onBranch: { root = root.branching($0) }
-            ))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Text(L("synoptic.demo.legend"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(L("common.reset")) { root = .demo; selection = [] }
-                    .controlSize(.small)
-            }
-            .padding(8)
-        }
-        .frame(minWidth: 780, minHeight: 480)
-    }
-}
-
-#Preview {
-    SynopticSheet(title: "Demo")
 }

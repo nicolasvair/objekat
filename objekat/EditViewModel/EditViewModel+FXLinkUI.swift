@@ -11,7 +11,9 @@ import SwiftUI
 extension EditViewModel {
 
     /// What the signal view draws round a bin's block: the frame's colour, the header's name and
-    /// on/off, the mix box's output section (the bin's while attached, the block's own while detached).
+    /// on/off (the bin's while attached, the block's own while detached), and its FOLD — the session's
+    /// memory, keyed by the BIN (@see SynopticUIState), so a bin folded on one host is folded on all.
+    /// A bin has no output section any more (format 25): a level on a bin is a gain stage among its plugins.
     func synopticFXInfo(_ block: ObjectPlugin) -> SynopticFXLink? {
         guard let fb = block.fxBlock else { return nil }
         let link = fxLink(fb.linkID)
@@ -21,10 +23,9 @@ extension EditViewModel {
                               color: ObjekatPalette.plugin(link?.colorIndex ?? 0),
                               isDetached: fb.isDetached,
                               isEnabled: out.isEnabled,
-                              gainDb: out.gainDb,
-                              pan: out.pan,
-                              muted: out.muted,
-                              memberCount: fxLinkMembers(fb.linkID).count)
+                              memberCount: fxLinkMembers(fb.linkID).count,
+                              isFolded: SynopticUIState.shared.isFXFolded(fb.linkID),
+                              linkID: fb.linkID)
     }
 
     /// True if `pluginIDs` — plugins of `hostID`'s chain — can become the definition of a NEW bin:

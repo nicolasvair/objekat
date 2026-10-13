@@ -56,7 +56,6 @@ extension CommandRegistry {
             guard let plugins = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
-            let gains = vm.chainGains(host)
             let status = vm.bridgeStatusNow()
             // An audio object's ARA source (Melodyne) comes FIRST, `slot: "ara_source"`: it is what the
             // clip plays through, ahead of its chain.
@@ -68,8 +67,6 @@ extension CommandRegistry {
                 "host": .string(host.uuidString),
                 "is_stem": .bool(vm.isStemHost(host)),
                 "plugins": .array(entries),
-                "chain_in_db": .number(Double(gains.inDb)),
-                "chain_out_db": .number(Double(gains.outDb)),
             ]
             // A send's mini-chain (INC 3): who it belongs to.
             if vm.find(id: host) == nil, let key = vm.sendChainKey(host) {
@@ -224,7 +221,8 @@ extension CommandRegistry {
         }
 
         register("plugin.toggle",
-                 summary: "Enables or bypasses a plugin (a toggle, without recompiling the chain).",
+                 summary: "Enables or bypasses a plugin (a toggle, without recompiling the chain). "
+                        + "Refused on a gain stage (`invalid_state`, reason `gain_stage_no_bypass`).",
                  params: [ParamSpec("host", "uuid", "Carrying object or stem."),
                           ParamSpec("plugin", "uuid", "Target plugin.")],
                  // `.handled` since 15 September 2026: the method pushes its own point now, and
@@ -234,6 +232,7 @@ extension CommandRegistry {
             let host = try p.uuid("host")
             let pluginID = try p.uuid("plugin")
             let plugin = try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            if plugin.isGainStage { throw CommandAdapters.gainStageNoBypass(pluginID) }
             vm.togglePluginEnabled(objectID: host, pluginID: pluginID)
             return .object(["plugin": .string(pluginID.uuidString),
                             "enabled": .bool(!plugin.isEnabled)])
@@ -395,6 +394,68 @@ extension CommandRegistry {
             return .object(result)
         }
 
+        // A parallel branch, as the signal view makes it (§B.2): from a '+' (`series` + `at`, the drag
+        // down-right) or from a card's menu (`plugin`). The CURRENT card selection of this host decides the
+        // run, exactly as for the hand (@see SynopticBranchRun): select first with `plugin.select`.
+        register("plugin.branch",
+                 summary: "Creates a parallel branch in a host's chain, as the signal view does: from the '+' "
+                        + "at `at` of `series` (a drag down-right) or from the card `plugin` (its menu). The "
+                        + "host's current card selection extends it to the selected run (a '+': the element "
+                        + "under it and the selected ones that follow; a card: the selected run round it). "
+                        + "An empty series gets an EMPTY branch. One undo point.",
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the chain."),
+                          ParamSpec("plugin", "uuid", required: false,
+                                    "The card whose menu is used. Excludes 'series' / 'at'."),
+                          ParamSpec("series", "string|object", required: false,
+                                    "The '+''s series: \"root\" (default) or {\"voice\": <parallel block id>, "
+                                  + "\"index\": <branch>}. A bin's series refuses (no branch inside a bin)."),
+                          ParamSpec("at", "int", required: false,
+                                    "The '+''s index in that series, markers not counted (default: the tail '+').")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard let chain = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let selection = vm.selectedPluginHostID == host ? vm.selectedPluginIDs : []
+            let made: [UUID]?
+            if p.raw["plugin"] != nil {
+                if p.raw["series"] != nil || p.raw["at"] != nil {
+                    throw CommandError(code: .bad_params, message: "'plugin' excludes 'series' and 'at'")
+                }
+                let id = try p.uuid("plugin")
+                guard EditViewModel.locate(id, in: chain) != nil else {
+                    throw CommandError(code: .not_found, message: "no such card on this host: \(id.uuidString)")
+                }
+                made = vm.synopticBranch(objectID: host, pluginID: id, selection: selection)
+            } else {
+                var raw = p.raw
+                if raw["series"] == nil { raw["series"] = .string("root") }
+                let q = CommandParams(raw)
+                guard case .series(let location, let index) = try CommandAdapters.dropSite(q, chain: chain) else {
+                    throw CommandError(code: .bad_params, message: "series: \"root\" or {\"voice\": id, \"index\": n}")
+                }
+                made = vm.synopticBranch(objectID: host, location: location, at: index, selection: selection)
+            }
+            guard let made else {
+                throw CommandError(code: .invalid_state,
+                                   message: "refused: a bin's instance or series is never branched on its own")
+            }
+            // The block the branch was made in: the carrier holding the first entry of the run (a block that
+            // received one more branch is that block itself).
+            let after = vm.chainPlugins(host) ?? []
+            var block: UUID? = nil
+            if let first = made.first {
+                if made.count == 1, let e = EditViewModel.findEntry(first, in: after), e.isRack { block = first }
+                else if case .voice(let b, _)? = EditViewModel.locate(first, in: after)?.0 { block = b }
+            }
+            return .object(["host": .string(host.uuidString),
+                            "branched": .array(made.map { .string($0.uuidString) }),
+                            "empty_branch": .bool(made.isEmpty),
+                            "block": block.map { .string($0.uuidString) } ?? .null,
+                            "plugins": .array(after.map { CommandAdapters.pluginPayload($0) })])
+        }
+
         register("plugin.unlink",
                  summary: "Detaches a plugin from its link group (it becomes independent again).",
                  params: [ParamSpec("host", "uuid", "Carrying host."),
@@ -489,9 +550,16 @@ extension CommandRegistry {
 
         register("plugin.toggle_selected",
                  summary: "Bypasses or re-enables every selected card. Mixed states go to OFF: "
-                        + "if a single one is still on, they all go off. ONE undo step.",
+                        + "if a single one is still on, they all go off. ONE undo step. Gain stages "
+                        + "have no bypass: they are passed over (`invalid_state`, reason "
+                        + "`gain_stage_no_bypass`, when only stages are selected).",
                  params: [], undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            // Only gain stages selected: nothing can be bypassed (they have no bypass).
+            let picked = vm.orderedSelectedPlugins()
+            if !picked.isEmpty, picked.allSatisfy(\.isGainStage) {
+                throw CommandAdapters.gainStageNoBypass(picked[0].id)
+            }
             guard let enabled = vm.toggleSelectedPluginsEnabled() else {
                 throw CommandError(code: .invalid_state, message: "no card selected")
             }
@@ -571,7 +639,8 @@ extension CommandRegistry {
         }
 
         register("plugin.set_param",
-                 summary: "Writes a parameter of a live instance (by index).",
+                 summary: "Writes a parameter of a live instance (by index). On a gain stage "
+                        + "(0 gain dB, 1 pan, 2 mute) the write takes one undo point.",
                  params: [ParamSpec("plugin", "uuid", "Target plugin."),
                           ParamSpec("index", "int", "Parameter index (see plugin.get_params)."),
                           ParamSpec("value", "number", "New value, within [min, max].")],
@@ -590,6 +659,9 @@ extension CommandRegistry {
                                    message: "unknown parameter \(index) (\(params.count) available)")
             }
             let value = Float(try p.double("value")).clamped(to: target.min...target.max)
+            // A GAIN STAGE's parameters are the hand's (its card): one undo point per write, as the
+            // card's drag takes one (@see EditViewModel.setGainStage). Any other plugin: unchanged.
+            if vm.gainStageEntry(pluginID) != nil { vm.pushUndo() }
             vm.setPluginParam(pluginID: pluginID, index: index, value: value)
             return .object(["plugin": .string(pluginID.uuidString),
                             "index": .int(index),
@@ -920,7 +992,9 @@ extension CommandRegistry {
                                 guard let i = d["index"] as? Int, let role = d["role"] as? String else { return nil }
                                 return SendMarkerAudit.LayoutEntry(index: i, role: role, key: d["key"] as? String,
                                                                    aux: d["aux"] as? String, tapPosition: d["tap_position"] as? Int,
-                                                                   chainPlugins: d["chain_plugins"] as? Int)
+                                                                   chainPlugins: d["chain_plugins"] as? Int,
+                                                                   segmentStart: d["segment_start"] as? Bool ?? false,
+                                                                   segmentEnd: d["segment_end"] as? Bool ?? false)
                             }
                             engineChecked += 1
                             layouts[o.id.uuidString] = JSONValue.fromFoundation(raw)
@@ -991,24 +1065,6 @@ extension CommandRegistry {
                 _ = engine.debugSetPluginProperty("ceilingDb", value: db, forPlugin: added.id.uuidString)
             }
             return .object(["plugin": .string(added.id.uuidString)])
-        }
-
-        register("debug.set_chain_gain",
-                 summary: "DEBUG. Sets a host's chain IN and/or OUT gain (dB) through the normal model path — "
-                        + "the gains the position proof of a send stacks up (no public command sets them).",
-                 params: [ParamSpec("host", "uuid", "Object or stem."),
-                          ParamSpec("in_db", "number", required: false, "Chain start gain."),
-                          ParamSpec("out_db", "number", required: false, "Chain end gain.")],
-                 undo: .bus) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let host = try p.uuid("host")
-            guard vm.chainPlugins(host) != nil else {
-                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
-            }
-            if let v = try p.optionalDouble("in_db") { vm.setChainGain(objectID: host, output: false, dB: Float(v)) }
-            if let v = try p.optionalDouble("out_db") { vm.setChainGain(objectID: host, output: true, dB: Float(v)) }
-            let g = vm.chainGains(host)
-            return .object(["host": .string(host.uuidString), "in_db": .number(Double(g.inDb)), "out_db": .number(Double(g.outDb))])
         }
 
         register("debug.set_plugin_property",

@@ -26,11 +26,13 @@ extension CommandRegistry {
         return .object([
             "id": .string(link.id.uuidString),
             "name": .string(link.name),
+            // B.9: true once the user named the bin (explicit `name`, `fxlink.rename`, the inline
+            // field) — it then never follows an object again; `name_source` is the object / stem it
+            // follows while it is not.
+            "user_named": .bool(link.userNamed),
+            "name_source": link.nameSourceID.map { .string($0.uuidString) } ?? .null,
             "color_index": .int(link.colorIndex),
             "enabled": .bool(link.isEnabled),
-            "gain_db": .number(Double(link.gainDb)),
-            "pan": .number(Double(link.pan)),
-            "muted": .bool(link.muted),
             "plugins": .array(link.plugins.map { d in
                 .object(["id": .string(d.id.uuidString),
                          "name": .string(d.name),
@@ -54,8 +56,7 @@ extension CommandRegistry {
                     }),
                 ]
                 if fb?.isDetached == true, let l = fb?.local {
-                    o["local"] = .object(["enabled": .bool(l.isEnabled), "gain_db": .number(Double(l.gainDb)),
-                                          "pan": .number(Double(l.pan)), "muted": .bool(l.muted)])
+                    o["local"] = .object(["enabled": .bool(l.isEnabled)])
                 }
                 return .object(o)
             }),
@@ -146,7 +147,9 @@ extension CommandRegistry {
                                     "Plain plugins of that chain, in ONE series, with no manual link."),
                           ParamSpec("objects", "array<uuid>", required: false,
                                     "Alternative to host+plugins: several timeline objects."),
-                          ParamSpec("name", "string", required: false, "Name (default 'FX link N').")],
+                          ParamSpec("name", "string", required: false,
+                                    "Name, kept as typed and never followed again (default: the "
+                                  + "host's name, made unique, which follows its renaming).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let name = try p.optionalString("name")
@@ -180,13 +183,35 @@ extension CommandRegistry {
         }
 
         register("fxlink.rename",
-                 summary: "Renames an FX link.",
+                 summary: "Renames an FX link (by hand: it stops following its object's name).",
                  params: [ParamSpec("link", "uuid", "The link."), ParamSpec("name", "string", "New name.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             vm.renameFXLink(link.id, to: try p.string("name"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
+        }
+
+        register("debug.rename_shortcut",
+                 summary: "Presses ⌘R as the timeline would (B.9): while the signal view holds the "
+                        + "keyboard and its selection designates ONE FX link bin, the bin's inline rename "
+                        + "opens (`SynopticUIState.renamingFXLinkID`); otherwise the one selected object / "
+                        + "marker is put in rename. Answers what it did: `target` = fxlink · object · "
+                        + "annotation · none, with the `id`.",
+                 params: [],
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            SynopticUIState.shared.renamingFXLinkID = nil
+            let target = vm.performRenameShortcut()
+            var o: [String: JSONValue] = [:]
+            switch target {
+            case .fxLink(let id):     o["target"] = .string("fxlink");     o["id"] = .string(id.uuidString)
+            case .object(let id):     o["target"] = .string("object");     o["id"] = .string(id.uuidString)
+            case .annotation(let id): o["target"] = .string("annotation"); o["id"] = .string(id.uuidString)
+            case .none:               o["target"] = .string("none");       o["id"] = .null
+            }
+            o["renaming_fxlink"] = SynopticUIState.shared.renamingFXLinkID.map { .string($0.uuidString) } ?? .null
+            return .object(o)
         }
 
         register("fxlink.set_color",
@@ -279,38 +304,21 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             let id = try p.uuid("plugin")
-            guard link.plugins.contains(where: { $0.id == id }) else {
+            guard let def = link.plugins.first(where: { $0.id == id }) else {
                 throw CommandError(code: .not_found, message: "unknown definition plugin")
             }
+            if def.isGainStage { throw CommandAdapters.gainStageNoBypass(id) }
             vm.fxSetPluginEnabled(linkID: link.id, definitionID: id, enabled: try p.bool("enabled"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
         }
 
         register("fxlink.set_enabled",
-                 summary: "The bin's COMMON on/off: off bypasses every attached member's block, its "
-                        + "output section included.",
+                 summary: "The bin's COMMON on/off: off bypasses every attached member's block.",
                  params: [ParamSpec("link", "uuid", "The link."), ParamSpec("enabled", "bool", "On or off.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             vm.fxSetEnabled(linkID: link.id, enabled: try p.bool("enabled"))
-            return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
-        }
-
-        register("fxlink.set_output",
-                 summary: "The bin's output section — an end-of-series gain stage on every attached "
-                        + "member: volume (dB), pan (-1…1) and mute. Omitted fields are left as they are.",
-                 params: [ParamSpec("link", "uuid", "The link."),
-                          ParamSpec("gain_db", "number", required: false, "Volume, -96…+40 dB."),
-                          ParamSpec("pan", "number", required: false, "Pan, -1…+1."),
-                          ParamSpec("muted", "bool", required: false, "Mute.")],
-                 undo: .handled) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let link = try self.requireFXLink(p, in: vm)
-            vm.fxSetOutput(linkID: link.id,
-                           gainDb: try p.optionalDouble("gain_db").map { Float($0) },
-                           pan: try p.optionalDouble("pan").map { Float($0) },
-                           muted: p.raw["muted"] == nil ? nil : try p.bool("muted"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
         }
 
@@ -412,24 +420,23 @@ extension CommandRegistry {
         }
 
         register("fxlink.set_local_output",
-                 summary: "The output section of a DETACHED block (its own copy): enabled, volume, pan, mute.",
+                 summary: "The common on/off of a DETACHED block (its own copy of the bin's rules). A bin "
+                        + "has no output section since format 25: `gain_db` / `pan` / `muted` are refused "
+                        + "(a level on a bin is a gain stage among its plugins, `plugin.add_gain_stage`).",
                  params: [ParamSpec("host", "uuid", "The host."),
                           ParamSpec("block", "uuid", required: false, "The host's block."),
                           ParamSpec("link", "uuid", required: false, "Or the bin it belongs to."),
-                          ParamSpec("enabled", "bool", required: false, "Common on/off of the copy."),
-                          ParamSpec("gain_db", "number", required: false, "Volume, -96…+40 dB."),
-                          ParamSpec("pan", "number", required: false, "Pan, -1…+1."),
-                          ParamSpec("muted", "bool", required: false, "Mute.")],
+                          ParamSpec("enabled", "bool", "Common on/off of the copy.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            if p.raw["gain_db"] != nil || p.raw["pan"] != nil || p.raw["muted"] != nil {
+                throw CommandError(code: .bad_params,
+                                   message: "a bin has no output section since format 25: use a gain stage")
+            }
             let host = try p.uuid("host")
             let block = try self.requireBlock(p, on: host, in: vm)
-            guard vm.fxSetLocalOutput(hostID: host, blockID: block.id,
-                                      gainDb: try p.optionalDouble("gain_db").map { Float($0) },
-                                      pan: try p.optionalDouble("pan").map { Float($0) },
-                                      muted: p.raw["muted"] == nil ? nil : try p.bool("muted"),
-                                      enabled: p.raw["enabled"] == nil ? nil : try p.bool("enabled"))
-            else { throw self.refused("only a detached block has an output section of its own") }
+            guard vm.fxSetLocalEnabled(hostID: host, blockID: block.id, enabled: try p.bool("enabled"))
+            else { throw self.refused("only a detached block has an on/off of its own") }
             return .object(["block": .string(block.id.uuidString)])
         }
 

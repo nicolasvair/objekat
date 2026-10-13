@@ -28,6 +28,19 @@ struct Main {
 
         check(SendDrop.decide(.sendBox) == .refuse(.refusedSendBox), "another send's box refuses a send card (INC 3)")
 
+        // The signal view rework (§B.6): knowing the trunk's size, its head '+' IS the input and its tail
+        // '+' the pre-fader slot; the middle ones stay chain(i); everything else is the plain table.
+        check(SendDrop.decide(.trunk(index: 0), trunkCount: 3) == .move(.input, .takenAtInput), "head '+' -> input")
+        check(SendDrop.decide(.trunk(index: -2), trunkCount: 3) == .move(.input, .takenAtInput), "before the head -> input")
+        check(SendDrop.decide(.trunk(index: 1), trunkCount: 3) == .move(.chain(1), .takenHere), "a middle '+' -> chain(1)")
+        check(SendDrop.decide(.trunk(index: 2), trunkCount: 3) == .move(.chain(2), .takenHere), "a middle '+' -> chain(2)")
+        check(SendDrop.decide(.trunk(index: 3), trunkCount: 3) == .move(.preFader, .takenBeforeFader), "tail '+' -> pre-fader")
+        check(SendDrop.decide(.trunk(index: 9), trunkCount: 3) == .move(.preFader, .takenBeforeFader), "past the tail -> pre-fader")
+        check(SendDrop.decide(.trunk(index: 0), trunkCount: 0) == .move(.input, .takenAtInput), "an empty trunk's one '+' -> input")
+        check(SendDrop.decide(.slot(.postFader), trunkCount: 3) == .move(.postFader, .takenAfterFader), "a slot is unchanged")
+        check(SendDrop.decide(.fxBlock, trunkCount: 3) == .refuse(.refusedFXLink), "a refusal is unchanged")
+        check(SendDrop.decide(.parallelBranch, trunkCount: 3) == .refuse(.refusedParallel), "a branch still refuses")
+
         // Every refusal is a refusal and says so; every acceptance is not.
         let aims: [SendDropAim] = [.trunk(index: 1), .slot(.input), .slot(.preFader), .slot(.postFader),
                                    .parallelBranch, .fxBlock, .sendBox, .elsewhere]

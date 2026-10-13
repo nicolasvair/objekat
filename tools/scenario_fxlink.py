@@ -20,13 +20,14 @@ What it is really out to prove, beyond the commands answering:
     realigns the host on the bin — order, membership, output section, parameters;
   • ONE undo point per gesture, the registry restoring together with the chains;
   • the bin survives a save and a reopen, mirrors included;
-  • and the half only an export can settle — the ENGINE followed, not just the model: the output
-    section (volume, mute, common on/off) is heard, per member, detached or not.
+  • and the half only an export can settle — the ENGINE followed, not just the model: a bin's level
+    (a gain + pan + mute STAGE among its plugins since format 25 — a bin has no output section any
+    more) and its common on/off are heard, per member, detached or not.
 
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
-import array, os, shutil, sys, tempfile, wave
+import array, os, shutil, sys, tempfile, time, wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -121,6 +122,29 @@ try:
 
         def member(link, host):
             return next(m for m in cmd("fxlink.get", link=link)["members"] if m["host"] == host)
+
+        # A bin's level is a gain + pan + mute stage among its plugins (format 25). Laid in the
+        # host's block: in an attached bin it joins the definition, every member gets an instance.
+        def add_bin_stage(host, **values):
+            return cmd("plugin.add_gain_stage", host=host, face="gain_pan_mute",
+                       series={"block": block_of(host)["id"]}, **values)
+
+        def bin_stage(host):
+            return next(p for p in block_of(host)["plugins"] if p.get("gain_stage"))["id"]
+
+        def stage(pid):
+            return cmd("plugin.gain_stage", plugin=pid)
+
+        def wait_stage(pid, gain_db, muted=None, timeout=5.0):
+            # the mirror carries a set to the other members asynchronously
+            dl = time.time() + timeout
+            while True:
+                s_ = stage(pid)
+                if abs(s_["gain_db"] - gain_db) < 1e-3 and (muted is None or s_["muted"] is muted):
+                    return s_
+                if time.time() > dl:
+                    return s_
+                time.sleep(0.1)
 
         A = cmd("object.add", path=BIP, lane=0, start=0)["id"]
         B = cmd("object.add", path=BIP, lane=1, start=0)["id"]
@@ -252,8 +276,12 @@ try:
         check("and the copy's change does not reach the bin", abs(param(revA, WET) - 0.9) < 1e-3)
         check("...while C, a member, still follows A",
               abs(param(next(p for p in block_of(C)["plugins"] if p["identifier"] == "reverb")["id"], WET) - 0.9) < 1e-3)
-        check("a detached block refuses the bin's output edit through set_local_output only",
-              refused("fxlink.set_local_output", host=A, link=LID, gain_db=-3) == "invalid_state")
+        check("an ATTACHED block has no on/off of its own (set_local_output refused)",
+              refused("fxlink.set_local_output", host=A, link=LID, enabled=False) == "invalid_state")
+        check("a bin has no output section any more: set_local_output refuses a gain",
+              refused("fxlink.set_local_output", host=B, link=LID, gain_db=-3) == "bad_params")
+        check("...and fxlink.set_output is gone",
+              refused("fxlink.set_output", link=LID, gain_db=-3) is not None)
 
         # the definition is edited while B is away
         cmd("fxlink.move_plugin", link=LID, plugin=d_rev, index=0); idle()
@@ -302,10 +330,12 @@ try:
               not any(p.get("is_fx_block") for p in chain(STEM)) and len(cmd("fxlink.get", link=LID)["members"]) == 3)
 
         # ── save / reopen ───────────────────────────────────────────────────
-        cmd("fxlink.set_output", link=LID, gain_db=-4.5, pan=0.25)
+        add_bin_stage(A, gain_db=-4.5, pan=0.25); idle()
         cmd("fxlink.rename", link=LID, name="Bus FX")
         cmd("fxlink.detach", host=C, link=LID); idle()
-        cmd("fxlink.set_local_output", host=C, link=LID, gain_db=-9.0, muted=True)
+        cS = bin_stage(C)
+        cmd("plugin.set_param", plugin=cS, index=0, value=-9.0)
+        cmd("plugin.set_param", plugin=cS, index=2, value=1); idle()
         before = cmd("fxlink.get", link=LID)
         proj = os.path.join(TMP, "p.objekat")
         cmd("project.save_as", path=proj); idle()
@@ -316,15 +346,20 @@ try:
         after = cmd("fxlink.list")
         check("the bin is back", after["count"] == 1)
         g = after["links"][0]
-        check("...with its name, output and definition",
-              g["name"] == "Bus FX" and abs(g["gain_db"] + 4.5) < 1e-6 and abs(g["pan"] - 0.25) < 1e-6
-              and [d["identifier"] for d in g["plugins"]] == [d["identifier"] for d in before["plugins"]],
+        check("...with its name and definition, the gain + pan + mute stage among its plugins",
+              g["name"] == "Bus FX"
+              and [d["identifier"] for d in g["plugins"]] == [d["identifier"] for d in before["plugins"]]
+              and "objGainPanMute" in [d["identifier"] for d in g["plugins"]],
               str(g))
         check("...its three members, C detached",
               len(g["members"]) == 3 and sum(1 for m in g["members"] if m["detached"]) == 1)
-        check("...and C's own output section",
-              any(m.get("local", {}).get("muted") is True and abs(m["local"]["gain_db"] + 9.0) < 1e-6
-                  for m in g["members"]))
+        att = [stage(bin_stage(m["host"])) for m in g["members"] if not m["detached"]]
+        check("...the attached members' stage at -4.5 dB / pan 0.25",
+              len(att) == 2 and all(abs(v["gain_db"] + 4.5) < 1e-4 and abs(v["pan"] - 0.25) < 1e-4
+                                    and v["muted"] is False for v in att), str(att))
+        det = [stage(bin_stage(m["host"])) for m in g["members"] if m["detached"]]
+        check("...and C's own stage (-9 dB, muted)",
+              len(det) == 1 and abs(det[0]["gain_db"] + 9.0) < 1e-4 and det[0]["muted"] is True, str(det))
         # the mirror was re-armed by the load
         a2 = next(m for m in g["members"] if not m["detached"])
         rr = [i for i in a2["instances"] if i["name"] == "Reverb"][0]["id"]
@@ -443,7 +478,7 @@ try:
         se, sr_ = add(S1, "4bandEq"), add(S1, "reverb")
         SRC = cmd("fxlink.create", host=S1, plugins=[se, sr_], name="Src bin")["id"]
         cmd("fxlink.attach", link=SRC, host=S2)
-        cmd("fxlink.set_output", link=SRC, gain_db=-6.0)
+        add_bin_stage(S1, gain_db=-6.0); idle()
         cmd("selection.set", ids=[S1, S2])
         cmd("clipboard.copy")
         cmd("tab.select", index=2); idle()
@@ -452,8 +487,10 @@ try:
         check("a cross-project paste makes ONE new bin in the target",
               lst["count"] == 1 and lst["links"][0]["id"] != SRC, str(lst["count"]))
         g = lst["links"][0]
-        check("...named and set as the source's (name, volume), both pasted objects its members",
-              g["name"] == "Src bin" and abs(g["gain_db"] + 6.0) < 1e-6 and len(g["members"]) == 2, str(g))
+        pv = [stage(bin_stage(m["host"])) for m in g["members"]]
+        check("...named and set as the source's (name, stage at -6 dB), both pasted objects its members",
+              g["name"] == "Src bin" and len(g["members"]) == 2
+              and len(pv) == 2 and all(abs(v["gain_db"] + 6.0) < 1e-4 for v in pv), "%s %s" % (g, pv))
         ti = [next(i for i in m["instances"] if i["name"] == "Reverb")["id"] for m in g["members"]]
         cmd("plugin.set_param", plugin=ti[0], index=WET, value=0.66); idle()
         check("...and it mirrors", abs(param(ti[1], WET) - 0.66) < 1e-3, "%s" % param(ti[1], WET))
@@ -472,7 +509,7 @@ try:
         ke = add(K1, "4bandEq")
         KL = cmd("fxlink.create", host=K1, plugins=[ke], name="Inner")["id"]
         cmd("fxlink.attach", link=KL, host=K2)
-        cmd("fxlink.set_output", link=KL, gain_db=-9.0)
+        add_bin_stage(K1, gain_db=-9.0); idle()
         grp = cmd("group.create", ids=[K1, K2])["id"]
         cmd("project.save_as", path=cproj); idle()
         r = cmd("consolidate.make", id=grp)
@@ -483,8 +520,9 @@ try:
         lst = cmd("fxlink.list")
         check("unmaking gives the content back with a NEW bin (not the old id), both members",
               lst["count"] == 1 and lst["links"][0]["id"] != KL and len(lst["links"][0]["members"]) == 2, str(lst))
-        check("...its output section carried through the sidecar (-9 dB)",
-              abs(lst["links"][0]["gain_db"] + 9.0) < 1e-6, str(lst["links"][0]))
+        kv = [stage(bin_stage(m["host"])) for m in lst["links"][0]["members"]]
+        check("...its stage carried through the sidecar (-9 dB on both members)",
+              len(kv) == 2 and all(abs(v["gain_db"] + 9.0) < 1e-4 for v in kv), str(kv))
         check("...and its name",  lst["links"][0]["name"] == "Inner")
 
         # ── the ENGINE follows: an export re-read ──────────────────────────
@@ -495,8 +533,10 @@ try:
         eqX = add(X, "4bandEq")
         LX = cmd("fxlink.create", host=X, plugins=[eqX])["id"]
         cmd("fxlink.attach", link=LX, host=Y)
+        add_bin_stage(X)                            # neutral: the bin's level, 0 dB
         cmd("object.set_mute", ids=[Y], muted=True)
         idle()
+        sX, sY = bin_stage(X), bin_stage(Y)
 
         def render(name):
             out = os.path.join(TMP, name)
@@ -507,13 +547,13 @@ try:
 
         p0 = render("neutral.wav")
         check("the bin plays (signal through the block)", p0 > 0.05, "%s" % p0)
-        cmd("fxlink.set_output", link=LX, gain_db=-20.0)
+        cmd("plugin.set_param", plugin=sX, index=0, value=-20.0); idle()
         p1 = render("minus20.wav")
         check("the bin's volume is HEARD (-20 dB)", abs(p1 / p0 - 0.1) < 0.02, "%s / %s" % (p1, p0))
-        cmd("fxlink.set_output", link=LX, muted=True)
+        cmd("plugin.set_param", plugin=sX, index=2, value=1); idle()
         p2 = render("muted.wav")
         check("the bin's mute is HEARD", p2 < p0 * 0.001, "%s" % p2)
-        cmd("fxlink.set_output", link=LX, muted=False)
+        cmd("plugin.set_param", plugin=sX, index=2, value=0); idle()
         cmd("fxlink.set_enabled", link=LX, enabled=False)
         p3 = render("off.wav")
         check("a bin that is off bypasses its output stage too (level back to unity)",
@@ -526,21 +566,23 @@ try:
         cmd("object.set_mute", ids=[Y], muted=False)
         cmd("object.set_mute", ids=[X], muted=True)
         idle()
+        wait_stage(sY, -20.0, muted=False)
         py = render("member_Y.wav")
         check("the OTHER member hears the bin's volume too", abs(py / p0 - 0.1) < 0.02, "%s / %s" % (py, p0))
-        cmd("fxlink.detach", host=Y, link=LX)
-        cmd("fxlink.set_local_output", host=Y, link=LX, gain_db=0.0)
+        cmd("fxlink.detach", host=Y, link=LX); idle()
+        check("the detached member keeps its stage instance", bin_stage(Y) == sY)
+        cmd("plugin.set_param", plugin=sY, index=0, value=0.0); idle()
         py2 = render("member_Y_detached.wav")
         check("a detached member plays its OWN output section (0 dB, unlike the bin's -20)",
               abs(py2 / p0 - 1.0) < 0.05, "%s / %s" % (py2, p0))
-        cmd("fxlink.set_local_output", host=Y, link=LX, muted=True)
+        cmd("plugin.set_param", plugin=sY, index=2, value=1); idle()
         py3 = render("member_Y_localmute.wav")
         check("...its local mute is heard", py3 < p0 * 0.001, "%s" % py3)
         cmd("fxlink.reattach", host=Y, link=LX)
         py4 = render("member_Y_reattached.wav")
         check("reattached, it plays the bin's again", abs(py4 / p0 - 0.1) < 0.02, "%s / %s" % (py4, p0))
         cmd("edit.undo")      # the reattach
-        cmd("edit.undo")      # the local mute
+        cmd("edit.undo")      # the local mute (a stage's set is an undo point)
         idle()
         py5 = render("member_Y_undone.wav")
         check("undo restores the detached member's local section in the engine (0 dB)",
@@ -732,6 +774,168 @@ try:
         ep2 = render("empty_bin_reopened.wav")
         check("...and it still passes the signal", ep2 > 0.05, "%s" % ep2)
         audit_clean("at the end of the empty-bin phase")
+
+        # ── NAMES (plan_synoptic_rework B.9) ────────────────────────────────
+        # A bin takes the name of its object, FOLLOWS the object's renaming until the user names it by
+        # hand, namesakes are numbered, several objects → the first in time, and ⌘R is contextual.
+        cmd("project.new")
+
+        def link_of(lid):
+            return cmd("fxlink.get", link=lid)
+
+        def nm(lid):
+            return link_of(lid)["name"]
+
+        def named(oid, label):
+            cmd("object.rename", id=oid, name=label)
+            return oid
+
+        def two_plugins(host):
+            return [add(host, "4bandEq"), add(host, "reverb")]
+
+        K = named(cmd("object.add", path=BIP, lane=0, start=0)["id"], "Kick")
+        k1 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("a bin made from \"Kick\" is called \"Kick\", follows it, and is not the user's",
+              k1["name"] == "Kick" and k1["name_source"] == K and k1["user_named"] is False, str(k1))
+        k2 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("a namesake is numbered: \"Kick 2\"", k2["name"] == "Kick 2" and k2["name_source"] == K, k2["name"])
+        k3 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("...and the next \"Kick 3\"", k3["name"] == "Kick 3", k3["name"])
+        K1, K2, K3 = k1["id"], k2["id"], k3["id"]
+
+        cmd("object.rename", id=K, name="Kik"); idle()
+        check("renaming the object renames its bins, through the same numbering",
+              [nm(K1), nm(K2), nm(K3)] == ["Kik", "Kik 2", "Kik 3"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("edit.undo"); idle()
+        check("ONE undo gives back the object's name AND the bins' names",
+              next(o for o in cmd("object.list")["objects"] if o["id"] == K)["name"] == "Kick"
+              and [nm(K1), nm(K2), nm(K3)] == ["Kick", "Kick 2", "Kick 3"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("edit.redo"); idle()
+        check("...and redo renames them again", [nm(K1), nm(K2), nm(K3)] == ["Kik", "Kik 2", "Kik 3"])
+
+        r = cmd("fxlink.rename", link=K1, name="Mine")
+        check("a bin renamed by hand becomes the user's", r["name"] == "Mine" and r["user_named"] is True, str(r))
+        cmd("object.rename", id=K, name="Snare"); idle()
+        check("...and keeps its name when the object is renamed; the others still follow",
+              [nm(K1), nm(K2), nm(K3)] == ["Mine", "Snare", "Snare 2"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("object.rename", id=K, name=""); idle()
+        check("clearing the object's name: the bins follow what the object is called then (its file)",
+              nm(K2) == "bip.wav" and nm(K3) == "bip.wav 2" and nm(K1) == "Mine",
+              str([nm(K1), nm(K2), nm(K3)]))
+        cmd("object.rename", id=K, name="Kick"); idle()
+
+        # an explicit name at creation is the user's, kept as typed, even as a namesake
+        kx = cmd("fxlink.create", host=K, plugins=two_plugins(K), name="Kick")
+        check("an explicit `name` is kept as typed and marked the user's",
+              kx["name"] == "Kick" and kx["user_named"] is True and kx["name_source"] is None, str(kx))
+        cmd("object.rename", id=K, name="Tom"); idle()
+        check("...and never follows", nm(kx["id"]) == "Kick" and nm(K2) == "Tom" and nm(K3) == "Tom 2")
+
+        # a source that goes away freezes the name; its orphan does not hold the name hostage
+        Z = named(cmd("object.add", path=BIP, lane=1, start=1)["id"], "Zed")
+        z1 = cmd("fxlink.create", host=Z, plugins=two_plugins(Z))["id"]
+        zk = cmd("fxlink.attach", link=z1, host=K)
+        cmd("object.remove", ids=[Z]); idle()
+        check("a bin whose object is deleted keeps its name (still worn by K)", nm(z1) == "Zed")
+        Z2 = named(cmd("object.add", path=BIP, lane=2, start=1)["id"], "Zed")
+        z2 = cmd("fxlink.create", host=Z2, plugins=two_plugins(Z2))
+        check("a namesake only held by a bin NOBODY uses any more does not number: \"Zed 2\"",
+              z2["name"] == "Zed 2", z2["name"])      # z1 is still worn by K: it IS in use
+        cmd("fxlink.release", host=K, link=z1); idle()
+        z3 = cmd("fxlink.create", host=Z2, plugins=[add(Z2, "chorus"), add(Z2, "compressor")])
+        check("...but once no block wears \"Zed\", the name is free again",
+              z3["name"] == "Zed", z3["name"])
+
+        # several objects: named after the FIRST in time, even when it brings no plugin of its own
+        X = named(cmd("object.add", path=BIP, lane=3, start=0.2)["id"], "Xray")
+        Y = named(cmd("object.add", path=BIP, lane=4, start=5)["id"], "Yank")
+        two_plugins(Y)
+        m = cmd("fxlink.create", objects=[Y, X])
+        check("made of several objects, the bin is named after the first in time (and follows it)",
+              m["name"] == "Xray" and m["name_source"] == X, str(m))
+        cmd("object.rename", id=Y, name="Yoke"); idle()
+        check("...not after the others", nm(m["id"]) == "Xray")
+        cmd("object.rename", id=X, name="Xenon"); idle()
+        check("...and follows the first", nm(m["id"]) == "Xenon")
+
+        # a bin on a stem (a bus) is named after it, follows its renaming
+        V = cmd("stem.add", name="Voice", format="stereo")["id"]
+        vp = two_plugins(V)
+        v = cmd("fxlink.create", host=V, plugins=vp)
+        check("a bin made on a stem is named after the stem", v["name"] == "Voice" and v["name_source"] == V, str(v))
+        cmd("stem.rename", id=V, name="Choir"); idle()
+        check("...and follows the stem's renaming", nm(v["id"]) == "Choir")
+
+        # an EMPTY bin laid by the browser's "New FX link"
+        E = named(cmd("object.add", path=BIP, lane=5, start=0)["id"], "Echo")
+        e = cmd("debug.fxlink_create_empty", host=E)
+        check("an empty bin is named after its host too", e["name"] == "Echo", str(e))
+
+        # AUTOMATIC creation: a cut / split / duplicate names the bin after the object cut
+        C0 = named(cmd("object.add", path=BIP, lane=6, start=0)["id"], "Hat")
+        two_plugins(C0)
+        cmd("object.split_at", ids=[C0], seconds=0.3); idle()
+        auto = [l for l in cmd("fxlink.list")["links"] if l["name"].startswith("Hat")]
+        check("a split makes a bin named after the object cut", len(auto) == 1 and auto[0]["name"] == "Hat"
+              and auto[0]["name_source"] == C0 and auto[0]["user_named"] is False, str(auto))
+        cmd("object.rename", id=C0, name="Ride"); idle()
+        check("...which follows the ORIGINAL's renaming", nm(auto[0]["id"]) == "Ride")
+        D0 = named(cmd("object.add", path=BIP, lane=7, start=0)["id"], "Ride")
+        two_plugins(D0)
+        cmd("object.duplicate", ids=[D0]); idle()
+        names = sorted(l["name"] for l in cmd("fxlink.list")["links"] if l["name"].startswith("Ride"))
+        check("a duplicate makes a bin named after the original, numbered against the namesake",
+              names == ["Ride", "Ride 2"], str(names))
+        # paste
+        cmd("selection.set", ids=[D0]); cmd("clipboard.copy"); cmd("clipboard.paste"); idle()
+        check("a paste does not add a bin for an already-linked original",
+              len([l for l in cmd("fxlink.list")["links"] if l["name"].startswith("Ride")]) == 2)
+        audit_clean("after the names phase")
+
+        # save / reopen: the names, the flag and the source survive; the follow still works
+        before = {l["id"]: (l["name"], l["user_named"], l["name_source"]) for l in cmd("fxlink.list")["links"]}
+        nproj = os.path.join(TMP, "names.objekat")
+        cmd("project.save_as", path=nproj); idle()
+        cmd("project.new")
+        cmd("project.open", path=nproj); idle()
+        after = {l["id"]: (l["name"], l["user_named"], l["name_source"]) for l in cmd("fxlink.list")["links"]}
+        check("names, `user_named` and `name_source` survive a save and a reopen",
+              after == before, "%s\n%s" % (sorted(before.items()), sorted(after.items())))
+        cmd("object.rename", id=K, name="Floor"); idle()
+        check("...and a reopened bin still follows its object",
+              cmd("fxlink.get", link=K2)["name"] == "Floor" and cmd("fxlink.get", link=K1)["name"] == "Mine")
+
+        # ⌘R, contextual: the signal view's selection on ONE bin renames the bin; else as before
+        def shortcut():
+            return cmd("debug.rename_shortcut")
+
+        cmd("plugin.deselect"); cmd("selection.set", ids=[K])
+        r = shortcut()
+        check("⌘R with the timeline's keyboard renames the selected object (as before)",
+              r["target"] == "object" and r["id"] == K and r["renaming_fxlink"] is None, str(r))
+        blk_k2 = next(p for p in cmd("plugin.list", host=K)["plugins"] if p.get("is_fx_block") and p.get("link") == K2)
+        cards2 = [q["id"] for q in blk_k2["plugins"]]
+        cmd("plugin.select", host=K, plugins=[cards2[0]])
+        r = shortcut()
+        check("⌘R with ONE card of a bin selected opens that bin's rename field",
+              r["target"] == "fxlink" and r["id"] == K2 and r["renaming_fxlink"] == K2, str(r))
+        cmd("plugin.select", host=K, plugins=cards2)
+        r = shortcut()
+        check("...and with every card of the bin selected", r["target"] == "fxlink" and r["id"] == K2, str(r))
+        blk_k3 = next(p for p in cmd("plugin.list", host=K)["plugins"] if p.get("is_fx_block") and p.get("link") == K3)
+        cmd("plugin.select", host=K, plugins=[cards2[0], blk_k3["plugins"][0]["id"]])
+        r = shortcut()
+        check("...but not with cards of TWO bins: back to the object", r["target"] == "object" and r["renaming_fxlink"] is None, str(r))
+        cmd("plugin.select", host=K, plugins=[])
+        r = shortcut()
+        check("...nor with the view holding the keyboard on nothing: back to the object",
+              r["target"] == "object" and r["id"] == K, str(r))
+        cmd("plugin.deselect"); cmd("selection.clear")
+        check("...and with nothing selected anywhere, nothing", shortcut()["target"] == "none")
+
+        # the typed name commits through the same door as `fxlink.rename`
+        cmd("fxlink.rename", link=K2, name="Typed"); idle()
+        check("the field's commit marks the name as the user's", cmd("fxlink.get", link=K2)["user_named"] is True)
 
         audit_clean("at the end of the scenario (signal view, overlay)")
 

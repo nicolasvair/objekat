@@ -21,7 +21,10 @@ What it is really out to prove, beyond the commands answering:
   • ⌘D and ⌘V land just after the LAST selected card, in ITS series, and not at the chain's end;
   • a MOVE really empties the source, where a copy and a link leave it whole;
   • a DROP lands on a BUS's strip — the only place a stem can be aimed at with the hand — and
-    the selection follows its cards there.
+    the selection follows its cards there;
+  • a PARALLEL BRANCH (`plugin.branch`, the '+' and the card's menu) takes the run the selection says,
+    stops at a send's marker, makes an EMPTY branch where there is nothing, refuses a bin's inside, and
+    costs ONE undo point.
 
 The half this file cannot reach is the mouse: the rectangle, ⇧ and ⌘ on the canvas are geometry,
 and they are asserted on their own in `test_synoptic_marquee.swift`.
@@ -378,6 +381,117 @@ with ObjekatClient(SOCK) as c:
           len(on_send) == 3 and [p["identifier"] for p in on_trunk] == BUILTINS, str(on_send))
     check("...and nothing is linked, on either side",
           all(not p.get("link_group") for p in on_send + on_trunk), str(on_send + on_trunk))
+    cmd("plugin.deselect")
+
+    # ── a parallel branch (§B.2, 13 October 2026): the '+', the card's menu, the selection ─
+    # The hand's two doors are `plugin.branch` with `series`/`at` (a drag down-right out of a '+') and with
+    # `plugin` (the card's "Create a parallel branch"). ONE undo point each, read on `perf.census` — in a
+    # FRESH project, so that the undo history (capped at 50) is far from full and its depth means something.
+    cmd("project.new")
+    BR = cmd("object.add", path=BIP, lane=2, start=0)["id"]
+    p1, p2, p3, p4 = fill(BR)
+
+    def top(host):
+        return cmd("plugin.list", host=host)["plugins"]
+
+    def shape(host):
+        """The root series: plugin ids, a rack as ("R", [[ids of each branch]]), a send marker as "M"."""
+        out = []
+        for q in top(host):
+            if q.get("is_rack"):
+                out.append(("R", [[x["id"] if not x.get("is_rack") else "R" for x in v] for v in q["voices"]]))
+            elif q.get("is_send_marker"):
+                out.append("M")
+            else:
+                out.append(q["id"])
+        return out
+
+    def depth():
+        return cmd("perf.census")["undo_depth"]
+
+    def branch_once(label, expect_ids, expect_shape, **params):
+        """One `plugin.branch`: what it took, the chain it left, ONE undo point, and one undo restores."""
+        before, d0 = shape(BR), depth()
+        r = cmd("plugin.branch", host=BR, **params)
+        check(label + ": the run", r["branched"] == expect_ids, str(r["branched"]))
+        check(label + ": the chain", shape(BR) == expect_shape, str(shape(BR)))
+        check(label + ": ONE undo point", depth() == d0 + 1, "%d -> %d" % (d0, depth()))
+        cmd("edit.undo")
+        check(label + ": one undo puts the chain back", shape(BR) == before, str(shape(BR)))
+        return r
+
+    cmd("plugin.deselect")
+    r = branch_once("'+' 1, no selection", [p2], [p1, ("R", [[p2], []]), p3, p4], series="root", at=1)
+    check("the answer names the new block", r["block"] is not None and r["empty_branch"] is False, str(r))
+    branch_once("head '+', no selection", [p1], [("R", [[p1], []]), p2, p3, p4], at=0)
+    branch_once("tail '+', no selection: the element ABOVE it", [p4], [p1, p2, p3, ("R", [[p4], []])], at=4)
+
+    cmd("plugin.select", host=BR, plugins=[p3, p2])
+    branch_once("'+' 1, p2 p3 selected: both, in chain order", [p2, p3], [p1, ("R", [[p2, p3], []]), p4], at=1)
+    branch_once("'+' 2, p2 p3 selected: from p3 down only", [p3], [p1, p2, ("R", [[p3], []]), p4], at=2)
+    branch_once("'+' 0, p1 not selected: p1 alone, the selection ignored", [p1], [("R", [[p1], []]), p2, p3, p4], at=0)
+    cmd("plugin.select", host=BR, plugins=[p2, p4])
+    branch_once("'+' 1, p2 p4 selected (not contiguous): p2 only", [p2], [p1, ("R", [[p2], []]), p3, p4], at=1)
+    cmd("plugin.select", host=BR, plugins=[p3, p4])
+    branch_once("tail '+', p3 p4 selected: both (going up)", [p3, p4], [p1, p2, ("R", [[p3, p4], []])], at=4)
+
+    # the card's menu
+    cmd("plugin.select", host=BR, plugins=[p2, p3, p4])
+    branch_once("menu on p3, p2 p3 p4 selected: the whole run round it", [p2, p3, p4],
+                [p1, ("R", [[p2, p3, p4], []])], plugin=p3)
+    branch_once("menu on p1, not selected: p1 alone", [p1], [("R", [[p1], []]), p2, p3, p4], plugin=p1)
+    cmd("plugin.deselect")
+    branch_once("menu on p2, no selection: p2 alone", [p2], [p1, ("R", [[p2], []]), p3, p4], plugin=p2)
+
+    # an EMPTY branch: a '+' with nothing under it — the empty chain, and an empty branch of a block
+    EMPTY = cmd("object.add", path=BIP, lane=3, start=0)["id"]
+    fill(EMPTY, [])
+    r = cmd("plugin.branch", host=EMPTY, at=0)
+    rk = [q for q in top(EMPTY) if q.get("is_rack")]
+    check("an empty chain: an EMPTY branch (a block of two empty branches)",
+          r["branched"] == [] and r["empty_branch"] is True and len(rk) == 1 and rk[0]["voices"] == [[], []]
+          and r["block"] is None, str(r))
+    cmd("edit.undo")
+    check("...one undo takes it back", top(EMPTY) == [], str(top(EMPTY)))
+    cmd("plugin.branch", host=BR, at=1)                      # [p1, R[[p2],[]], p3, p4]
+    blk = next(q for q in top(BR) if q.get("is_rack"))["id"]
+    r = cmd("plugin.branch", host=BR, series={"voice": blk, "index": 1}, at=0)
+    inner = next(q for q in top(BR) if q.get("is_rack"))["voices"]
+    check("an empty branch of a block: a nested block of two empty branches inside it",
+          r["empty_branch"] is True and [x["id"] for x in inner[0]] == [p2] and len(inner[1]) == 1
+          and inner[1][0].get("is_rack") and inner[1][0]["voices"] == [[], []], str(inner))
+    cmd("edit.undo"); cmd("edit.undo")
+    check("...two undos, two points", shape(BR) == [p1, p2, p3, p4], str(shape(BR)))
+
+    # a send's marker is a barrier: a send taken before p3 stays where it is
+    AUXB = cmd("aux.create", start=0, end=4, lane=5)["id"]
+    cmd("send.create", id=BR, aux=AUXB, position="chain", before_plugin=p3)
+    check("a send taps the chain before p3", shape(BR) == [p1, p2, "M", p3, p4], str(shape(BR)))
+    cmd("plugin.select", host=BR, plugins=[p2, p3])
+    branch_once("p2 p3 selected across a send's marker: the run stops at the marker", [p2],
+                [p1, ("R", [[p2], []]), "M", p3, p4], at=1)
+    branch_once("view index 2 is p3 (the marker is not counted)", [p3], [p1, p2, "M", ("R", [[p3], []]), p4], at=2)
+    cmd("send.remove", id=BR, aux=AUXB)
+    cmd("plugin.deselect")
+
+    # refusals: inside a bin, a bin's instance
+    q1, q2 = fill(BR, ["4bandEq", "reverb"])
+    link = cmd("fxlink.create", host=BR, plugins=[q1, q2])
+    blockid = next(q for q in top(BR) if q.get("is_fx_block"))["id"]
+    inst = next(q for q in top(BR) if q.get("is_fx_block"))["plugins"][0]["id"]
+    d0 = depth()
+    for label, params in [("a bin's series", {"series": {"block": blockid}, "at": 0}),
+                          ("a bin's instance (menu)", {"plugin": inst})]:
+        try:
+            cmd("plugin.branch", host=BR, **params)
+            check("branching %s is refused" % label, False, "no error raised")
+        except ObjekatError as e:
+            check("branching %s is refused" % label, "invalid_state" in str(e), str(e))
+    check("...and the refusals burn no undo point", depth() == d0, "%d -> %d" % (d0, depth()))
+    r = cmd("plugin.branch", host=BR, at=0)
+    check("the '+' above a bin branches the bin's block WHOLE", r["branched"] == [blockid], str(r))
+    cmd("edit.undo")
+    cmd("fxlink.delete", link=link["id"])
     cmd("plugin.deselect")
 
 print("")

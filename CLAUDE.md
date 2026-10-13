@@ -2564,6 +2564,39 @@ What has landed since mid-August, in order:
   fader), the plan said it would not; consolidating an object that carries a pre-fader send is now refused (cause of
   the gap not investigated).
 
+- **The signal view rework: gain stages, the object frame, the "+" gestures, sends below** (12-13 October
+  2026, branch `feat/synoptic-rework`, MERGED into `main` and pushed on 13 October 2026; engine patch
+  **`0041`** on the fork branch `objekat-gainstage-0041`, `8f3e51a6beb`, published on the fork the same day,
+  `objekat-patches-3.5` fast-forwarded onto it; the next free number is `0042`). Authority: `docs/plan_synoptic_rework.md` (the user's
+  requests 1–12, decisions D1–D8, lots L0 → L8, journal H with every measurement); the decision in
+  `architecture_decisions.md` ("The signal view rework").
+  **Session format 25: the trims and the FX link's output section are GONE**, model and engine. An old file's
+  non-neutral trim (or one with a curve) becomes a GAIN STAGE at the head / the tail of the chain, an FX
+  output a "gain · pan" stage at the end of the bin (one mirrored instance per attached member), at load, by
+  ONE pure function (`LegacyGainMigration`), the load staying clean. A gain stage (`ObjGainStagePlugin`, two
+  faces) is an ORDINARY plugin leaf — every walker carries it — with no bypass, no editor, never in the
+  browser, the hand clamped to ±20 dB. The send anchors `input` / `pre_fader` are the user segment's bounds
+  now. Proven by a null test against the format-24 build (`scenario_gain_migration.py`, every section 0 LSB,
+  needs `--base-app`).
+  **The view**: the object drawn in a frame of its colour, clip on top and mixer at the bottom straddling it;
+  a "+" that shows on hover, and dragged — right = a gain stage, further = gain · pan · mute, right-down = a
+  parallel branch, right-up = a send from there (`SynopticPlusGesture`, pure); the clip's options folded by
+  default (a pill says when a hidden one is not neutral), an FX link foldable by double click; sends below
+  the stems, their wire leaving the trunk by the LEFT (`SendWire`, pure; a handle beside the "+" moves the
+  send); a send's plugins drawn as chain cards; the diagnostic gone. **An FX link takes its object's name**
+  and follows its renaming until renamed by hand (`user_named`, `name_source`); ⌘R renames the bin when the
+  signal view holds the keyboard and its selection designates ONE bin (a header click selects the block).
+  **A trap worth keeping**: removing the first `ObjGain` of a MONO chain doubled it (+6.02 dB) —
+  `ChannelRemappingNode`'s explicit mapping ADDED into a destination that, in a linear chain, is its own
+  input. That is patch `0041`; it was invisible while a trim sat in front.
+  Verified with no screen (L8, 13 October): Debug build, no new warning; the pure tests (12 suites, 14 s in
+  parallel) and the headless D.3 suite in ~3 min 30 s of execution — `scenario_gain_stage` 42/0,
+  `scenario_gain_migration` 80/0, `scenario_fxlink` 188/0, `scenario_plugin_selection` 64, `smoke.jsonl`
+  15/15, `scenario_send_plugins_reopen` 53/0; no window on the headless pids checked; i18n clean.
+  **Not seen, not heard, not felt — none of it**: every pixel of the view (plan D.4 is the list), the four
+  drag gestures and their thresholds under a hand, and BY EAR an old project with trims and FX outputs
+  opened in the new build (the null test proves the export, not the live graph).
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -150,14 +150,6 @@ extension EditViewModel {
         // rather than one of them being reasoned about and the other forgotten the day the append
         // becomes an insert (@see AutomationPointRef).
         clearAutomationPointSelection()
-        // The chain trims exist on the engine side only if the rack has been compiled — and it is
-        // not, for an object with no plugin whose trims have stayed at 0 dB. Materialise it
-        // BEFORE the first point, otherwise the curve would have no plugin to write itself into (the same
-        // precaution as `setChainGain`, which compiles when the engine answers it "no rack").
-        if param == .chainInGain || param == .chainOutGain,
-           let obj = find(id: objectID), !obj.needsChainCompile {
-            compileRack(objectID: objectID)
-        }
         let ok = update(id: objectID) { obj in
             let pt = AutomationPoint(t: max(0, t),
                                      v: v.clamped(to: param.valueRange),
@@ -336,15 +328,14 @@ extension EditViewModel {
         switch ref {
         case .volume:            return object.volume
         case .pan:               return object.pan
-        case .chainInGain:       return object.chainInGainDb
-        case .chainOutGain:      return object.chainOutGainDb
         case .send(let auxID):   return sendLevel(from: object.id, to: auxID)
-        case .plugin:            return nil
+        case .plugin, .chainInGain, .chainOutGain:
+            return nil   // the old trims: decodable only, never produced (format 25)
         }
     }
 
     /// The MODEL parameters that can be offered for automation on this object, those already
-    /// automated aside: fader, pan, trims, sends. Plugin parameters have their own list
+    /// automated aside: fader, pan, sends. Plugin parameters have their own list
     /// (@see automatablePluginParams), because they run into the hundreds and are filed by
     /// plugin — mixing them in with these would drown the menu.
     func automatableParams(for object: SoundObject) -> [ParamRef] {
@@ -400,10 +391,10 @@ extension EditViewModel {
         switch ref {
         case .volume:          updateVolume(id: objectID, volume: v)
         case .pan:             updatePan(id: objectID, pan: v)
-        case .chainInGain:     setChainGain(objectID: objectID, output: false, dB: v)
-        case .chainOutGain:    setChainGain(objectID: objectID, output: true,  dB: v)
         case .send(let auxID): setSendLevel(from: objectID, to: auxID, levelDb: v)
         case .plugin:          break   // no static value on the model side (see above)
+        case .chainInGain, .chainOutGain:
+            break                      // the old trims: no target any more (format 25)
         }
         isDirty = true
     }

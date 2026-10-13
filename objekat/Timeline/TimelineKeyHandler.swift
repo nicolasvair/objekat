@@ -894,15 +894,9 @@ extension TimelineView {
                     // Cmd+S (Save) / Cmd+Shift+S (Save As) are handled by the File menu.
                 case "r":
                     if flags.contains(.command) {
-                        if vm.selectedIDs.count == 1 {
-                            DispatchQueue.main.async { vm.renamingID = vm.selectedIDs.first }
-                        } else if let a = vm.selectedAnnotation {
-                            // The same shortcut for a marker's name, a region's and a comment's
-                            // text: one gesture to name a thing, whatever kind of thing it is.
-                            // `selectedAnnotation` is nil for SEVERAL marks: there is no one name
-                            // to type over all of them, so ⌘R then does nothing.
-                            DispatchQueue.main.async { vm.renamingID = a.markerID }
-                        }
+                        // Contextual (plan_synoptic_rework B.9): the signal view holding the keyboard
+                        // on ONE FX link bin renames the bin; otherwise the object / marker as before.
+                        DispatchQueue.main.async { vm.performRenameShortcut() }
                         return nil
                     }
                     if !flags.contains(.command) {

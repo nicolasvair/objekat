@@ -70,6 +70,9 @@ struct ProjectLoadOutcome: Equatable {
     /// NEVER repaired by the load itself: a hand is asked afterwards
     /// (@see `offerFXLinkDivergenceRepair`), a script calls `fxlink.repair_divergences`.
     var fxLinkDivergences: [FXLinkDivergence.Detail] = []
+    /// What became of the file's old trims and FX link outputs (@see LegacyGainMigration). Zero
+    /// everywhere = nothing to convert. Never makes the load MODIFIED: nothing changed to the ear.
+    var legacyGainMigration = LegacyGainMigration.Report()
 }
 
 /// What to do about plugin ids that more than one entry of a file carries, decided BEFORE the load
@@ -472,7 +475,8 @@ extension EditViewModel {
         lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
                                              repairedPluginIDs: pluginIDCheck.repaired,
                                              duplicatePluginIDs: pluginIDCheck.duplicates,
-                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad())
+                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad(),
+                                             legacyGainMigration: doc.legacyGainMigration ?? .init())
         loadState = nil
     }
 
@@ -601,7 +605,8 @@ extension EditViewModel {
         lastProjectLoad = ProjectLoadOutcome(path: nil, success: true, durationMs: durationMs,
                                              repairedPluginIDs: pluginIDCheck.repaired,
                                              duplicatePluginIDs: pluginIDCheck.duplicates,
-                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad())
+                                             fxLinkDivergences: detectFXLinkDivergencesAfterLoad(),
+                                             legacyGainMigration: doc.legacyGainMigration ?? .init())
         loadState = nil
         return true
     }

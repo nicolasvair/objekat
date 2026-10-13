@@ -167,6 +167,13 @@ extension CommandAdapters {
                            details: .object(["reason": .string(why.rawValue)]))
     }
 
+    /// A gain stage has no bypass (@see GainStage.swift): every on/off verb aimed at one refuses it.
+    static func gainStageNoBypass(_ pluginID: UUID) -> CommandError {
+        CommandError(code: .invalid_state,
+                     message: "plugin \(pluginID.uuidString) is a gain stage: it has no bypass",
+                     details: .object(["reason": .string("gain_stage_no_bypass")]))
+    }
+
     /// `plugin.link` and a send's mini-chain: refused on either side (a send's plugin is never linked).
     static func refuseLinkOnSend(_ hosts: [UUID], in vm: EditViewModel) throws {
         guard hosts.contains(where: { vm.isSendChainHost($0) && vm.find(id: $0) == nil }) else { return }
@@ -347,7 +354,13 @@ extension CommandAdapters {
         ]
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).
-        if plugin.isRack { payload["is_rack"] = .bool(true) }
+        if let rack = plugin.rack {
+            payload["is_rack"] = .bool(true)
+            // Its branches, in order: each a series of entries (what `plugin.branch` makes and the tests read).
+            payload["voices"] = .array(rack.voices.map { voice in
+                .array(voice.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
+            })
+        }
         // A send's marker is not a plugin either: it only says where the send towards `send_marker.aux`
         // taps the chain (`send.list` gives the position as a person reads it).
         if let marker = plugin.sendMarker {
@@ -373,6 +386,8 @@ extension CommandAdapters {
             }
         }
         if let group = plugin.linkGroupID { payload["link_group"] = .string(group.uuidString) }
+        // A leaf says whether it is a gain stage, and which face (@see GainStage.swift).
+        if !plugin.isContainer { payload["gain_stage"] = .stringOrNull(plugin.gainStageFace?.rawValue) }
         return .object(payload)
     }
 

@@ -20,6 +20,8 @@
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
+//         ../objekat/SoundObject/GainStage.swift \
+//         ../objekat/SoundObject/LegacyGainMigration.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
@@ -85,7 +87,7 @@ enum ARAModelTest {
         let noKey = try JSONSerialization.data(withJSONObject: dict)
         check("format-19 style JSON decodes with araSource == nil",
               (try? JSONDecoder().decode(SoundObject.self, from: noKey))?.araSource == nil)
-        check("session format is 24", SessionSchema.formatVersion == 24)
+        check("session format is 25", SessionSchema.formatVersion == 25)
 
         // 3. derivedCopy: the source follows, with a NEW plugin id, never linked.
         var linked = src

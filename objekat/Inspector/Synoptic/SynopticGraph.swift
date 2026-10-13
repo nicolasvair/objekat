@@ -65,6 +65,10 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// identity colours but is drawn greyed, like any state inherited from a disabled container.
     /// It never touches the plugin's own bypass (`isEnabled`).
     var greyedByBlock: Bool = false
+    /// Non-nil = this plugin is a GAIN STAGE (a built-in of the app, docs/plan_synoptic_rework.md §B.0.1):
+    /// the card shows that face instead of a plugin's (no power button, no editor), and is laid at that
+    /// face's width (@see SynopticLayout.cardWidth).
+    var gainStage: SynopticGainStageFace? = nil
 
     /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
     var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
@@ -75,7 +79,8 @@ struct SynopticPlugin: Identifiable, Equatable {
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
          isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
-         inFXBlock: Bool = false, greyedByBlock: Bool = false) {
+         inFXBlock: Bool = false, greyedByBlock: Bool = false,
+         gainStage: SynopticGainStageFace? = nil) {
         self.id = id
         self.name = name
         self.category = category
@@ -88,6 +93,7 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.color = color
         self.inFXBlock = inFXBlock
         self.greyedByBlock = greyedByBlock
+        self.gainStage = gainStage
     }
 
     /// A generic plugin inserted by a '+' in phase A (in phase B, the '+' will open
@@ -97,8 +103,15 @@ struct SynopticPlugin: Identifiable, Equatable {
     }
 }
 
+/// The two faces of a gain stage (docs/plan_synoptic_rework.md §B.4): one dB box, or pan · volume · mute.
+/// The layout's own word for it: this file knows neither the model nor the engine.
+enum SynopticGainStageFace: Equatable, Hashable {
+    case gain
+    case gainPanMute
+}
+
 /// What a `.series` node carries when it IS a bin's block (an FX link): the rounded rectangle drawn
-/// round it, and the header card and mix box controls. The series inside is the block's own instances, so
+/// round it, and its header card. The series inside is the block's own instances, so
 /// every '+' / drop zone / card of it is laid by the ordinary series code.
 struct SynopticFXLink: Equatable {
     var blockID: UUID
@@ -108,11 +121,17 @@ struct SynopticFXLink: Equatable {
     var isDetached: Bool
     /// The common on/off (the bin's while attached, the block's own while detached).
     var isEnabled: Bool
-    var gainDb: Float
-    var pan: Float
-    var muted: Bool
     /// How many hosts carry the bin (attached or not), for the tooltip.
     var memberCount: Int
+    /// FOLDED: the block shows its header and a one-line body ("3 plugins"); the wire runs straight
+    /// through (@see SynopticLayout.FXBlockPlacement.isFolded). Fed from `SynopticUIState`.
+    var isFolded: Bool = false
+    /// The bin's own id (`FXLink.id`), shared by every host that carries it. The fold and the rename
+    /// target of `SynopticUIState` are keyed by it (@see stateKey). nil in the demo.
+    var linkID: UUID? = nil
+
+    /// The key of this block in `SynopticUIState` (the bin's id, else the block's).
+    var stateKey: UUID { linkID ?? blockID }
 }
 
 struct SynopticNode: Identifiable, Equatable {
@@ -182,6 +201,18 @@ enum SynopticSendSlot: Equatable, Hashable {
     case postFader
 }
 
+extension SynopticSendSlot {
+    /// The slot a send takes at the trunk's insert point `index`, the trunk holding `count` top-level
+    /// entries (docs/plan_synoptic_rework.md §B.6): the head "+" ≡ `.input`, the tail "+" ≡ `.preFader`,
+    /// the "+" between entries `index − 1` and `index` ≡ `.chain(index)`. An EMPTY trunk has one "+",
+    /// both head and tail: it is `.input` (the two sound the same with nothing between them).
+    static func forTrunkInsert(index: Int, count: Int) -> SynopticSendSlot {
+        if index <= 0 { return .input }
+        if index >= count { return .preFader }
+        return .chain(index)
+    }
+}
+
 /// One send in the signal view. At the foot of an object = a departure towards an aux (`id` = the
 /// aux), drawn as a CARD beside the trunk; at the head of an aux = a received send (`id` = the
 /// sending object), drawn as a row of the bus head.
@@ -203,10 +234,16 @@ struct SynopticSend: Identifiable, Equatable {
     var plugins: [SynopticSendPlugin] = []
 }
 
-/// One plugin of a send's mini-chain, as the box draws it: a compact row. Never linked (a send's
-/// plugin carries no link), so the row has no link pastille.
+/// One plugin of a send's mini-chain, as the box draws it: a CARD like any plugin of the chain (the
+/// same `SynopticCardView`), laid at the box's width. Never linked (a send's plugin carries no link), so
+/// the card has no link badge.
 struct SynopticSendPlugin: Identifiable, Equatable {
     let id: UUID
     let name: String
     var enabled: Bool = true
+    /// The plugin's identity colour (@see ObjectPlugin.color): the card's halo and its on/off. Grey until
+    /// the binding feeds it.
+    var color: Color = .gray
+    /// Non-nil = this plugin is a GAIN STAGE (@see SynopticPlugin.gainStage): its card takes that face.
+    var gainStage: SynopticGainStageFace? = nil
 }

@@ -44,8 +44,11 @@ struct Stem: Identifiable, Codable, Equatable {
     // The bus's FX chain (INC 2): the same fields as a SoundObject. The bus (the stem's FolderTrack,
     // or getMasterPluginList() for the Main) hosts a user rack through the same signal pipeline.
     var plugins: [ObjectPlugin] = []
-    var chainInGainDb: Float = 0
-    var chainOutGainDb: Float = 0
+    /// DECODE-ONLY: the pre / post FX trims of a file written before format 25 (`chainInGainDb` /
+    /// `chainOutGainDb`). Never encoded, never read by anything but `LegacyGainMigration`, which turns a
+    /// non-neutral one into a gain stage at load and zeroes it (plan_synoptic_rework D1).
+    var legacyChainInGainDb: Float = 0
+    var legacyChainOutGainDb: Float = 0
 
     /// Routing of the bus's output to the Main (master). true = the stem is summed into the main
     /// mix (the default and historical behaviour); false = the bus is detached from the master (the
@@ -62,16 +65,14 @@ struct Stem: Identifiable, Codable, Equatable {
     var color: Color { ObjekatPalette.stem(colorIndex) }
 
     /// The same meaning as `SoundObject.needsChainCompile`: the bus's FX chain has to be compiled
-    /// if it carries plugins OR only trim gains.
-    var needsChainCompile: Bool { !plugins.isEmpty || chainInGainDb != 0 || chainOutGainDb != 0 }
+    /// if it carries plugins.
+    var needsChainCompile: Bool { !plugins.isEmpty }
 
     init(id: UUID, name: String, colorIndex: Int, format: StemFormat,
          gainDb: Float? = nil, plugins: [ObjectPlugin] = [],
-         chainInGainDb: Float = 0, chainOutGainDb: Float = 0,
          routeToMain: Bool = true, muted: Bool = false) {
         self.id = id; self.name = name; self.colorIndex = colorIndex; self.format = format
         self.gainDb = gainDb; self.plugins = plugins
-        self.chainInGainDb = chainInGainDb; self.chainOutGainDb = chainOutGainDb
         self.routeToMain = routeToMain; self.muted = muted
     }
 
@@ -87,10 +88,22 @@ struct Stem: Identifiable, Codable, Equatable {
         format        = try c.decode(StemFormat.self, forKey: .format)
         gainDb        = try c.decodeIfPresent(Float.self, forKey: .gainDb)
         plugins       = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []
-        chainInGainDb = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb) ?? 0
-        chainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
+        legacyChainInGainDb  = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb) ?? 0
+        legacyChainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
         routeToMain   = try c.decodeIfPresent(Bool.self, forKey: .routeToMain) ?? true
         muted         = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
+    }
+    /// The legacy trims are never written (format 25: they are gain stages, @see LegacyGainMigration).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encode(format, forKey: .format)
+        try c.encodeIfPresent(gainDb, forKey: .gainDb)
+        try c.encode(plugins, forKey: .plugins)
+        try c.encode(routeToMain, forKey: .routeToMain)
+        try c.encode(muted, forKey: .muted)
     }
 }
 
@@ -449,22 +462,19 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// engine track, outside the RackType). An array from now on so as to prepare for several
     /// instruments in parallel (an instrument rack with MIDI fan-out), not implemented engine-side in step A.
     var instruments: [ObjectPlugin] = []
-    /// The dB gain at the START and END of the plugin chain (input / output trim), independent of
-    /// the fader. Always present in the signal view, even without a parallel block. 0 = unity.
-    var chainInGainDb: Float = 0
-    var chainOutGainDb: Float = 0
-    /// The gain the DRAWN waveform follows: the fader plus the chain's two trims (pre / post FX).
+    /// DECODE-ONLY: the pre / post FX trims of a file written before format 25 (`chainInGainDb` /
+    /// `chainOutGainDb`). Never encoded, never read by anything but `LegacyGainMigration`, which turns a
+    /// non-neutral one into a gain stage at load and zeroes it (plan_synoptic_rework D1).
+    var legacyChainInGainDb: Float = 0
+    var legacyChainOutGainDb: Float = 0
+    /// The gain the DRAWN waveform follows: the fader.
     ///
     /// A DISPLAY approximation, on purpose. What is heard is `volume` then the chain, and the
     /// plugins in between (a compressor, an EQ) can change the level by any amount the drawing
-    /// cannot know without rendering — so only what is a pure GAIN is counted here: the fader and
-    /// the two trims, which are dB in a straight line. A trim moves the waveform exactly as far as it
-    /// moves the sound, whatever the plugins do in between. `-96` (silence) stays silence whatever
-    /// the trims add — a muted-by-fader object does not come back on the screen because of a +12.
-    var waveformDisplayGainDb: Float {
-        if volume <= -96 { return volume }
-        return volume + chainInGainDb + chainOutGainDb
-    }
+    /// cannot know without rendering. Until format 24 the two chain trims were counted here too (pure
+    /// dB in a straight line); since they became gain stages — plugins, whose value lives in the
+    /// instance and not in the model — they are not (plan_synoptic_rework M.4: reported, open point).
+    var waveformDisplayGainDb: Float { volume }
     var label: String?
     /// A custom colour (an index into `ObjectColorPalette.palette`), independent of the stem —
     /// assignable through the context menu on a clip / MIDI clip / group / aux. `nil` = no colour
@@ -643,11 +653,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         guard let rgb = customColorRGB else { return false }
         return ObjectColorChoice.prefersLightInk(rgb, alpha: ObjectColorChoice.bandOpacity(selected: selected))
     }
-    /// True if the object's FX chain has something to compile on the engine side: plugins, OR only
-    /// start/end trim gains (the rack then has to be materialised anyway — chain ObjGains do not
-    /// exist without a compile), OR an AUTOMATION of those gains: a trim curve laid on an object
-    /// whose static trim stayed at 0 dB would otherwise have no plugin to write itself into, and
-    /// would never be heard.
+    /// True if the object's FX chain has something to compile on the engine side: plugins (a gain
+    /// stage included — since format 25 the old start/end trims are gain stages, plugins like any).
     ///
     /// A send's marker alone does NOT count: with no plugin and no trim there is no chain to order a
     /// send in, and a send placed "in the chain" of an empty chain taps exactly the signal the fader
@@ -656,9 +663,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// A send that CARRIES plugins does (INC 3): the compile owns the content of every mini-chain,
     /// and an object whose only plugins sit on a send would otherwise never instantiate them.
     var needsChainCompile: Bool {
-        plugins.contains(where: { !$0.isSendMarker }) || chainInGainDb != 0 || chainOutGainDb != 0
-            || automation.contains { ($0.param == .chainInGain || $0.param == .chainOutGain)
-                                     && !$0.points.isEmpty }
+        plugins.contains(where: { !$0.isSendMarker })
             || (!isAux && sends.contains { !$0.plugins.isEmpty })
     }
 
@@ -961,7 +966,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// The fallback order for a BLANK band (a reopened project, a new object): the fader first — it
     /// is the parameter one automates nine times out of ten.
     private static func fallbackAutomationOrder(_ obj: SoundObject) -> [ParamRef] {
-        [.volume, .pan, .chainInGain, .chainOutGain] + obj.sends.map { .send(auxID: $0.auxID) }
+        [.volume, .pan] + obj.sends.map { .send(auxID: $0.auxID) }
     }
 
     /// True if this parameter carries at least one point on this object.
@@ -974,8 +979,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// Offering a row for a plugin that has gone would display 'plugin ?'.
     func resolvesAutomationTarget(_ ref: ParamRef) -> Bool {
         switch ref {
-        case .volume, .pan, .chainInGain, .chainOutGain:
+        case .volume, .pan:
             return true
+        case .chainInGain, .chainOutGain:
+            // Decodable only (a pre-25 file), never produced: the migration moved them onto gain
+            // stages, and nothing in the engine answers them any more.
+            return false
         case .send(let auxID):
             return sends.contains { $0.auxID == auxID }
         case .plugin(let pluginKey, _):
@@ -1131,7 +1140,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
          sends: [AuxSend] = [], baseBPM: Double? = nil,
          consolidateID: UUID? = nil,
          independentAttrs: ConsolidateAttrLinks = [],
-         chainInGainDb: Float = 0, chainOutGainDb: Float = 0,
          pianoRollOpen: Bool = false,
          automation: [AutomationLane] = [],
          automationTouchOrder: [ParamRef] = [],
@@ -1163,8 +1171,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.baseBPM    = baseBPM
         self.consolidateID = consolidateID
         self.independentAttrs = independentAttrs
-        self.chainInGainDb  = chainInGainDb
-        self.chainOutGainDb = chainOutGainDb
         self.pianoRollOpen  = pianoRollOpen
         self.automation     = automation
         self.automationTouchOrder = automationTouchOrder
@@ -1248,7 +1254,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     sends: derivedSends, baseBPM: baseBPM,
                     consolidateID: consolidateID,
                     independentAttrs: independentAttrs,
-                    chainInGainDb: chainInGainDb, chainOutGainDb: chainOutGainDb,
                     automation: inherited.compactMap { lane in
                         guard let ref = Self.remapping(lane.param, with: remap) else { return nil }
                         return AutomationLane(param: ref, points: lane.points)
@@ -1335,8 +1340,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(baseBPM, forKey: .baseBPM)
         try c.encodeIfPresent(consolidateID, forKey: .consolidateID)
         if !independentAttrs.isEmpty { try c.encode(independentAttrs, forKey: .independentAttrs) }
-        if chainInGainDb  != 0 { try c.encode(chainInGainDb,  forKey: .chainInGainDb) }
-        if chainOutGainDb != 0 { try c.encode(chainOutGainDb, forKey: .chainOutGainDb) }
         if pianoRollOpen { try c.encode(true, forKey: .pianoRollOpen) }
         // 'No point = no automation': empty rows are not written.
         let curves = automation.filter { !$0.points.isEmpty }
@@ -1389,8 +1392,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         baseBPM    = try c.decodeIfPresent(Double.self, forKey: .baseBPM)
         consolidateID = try c.decodeIfPresent(UUID.self, forKey: .consolidateID)
         independentAttrs = try c.decodeIfPresent(ConsolidateAttrLinks.self, forKey: .independentAttrs) ?? []
-        chainInGainDb  = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb)  ?? 0
-        chainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
+        legacyChainInGainDb  = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb)  ?? 0
+        legacyChainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
         pianoRollOpen  = try c.decodeIfPresent(Bool.self, forKey: .pianoRollOpen) ?? false
         automation     = try c.decodeIfPresent([AutomationLane].self, forKey: .automation) ?? []
         automationOpen = try c.decodeIfPresent(Bool.self, forKey: .automationOpen) ?? false

@@ -451,8 +451,23 @@ Checked as still biting: `develop` still had the linear `std::find`.
   the plugins — a tail rang past the owner's end). Branch `objekat-sends-0040`, commit
   `e69b952520a`, **published on the fork on 11 October** (with `objekat-sends-0039`, the tag
   `objekat-sends-0040-v1` on the first version, and `objekat-patches-3.5` moved to it). Files:
-  `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`, `tracktion_EditNodeBuilder.cpp`. The next
-  number is `0041`.
+  `tracktion_ObjBridge.h`, `tracktion_ObjBridgeNodes.*`, `tracktion_EditNodeBuilder.cpp`.
+- `0041` — **an explicit channel remap no longer adds its input onto itself (docs/plan_synoptic_rework.md,
+  lot M).** `ChannelRemappingNode`'s explicit mapping ADDS each source into its destination, right only on a
+  cleared buffer. In a linear `CombiningNode::TimedNode` chain — a clip's plugin list — every node processes
+  in ONE shared view (`prepareToPlay`, the `isLinearChain` path), so the destination IS the input: the
+  `ChannelMap::conversion (1, 2)` that `createNodeForPlugin` lays before the first plugin of a MONO clip's
+  chain gave **+6.02 dB on both channels**, and a remap could read a source it had already overwritten. It
+  stayed hidden as long as every chain began with the app's `trimIn` (an `ObjGainPlugin`, which widens the
+  mono itself — `singlePassThrough`, no conversion node); format 25 removed the trims (gain stages) and it
+  surfaced (measured: mono 0.25 → `4bandEq` → 0.5; stereo unchanged). The node now copies its input aside
+  when the two views overlap (a buffer allocated in `prepareToPlay`), clears the destination and maps from
+  the copy — what a cleared, non-aliased destination receives; a non-aliased remap is unchanged sample for
+  sample. Every explicit remap benefits: the plugin conversion (l.~1732), the rack input conversion
+  (l.~1795), the clips' channel matching (l.~1252), the sidechain direct / key maps (l.~1637, ~1672 — the
+  `0037` refusal of a bridge reader without a direct channel, written against this very defect, is left in
+  place). Branch `objekat-gainstage-0041` (local, NOT published), commit on top of `objekat-sends-0040`.
+  File: `tracktion_ChannelRemappingNode.*`. The next number is `0042`.
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit
@@ -494,7 +509,7 @@ does not go through the script. Patch `0031` settles it in the branch itself: ju
 HTTPS, same repository, same commit.
 
 Verification: `git -C tracktion_engine log --oneline 494e91d2ff5..HEAD | wc -l`
-must give as many as there are archives in the active series — today **32**. That number moves
+must give as many as there are archives in the active series — today **39**. That number moves
 with every patch added and with every one set aside; `ls engine-patches/3.5/0*.patch | wc -l`
 says it without getting it wrong.
 

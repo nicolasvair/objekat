@@ -127,6 +127,7 @@ extension EditViewModel {
         guard stems[i].name != newName else { return }
         pushUndo()
         stems[i].name = newName
+        followRename(of: [id], to: newName)       // the FX link bins made from this stem (B.9)
         isDirty = true
     }
 
@@ -329,7 +330,7 @@ extension EditViewModel {
     /// Reapplies the remembered bus FX chains to the engine (stems + Main/master). To be called
     /// after loading a project, once the buses are created and the Main is declared (`setMasterStemKey`).
     /// `compileRack` reads the model's plugins + chain gains through the host primitives.
-    /// needsChainCompile: a bus with ONLY trim gains has to be compiled too.
+    /// needsChainCompile: a bus with plugins (gain stages included).
     func syncStemPlugins() {
         for stem in stems where stem.needsChainCompile {
             compileRack(objectID: stem.id)

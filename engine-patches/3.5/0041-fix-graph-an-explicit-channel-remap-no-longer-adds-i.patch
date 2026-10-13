@@ -1,0 +1,134 @@
+From 8f3e51a6bebf66cc52e77b7d8be335b71fee3e8d Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 21:13:42 +0200
+Subject: [PATCH] fix(graph): an explicit channel remap no longer adds its
+ input onto itself
+
+ChannelRemappingNode's explicit mapping ADDS each source channel into its destination, which is only
+right on a cleared buffer (ClearBuffers::yes). In a linear CombiningNode::TimedNode chain - a clip's
+plugin list - every node processes in ONE shared view, so the destination IS the input: the mono
+source converted to stereo for the first plugin of a clip's chain (createNodeForPlugin,
+ChannelMap::conversion (1, 2)) came out at twice its level, +6.02 dB on both channels, and any
+remap read sources it had already overwritten. Objekat's chain used to begin with a gain plugin
+that widens the mono itself (no conversion node), which hid it; the gain stages of format 25 took
+that plugin away.
+
+When the input and output views overlap, the input is now copied aside (a buffer allocated in
+prepareToPlay), the destination cleared, and the mapping reads the copy: exactly what a cleared,
+non-aliased destination receives. A non-aliased remap is unchanged, sample for sample.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../graph/tracktion_ChannelRemappingNode.cpp  | 64 ++++++++++++++++++-
+ .../graph/tracktion_ChannelRemappingNode.h    |  5 ++
+ 2 files changed, 66 insertions(+), 3 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.cpp
+index c782faf1ad4..2e53e7e5c5c 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.cpp
+@@ -101,9 +101,46 @@ bool ChannelRemappingNode::isReadyToProcess()
+     return input->hasProcessed();
+ }
+ 
+-void ChannelRemappingNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo&)
++void ChannelRemappingNode::prepareToPlay (const tracktion::graph::PlaybackInitialisationInfo& info)
+ {
+     // Nothing special needed - input handles its own preparation
++
++    // Patch local Objekat (0041) — room for a copy of the input, used only when the output
++    // buffer turns out to be the input buffer (@see processExplicitMapping).
++    if (mode == Mode::ExplicitMapping)
++    {
++        const auto numInputChannels = std::max (1, input->getNodeProperties().numberOfChannels);
++        aliasedInputCopy.resize ({ static_cast<choc::buffer::ChannelCount> (numInputChannels),
++                                   static_cast<choc::buffer::FrameCount> (std::max (1, info.blockSize)) });
++    }
++}
++
++namespace
++{
++    // Patch local Objekat (0041) — whether two views overlap in memory (channel by channel).
++    bool viewsShareMemory (const choc::buffer::ChannelArrayView<float>& a,
++                           const choc::buffer::ChannelArrayView<float>& b)
++    {
++        const auto na = a.getNumFrames(), nb = b.getNumFrames();
++
++        if (na == 0 || nb == 0)
++            return false;
++
++        for (choc::buffer::ChannelCount i = 0; i < a.getNumChannels(); ++i)
++        {
++            const float* pa = a.getChannel (i).data.data;
++
++            for (choc::buffer::ChannelCount j = 0; j < b.getNumChannels(); ++j)
++            {
++                const float* pb = b.getChannel (j).data.data;
++
++                if (pa < pb + nb && pb < pa + na)
++                    return true;
++            }
++        }
++
++        return false;
++    }
+ }
+ 
+ void ChannelRemappingNode::process (ProcessContext& pc)
+@@ -122,14 +159,35 @@ void ChannelRemappingNode::processExplicitMapping (ProcessContext& pc)
+     // Always pass through MIDI
+     pc.buffers.midi.copyFrom (inputBuffers.midi);
+ 
++    auto sourceAudio = inputBuffers.audio;
++
++    // Patch local Objekat (0041) — the mapping ADDS into its destination, which is only right on a
++    // cleared buffer (ClearBuffers::yes). When the destination IS the input — every node of a linear
++    // TimedNode chain processes in one shared view, the clip's plugin list being one — the input was
++    // added onto itself: a mono source converted to stereo for the first plugin of a clip's chain came
++    // out at twice its level (+6.02 dB, both channels), and any remap read sources it had already
++    // overwritten. So, when they overlap, the input is copied aside, the destination cleared, and the
++    // mapping reads the copy: exactly what a non-aliased (cleared) destination would have received.
++    if (viewsShareMemory (sourceAudio, pc.buffers.audio))
++    {
++        const auto numChannels = std::min (sourceAudio.getNumChannels(), aliasedInputCopy.getNumChannels());
++        const auto numFrames = std::min (sourceAudio.getNumFrames(), aliasedInputCopy.getNumFrames());
++        jassert (numChannels == sourceAudio.getNumChannels() && numFrames == sourceAudio.getNumFrames());
++
++        auto copyView = aliasedInputCopy.getView().getFirstChannels (numChannels).getStart (numFrames);
++        copy (copyView, sourceAudio.getFirstChannels (numChannels).getStart (numFrames));
++        pc.buffers.audio.clear();
++        sourceAudio = copyView;
++    }
++
+     // Remap audio channels - use add() to accumulate (allows multiple sources to one dest)
+     for (const auto& e : channelMap.entries)
+     {
+-        if (e.source < static_cast<int> (inputBuffers.audio.getNumChannels())
++        if (e.source < static_cast<int> (sourceAudio.getNumChannels())
+             && e.dest < static_cast<int> (pc.buffers.audio.getNumChannels()))
+         {
+             auto destChan = pc.buffers.audio.getChannel (static_cast<choc::buffer::ChannelCount> (e.dest));
+-            auto srcChan = inputBuffers.audio.getChannel (static_cast<choc::buffer::ChannelCount> (e.source));
++            auto srcChan = sourceAudio.getChannel (static_cast<choc::buffer::ChannelCount> (e.source));
+ 
+             if (e.gain == 1.0f)
+                 add (destChan, srcChan);
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.h b/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.h
+index c5448d6ace7..4f7eda9f65a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ChannelRemappingNode.h
+@@ -84,6 +84,11 @@ private:
+     // Explicit mapping mode
+     ChannelMap channelMap;
+ 
++    // Patch local Objekat (0041) — a copy of the input, taken when the output buffer IS the input
++    // buffer (a linear TimedNode chain shares one view between all its nodes; node memory sharing
++    // can do the same). Allocated in prepareToPlay, never on the audio thread.
++    choc::buffer::ChannelArrayBuffer<float> aliasedInputCopy;
++
+     // Processor passthrough mode
+     ChannelConfiguration inputChannelConfig;
+     ChannelConfiguration processorChannelConfig;
+-- 
+2.50.1 (Apple Git-155)
+

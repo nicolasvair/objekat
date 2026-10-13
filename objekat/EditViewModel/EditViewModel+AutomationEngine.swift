@@ -21,7 +21,7 @@ import Foundation
 // THE COROLLARY, which is the whole wiring job: the object's geometry is part of the
 // curve pushed. Anything that moves, trims, or rebuilds an object must push its
 // curves again — the same call sites as `pushMix` / `syncPosition`, plus the paths that recreate
-// the carrying plugins (compileRack for the trims, resyncAllSends for the sends).
+// the carrying plugins (compileRack for the plugins, gain stages included; resyncAllSends for the sends).
 //
 // A STATIC FADER VS A CURVE: no offset, no composition. As soon as a parameter carries a
 // point, the curve is the authority and the model's static setting is no longer heard — it stays written,
@@ -33,14 +33,15 @@ extension EditViewModel {
     // MARK: - Engine addressing
 
     /// The translation of a `ParamRef` into an engine target — the exact triple
-    /// `setAutomationCurve:forObject:target:targetKey:paramID:` expects.
+    /// `setAutomationCurve:forObject:target:targetKey:paramID:` expects. nil for the old trims
+    /// (`chainInGain` / `chainOutGain`): the engine has none any more (format 25) — their curves were
+    /// moved onto gain stages at load (@see LegacyGainMigration).
     static func engineTarget(for ref: ParamRef) -> (target: OBJAutomationTarget,
-                                                   key: String?, paramID: String?) {
+                                                   key: String?, paramID: String?)? {
         switch ref {
         case .volume:          return (.volume,   nil, nil)
         case .pan:             return (.pan,      nil, nil)
-        case .chainInGain:     return (.trimIn,   nil, nil)
-        case .chainOutGain:    return (.trimOut,  nil, nil)
+        case .chainInGain, .chainOutGain: return nil
         case .send(let auxID): return (.send,     auxID.uuidString, nil)
         case .plugin(let pluginKey, let paramID):
             // `uuid` serves only the API's symmetry on the engine side: a pluginKey is unique in
@@ -59,7 +60,7 @@ extension EditViewModel {
     /// a curve in the model are covered — and erasing those that no longer carry one is
     /// held separately, by the memory of what has already been pushed (@see pushAutomation).
     func pushableAutomationTargets(of object: SoundObject) -> [ParamRef] {
-        [.volume, .pan, .chainInGain, .chainOutGain]
+        [.volume, .pan]
             + object.sends.map { .send(auxID: $0.auxID) }
             + object.automation.map(\.param).filter { if case .plugin = $0 { return true } else { return false } }
     }
@@ -119,7 +120,7 @@ extension EditViewModel {
         pushedPluginParams[object.id] = live.filter { if case .plugin = $0 { return true } else { return false } }
 
         for ref in refs {
-            let t = Self.engineTarget(for: ref)
+            guard let t = Self.engineTarget(for: ref) else { continue }
             engine.setAutomationCurve(engineCurvePoints(ref, on: object),
                                       forObject: object.id.uuidString,
                                       target: t.target,

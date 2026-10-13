@@ -94,11 +94,11 @@ extension EditViewModel {
         return Self.enclosingFXBlock(of: pluginID, in: plugins) != nil
     }
 
-    // MARK: Output section
+    // MARK: The bin's rules (common on/off)
 
-    /// The output section a block is heard with: the bin's while attached (a bin missing from the
-    /// registry counts as neutral, and the block then plays its plugins as they are), the block's own
-    /// copy while detached.
+    /// The rules a block is heard with — its common on/off (format 25: no output section any more):
+    /// the bin's while attached (a bin missing from the registry counts as on, and the block then plays
+    /// its plugins as they are), the block's own copy while detached.
     func fxOutput(of block: ObjectPlugin) -> FXLinkOutput {
         guard let b = block.fxBlock else { return FXLinkOutput() }
         if b.isDetached { return b.local ?? FXLinkOutput() }
@@ -153,9 +153,9 @@ extension EditViewModel {
 
     // MARK: Freezing (consolidated sidecars)
 
-    /// A sub-tree whose ATTACHED blocks each carry the bin's output section in `local`: a sidecar
-    /// holds no registry, so what it writes must be enough to rebuild the sound (a bin's gain, pan,
-    /// mute and common on/off are part of it). Only a snapshot: the block stays attached, and the
+    /// A sub-tree whose ATTACHED blocks each carry the bin's rules in `local`: a sidecar holds no
+    /// registry, so what it writes must be enough to rebuild the sound (the bin's common on/off is part
+    /// of it; its gain, pan and mute were too until format 24 — now a gain stage among the instances). Only a snapshot: the block stays attached, and the
     /// restoring side (`deepFreshCopy`) turns the snapshot back into a NEW bin — never into the
     /// live one. A bin the registry no longer knows freezes as neutral. Idempotent.
     func freezingFXBlocks(in o: SoundObject) -> SoundObject {
@@ -181,15 +181,13 @@ extension EditViewModel {
 
     // MARK: Engine — hot pushes (no recompile)
 
-    /// Pushes one block's output section and the effective on/off of its instances to the engine,
-    /// with no recompile: a volume drag, a mute or the bin's common on/off must not glitch the
-    /// chain. Silent for a block the engine has not compiled yet — the model holds the value, the
-    /// next compile lays it down.
+    /// Pushes the effective on/off of one block's instances to the engine, with no recompile: the
+    /// bin's common on/off must not glitch the chain. Silent for a block the engine has not compiled
+    /// yet — the model holds the value, the next compile lays it down. (The bin's output section has
+    /// no engine side any more — format 25: its output is a gain stage, one of the leaves.)
     func pushFXBlockOutput(hostID: UUID, block: ObjectPlugin) {
         guard let engine, let fb = block.fxBlock else { return }
         let out = fxOutput(of: block)
-        engine.setFXBlockOutput(block.id.uuidString, gainDb: out.effectiveGainDb, pan: out.pan,
-                                enabled: out.isEnabled)
         for leaf in fb.plugins {
             engine.setPlugin(leaf.id.uuidString, enabled: leaf.isEnabled && out.isEnabled,
                              forObjectID: hostID.uuidString)

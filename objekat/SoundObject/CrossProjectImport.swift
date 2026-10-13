@@ -184,9 +184,13 @@ enum CrossProjectImport {
                         c.sidechain = remapSidechain(d.sidechain)
                         defs.append(c)
                     }
-                    let nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
-                                    isEnabled: old.isEnabled, gainDb: old.gainDb, pan: old.pan,
-                                    muted: old.muted)
+                    var nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
+                                    isEnabled: old.isEnabled)
+                    // The naming rule travels (plan_synoptic_rework B.0.6): a name typed by hand stays the
+                    // user's; a bin following an object of the batch follows its copy, one following an
+                    // object left behind in the other project follows nobody.
+                    nl.userNamed = old.userNamed
+                    nl.nameSourceID = old.nameSourceID.flatMap { objectIDMap[$0] }
                     newFXLinks.append(nl)
                     fxLinkMap[fb.linkID] = nl.id
                     newLinkID = nl.id
@@ -245,8 +249,8 @@ enum CrossProjectImport {
 
         /// Remaps a `ParamRef` onto the cloned batch, or drops it (`nil`) when it points outside
         /// the batch: a `.plugin` ref whose plugin was not cloned alongside it, or a `.send` ref
-        /// whose aux is not part of the pasted batch. Every other case (`.volume`, `.pan`,
-        /// `.chainInGain`, `.chainOutGain`) needs no remap at all.
+        /// whose aux is not part of the pasted batch. Every other case (`.volume`, `.pan`, and the
+        /// decodable-only `.chainInGain` / `.chainOutGain`) needs no remap at all.
         func remapParamRef(_ ref: ParamRef, pluginIDMap: [UUID: UUID]) -> ParamRef? {
             switch ref {
             case .plugin(let pluginKey, let paramID):

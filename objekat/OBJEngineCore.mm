@@ -9,6 +9,7 @@
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"
+#include "OBJGainStagePlugin.h"
 #include "OBJWindowFadePlugin.h"
 #include "OBJChannelModePlugin.h"
 #include "OBJParallelBlockPlugin.h"
@@ -257,7 +258,7 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
 
     te::EditLimits getEditLimits() override {
         auto limits = te::EngineBehaviour::getEditLimits();
-        // Branche containerclip : TOUTE la chaîne d'un objet (trims, FX user, fader, fenêtre)
+        // Branche containerclip : TOUTE la chaîne d'un objet (FX user, fader, fenêtre)
         // vit désormais sur sa CLIP plugin-list — c'est cette limite-là qui borne le nombre de
         // FX par objet, et non plus celle de la piste. 5 slots système (dont l'instrument d'un
         // objet MIDI, en tête de SA chaîne de clip) + 40 FX utilisateur.
@@ -402,7 +403,7 @@ static te::Plugin::Ptr insertObjGain(te::PluginList& plugins) {
 //   1. UNE PISTE = UN COMPARTIMENT D'ORDONNANCEMENT, pas une ligne de l'interface.
 //      Les objets top-level sont des CLIPS posés sur la piste que leur alloue la
 //      politique du pool (`trackSlotForKey:lane:`, `_poolTracks`) ; la chaîne
-//      propre à un objet (trims, FX, fader, fenêtre/fades) vit sur sa CLIP
+//      propre à un objet (FX, fader, fenêtre/fades) vit sur sa CLIP
 //      plugin-list. La lane, elle, ne dit rien au moteur — @see « Pool de pistes ».
 //   2. UN GROUPE = UN ContainerClip posé sur la piste de son compartiment ; ses
 //      enfants sont des clips DANS le container, à leur position absolue. La chaîne
@@ -456,7 +457,7 @@ static constexpr double kOpenWindowSecs = 86400.0;
 static constexpr double kInfiniteWindowThresholdSecs = 1.0e8;
 
 // Index d'insertion d'un plugin user dans une plugin-list hôte : juste AVANT `anchor`
-// (le trim de fin de chaîne, ou à défaut le fader), sinon en fin de liste.
+// (la fin du segment user, @see userSegmentEndAnchorForKey:in:), sinon en fin de liste.
 static int indexBefore(te::PluginList& plugins, const te::Plugin::Ptr& anchor) {
     if (anchor) {
         int i = plugins.indexOf(anchor.get());
@@ -472,8 +473,9 @@ static int indexBefore(te::PluginList& plugins, const te::Plugin::Ptr& anchor) {
 // déjà DEVANT l'ancre — le cas normal d'une recompilation — son retrait décale l'ancre d'un cran
 // vers la gauche, et le plugin atterrit DERRIÈRE elle. Ce qu'on payait : dans une branche
 // parallèle le FX passait derrière son gain de voie (le gain réglait alors son ENTRÉE, d'où « le
-// niveau ne fait rien ») ; à la racine, la chaîne user passait derrière trimOut dans l'ordre
-// INVERSE du modèle, et l'état alternait correct/inversé à chaque compile.
+// niveau ne fait rien ») ; à la racine, la chaîne user passait derrière le trim de sortie dans l'ordre
+// INVERSE du modèle, et l'état alternait correct/inversé à chaque compile. (Les trims ont
+// disparu au format 25 — l'ancre de fin est désormais le fader — mais le piège reste le même.)
 //
 // Détaché d'abord, `insertPlugin` voit l'ancre à sa place définitive et n'a plus rien à retirer.
 // L'instance survit au détachement : le Ptr de `_pluginMap` la tient, et le cache de plugins la
@@ -497,14 +499,16 @@ static void movePluginBefore(te::PluginList& pl, const te::Plugin::Ptr& p,
 // L'arbre (source de vérité = modèle Swift) garde sa forme d'origine :
 //   feuille : { id, kind:"plugin", identifier, format, name, stateXML?, enabled? }
 //   bloc //  : { kind:"rack", voices:[ [<entrées série>], ... ] }
-//   bac FX   : { id, kind:"fxlink", plugins:[<feuilles>], enabled, gainDb, pan }
+//   bac FX   : { id, kind:"fxlink", plugins:[<feuilles>] }
 // et il est compilé TEL QUEL : un bloc parallèle devient un ObjParallelBlockPlugin, dont
 // chaque branche porte la chaîne série de sa voie et un ObjGain de fin (wetDb). Le moteur le
 // déplie en SummingNode { branche… } et égalise les latences entre branches.
 // Un BAC FX (kind:"fxlink") n'a pas de forme propre côté moteur : il est DÉPLIÉ au parsing en
-// ses feuilles, suivies d'un ObjGain de sortie (clé fxOutputKey) — la section de sortie du bac
-// (volume, pan, mute, on/off commun). Rien de plus à réconcilier : les feuilles sont des plugins
-// ordinaires, et leur miroir (link) est celui qui existait déjà.
+// ses feuilles, rien d'autre. Son on/off commun est déjà replié dans chaque feuille côté Swift, et
+// ce qui était sa section de sortie (volume, pan, mute) est depuis le format 25 un ÉTAGE DE GAIN
+// du bac, une feuille comme une autre (@see ObjGainStagePlugin, LegacyGainMigration.swift). Rien
+// de plus à réconcilier : les feuilles sont des plugins ordinaires, et leur miroir (link) est
+// celui qui existait déjà.
 // @see ObjParallelBlockPlugin, te::ParallelPluginBlock
 
 namespace {
@@ -514,10 +518,6 @@ using CompileSeries = std::vector<CompileNode>;
 
 struct CompileNode {
     bool                       isRack = false;
-    // gain de sortie d'un bac FX (isGain) — `key` = fxOutputKey(id du bloc)
-    bool                       isGain = false;
-    float                      gainDb = 0.0f;
-    float                      pan = 0.0f;
     // feuille (!isRack)
     std::string                key;        // pluginKey (ObjectPlugin.id)
     bool                       enabled = true;
@@ -556,25 +556,12 @@ static CompileNode parseCompileNode(NSDictionary* d) {
     return n;
 }
 
-// Clé du gain de sortie d'un bac FX — comme voiceGainKey, un plugin que le compilateur pose de
-// lui-même : il DOIT figurer parmi les clés attendues (le nettoyage le détruirait sinon).
-static std::string fxOutputKey(const std::string& blockKey) {
-    return blockKey + "#fxout";
-}
-
 static CompileSeries parseCompileSeries(NSArray<NSDictionary*>* arr) {
     CompileSeries s;
     for (NSDictionary* d in arr) {
         if ([d[@"kind"] isEqualToString:@"fxlink"]) {
             for (NSDictionary* leaf in (NSArray*)d[@"plugins"])
                 s.push_back(parseCompileNode(leaf));
-            CompileNode g;
-            g.isGain  = true;
-            g.key     = fxOutputKey(std::string([(d[@"id"] ?: @"") UTF8String]));
-            g.enabled = d[@"enabled"] ? [d[@"enabled"] boolValue] : YES;
-            g.gainDb  = d[@"gainDb"] ? [d[@"gainDb"] floatValue] : 0.0f;
-            g.pan     = d[@"pan"] ? [d[@"pan"] floatValue] : 0.0f;
-            s.push_back(g);
             continue;
         }
         s.push_back(parseCompileNode(d));
@@ -1346,9 +1333,16 @@ struct OBJRenderChain {
 - (double)headCutForKey:(const std::string&)key;
 // Oublie tout ce que le moteur retient de l'objet (chaîne, repères, appartenance).
 - (void)forgetObjectBookkeeping:(const std::string&)key;
-// Index où insérer un FX user de l'objet `key` dans sa plugin-list : avant le trim de fin de
-// chaîne s'il existe, sinon avant le fader, sinon en fin de liste.
+// La fin du segment user de `key` dans sa plugin-list : fader, gain de stem, ancre du master, ou
+// nullptr (fin de liste).
+- (te::Plugin::Ptr)userSegmentEndAnchorForKey:(const std::string&)key in:(te::PluginList&)pl;
+// Index où insérer un FX user de l'objet `key` dans sa plugin-list : devant la fin de son segment
+// user (@see userSegmentEndAnchorForKey:in:), sinon en fin de liste.
 - (int)userInsertIndexForKey:(const std::string&)key in:(te::PluginList&)pl;
+// Le premier et le dernier plugin du segment user de `key` présents dans `pl` (l'ordre de la racine
+// de la dernière compile, jetons d'envoi « dans la chaîne » compris). Nuls si le segment est vide.
+- (std::pair<te::Plugin::Ptr, te::Plugin::Ptr>)userSegmentBoundsForKey:(const std::string&)key
+                                                                    in:(te::PluginList&)pl;
 // Vrai si ces plugins occupent déjà `pl` dans cet ordre, tous devant `anchor`.
 - (BOOL)plugins:(const std::vector<std::string>&)keys
    areInOrderIn:(te::PluginList&)pl
@@ -1464,7 +1458,7 @@ struct OBJRenderChain {
     // donc on garde ce qu'il a dit. @see setWindowForKey:
     std::unordered_map<std::string, std::pair<double, double>> _modelFadeMap;
     // objectID → fader ObjGain (volume/pan) dans sa plugin-list hôte. Repère EXPLICITE : la
-    // chaîne contient d'autres ObjGain (trims début/fin), on ne peut plus « prendre le premier ».
+    // chaîne contient d'autres ObjGain (gains de voie, sorties de bloc…), on ne peut plus « prendre le premier ».
     std::unordered_map<std::string, te::Plugin::Ptr>          _faderGainMap;
     // objectID → ObjWindowFade (fenêtre + fades post-FX), en fin de chaîne hôte.
     std::unordered_map<std::string, te::Plugin::Ptr>          _windowFadeMap;
@@ -1543,13 +1537,12 @@ struct OBJRenderChain {
     id _appActivateObserver;
 
     // CHAÎNE FX LINÉAIRE (branche containerclip) — remplace le RackType par objet. Les plugins
-    // user sont insérés EN SÉRIE dans la plugin-list hôte, encadrés par deux ObjGain de trim
-    // (début/fin de chaîne), le tout AVANT le fader et la fenêtre/fades :
-    //   [ instrument? | trimIn | FX… | trimOut | fader ObjGain | ObjWindowFade ]
+    // user sont insérés EN SÉRIE dans la plugin-list hôte, AVANT le fader et la fenêtre/fades :
+    //   [ channel mode? | instrument? | FX… (étages de gain compris) | fader ObjGain | ObjWindowFade ]
+    // Plus de trims de début/fin depuis le format 25 : ce sont des étages de gain du modèle, des
+    // plugins user comme les autres (@see ObjGainStagePlugin, LegacyGainMigration.swift).
     struct OBJObjectChain {
         std::vector<std::string> pluginKeys;   // ordre série (source de vérité de l'ordre)
-        te::Plugin::Ptr          trimIn;
-        te::Plugin::Ptr          trimOut;
         // L'ordre de la RACINE de la dernière compile, jetons d'envoi compris (« @émetteur|aux »).
         // Ce que lit -applySendPositionsForKey: pour poser un envoi « dans la chaîne ».
         std::vector<std::string> rootOrder;
@@ -1721,6 +1714,13 @@ static BOOL gOBJAudioDisabled = NO;
         // avant toute création/restauration de clip.
         _wavFormat = std::make_unique<OBJWavAudioFormat>();
         _engine->getPluginManager().createBuiltInType<te::ObjGainPlugin>();
+        // The user GAIN STAGE (a "+" gesture, or a migrated trim / FX link output): one class, two
+        // type names — its two faces (@see OBJGainStagePlugin.h). Not in tracktionBuiltInPluginList():
+        // it is never offered by the browser.
+        _engine->getPluginManager().registerBuiltInType(
+            std::make_unique<te::ObjGainStageBuiltInType>(te::ObjGainStagePlugin::xmlTypeName));
+        _engine->getPluginManager().registerBuiltInType(
+            std::make_unique<te::ObjGainStageBuiltInType>(te::ObjGainStagePlugin::panMuteXmlTypeName));
         // Enveloppe fenêtre+fade de bus de groupe (folder). Enregistrer avant toute
         // création/restauration de folder de groupe.
         _engine->getPluginManager().createBuiltInType<te::ObjWindowFadePlugin>();
@@ -2535,7 +2535,7 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 
 // Pose la chaîne commune de fin d'un objet sur sa plugin-list hôte : fader ObjGain puis
 // ObjWindowFade (fenêtre + fondus post-FX). Les deux sont mémorisés par objectID — la chaîne
-// contiendra d'autres ObjGain (trims), donc « le premier ObjGain » n'est plus un repère.
+// contiendra d'autres ObjGain (gains de voie…), donc « le premier ObjGain » n'est plus un repère.
 //
 // TOUT objet en reçoit un, container compris. Ça n'a pas toujours été le cas : un GROUPE et un
 // AUX s'en passaient, leurs bornes venant de l'étendue du ContainerClip et leurs fondus de
@@ -2718,7 +2718,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
 
     _clipMap[key] = clip;
 
-    // La chaîne propre à l'objet (trims + FX user + fader + fenêtre/fades) vit sur la CLIP
+    // La chaîne propre à l'objet (FX user + fader + fenêtre/fades) vit sur la CLIP
     // plugin-list : la piste est partagée par toute la lane, elle ne peut rien porter de
     // spécifique. C'est ce qui impose une chaîne LINÉAIRE (pas de RackInstance sur un clip).
     if (auto* pl = clip->getPluginList()) {
@@ -3025,19 +3025,28 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     return nullptr;
 }
 
-- (int)userInsertIndexForKey:(const std::string&)key in:(te::PluginList&)pl {
-    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end() && it->second.trimOut)
-        return indexBefore(pl, it->second.trimOut);
+// La FIN du segment user d'un hôte : le plugin juste devant lequel la chaîne user se termine.
+// Objet → son fader ; stem → son gain de bus (donc devant le VU aussi : le vu-mètre d'un stem doit
+// montrer ce qui sort du bus, FX compris) ; Main → l'ObjGain d'ancre du master (pour rester
+// pré-VU). nullptr = fin de liste — un premier compile d'objet arrive avant son fader, que
+// installObjectChainTail: pose ensuite DERRIÈRE. Seule ancre de la chaîne user depuis que les
+// trims de début/fin ont disparu (format 25) : compileSeries:, userInsertIndexForKey:in: et
+// applySendPositionsForKey: la lisent toutes trois.
+- (te::Plugin::Ptr)userSegmentEndAnchorForKey:(const std::string&)key in:(te::PluginList&)pl {
+    auto inList = [&](const te::Plugin::Ptr& p) -> te::Plugin::Ptr {
+        return (p && pl.indexOf(p.get()) >= 0) ? p : te::Plugin::Ptr();
+    };
     if (auto it = _faderGainMap.find(key); it != _faderGainMap.end())
-        return indexBefore(pl, it->second);
-    // Stem : devant le gain de bus, donc devant le VU aussi — le vu-mètre d'un stem doit
-    // montrer ce qui sort du bus, FX compris.
+        if (auto p = inList(it->second)) return p;
     if (auto it = _stemGainMap.find(key); it != _stemGainMap.end())
-        return indexBefore(pl, it->second);
-    // Master (pas d'objet Objekat derrière) : devant l'ObjGain d'ancre, pour rester pré-VU.
-    if (_masterAnchorGain && &pl == &_edit->getMasterPluginList())
-        return indexBefore(pl, _masterAnchorGain);
-    return pl.size();
+        if (auto p = inList(it->second)) return p;
+    if (_masterAnchorGain && _edit && &pl == &_edit->getMasterPluginList())
+        if (auto p = inList(_masterAnchorGain)) return p;
+    return {};
+}
+
+- (int)userInsertIndexForKey:(const std::string&)key in:(te::PluginList&)pl {
+    return indexBefore(pl, [self userSegmentEndAnchorForKey:key in:pl]);
 }
 
 // Oublie tout le bookkeeping moteur d'un objet (sans toucher aux objets Tracktion, déjà
@@ -3097,8 +3106,6 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
             for (auto& pk : it->second.pluginKeys)
                 if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end())
                     toDelete.push_back(pit->second);
-            if (it->second.trimIn)  toDelete.push_back(it->second.trimIn);
-            if (it->second.trimOut) toDelete.push_back(it->second.trimOut);
         }
         [self closeEditorsAndPurgePluginsForObjectID:
             [NSString stringWithUTF8String:_masterStemKey.c_str()]];   // résout encore sur le master
@@ -3399,7 +3406,7 @@ static bool moveClipToOwner(te::Clip& clip, te::ClipOwner& dest) {
 - (void)updateVolume:(float)volume pan:(float)pan forID:(NSString*)uuid {
     std::string key([uuid UTF8String]);
     // Fader = l'ObjGain mémorisé de l'objet. Repère explicite : la chaîne contient aussi les
-    // trims de début/fin, qui sont des ObjGain — « le premier de la liste » serait faux.
+    // gains de voie des blocs parallèles, qui sont des ObjGain — « le premier de la liste » serait faux.
     if (auto it = _faderGainMap.find(key); it != _faderGainMap.end())
         applyGainAndPan(it->second, volume, pan);
 }
@@ -3458,7 +3465,7 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
 //
 // Un clip stéréo peut se lire par son canal gauche seul, son droit seul ou leur somme mono, sur
 // les deux côtés — sans toucher au fichier. Le travail est fait par un petit plugin de service,
-// ObjChannelMode, posé en TÊTE de la plugin-list du clip (AVANT trims, FX et fader : le choix
+// ObjChannelMode, posé en TÊTE de la plugin-list du clip (AVANT FX et fader : le choix
 // porte sur la source). Il n'existe que quand le mode n'est pas LR, si bien qu'un clip ordinaire
 // ne paie rien. Codes : 0 = LR, 1 = L, 2 = R, 3 = C (@see ObjChannelModePlugin::Mode).
 //
@@ -3484,8 +3491,8 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
     }
 
     if (it == _channelModeMap.end()) {
-        // Index 0 : AVANT trimIn, les FX et le fader. `userInsertIndexForKey:` pose tout le reste
-        // devant ses ancres (trimOut / fader), donc rien ne passera devant celui-là.
+        // Index 0 : AVANT les FX (étages de gain compris) et le fader. `userInsertIndexForKey:` pose
+        // tout le reste devant la fin du segment user (le fader), donc rien ne passera devant celui-là.
         te::Plugin::Ptr p = pl.insertPlugin(te::ObjChannelModePlugin::create(), 0);
         if (!p) { NSLog(@"[OBJ] channelMode: insertion refusée (%s)", key.c_str()); return; }
         _channelModeMap[key] = p;
@@ -3555,7 +3562,7 @@ static void applyGainAndPan(te::Plugin::Ptr fader, float gainDb, float pan) {
 // container couvre une grande étendue avec un offset nul, donc temps local = temps edit, et
 // toutes les opérations par clip (position, volume, vitesse, fades) les atteignent inchangées.
 //
-// La chaîne de bus du groupe (trims, FX, fader, fenêtre/fades) vit sur la plugin-list du
+// La chaîne de bus du groupe (FX, fader, fenêtre/fades) vit sur la plugin-list du
 // ContainerClip. Gain structurel visé par l'expérience : un groupe de N enfants coûte UN clip
 // sur une piste partagée, là où le modèle folder coûtait N+1 pistes.
 
@@ -4087,7 +4094,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                  }
 
                              // Un ANCÊTRE n'est là que pour porter la cible : sa fenêtre la
-                             // rognerait et son traitement (fader, trims, FX de bus) serait cuit
+                             // rognerait et son traitement (fader, FX de bus) serait cuit
                              // dans le wave PUIS réappliqué à la lecture. On le rend transparent.
                              // Le CONTENU de la cible, lui, n'est touché en RIEN : c'est ce qu'on
                              // cuit — ses FX, l'instrument d'un objet MIDI, les bornes et fondus
@@ -4944,20 +4951,52 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     return YES;
 }
 
+// The user segment's bounds in `pl`: its first and last entries PRESENT in the list, in the order of the
+// root of the last compile (`chain.rootOrder`: plugins, gain stages, parallel-block carriers, and the
+// `@sender|aux` tokens of the sends placed IN the chain — a token whose send is not a chain send, or not
+// in this list, is skipped). Both null when the segment is empty or the host was never compiled. What
+// replaced the old trims as the segment's frontier (format 25, plan_synoptic_rework B.0.4): read by
+// -applySendPositionsForKey: and reported by -chainLayoutForObjectID: (`segment_start` / `segment_end`).
+- (std::pair<te::Plugin::Ptr, te::Plugin::Ptr>)userSegmentBoundsForKey:(const std::string&)key
+                                                                    in:(te::PluginList&)pl {
+    te::Plugin::Ptr first, last;
+    auto cit = _objectChainMap.find(key);
+    if (cit == _objectChainMap.end()) return {first, last};
+    for (const std::string& e : cit->second.rootOrder) {
+        if (e.empty()) continue;
+        te::Plugin::Ptr p;
+        if (e[0] == '@') {
+            auto bit = _bridgeSendMap.find(e.substr(1));
+            if (bit == _bridgeSendMap.end()) continue;
+            auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(bit->second.get());
+            if (!bs || bs->getTapPosition() != te::ObjBridgeSendPlugin::chain) continue;
+            p = bit->second;
+        } else if (auto pit = _pluginMap.find(e); pit != _pluginMap.end()) {
+            p = pit->second;
+        }
+        if (!p || pl.indexOf(p.get()) < 0) continue;
+        if (!first) first = p;
+        last = p;
+    }
+    return {first, last};
+}
+
 // WHERE each send of `key` sits in the sender's plugin list — the one owner of that question
 // (docs/plan_sends_rework.md §D.1.A.d). The list is
-//     [ channel mode? | instrument? | trimIn | FX… | trimOut | fader | window-fade | sends… ]
-// and the model asks, per send: post-fader (the end, after the window-fade — or, when the send CARRIES
-// PLUGINS, between the fader and the window-fade, the envelope then coming on its copy), pre-fader
-// (after trimOut, before the fader), input (before trimIn; before the fader when no chain is
-// materialised — the same signal) or in the chain (between the plugins, as the last compile recorded the
-// root order, `@sender|aux` tokens included). A send is moved ONLY when it is not where it should be
+//     [ channel mode? | instrument? | user segment… | fader | window-fade | sends… ]
+// (the user segment = the root of the last compile, gain stages and `@sender|aux` tokens included —
+// format 25 has no trims around it any more: a pre / post trim became the segment's first / last
+// gain stage, plan_synoptic_rework B.0.4) and the model asks, per send: post-fader (the end, after the
+// window-fade — or, when the send CARRIES PLUGINS, between the fader and the window-fade, the envelope
+// then coming on its copy), pre-fader (after the whole user segment, before the fader), input (before
+// the segment's first entry; before the fader when the segment is empty — the same signal) or in the
+// chain (between the plugins, as the last compile recorded the root order, tokens included). A send is moved ONLY when it is not where it should be
 // (movePluginBefore detaches the plugin for the time of the move, which wakes its listeners), so that the
 // common case — nothing to do — costs a few index reads. Returns YES when something moved: the caller
 // owes a rebuild (compileUserRack and commitBridgeSync both restart).
 //
-// Called from compileUserRackForObjectID: (the compile has just put the plugins before trimOut, possibly
-// on the wrong side of a send), from commitBridgeSync (a send was laid or its position changed) and from
+// Called from compileUserRackForObjectID: (the compile has just put the plugins before the fader,
+// possibly on the wrong side of a send), from commitBridgeSync (a send was laid or its position changed) and from
 // installObjectChainTail: (a new fader / window were appended behind the sends). In any order: each call
 // reads the whole truth, none depends on the others having run.
 - (BOOL)applySendPositionsForKey:(const std::string&)key {
@@ -4976,15 +5015,15 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     auto inList = [&](const te::Plugin::Ptr& p) -> te::Plugin::Ptr {
         return (p && pl->indexOf(p.get()) >= 0) ? p : te::Plugin::Ptr();
     };
-    te::Plugin::Ptr trimIn, trimOut, fader, window;
+    te::Plugin::Ptr fader, window;
     const std::vector<std::string>* rootOrder = nullptr;
-    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) {
-        trimIn = inList(it->second.trimIn);
-        trimOut = inList(it->second.trimOut);
-        rootOrder = &it->second.rootOrder;
-    }
+    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) rootOrder = &it->second.rootOrder;
     if (auto it = _faderGainMap.find(key); it != _faderGainMap.end())   fader  = inList(it->second);
     if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) window = inList(it->second);
+    // The user segment's first and last entries present in the list (nullptr = an empty segment). Read
+    // ONCE, before anything moves: a send moved below is never one of them (a bound that is a chain
+    // send is placed by the chain pass, which keeps it between its neighbours).
+    const auto [segmentStart, segmentEnd] = [self userSegmentBoundsForKey:key in:*pl];
 
     bool moved = false;
     auto idx = [&](const te::Plugin::Ptr& p) { return pl->indexOf(p.get()); };
@@ -5009,45 +5048,16 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         return list != nullptr && list->size() > 0;
     };
 
-    // The three places that do not depend on the chain's content.
-    for (auto& [mk, raw] : mine) {
-        te::Plugin::Ptr p = inList(raw);
-        if (!p) continue;
-        switch (kindOf(p)) {
-            case te::ObjBridgeSendPlugin::preFader:
-                if (!fader) break;
-                if (!(idx(p) < idx(fader) && (!trimOut || idx(p) > idx(trimOut)))) moveBefore(p, fader);
-                break;
-            case te::ObjBridgeSendPlugin::input: {
-                const te::Plugin::Ptr anchor = trimIn ? trimIn : fader;     // no chain: the same signal
-                if (!anchor) break;
-                if (!(idx(p) < idx(anchor))) moveBefore(p, anchor);
-                break;
-            }
-            case te::ObjBridgeSendPlugin::chain:
-                break;                                                      // below
-            default: {                                                      // post-fader
-                if (carriesPlugins(p) && window) {
-                    // With plugins: after the fader, BEFORE the window-fade — the envelope is laid on
-                    // the send's copy after its plugins, once (the tap must not carry it already).
-                    if (!(idx(p) < idx(window) && (!fader || idx(p) > idx(fader)))) moveBefore(p, window);
-                    break;
-                }
-                const int floor = juce::jmax(window ? idx(window) : -1, fader ? idx(fader) : -1);   // the end
-                if (!(idx(p) > floor)) moveBefore(p, te::Plugin::Ptr());
-                break;
-            }
-        }
-    }
-
-    // In the chain: the order of the root, tokens included.
+    // In the chain FIRST: the order of the root, tokens included. Before the three other places, so that
+    // a chain send that closes the segment is already where it belongs when the pre-fader rule reads
+    // the segment's end (one call is enough: nothing placed below moves a chain send).
     bool anyChain = false;
     for (auto& [mk, raw] : mine) if (kindOf(raw) == te::ObjBridgeSendPlugin::chain) { anyChain = true; break; }
     if (anyChain) {
         std::unordered_set<std::string> placed;
-        const te::Plugin::Ptr endAnchor = trimOut ? trimOut : fader;
+        const te::Plugin::Ptr endAnchor = fader;
         if (rootOrder) {
-            te::Plugin::Ptr prev = trimIn;
+            te::Plugin::Ptr prev;
             for (size_t i = 0; i < rootOrder->size(); ++i) {
                 const std::string& e = (*rootOrder)[i];
                 if (e.empty()) continue;
@@ -5072,16 +5082,53 @@ static void objLayBridgeWires(te::Plugin& plugin) {
                 placed.insert(e.substr(1));
             }
         }
-        // A chain send whose marker has not been compiled yet: the end of the chain, where it taps the
-        // whole of it, until the compile that carries the marker arrives. "In the chain" is AFTER the IN
-        // trim as well: a send that comes from the input place sits before it, and an object whose chain
-        // is empty but whose SEND carries plugins has trims and no compile to come (the marker is alone
-        // in the chain: `recompileForSendMarker` has nothing to compile).
+        // A chain send whose marker has not been compiled yet: the end of the chain (before the fader),
+        // where it taps the whole of it, until the compile that carries the marker arrives. "In the
+        // chain" is AFTER the segment's first entry as well: a send that comes from the input place sits
+        // before it. An object whose chain is empty but whose SEND carries plugins has no compile to come
+        // (the marker is alone in the chain: `recompileForSendMarker` has nothing to compile) — its
+        // segment is empty, and before the fader is the same signal as the input. The mutual order with
+        // a pre-fader send at the end boundary is inaudible (both copy the same signal).
         for (auto& [mk, raw] : mine) {
             if (placed.count(mk)) continue;
             te::Plugin::Ptr p = inList(raw);
             if (!p || kindOf(p) != te::ObjBridgeSendPlugin::chain || !endAnchor) continue;
-            if (!(idx(p) < idx(endAnchor) && (!trimIn || idx(p) > idx(trimIn)))) moveBefore(p, endAnchor);
+            if (!(idx(p) < idx(endAnchor) && (!segmentStart || idx(p) > idx(segmentStart))))
+                moveBefore(p, endAnchor);
+        }
+    }
+
+    // The three places that do not depend on the chain's content.
+    for (auto& [mk, raw] : mine) {
+        te::Plugin::Ptr p = inList(raw);
+        if (!p) continue;
+        switch (kindOf(p)) {
+            case te::ObjBridgeSendPlugin::preFader:
+                // After every user entry (the post gain stage included), before the fader.
+                if (!fader) break;
+                if (!(idx(p) < idx(fader) && (!segmentEnd || idx(p) > idx(segmentEnd)))) moveBefore(p, fader);
+                break;
+            case te::ObjBridgeSendPlugin::input: {
+                // Before the segment's first entry (the pre gain stage, when there is one); an empty
+                // segment: before the fader, the same signal.
+                const te::Plugin::Ptr anchor = segmentStart ? segmentStart : fader;
+                if (!anchor) break;
+                if (!(idx(p) < idx(anchor))) moveBefore(p, anchor);
+                break;
+            }
+            case te::ObjBridgeSendPlugin::chain:
+                break;                                                      // above
+            default: {                                                      // post-fader
+                if (carriesPlugins(p) && window) {
+                    // With plugins: after the fader, BEFORE the window-fade — the envelope is laid on
+                    // the send's copy after its plugins, once (the tap must not carry it already).
+                    if (!(idx(p) < idx(window) && (!fader || idx(p) > idx(fader)))) moveBefore(p, window);
+                    break;
+                }
+                const int floor = juce::jmax(window ? idx(window) : -1, fader ? idx(fader) : -1);   // the end
+                if (!(idx(p) > floor)) moveBefore(p, te::Plugin::Ptr());
+                break;
+            }
         }
     }
 
@@ -5343,9 +5390,11 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 }
 
 // The sender's plugin list as ROLES, in order — what the audit and the position scenarios read. Each
-// entry: {index, role, key?, aux?}. Roles: trimIn, trimOut, fader, windowFade, fx (a user plugin or a
+// entry: {index, role, key?, aux?}. Roles: fader, windowFade, fx (a user plugin, a gain stage or a
 // carrier: `key` = its model id), send (`aux`, `tap_position`), other (an instrument, a channel-mode
-// plugin, anything the engine added on its own: `type`).
+// plugin, anything the engine added on its own: `type`). The user segment's frontier (what the old
+// pre / post trim roles marked until format 25) is told on its first and last entries:
+// `segment_start: true` / `segment_end: true` (@see userSegmentBoundsForKey:in:; absent = empty segment).
 - (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString*)uuid {
     if (!_edit || !uuid) return nil;
     const std::string key([uuid UTF8String]);
@@ -5354,11 +5403,8 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     std::unordered_map<te::Plugin*, std::string> userKey, sendKey;
     for (auto& [k, p] : _pluginMap) if (p) userKey[p.get()] = k;
     for (auto& [mk, p] : _bridgeSendMap) if (p) sendKey[p.get()] = mk;
-    te::Plugin *trimIn = nullptr, *trimOut = nullptr, *fader = nullptr, *window = nullptr;
-    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) {
-        trimIn = it->second.trimIn.get();
-        trimOut = it->second.trimOut.get();
-    }
+    te::Plugin *fader = nullptr, *window = nullptr;
+    const auto [segmentStart, segmentEnd] = [self userSegmentBoundsForKey:key in:*pl];
     if (auto it = _faderGainMap.find(key); it != _faderGainMap.end()) fader = it->second.get();
     if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) window = it->second.get();
 
@@ -5369,9 +5415,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
         // The engine object's identity (a scenario compares it before and after an undo: an instance
         // that is KEPT keeps its address, a rebuilt one is a new object).
         e[@"instance"] = [NSString stringWithFormat:@"%p", (void*)p];
-        if (p == trimIn)       e[@"role"] = @"trimIn";
-        else if (p == trimOut) e[@"role"] = @"trimOut";
-        else if (p == fader)   e[@"role"] = @"fader";
+        if (p == segmentStart.get()) e[@"segment_start"] = @YES;
+        if (p == segmentEnd.get())   e[@"segment_end"] = @YES;
+        if (p == fader)        e[@"role"] = @"fader";
         else if (p == window)  e[@"role"] = @"windowFade";
         else if (auto sit = sendKey.find(p); sit != sendKey.end()) {
             e[@"role"] = @"send";
@@ -8354,7 +8400,7 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
 //
 // Ce que le modèle demande est une chose, ce que la plugin-list contient VRAIMENT en est une
 // autre — et c'est là que se voit un décalage d'ordre : un FX passé derrière son gain de voie, la
-// chaîne user passée derrière trimOut. Le synoptique, lui, dessine le modèle : il ne peut pas
+// chaîne user passée derrière le fader. Le synoptique, lui, dessine le modèle : il ne peut pas
 // démentir le moteur.
 //
 // Coupée par défaut, allumée par OBJ_FX_DUMP=1 dans l'environnement (Xcode : Run ▸ Arguments ▸
@@ -8368,7 +8414,7 @@ static bool objFxDumpEnabled() {
 
 // Journalise une plugin-list dans l'ordre où le moteur la traversera, en descendant dans les
 // branches d'un bloc parallèle. `role` nomme chaque plugin : pluginKey du modèle pour un FX user,
-// rôle (trimIn/trimOut/fader/…) pour les plugins de service.
+// rôle (fader/fenêtre/instrument/…) pour les plugins de service.
 static void objDumpPluginList(te::PluginList& pl,
                               const std::unordered_map<const te::Plugin*, std::string>& role,
                               int depth) {
@@ -8407,8 +8453,9 @@ static void objDumpPluginList(te::PluginList& pl,
     }
 }
 
-// Compile une série de l'arbre modèle dans `pl`, juste avant `anchor` (trimOut pour la chaîne
-// hôte, gain de voie pour une branche ; nullptr → en fin de liste). Réentrante : un bloc
+// Compile une série de l'arbre modèle dans `pl`, juste avant `anchor` (la fin du segment user pour
+// la chaîne hôte — @see userSegmentEndAnchorForKey:in: —, gain de voie pour une branche ; nullptr →
+// en fin de liste). Réentrante : un bloc
 // parallèle devient un ObjParallelBlockPlugin et la fonction se rappelle sur la PluginList de
 // chacune de ses branches.
 //
@@ -8430,30 +8477,6 @@ static void objDumpPluginList(te::PluginList& pl,
         // destroy the other host's instance. Not added to `failed` either: Swift would drop the
         // plugin from the model, and the model is what a repaired save should keep.
         if ([self isPluginKeyHeldByAnotherHost:n.key]) continue;
-
-        if (n.isGain) {
-            // Sortie d'un bac FX : un ObjGain posé à la suite des feuilles du bac (l'ordre est
-            // remis en place par la passe de fin de série, comme pour tout le reste).
-            te::Plugin::Ptr gp;
-            if (auto git = _pluginMap.find(n.key); git != _pluginMap.end()) gp = git->second;
-            if (!gp) {
-                gp = pl.insertPlugin(te::ObjGainPlugin::create(), indexBefore(pl, anchor));
-                if (!gp) {
-                    NSLog(@"[FX] compile: sortie de bac '%s' refusée", n.key.c_str());
-                    [failed addObject:[NSString stringWithUTF8String:n.key.c_str()]];
-                    continue;
-                }
-                _pluginMap[n.key] = gp;
-            }
-            if (auto* g = dynamic_cast<te::ObjGainPlugin*>(gp.get())) {
-                g->setGainDb(n.gainDb);
-                g->setPan(n.pan);
-            }
-            gp->setEnabled(n.enabled);
-            order.push_back(n.key);
-            here.push_back(n.key);
-            continue;
-        }
 
         if (n.isRack) {
             te::Plugin::Ptr carrier;
@@ -8624,10 +8647,12 @@ static void objDumpPluginList(te::PluginList& pl,
 // Compile la chaîne FX user d'un objet dans sa plugin-list hôte.
 //
 // Disposition visée, de gauche à droite :
-//   [ instrument? | trimIn | FX… | trimOut | fader ObjGain | ObjWindowFade ]
+//   [ channel mode? | instrument? | FX… (étages de gain compris) | fader ObjGain | ObjWindowFade ]
 // L'instrument (clip MIDI) et la queue (fader + fenêtre) sont posés ailleurs ; ici on ne
-// touche qu'au segment [trimIn … trimOut], qu'on réconcilie par pluginKey pour préserver les
+// touche qu'au segment user (devant le fader), qu'on réconcilie par pluginKey pour préserver les
 // instances vivantes (état, éditeurs ouverts, paramètres, link), puis qu'on remet dans l'ordre.
+// Plus de trims de début/fin depuis le format 25 : un gain avant/après les FX est un ÉTAGE DE GAIN
+// du modèle, une feuille comme une autre (plan_synoptic_rework D1, B.0.3).
 //
 // `sendChains` (INC 3, docs/plan_sends_rework.md §D.2.A.h): the plugins each SEND of this object
 // carries — `[{ "aux": <uuid>, "plugins": [<leaves>] }]`, one entry per send that carries some and is
@@ -8637,9 +8662,7 @@ static void objDumpPluginList(te::PluginList& pl,
 // list emptied by the clean-up pass (its keys are no longer wanted).
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
-                                       sendChains:(NSArray<NSDictionary*>*)sendChains
-                                        chainInDb:(float)chainInDb
-                                       chainOutDb:(float)chainOutDb {
+                                       sendChains:(NSArray<NSDictionary*>*)sendChains {
     NSMutableArray<NSString*>* failed = [NSMutableArray array];  // pluginKeys non résolus
     if (!_edit) return failed;
     std::string key([uuid UTF8String]);
@@ -8659,7 +8682,7 @@ static void objDumpPluginList(te::PluginList& pl,
         if (![aux isKindOfClass:[NSString class]] || aux.length == 0) continue;
         CompileSeries leaves;
         for (auto& n : parseCompileSeries(d[@"plugins"] ?: @[]))
-            if (!n.isRack && !n.isGain && !n.isSend && !n.key.empty()) leaves.push_back(n);
+            if (!n.isRack && !n.isSend && !n.key.empty()) leaves.push_back(n);
         sendSeries.emplace_back(std::string([aux UTF8String]), std::move(leaves));
     }
 
@@ -8680,21 +8703,13 @@ static void objDumpPluginList(te::PluginList& pl,
             _pluginOwnerHost.erase(oit);
     }
 
-    // 2) Trims de début / fin de chaîne : créés une fois, jamais détruits (ils bornent le
-    //    segment user et rendent setChainGain: instantané, sans recompiler).
-    auto ensureTrim = [&](te::Plugin::Ptr& slot, float dB) {
-        if (!slot) slot = pl->insertPlugin(te::ObjGainPlugin::create(),
-                                           [self userInsertIndexForKey:key in:*pl]);
-        if (auto* g = dynamic_cast<te::ObjGainPlugin*>(slot.get())) g->setGainDb(dB);
-    };
-    ensureTrim(chain.trimIn,  chainInDb);
-    ensureTrim(chain.trimOut, chainOutDb);
-
-    // 3) Créer / réutiliser / ordonner, récursivement : un bloc parallèle descend dans la
-    //    PluginList de chacune de ses branches.
+    // 2) Créer / réutiliser / ordonner, récursivement : un bloc parallèle descend dans la
+    //    PluginList de chacune de ses branches. Le segment user finit devant le fader (le gain de
+    //    bus d'un stem, l'ancre du master ; en fin de liste avant que le fader n'existe).
     std::vector<std::string> newOrder;
     _compilingHostKey = key;
-    [self compileSeries:root into:*pl anchor:chain.trimOut order:newOrder failed:failed];
+    [self compileSeries:root into:*pl anchor:[self userSegmentEndAnchorForKey:key in:*pl]
+                  order:newOrder failed:failed];
     for (auto& [aux, series] : sendSeries) {
         if (series.empty()) continue;
         NSInteger outcome = 0;
@@ -8715,7 +8730,7 @@ static void objDumpPluginList(te::PluginList& pl,
     for (auto& pk : newOrder) _pluginOwnerHost[pk] = key;
 
     // L'ordre de la racine, jetons d'envoi compris, puis la pose des envois : le compile vient de
-    // reposer les plugins avant trimOut, il a pu laisser un envoi du mauvais côté d'un voisin. Le
+    // reposer les plugins avant le fader, il a pu laisser un envoi du mauvais côté d'un voisin. Le
     // redémarrage ci-dessous porte ce déplacement éventuel.
     chain.rootOrder.clear();
     for (auto& n : root) {
@@ -8745,10 +8760,6 @@ static void objDumpPluginList(te::PluginList& pl,
     for (auto& [pk, p] : _pluginMap)
         if (p) role[p.get()] = pk;
 
-    if (auto it = _objectChainMap.find(key); it != _objectChainMap.end()) {
-        if (it->second.trimIn)  role[it->second.trimIn.get()]  = "trimIn";
-        if (it->second.trimOut) role[it->second.trimOut.get()] = "trimOut";
-    }
     if (auto it = _faderGainMap.find(key);  it != _faderGainMap.end()  && it->second)
         role[it->second.get()] = "fader";
     if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end() && it->second)
@@ -8789,38 +8800,12 @@ static void objDumpPluginList(te::PluginList& pl,
         g->setGainDb(dB);
 }
 
-// Section de sortie d'un bac FX, à chaud : gain, pan et on/off de l'ObjGain posé à la suite des
-// feuilles du bloc. Silencieux si le bloc n'a jamais été compilé — la valeur vit dans le modèle,
-// la prochaine compilation la posera. Le gain porte aussi le MUTE (le modèle pousse un gain EFFECTIF).
-- (void)setFXBlockOutput:(NSString*)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled {
-    if (!blockID) return;
-    auto it = _pluginMap.find(fxOutputKey(std::string([blockID UTF8String])));
-    if (it == _pluginMap.end()) return;
-    if (auto* g = dynamic_cast<te::ObjGainPlugin*>(it->second.get())) {
-        g->setGainDb(dB);
-        g->setPan(pan);
-    }
-    it->second->setEnabled(enabled);
-}
-
-// Ajuste à chaud le gain dB de début (output=NO) / fin (output=YES) de chaîne, sans recompiler.
-// Retourne NO si la chaîne n'existe pas encore (objet jamais compilé) → le caller compile alors.
-- (BOOL)setChainGain:(float)dB output:(BOOL)isOutput objectID:(NSString*)uuid {
-    auto it = _objectChainMap.find(std::string([uuid UTF8String]));
-    if (it == _objectChainMap.end()) return NO;
-    te::Plugin::Ptr g = isOutput ? it->second.trimOut : it->second.trimIn;
-    if (!g) return NO;
-    if (auto* og = dynamic_cast<te::ObjGainPlugin*>(g.get())) og->setGainDb(dB);
-    return YES;
-}
-
 // MARK: - Automations — courbes de paramètre
 //
 // @see la déclaration dans OBJEngineCore.h pour le contrat (remplacement en bloc, temps edit).
 
 // Retrouve le paramètre automatable visé par une cible d'automation. nil quand la chaîne n'a
-// pas (encore) le plugin correspondant — trims d'un objet dont le rack n'a jamais été compilé,
-// envoi non câblé, plugin retiré depuis. Cas normal, pas une erreur : le modèle Swift fait foi
+// pas (encore) le plugin correspondant — fader d'un objet pas encore posé, envoi non câblé, plugin retiré depuis. Cas normal, pas une erreur : le modèle Swift fait foi
 // et repoussera la courbe quand la cible existera (compileUserRack, syncBridge, syncAdd).
 - (te::AutomatableParameter::Ptr)automatableParamForObject:(NSString*)uuid
                                                     target:(OBJAutomationTarget)target
@@ -8838,13 +8823,6 @@ static void objDumpPluginList(te::PluginList& pl,
             // Le fader mémorisé de l'objet — repère explicite, la chaîne porte d'autres ObjGain.
             if (auto it = _faderGainMap.find(key); it != _faderGainMap.end()) plugin = it->second;
             wantedID = (target == OBJAutomationTargetVolume) ? "gain" : "pan";
-            break;
-
-        case OBJAutomationTargetTrimIn:
-        case OBJAutomationTargetTrimOut:
-            if (auto it = _objectChainMap.find(key); it != _objectChainMap.end())
-                plugin = (target == OBJAutomationTargetTrimOut) ? it->second.trimOut : it->second.trimIn;
-            wantedID = "gain";
             break;
 
         case OBJAutomationTargetSend: {

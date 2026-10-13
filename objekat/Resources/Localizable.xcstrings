@@ -4969,25 +4969,48 @@
         }
       }
     },
+    "fxlink.help.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold the FX link"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plegar el FX link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replier le FX link"
+          }
+        }
+      }
+    },
     "fxlink.help.members.one": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shared by %d object — double-click to rename"
+            "value": "Shared by %d object — double-click to fold / unfold"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compartido por %d objeto — doble clic para renombrar"
+            "value": "Compartido por %d objeto — doble clic para plegar / desplegar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Partagé par %d objet — double clic pour renommer"
+            "value": "Partagé par %d objet — double clic pour replier / déplier"
           }
         }
       }
@@ -4998,19 +5021,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shared by %d objects — double-click to rename"
+            "value": "Shared by %d objects — double-click to fold / unfold"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compartido por %d objetos — doble clic para renombrar"
+            "value": "Compartido por %d objetos — doble clic para plegar / desplegar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Partagé par %d objets — double clic pour renommer"
+            "value": "Partagé par %d objets — double clic pour replier / déplier"
           }
         }
       }
@@ -5034,6 +5057,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activer / désactiver tout le fx link"
+          }
+        }
+      }
+    },
+    "fxlink.help.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfold the FX link"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desplegar el FX link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplier le FX link"
           }
         }
       }
@@ -5103,6 +5149,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Détacher de ce fx link"
+          }
+        }
+      }
+    },
+    "fxlink.menu.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plegar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replier"
           }
         }
       }
@@ -5241,6 +5310,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Renommer"
+          }
+        }
+      }
+    },
+    "fxlink.menu.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfold"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desplegar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplier"
           }
         }
       }
@@ -7426,29 +7518,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Canaux"
-          }
-        }
-      }
-    },
-    "inspector.diagnostic": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnostic"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnóstico"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Diagnostic"
           }
         }
       }
@@ -14376,6 +14445,98 @@
         }
       }
     },
+    "synoptic.audioFile.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide the options (or double click)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ocultar las opciones (o doble clic)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les options (ou double-clic)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.pill.speed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speed ×%@ — hidden setting (double click to open)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Velocidad ×%@ — ajuste oculto (doble clic para abrir)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vitesse ×%@ — réglage masqué (double-clic pour ouvrir)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.pill.tempo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stretched to %@ bpm — hidden setting (double click to open)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajustado a %@ bpm — ajuste oculto (doble clic para abrir)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calé sur %@ bpm — réglage masqué (double-clic pour ouvrir)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the options (or double click)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar las opciones (o doble clic)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher les options (ou double-clic)"
+          }
+        }
+      }
+    },
     "synoptic.bypass": {
       "extractionState": "manual",
       "localizations": {
@@ -14510,6 +14671,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Vue synoptique (démo) — %@"
+          }
+        }
+      }
+    },
+    "synoptic.gainStage.grip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag: move (⌥ copy, ⌘ linked copy to another object)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+          }
+        }
+      }
+    },
+    "synoptic.gainStage.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this gain stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar esta etapa de ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer cet étage de gain"
           }
         }
       }
@@ -14859,6 +15066,29 @@
         }
       }
     },
+    "synoptic.menu.createBranch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crear una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Créer une branche parallèle"
+          }
+        }
+      }
+    },
     "synoptic.midi": {
       "extractionState": "manual",
       "localizations": {
@@ -14951,29 +15181,6 @@
         }
       }
     },
-    "synoptic.newBranch": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New branch from this point"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nueva rama desde este punto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nouvelle branche depuis ce point"
-          }
-        }
-      }
-    },
     "synoptic.openPlugin": {
       "extractionState": "manual",
       "localizations": {
@@ -15039,6 +15246,213 @@
           "stringUnit": {
             "state": "translated",
             "value": "Out"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Branche parallèle"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.gainPanMute": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain · Pan · Mute"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganancia · Pan · Mute"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain · Pan · Mute"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.notHere": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aquí no"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas ici"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send from here…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envío desde aquí…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi depuis ici…"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag down and right: a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar abajo a la derecha: una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser en bas à droite : une branche parallèle"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag right: a gain stage (further: gain · pan · mute)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar a la derecha: una etapa de ganancia (más lejos: ganancia · pan · mute)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser à droite : un étage de gain (plus loin : gain · pan · mute)"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag left: a send taken here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar a la izquierda: un envío tomado aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser à gauche : un envoi pris ici"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click, or drag left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer, ou glisser à gauche"
           }
         }
       }
@@ -15457,52 +15871,6 @@
         }
       }
     },
-    "synoptic.send.plugin.add.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Add a plugin on this send"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Añadir un plugin en este envío"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ajouter un plugin sur cet envoi"
-          }
-        }
-      }
-    },
-    "synoptic.send.plugin.remove.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove this plugin from the send"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Quitar este plugin del envío"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Retirer ce plugin de l'envoi"
-          }
-        }
-      }
-    },
     "synoptic.send.pos.chain": {
       "extractionState": "manual",
       "localizations": {
@@ -15683,6 +16051,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Supprimer cet envoi"
+          }
+        }
+      }
+    },
+    "synoptic.send.tap.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Where this send is taken from. Drag it along the chain to take the send somewhere else."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De dónde sale este envío. Arrástralo a lo largo de la cadena para que salga de otro sitio."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Là où cet envoi est pris. Glissez-le le long de la chaîne pour le faire partir d'ailleurs."
           }
         }
       }

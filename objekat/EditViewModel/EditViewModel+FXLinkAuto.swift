@@ -65,7 +65,8 @@ extension EditViewModel {
                 defs.append(d)
                 defByLeaf[leaf.id] = d.id
             }
-            link = FXLink(name: uniqueFXLinkName(nil), plugins: defs)
+            // Named after the object it was copied FROM (the original: `object`), and following it.
+            link = makeFXLink(name: nil, source: object.id, plugins: defs)
             fxLinks.append(link)
             fxPendingSources[object.id, default: []].append(
                 FXPendingSource(linkID: link.id, pairs: run.map { ($0.id, defByLeaf[$0.id]!) }))

@@ -230,7 +230,7 @@ try:
               [d["position"] for d in desc_a] == [p[0] for p in POSITIONS], [d["position"] for d in desc_a])
         c.send("project.save")
         saved = json.load(open(PROJ))
-        check("A: the file is format 24", saved.get("version") == 24, saved.get("version"))
+        check("A: the file is format 25", saved.get("version") == 25, saved.get("version"))
         wet_a, on_a = wets(c, "A", auxes)
         print("       A wet per aux (dBFS, 1 kHz tone at -12): %s" % " / ".join("%.3f" % v for v in wet_a))
         check("A: the four wets are four different figures (each send is heard for what it carries)",

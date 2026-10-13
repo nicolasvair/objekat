@@ -3,8 +3,8 @@ import Foundation
 // MARK: - A plugin id is unique in the whole project
 //
 // `ObjectPlugin.id` is the engine's PLUGIN KEY: `OBJEngineCore._pluginMap` is indexed by it, for
-// every leaf plugin, every container entry (a rack carrier, an FX link's block — whose derived
-// `#wetN` / `#fxout` keys hang off it) and every instrument, in every host (object, group child,
+// every leaf plugin, every container entry (a rack carrier — whose derived `#wetN` keys hang off
+// it —, an FX link's block) and every instrument, in every host (object, group child,
 // stem). The engine has room for ONE instance per key. A session carrying the same id under two
 // hosts therefore cannot be honoured: the later chain to compile finds the key already taken and
 // MOVES the existing instance into its own chain, so the earlier host silently plays dry (found

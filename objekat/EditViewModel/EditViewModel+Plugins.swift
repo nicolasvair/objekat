@@ -108,22 +108,6 @@ extension EditViewModel {
         return update(id: hostID) { f(&$0.plugins) }
     }
 
-    /// The host's chain start/end gains (0 dB if it cannot be found).
-    func chainGains(_ hostID: UUID) -> (inDb: Float, outDb: Float) {
-        if let i = stemIndex(hostID) { return (stems[i].chainInGainDb, stems[i].chainOutGainDb) }
-        if let o = find(id: hostID) { return (o.chainInGainDb, o.chainOutGainDb) }
-        return (0, 0)
-    }
-
-    /// Writes a chain gain (start/end) into the host's model.
-    func setChainGainModel(_ hostID: UUID, output: Bool, dB: Float) {
-        if let i = stemIndex(hostID) {
-            if output { stems[i].chainOutGainDb = dB } else { stems[i].chainInGainDb = dB }
-            isDirty = true; return
-        }
-        update(id: hostID) { if output { $0.chainOutGainDb = dB } else { $0.chainInGainDb = dB } }
-    }
-
     // MARK: - Plugins
 
     func loadCachedPlugins() {
@@ -226,17 +210,15 @@ extension EditViewModel {
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
             if let block = p.fxBlock {
-                // An FX link's block: its instances (already in the bin's order) + the bin's output
-                // section, which the engine unfolds into leaves and one ObjGain. The common on/off
-                // is folded into each leaf's own, so the engine has one flag per plugin to read.
+                // An FX link's block: its instances (already in the bin's order), which the engine
+                // unfolds into leaves. The common on/off is folded into each leaf's own, so the engine
+                // has one flag per plugin to read. The bin has no output section on the engine side
+                // any more (format 25): its output is a gain stage, one of its leaves.
                 let out = fxOutput(of: p)
                 return ["id":      p.id.uuidString,
                         "kind":    "fxlink",
                         "plugins": rackSpec(for: block.plugins.map { leaf in
-                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l }),
-                        "enabled": out.isEnabled,
-                        "gainDb":  Double(out.effectiveGainDb),
-                        "pan":     Double(out.pan)]
+                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l })]
             }
             var d: [String: Any] = [
                 "id":         p.id.uuidString,
@@ -258,17 +240,14 @@ extension EditViewModel {
     /// `sends`: the object's sends, whose plugins are compiled into the send plugins' own lists (INC 3).
     /// nil = read from the model (a bus has none); a caller that compiles BY VALUE (`syncPlugins`) hands
     /// over the object's.
-    func compileRack(objectID: UUID, plugins: [ObjectPlugin],
-                     chainInDb: Float, chainOutDb: Float, sends: [AuxSend]? = nil) -> [UUID] {
+    func compileRack(objectID: UUID, plugins: [ObjectPlugin], sends: [AuxSend]? = nil) -> [UUID] {
         guard let engine else { return [] }
         let owner = find(id: objectID)
         let sendChains = sendChainSpec(sender: objectID, sends: sends ?? owner?.sends ?? [],
                                        isAux: owner?.isAux ?? false) { rackSpec(for: $0) }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
                                                 tree: rackSpec(for: plugins, topLevel: true),
-                                                sendChains: sendChains,
-                                                chainInDb: chainInDb,
-                                                chainOutDb: chainOutDb) as? [String] ?? []
+                                                sendChains: sendChains) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
         if !failed.isEmpty {
             // During a load, remembers the name of the plugins that cannot be found (before removing them from the
@@ -286,9 +265,9 @@ extension EditViewModel {
                 }
             }
         }
-        // The chain start/end trims carry the `chainInGain`/`chainOutGain` curves:
-        // a compilation makes them anew. No effect for a BUS (stem or master), which is
-        // not a sound object and has no automation.
+        // A compilation makes plugin instances anew, and their curves live on them (a gain stage's
+        // included). No effect for a BUS (stem or master), which is not a sound object and has no
+        // automation.
         pushAutomation(objectID)
         // A recompiled AU is a NEW instance with its sidechain stripped (the model, not the engine,
         // is the authority on keys): lay them again. Coalesced — a load compiles every object.
@@ -296,25 +275,13 @@ extension EditViewModel {
         return Array(failed)
     }
 
-    /// The variant that reads the plugins + chain gains from the current model (object OR bus).
+    /// The variant that reads the plugins from the current model (object OR bus).
     @discardableResult
     func compileRack(objectID: UUID) -> [UUID] {
         // A send's mini-chain is compiled with its SENDER's chain (the engine owns it there).
         if let k = sendChainKey(objectID), find(id: objectID) == nil { return compileRack(objectID: k.sender) }
         guard let plugins = chainPlugins(objectID) else { return [] }
-        let g = chainGains(objectID)
-        return compileRack(objectID: objectID, plugins: plugins,
-                           chainInDb: g.inDb, chainOutDb: g.outDb)
-    }
-
-    /// The chain start (output:false) / end (output:true) gain in dB: model + the live plugin (cheap).
-    /// If the rack does not exist yet (an object with no chain), it is materialised once (compile).
-    func setChainGain(objectID: UUID, output: Bool, dB: Float) {
-        setChainGainModel(objectID, output: output, dB: dB)
-        recordAutomationTouch(objectID, output ? .chainOutGain : .chainInGain)
-        let applied = engine?.setChainGain(dB, output: output, objectID: objectID.uuidString) ?? false
-        if !applied { compileRack(objectID: objectID) }   // creates the rack + gains from the model
-        isDirty = true
+        return compileRack(objectID: objectID, plugins: plugins)
     }
 
     /// The display names ("Name [FORMAT]") of the plugins whose id is in `ids`, looked up
@@ -546,6 +513,12 @@ extension EditViewModel {
         guard let plugins = chainPlugins(objectID),
               let plug = Self.flattenLeaves(plugins).first(where: { $0.id == pluginID }),
               let engine else { return }
+        // A gain stage has no bypass of its own (its card has no power button): neutral is 0 dB.
+        // A bin's common on/off still takes it with the rest of the bin (@see GainStage.swift).
+        guard !plug.isGainStage else {
+            NSLog("[GAIN] no bypass on a gain stage (%@)", pluginID.uuidString)
+            return
+        }
         let newEnabled = !plug.isEnabled
         // The bypass of an attached FX link's instance is the bin's: every member's instance follows.
         if let def = fxDefinition(ofInstance: pluginID, on: objectID) {
@@ -652,7 +625,8 @@ extension EditViewModel {
     /// (`openEditorPluginID`), but with a window managed on the Swift side rather than by the JUCE engine
     /// since the built-in UI is already 100% SwiftUI (@see BuiltInPluginEditorWindowController).
     func openBuiltInPluginEditor(plug: ObjectPlugin) {
-        guard hasInterface else { return }
+        // A gain stage has no editor: its controls are its card's (@see GainStage.swift).
+        guard hasInterface, !plug.isGainStage else { return }
         if let existing = builtInEditorWindows[plug.id] {
             existing.window?.makeKeyAndOrderFront(nil)
             placeTiledEditor(plug.id)
@@ -1080,9 +1054,7 @@ extension EditViewModel {
         // Recompiles the rack from the model (project loading, paste, split, groups).
         // The plugins that cannot be found are removed from the model by compileRack. enabled/bypass is
         // applied on the compiler side (setEnabled per leaf during the reconciliation).
-        compileRack(objectID: object.id, plugins: chain,
-                    chainInDb: object.chainInGainDb, chainOutDb: object.chainOutGainDb,
-                    sends: object.sends)
+        compileRack(objectID: object.id, plugins: chain, sends: object.sends)
         // (Re)establishes the links: the instance has just been (re)created, and so have its siblings.
         if rewireLinks { rewireLinkGroups() }
     }

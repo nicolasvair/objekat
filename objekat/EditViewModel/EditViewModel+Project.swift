@@ -444,6 +444,14 @@ extension EditViewModel {
     func decodeProjectDocument(at url: URL) throws -> ProjectDocument {
         let data = try Data(contentsOf: url)
         var doc = try JSONDecoder().decode(ProjectDocument.self, from: data)
+        // The old trims and FX link outputs become gain stages, BEFORE anything reads the chains
+        // (the plugin-id detection included: the stages carry fresh ids). @see LegacyGainMigration.
+        let migration = LegacyGainMigration.migrate(&doc)
+        doc.legacyGainMigration = migration
+        if !migration.isEmpty {
+            NSLog("[LOAD] legacy gains → gain stages: %d trim(s), %d FX output(s), %d curve(s), %d clamped",
+                  migration.trims, migration.fxOutputs, migration.automationLanes, migration.clamped)
+        }
         doc.items = resolvedItems(doc.items, projectFolder: url.deletingLastPathComponent())
         return doc
     }

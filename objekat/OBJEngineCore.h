@@ -444,32 +444,22 @@
 //   feuille : @{@"id":…, @"kind":@"plugin", @"identifier":…, @"format":…, @"name":…,
 //              @"stateXML":… (optionnel), @"enabled":@(BOOL)}
 //   bloc // : @{@"kind":@"rack", @"voices":@[ @[<entrées série>], … ]}
-//   bac FX  : @{@"id":…, @"kind":@"fxlink", @"plugins":@[<feuilles>], @"enabled":@(BOOL),
-//              @"gainDb":…, @"pan":…} — déplié en feuilles + un ObjGain de sortie
+//   bac FX  : @{@"id":…, @"kind":@"fxlink", @"plugins":@[<feuilles>]} — déplié en ses feuilles
+//              (l'on/off commun du bac est déjà replié dans chaque feuille côté Swift ; sa sortie
+//              est un étage de gain, une feuille comme une autre — format 25)
 // `sendChains` : les plugins que PORTE chaque envoi de l'objet — @[ @{@"aux":…, @"plugins":@[<feuilles>]} ]
 // (INC 3) ; compilés dans la liste propre du plugin d'envoi, posé désactivé si le pont ne l'a pas
 // encore posé. @[] = aucun envoi ne porte de plugin.
 // Retourne la liste des pluginKeys NON RÉSOLUS (introuvables) — le caller les retire du modèle.
 - (NSArray<NSString*>*)compileUserRackForObjectID:(NSString*)uuid
                                              tree:(NSArray<NSDictionary*>*)tree
-                                       sendChains:(NSArray<NSDictionary*>* _Nonnull)sendChains
-                                        chainInDb:(float)chainInDb
-                                       chainOutDb:(float)chainOutDb;
+                                       sendChains:(NSArray<NSDictionary*>* _Nonnull)sendChains;
 
 // Niveau audio mesuré (0..1) à la sortie d'un plugin du rack (vu-mètre par carte synoptique).
 - (float)audioLevelForPluginKey:(NSString*)pluginKey forObjectID:(NSString*)uuid;
 
 // Gain dB d'une voie parallèle (ObjGain de fin de voie), ajusté à chaud (sans recompiler).
 - (void)setVoiceGain:(float)dB forBlockID:(NSString*)blockID voiceIndex:(int)vi objectID:(NSString*)uuid;
-
-// Section de sortie d'un BAC FX (kind:"fxlink" dans l'arbre de compileUserRack…) ajustée à chaud :
-// gain dB (le mute y arrive comme un gain EFFECTIF de -96), pan -1…1, on/off commun du bac.
-// `blockID` = l'id de l'entrée-bloc de la chaîne. Sans effet tant que le bloc n'est pas compilé.
-- (void)setFXBlockOutput:(NSString* _Nonnull)blockID gainDb:(float)dB pan:(float)pan enabled:(BOOL)enabled;
-
-// Gain dB de début (output:NO) / fin (output:YES) de chaîne, ajusté à chaud (sans recompiler).
-// Retourne NO si le rack n'existe pas encore (objet sans chaîne jamais compilé).
-- (BOOL)setChainGain:(float)dB output:(BOOL)isOutput objectID:(NSString*)uuid;
 
 // Paramètres AUTOMATABLES d'un plugin — built-in Tracktion comme AU/VST : c'est
 // `getAutomatableParameters()` qui répond, et il vaut pour les deux familles. L'ordre du tableau
@@ -509,8 +499,6 @@
 typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
     OBJAutomationTargetVolume = 0,  // fader ObjGain de l'objet, paramètre « gain » (dB)
     OBJAutomationTargetPan,         // fader ObjGain de l'objet, paramètre « pan » (-1…+1)
-    OBJAutomationTargetTrimIn,      // trim d'ENTRÉE de la chaîne user, « gain » (dB)
-    OBJAutomationTargetTrimOut,     // trim de SORTIE de la chaîne user, « gain » (dB)
     OBJAutomationTargetSend,        // ObjAuxSend vers `targetKey` (= auxID), « level » (dB)
     OBJAutomationTargetPlugin,      // plugin user `targetKey`, paramètre `paramID`
 };
@@ -590,7 +578,8 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)commitBridgeSync;
 // The newest published build, as plain data (plan §4.8): `build`, `taps`, `readers`. nil = none yet.
 - (NSDictionary<NSString*, id>* _Nullable)bridgeReport;
-// The sender's plugin list as roles, in order ({index, role, key?, aux?, tap_position?, type?}); nil if the host is unknown.
+// The sender's plugin list as roles, in order ({index, role, key?, aux?, tap_position?, type?,
+// segment_start?, segment_end?}); nil if the host is unknown.
 - (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString* _Nonnull)uuid;
 // YES if the LIVE instance can take a sidechain (an AU still loading answers NO: not known yet).
 - (BOOL)pluginCanSidechain:(NSString* _Nonnull)pluginKey;
@@ -708,7 +697,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // MARK: - Dernier paramètre TOUCHÉ (éditeur de plugin ouvert)
 //
 // Sert à la ligne de « future automation » : la bande d'automation d'un objet propose le dernier
-// paramètre qu'on a réglé sur lui. Les paramètres pilotés par le modèle Swift (fader, pan, trims,
+// paramètre qu'on a réglé sur lui. Les paramètres pilotés par le modèle Swift (fader, pan,
 // envois) se captent côté Swift ; les paramètres d'un plugin, non — un knob tourné dans une GUI
 // native AU/VST ne traverse jamais le pont.
 //

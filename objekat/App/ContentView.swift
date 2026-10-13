@@ -85,7 +85,7 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .frame(minWidth: 250, maxWidth: 360)
+                .frame(minWidth: 250, maxWidth: 720)
 
                 TimelineView(
                     viewModel: viewModel,

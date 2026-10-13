@@ -656,7 +656,6 @@ extension EditViewModel {
         func eligible(_ o: SoundObject) -> Bool {
             o.isClip && !o.isConsolidateInstance
                 && o.plugins.isEmpty && o.instruments.isEmpty
-                && o.chainInGainDb == 0 && o.chainOutGainDb == 0
         }
         guard objs.allSatisfy(eligible), objs.allSatisfy({ identicalClipContent($0, ref) }) else { return nil }
         return objs.count

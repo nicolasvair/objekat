@@ -22,6 +22,8 @@
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/Localization.swift \
+//         ../objekat/SoundObject/GainStage.swift \
+//         ../objekat/SoundObject/LegacyGainMigration.swift \
 //         ../objekat/EditViewModel/EditViewModel+Types.swift \
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
@@ -164,7 +166,7 @@ enum SendChainTest {
             let cleaned = decode(AuxSend.self, handWritten)
             check("codable: a hand-written marker / block / bin in a send's plugins is dropped at decode",
                   cleaned.plugins.map(\.id) == [p.id], "\(cleaned.plugins.count)")
-            check("the session format is 24", SessionSchema.formatVersion == 24)
+            check("the session format is 25", SessionSchema.formatVersion == 25)
             check("the notice says where a send's plugins live", SessionSchema.note.contains { $0.contains("PLUGINS ON a send (format 23)") })
             check("equality: two sends differing by their plugins are different", bare != AuxSend(auxID: aux, levelDb: -6, plugins: [p]))
         }
