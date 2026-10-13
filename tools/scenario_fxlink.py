@@ -775,6 +775,168 @@ try:
         check("...and it still passes the signal", ep2 > 0.05, "%s" % ep2)
         audit_clean("at the end of the empty-bin phase")
 
+        # ── NAMES (plan_synoptic_rework B.9) ────────────────────────────────
+        # A bin takes the name of its object, FOLLOWS the object's renaming until the user names it by
+        # hand, namesakes are numbered, several objects → the first in time, and ⌘R is contextual.
+        cmd("project.new")
+
+        def link_of(lid):
+            return cmd("fxlink.get", link=lid)
+
+        def nm(lid):
+            return link_of(lid)["name"]
+
+        def named(oid, label):
+            cmd("object.rename", id=oid, name=label)
+            return oid
+
+        def two_plugins(host):
+            return [add(host, "4bandEq"), add(host, "reverb")]
+
+        K = named(cmd("object.add", path=BIP, lane=0, start=0)["id"], "Kick")
+        k1 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("a bin made from \"Kick\" is called \"Kick\", follows it, and is not the user's",
+              k1["name"] == "Kick" and k1["name_source"] == K and k1["user_named"] is False, str(k1))
+        k2 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("a namesake is numbered: \"Kick 2\"", k2["name"] == "Kick 2" and k2["name_source"] == K, k2["name"])
+        k3 = cmd("fxlink.create", host=K, plugins=two_plugins(K))
+        check("...and the next \"Kick 3\"", k3["name"] == "Kick 3", k3["name"])
+        K1, K2, K3 = k1["id"], k2["id"], k3["id"]
+
+        cmd("object.rename", id=K, name="Kik"); idle()
+        check("renaming the object renames its bins, through the same numbering",
+              [nm(K1), nm(K2), nm(K3)] == ["Kik", "Kik 2", "Kik 3"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("edit.undo"); idle()
+        check("ONE undo gives back the object's name AND the bins' names",
+              next(o for o in cmd("object.list")["objects"] if o["id"] == K)["name"] == "Kick"
+              and [nm(K1), nm(K2), nm(K3)] == ["Kick", "Kick 2", "Kick 3"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("edit.redo"); idle()
+        check("...and redo renames them again", [nm(K1), nm(K2), nm(K3)] == ["Kik", "Kik 2", "Kik 3"])
+
+        r = cmd("fxlink.rename", link=K1, name="Mine")
+        check("a bin renamed by hand becomes the user's", r["name"] == "Mine" and r["user_named"] is True, str(r))
+        cmd("object.rename", id=K, name="Snare"); idle()
+        check("...and keeps its name when the object is renamed; the others still follow",
+              [nm(K1), nm(K2), nm(K3)] == ["Mine", "Snare", "Snare 2"], str([nm(K1), nm(K2), nm(K3)]))
+        cmd("object.rename", id=K, name=""); idle()
+        check("clearing the object's name: the bins follow what the object is called then (its file)",
+              nm(K2) == "bip.wav" and nm(K3) == "bip.wav 2" and nm(K1) == "Mine",
+              str([nm(K1), nm(K2), nm(K3)]))
+        cmd("object.rename", id=K, name="Kick"); idle()
+
+        # an explicit name at creation is the user's, kept as typed, even as a namesake
+        kx = cmd("fxlink.create", host=K, plugins=two_plugins(K), name="Kick")
+        check("an explicit `name` is kept as typed and marked the user's",
+              kx["name"] == "Kick" and kx["user_named"] is True and kx["name_source"] is None, str(kx))
+        cmd("object.rename", id=K, name="Tom"); idle()
+        check("...and never follows", nm(kx["id"]) == "Kick" and nm(K2) == "Tom" and nm(K3) == "Tom 2")
+
+        # a source that goes away freezes the name; its orphan does not hold the name hostage
+        Z = named(cmd("object.add", path=BIP, lane=1, start=1)["id"], "Zed")
+        z1 = cmd("fxlink.create", host=Z, plugins=two_plugins(Z))["id"]
+        zk = cmd("fxlink.attach", link=z1, host=K)
+        cmd("object.remove", ids=[Z]); idle()
+        check("a bin whose object is deleted keeps its name (still worn by K)", nm(z1) == "Zed")
+        Z2 = named(cmd("object.add", path=BIP, lane=2, start=1)["id"], "Zed")
+        z2 = cmd("fxlink.create", host=Z2, plugins=two_plugins(Z2))
+        check("a namesake only held by a bin NOBODY uses any more does not number: \"Zed 2\"",
+              z2["name"] == "Zed 2", z2["name"])      # z1 is still worn by K: it IS in use
+        cmd("fxlink.release", host=K, link=z1); idle()
+        z3 = cmd("fxlink.create", host=Z2, plugins=[add(Z2, "chorus"), add(Z2, "compressor")])
+        check("...but once no block wears \"Zed\", the name is free again",
+              z3["name"] == "Zed", z3["name"])
+
+        # several objects: named after the FIRST in time, even when it brings no plugin of its own
+        X = named(cmd("object.add", path=BIP, lane=3, start=0.2)["id"], "Xray")
+        Y = named(cmd("object.add", path=BIP, lane=4, start=5)["id"], "Yank")
+        two_plugins(Y)
+        m = cmd("fxlink.create", objects=[Y, X])
+        check("made of several objects, the bin is named after the first in time (and follows it)",
+              m["name"] == "Xray" and m["name_source"] == X, str(m))
+        cmd("object.rename", id=Y, name="Yoke"); idle()
+        check("...not after the others", nm(m["id"]) == "Xray")
+        cmd("object.rename", id=X, name="Xenon"); idle()
+        check("...and follows the first", nm(m["id"]) == "Xenon")
+
+        # a bin on a stem (a bus) is named after it, follows its renaming
+        V = cmd("stem.add", name="Voice", format="stereo")["id"]
+        vp = two_plugins(V)
+        v = cmd("fxlink.create", host=V, plugins=vp)
+        check("a bin made on a stem is named after the stem", v["name"] == "Voice" and v["name_source"] == V, str(v))
+        cmd("stem.rename", id=V, name="Choir"); idle()
+        check("...and follows the stem's renaming", nm(v["id"]) == "Choir")
+
+        # an EMPTY bin laid by the browser's "New FX link"
+        E = named(cmd("object.add", path=BIP, lane=5, start=0)["id"], "Echo")
+        e = cmd("debug.fxlink_create_empty", host=E)
+        check("an empty bin is named after its host too", e["name"] == "Echo", str(e))
+
+        # AUTOMATIC creation: a cut / split / duplicate names the bin after the object cut
+        C0 = named(cmd("object.add", path=BIP, lane=6, start=0)["id"], "Hat")
+        two_plugins(C0)
+        cmd("object.split_at", ids=[C0], seconds=0.3); idle()
+        auto = [l for l in cmd("fxlink.list")["links"] if l["name"].startswith("Hat")]
+        check("a split makes a bin named after the object cut", len(auto) == 1 and auto[0]["name"] == "Hat"
+              and auto[0]["name_source"] == C0 and auto[0]["user_named"] is False, str(auto))
+        cmd("object.rename", id=C0, name="Ride"); idle()
+        check("...which follows the ORIGINAL's renaming", nm(auto[0]["id"]) == "Ride")
+        D0 = named(cmd("object.add", path=BIP, lane=7, start=0)["id"], "Ride")
+        two_plugins(D0)
+        cmd("object.duplicate", ids=[D0]); idle()
+        names = sorted(l["name"] for l in cmd("fxlink.list")["links"] if l["name"].startswith("Ride"))
+        check("a duplicate makes a bin named after the original, numbered against the namesake",
+              names == ["Ride", "Ride 2"], str(names))
+        # paste
+        cmd("selection.set", ids=[D0]); cmd("clipboard.copy"); cmd("clipboard.paste"); idle()
+        check("a paste does not add a bin for an already-linked original",
+              len([l for l in cmd("fxlink.list")["links"] if l["name"].startswith("Ride")]) == 2)
+        audit_clean("after the names phase")
+
+        # save / reopen: the names, the flag and the source survive; the follow still works
+        before = {l["id"]: (l["name"], l["user_named"], l["name_source"]) for l in cmd("fxlink.list")["links"]}
+        nproj = os.path.join(TMP, "names.objekat")
+        cmd("project.save_as", path=nproj); idle()
+        cmd("project.new")
+        cmd("project.open", path=nproj); idle()
+        after = {l["id"]: (l["name"], l["user_named"], l["name_source"]) for l in cmd("fxlink.list")["links"]}
+        check("names, `user_named` and `name_source` survive a save and a reopen",
+              after == before, "%s\n%s" % (sorted(before.items()), sorted(after.items())))
+        cmd("object.rename", id=K, name="Floor"); idle()
+        check("...and a reopened bin still follows its object",
+              cmd("fxlink.get", link=K2)["name"] == "Floor" and cmd("fxlink.get", link=K1)["name"] == "Mine")
+
+        # ⌘R, contextual: the signal view's selection on ONE bin renames the bin; else as before
+        def shortcut():
+            return cmd("debug.rename_shortcut")
+
+        cmd("plugin.deselect"); cmd("selection.set", ids=[K])
+        r = shortcut()
+        check("⌘R with the timeline's keyboard renames the selected object (as before)",
+              r["target"] == "object" and r["id"] == K and r["renaming_fxlink"] is None, str(r))
+        blk_k2 = next(p for p in cmd("plugin.list", host=K)["plugins"] if p.get("is_fx_block") and p.get("link") == K2)
+        cards2 = [q["id"] for q in blk_k2["plugins"]]
+        cmd("plugin.select", host=K, plugins=[cards2[0]])
+        r = shortcut()
+        check("⌘R with ONE card of a bin selected opens that bin's rename field",
+              r["target"] == "fxlink" and r["id"] == K2 and r["renaming_fxlink"] == K2, str(r))
+        cmd("plugin.select", host=K, plugins=cards2)
+        r = shortcut()
+        check("...and with every card of the bin selected", r["target"] == "fxlink" and r["id"] == K2, str(r))
+        blk_k3 = next(p for p in cmd("plugin.list", host=K)["plugins"] if p.get("is_fx_block") and p.get("link") == K3)
+        cmd("plugin.select", host=K, plugins=[cards2[0], blk_k3["plugins"][0]["id"]])
+        r = shortcut()
+        check("...but not with cards of TWO bins: back to the object", r["target"] == "object" and r["renaming_fxlink"] is None, str(r))
+        cmd("plugin.select", host=K, plugins=[])
+        r = shortcut()
+        check("...nor with the view holding the keyboard on nothing: back to the object",
+              r["target"] == "object" and r["id"] == K, str(r))
+        cmd("plugin.deselect"); cmd("selection.clear")
+        check("...and with nothing selected anywhere, nothing", shortcut()["target"] == "none")
+
+        # the typed name commits through the same door as `fxlink.rename`
+        cmd("fxlink.rename", link=K2, name="Typed"); idle()
+        check("the field's commit marks the name as the user's", cmd("fxlink.get", link=K2)["user_named"] is True)
+
         audit_clean("at the end of the scenario (signal view, overlay)")
 
 finally:

@@ -138,12 +138,93 @@ extension EditViewModel {
         isDirty = true
     }
 
+    // MARK: A bin's name (plan_synoptic_rework B.9)
+    //
+    // A bin takes the name of the object it is made from ("Kick"), FOLLOWS that object's renaming for as
+    // long as the user has not named the bin by hand, and is told apart from its namesakes by a number
+    // ("Kick 2", "Kick 3"). Created from several objects, it is named after the FIRST in time. An EXPLICIT
+    // name (the API's `name`, the inline field) is the user's: kept as typed, never followed again.
+
+    /// `base`, or `base 2`, `base 3`… — the first one `taken` does not hold.
+    static func uniqueName(_ base: String, avoiding taken: Set<String>) -> String {
+        if !taken.contains(base) { return base }
+        var n = 2
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
+    /// The names a new or renamed bin must avoid: the bins that are really in use (some block refers to
+    /// them, or a cut has promised them a block), `excluding` the bin being renamed. An orphan — what a
+    /// deleted object leaves in memory for the undo — does not hold its name. Only read when a plain
+    /// comparison with the whole registry finds a namesake, so the common creation stays O(bins).
+    private func fxLinkNamesInUse(excluding: UUID? = nil, base: String) -> Set<String> {
+        let all = fxLinks.filter { $0.id != excluding }
+        guard all.contains(where: { $0.name == base || $0.name.hasPrefix(base + " ") }) else { return [] }
+        var live = Set(fxLinkPendingIDs())
+        for b in allFXBlocks() { if let l = b.block.fxBlock?.linkID { live.insert(l) } }
+        return Set(all.filter { live.contains($0.id) }.map(\.name))
+    }
+
+    /// The bins a cut / paste has created whose blocks are not yet in a chain (@see `fxPendingSources`).
+    private func fxLinkPendingIDs() -> [UUID] {
+        fxPendingSources.values.flatMap { $0.map(\.linkID) }
+    }
+
+    /// The default name: "FX link N" (nobody to follow).
     func uniqueFXLinkName(_ base: String?) -> String {
         if let base, !base.isEmpty { return base }
         var n = fxLinks.count + 1
         let taken = Set(fxLinks.map(\.name))
         while taken.contains("\(L("fxlink.default_name")) \(n)") { n += 1 }
         return "\(L("fxlink.default_name")) \(n)"
+    }
+
+    /// What a host (an object, a group, an aux, a stem or the Main) is called, as a bin made from it
+    /// would be named after it. nil for an unknown host or an empty name.
+    func fxLinkSourceName(of hostID: UUID) -> String? {
+        let name: String?
+        if let o = find(id: hostID) { name = o.displayName }
+        else if let i = stemIndex(hostID) { name = stems[i].name }
+        else { name = nil }
+        guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return name
+    }
+
+    /// The identity of a NEW bin: an explicit name is the user's (`userNamed`, follows nobody);
+    /// otherwise the source's name made unique, and the source remembered. No source and no name:
+    /// "FX link N".
+    func newFXLinkIdentity(explicitName: String?, source: UUID?) -> (name: String, source: UUID?, userNamed: Bool) {
+        if let explicitName {
+            let trimmed = explicitName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return (trimmed, nil, true) }
+        }
+        if let source, let base = fxLinkSourceName(of: source) {
+            return (Self.uniqueName(base, avoiding: fxLinkNamesInUse(base: base)), source, false)
+        }
+        return (uniqueFXLinkName(nil), nil, false)
+    }
+
+    /// A new bin, named after `source` (or as the user said). Not registered.
+    func makeFXLink(name: String?, source: UUID?, plugins: [ObjectPlugin]) -> FXLink {
+        let identity = newFXLinkIdentity(explicitName: name, source: source)
+        var link = FXLink(name: identity.name, plugins: plugins)
+        link.nameSourceID = identity.source
+        link.userNamed = identity.userNamed
+        return link
+    }
+
+    /// The bins that FOLLOW one of `sourceIDs` take `newName` again (made unique like at creation).
+    /// Called INSIDE a rename that has already pushed its undo point: one gesture, one ⌘Z. A bin the
+    /// user named, one without a source, and one whose source is elsewhere are left alone. In the
+    /// registry's order, so that two bins of one source come out "Kik" and "Kik 2", never swapped.
+    func followRename(of sourceIDs: Set<UUID>, to newName: String) {
+        let base = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty else { return }
+        for i in fxLinks.indices {
+            guard !fxLinks[i].userNamed, let s = fxLinks[i].nameSourceID, sourceIDs.contains(s) else { continue }
+            let name = Self.uniqueName(base, avoiding: fxLinkNamesInUse(excluding: fxLinks[i].id, base: base))
+            if fxLinks[i].name != name { fxLinks[i].name = name; isDirty = true }
+        }
     }
 
     // MARK: Reconciling the members
@@ -199,7 +280,7 @@ extension EditViewModel {
     /// All the plugins must be plain, in ONE series, and free of any manual link.
     @discardableResult
     func createFXLink(from hostID: UUID, pluginIDs: [UUID], name: String? = nil,
-                      undo: Bool = true) -> UUID? {
+                      nameSource: UUID? = nil, undo: Bool = true) -> UUID? {
         guard engine != nil, let chain = chainPlugins(hostID), !pluginIDs.isEmpty else { return nil }
         guard !(isSendChainHost(hostID) && find(id: hostID) == nil) else { return nil }   // a send holds no bin
         let leaves = Self.flattenLeaves(chain)
@@ -234,7 +315,7 @@ extension EditViewModel {
             inst.linkGroupID = d.id
             instances.append(inst)
         }
-        let link = FXLink(name: uniqueFXLinkName(name), plugins: definition)
+        let link = makeFXLink(name: name, source: nameSource ?? hostID, plugins: definition)
         fxLinks.append(link)
         let block = FXLink.blockEntry(linkID: link.id, name: link.name, instances: instances)
         updateChainPlugins(hostID) { c in
@@ -262,7 +343,7 @@ extension EditViewModel {
         guard !(isSendChainHost(hostID) && find(id: hostID) == nil) else { return nil }   // a send holds no bin
         if case .block = place.0 { return nil }                                          // a bin does not hold a bin
         if undo { pushUndo() }
-        let link = FXLink(name: uniqueFXLinkName(name), plugins: [])
+        let link = makeFXLink(name: name, source: hostID, plugins: [])
         fxLinks.append(link)
         guard attachFXLink(link.id, to: hostID, at: place, undo: false) != nil else {
             fxLinks.removeAll { $0.id == link.id }
@@ -283,7 +364,9 @@ extension EditViewModel {
         guard let source = hosts.first(where: { !Self.fxLinkEligibleRuns(in: $0.plugins).isEmpty }),
               let run = Self.fxLinkEligibleRuns(in: source.plugins).first else { return nil }
         if undo { pushUndo() }
-        guard let linkID = createFXLink(from: source.id, pluginIDs: run, name: name, undo: false) else {
+        // Named after the FIRST object in time, even when the definition comes from a later one.
+        guard let linkID = createFXLink(from: source.id, pluginIDs: run, name: name,
+                                        nameSource: hosts[0].id, undo: false) else {
             return nil
         }
         for h in hosts where h.id != source.id { attachFXLink(linkID, to: h.id, undo: false) }
@@ -784,7 +867,8 @@ extension EditViewModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let link = fxLink(linkID), !trimmed.isEmpty, link.name != trimmed else { return false }
         if undo { pushUndo() }
-        updateFXLink(linkID) { $0.name = trimmed }
+        // A name typed by hand is the user's for good: the bin no longer follows its object.
+        updateFXLink(linkID) { $0.name = trimmed; $0.userNamed = true }
         return true
     }
 
@@ -798,6 +882,65 @@ extension EditViewModel {
     }
 
     private func isValidPluginColorIndex(_ i: Int) -> Bool { i >= 0 && i < ObjekatPalette.plugins.count }
+
+    // MARK: ⌘R — renaming a bin (plan_synoptic_rework B.9, N1 option A)
+
+    /// What ⌘R renamed.
+    enum RenameShortcutTarget: Equatable {
+        case fxLink(UUID)       // the signal view's selection designates ONE bin: its inline field opens
+        case object(UUID)       // the timeline's one selected object
+        case annotation(UUID)   // the one selected marker / region / comment
+        case none
+    }
+
+    /// The bin the signal view's selection designates, if it designates exactly ONE: every selected
+    /// card is an instance inside the same bin's block (or the block's own entry, which is what a click
+    /// on the bin's header selects). A plain card, a card of another bin, or nothing: nil.
+    func fxLinkDesignatedBySelection() -> UUID? {
+        guard let host = selectedPluginHostID, !selectedPluginIDs.isEmpty,
+              let chain = chainPlugins(host) else { return nil }
+        var links = Set<UUID>()
+        for id in selectedPluginIDs {
+            if let fb = Self.enclosingFXBlock(of: id, in: chain)?.fxBlock ?? Self.findBlock(id, in: chain)?.fxBlock {
+                links.insert(fb.linkID)
+            } else {
+                return nil
+            }
+        }
+        guard links.count == 1, let only = links.first, fxLink(only) != nil else { return nil }
+        return only
+    }
+
+    /// Opens the bin's inline rename field (the header's "Rename" entry and ⌘R both come here). The
+    /// field commits through `renameFXLink`, which marks the name as the user's.
+    func beginRenamingFXLink(_ linkID: UUID) {
+        guard fxLink(linkID) != nil else { return }
+        SynopticUIState.shared.renamingFXLinkID = linkID
+    }
+
+    /// ⌘R. CONTEXTUAL: while the signal view holds the keyboard and its selection designates one bin,
+    /// the bin's inline rename field opens (`SynopticUIState.renamingFXLinkID`); otherwise what ⌘R has
+    /// always done in the timeline — rename the one selected object, or the one selected marker /
+    /// region / comment. Returns what it did (the headless scenario reads it).
+    @discardableResult
+    func performRenameShortcut() -> RenameShortcutTarget {
+        if pluginSurfaceHasKeyboard, let link = fxLinkDesignatedBySelection() {
+            beginRenamingFXLink(link)
+            return .fxLink(link)
+        }
+        if selectedIDs.count == 1, let id = selectedIDs.first {
+            renamingID = id
+            return .object(id)
+        }
+        // The same shortcut for a marker's name, a region's and a comment's text: one gesture to name
+        // a thing, whatever kind of thing it is. `selectedAnnotation` is nil for SEVERAL marks: there
+        // is no one name to type over all of them, so ⌘R then does nothing.
+        if let a = selectedAnnotation {
+            renamingID = a.markerID
+            return .annotation(a.markerID)
+        }
+        return .none
+    }
 
     // MARK: Redirecting the gestures aimed at a member's instance
 

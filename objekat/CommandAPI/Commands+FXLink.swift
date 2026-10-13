@@ -26,6 +26,11 @@ extension CommandRegistry {
         return .object([
             "id": .string(link.id.uuidString),
             "name": .string(link.name),
+            // B.9: true once the user named the bin (explicit `name`, `fxlink.rename`, the inline
+            // field) — it then never follows an object again; `name_source` is the object / stem it
+            // follows while it is not.
+            "user_named": .bool(link.userNamed),
+            "name_source": link.nameSourceID.map { .string($0.uuidString) } ?? .null,
             "color_index": .int(link.colorIndex),
             "enabled": .bool(link.isEnabled),
             "plugins": .array(link.plugins.map { d in
@@ -142,7 +147,9 @@ extension CommandRegistry {
                                     "Plain plugins of that chain, in ONE series, with no manual link."),
                           ParamSpec("objects", "array<uuid>", required: false,
                                     "Alternative to host+plugins: several timeline objects."),
-                          ParamSpec("name", "string", required: false, "Name (default 'FX link N').")],
+                          ParamSpec("name", "string", required: false,
+                                    "Name, kept as typed and never followed again (default: the "
+                                  + "host's name, made unique, which follows its renaming).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let name = try p.optionalString("name")
@@ -176,13 +183,35 @@ extension CommandRegistry {
         }
 
         register("fxlink.rename",
-                 summary: "Renames an FX link.",
+                 summary: "Renames an FX link (by hand: it stops following its object's name).",
                  params: [ParamSpec("link", "uuid", "The link."), ParamSpec("name", "string", "New name.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let link = try self.requireFXLink(p, in: vm)
             vm.renameFXLink(link.id, to: try p.string("name"))
             return self.fxLinkJSON(vm.fxLink(link.id) ?? link, in: vm)
+        }
+
+        register("debug.rename_shortcut",
+                 summary: "Presses ⌘R as the timeline would (B.9): while the signal view holds the "
+                        + "keyboard and its selection designates ONE FX link bin, the bin's inline rename "
+                        + "opens (`SynopticUIState.renamingFXLinkID`); otherwise the one selected object / "
+                        + "marker is put in rename. Answers what it did: `target` = fxlink · object · "
+                        + "annotation · none, with the `id`.",
+                 params: [],
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            SynopticUIState.shared.renamingFXLinkID = nil
+            let target = vm.performRenameShortcut()
+            var o: [String: JSONValue] = [:]
+            switch target {
+            case .fxLink(let id):     o["target"] = .string("fxlink");     o["id"] = .string(id.uuidString)
+            case .object(let id):     o["target"] = .string("object");     o["id"] = .string(id.uuidString)
+            case .annotation(let id): o["target"] = .string("annotation"); o["id"] = .string(id.uuidString)
+            case .none:               o["target"] = .string("none");       o["id"] = .null
+            }
+            o["renaming_fxlink"] = SynopticUIState.shared.renamingFXLinkID.map { .string($0.uuidString) } ?? .null
+            return .object(o)
         }
 
         register("fxlink.set_color",
