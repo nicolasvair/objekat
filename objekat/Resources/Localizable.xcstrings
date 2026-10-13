@@ -14353,6 +14353,98 @@
         }
       }
     },
+    "synoptic.audioFile.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide the options (or double click)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ocultar las opciones (o doble clic)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les options (ou double-clic)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.pill.speed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speed ×%@ — hidden setting (double click to open)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Velocidad ×%@ — ajuste oculto (doble clic para abrir)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vitesse ×%@ — réglage masqué (double-clic pour ouvrir)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.pill.tempo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stretched to %@ bpm — hidden setting (double click to open)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajustado a %@ bpm — ajuste oculto (doble clic para abrir)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calé sur %@ bpm — réglage masqué (double-clic pour ouvrir)"
+          }
+        }
+      }
+    },
+    "synoptic.audioFile.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the options (or double click)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrar las opciones (o doble clic)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher les options (ou double-clic)"
+          }
+        }
+      }
+    },
     "synoptic.bypass": {
       "extractionState": "manual",
       "localizations": {
