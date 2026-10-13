@@ -620,9 +620,12 @@ enum SynopticLayout {
         /// The head of a bus's chain (aux / group): a widened 'source' box carrying the infinite
         /// option and, for an aux, the sends it receives. nil when the head is the plain pill.
         var busHeadZone: CGRect? = nil
-        /// The object's FRAME (§B.5): from the head zone's midline to the mixer's midline, the whole content
-        /// width plus `fxPad` each side; the head and the mixer straddle its top and bottom edges, the stems
+        /// The object's FRAME (§B.5): from the head zone's midline to the mixer's midline. Its left and right
+        /// edges ARE the head zone's and the mixer's (same x, same width — the FX link rule): those two boxes
+        /// straddle its top and bottom edges; the chain sits `fxPad` (at least) inside its sides; the stems
         /// and the sends lie outside it. nil for a stem / the Main (their popover has no object).
+        /// Drawn with `objectFrameLineWidth` INSIDE this rectangle (@see objectFrameStrokeRect), as the
+        /// boxes' own borders are, so the outer edges coincide to the pixel.
         var objectFrame: CGRect? = nil
         /// The '+' on the wire mixer → stems (a send after the fader). nil when this object does not send.
         var postFaderPlus: PostFaderPlus? = nil
@@ -786,6 +789,14 @@ enum SynopticLayout {
     static let clipZoneH: CGFloat = 36
     /// The object frame's corner radius: an FX link body's (§B.5).
     static let objectFrameCorner: CGFloat = fxBodyCorner
+    /// The object frame's line: an FX link body's.
+    static let objectFrameLineWidth: CGFloat = 1.5
+    /// The path the frame's line is stroked along: `frame` inset by half the line on its sides, so that the
+    /// line's OUTER edge lies on the frame's sides — where the head and the mixer, whose borders are drawn
+    /// inside their rect (`strokeBorder`), have theirs. (A Canvas stroke is centred on its path.)
+    static func objectFrameStrokeRect(_ frame: CGRect) -> CGRect {
+        frame.insetBy(dx: objectFrameLineWidth / 2, dy: 0)
+    }
 
     // The 'stems' zone (output): a title plus the stem's drop-down menu, on one line.
     static let stemsZoneW: CGFloat = 176
@@ -860,17 +871,29 @@ enum SynopticLayout {
         let leadH = midi ? midiZoneH : (audioFile ? audioH : (busHead ? busHeadH : pillH))
         let clipW = mixWide ? clipZoneWWide : clipZoneW
 
-        // Everything is centred on a single vertical column, inside the frame, right of the gutters.
-        let contentW = max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0,
-                           araCardWidth ?? 0)
+        // Everything is centred on a single vertical column, right of the gutters.
+        //
+        // With an object FRAME (§B.5) the frame's width comes FIRST, and the two boxes that straddle its
+        // edges — the head zone at the top, the mixer at the bottom — take that width and that left edge
+        // EXACTLY: their sides ARE the frame's sides (the FX link rule, @see FXBlockPlacement.headerRect: one
+        // source of truth for the width, so the edges can never drift apart). The frame holds the chain and
+        // the ARA card `fxPad` from its sides; a head or a mixer wider than that widens the frame instead.
+        // Without a frame (a stem / the Main) each box keeps its own width, centred.
+        let bottomInFrame = mix ? clipW : (stems ? stemsZoneW : outW)   // the box the frame's bottom crosses
+        let frameW = max(chainSize.width + 2 * fxPad, (araCardWidth ?? 0) + 2 * fxPad, leadW, bottomInFrame)
+        let boxedLeadW = objectFrame ? frameW : leadW
+        let boxedClipW = objectFrame ? frameW : clipW
+        let boxedFootW = (objectFrame && !mix) ? frameW : (stems ? stemsZoneW : outW)
+        let contentW = objectFrame
+            ? max(frameW, stems ? stemsZoneW : outW)
+            : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0)
         let sendsArea = sendsEnabled || !sends.isEmpty
-        let innerEdge = margin + sendGutterSpace(sends.count)   // the frame's left edge (and the boxes')
-        let framePad: CGFloat = objectFrame ? fxPad : 0
-        let contentLeft = innerEdge + framePad
+        let innerEdge = margin + sendGutterSpace(sends.count)   // the column's left edge (and the boxes')
+        let contentLeft = innerEdge
         let centerX = contentLeft + contentW / 2
 
         // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP.
-        let leadRect = CGRect(x: centerX - leadW / 2, y: margin, width: leadW, height: leadH)
+        let leadRect = CGRect(x: centerX - boxedLeadW / 2, y: margin, width: boxedLeadW, height: leadH)
         var midiZone: CGRect? = nil
         var instrumentSlot: CGRect? = nil
         var audioZone: CGRect? = nil
@@ -909,8 +932,8 @@ enum SynopticLayout {
         var clipZone: CGRect? = nil
         var wireTop: CGFloat           // the top of the wire that arrives at the foot
         if mix {
-            let clipRect = CGRect(x: centerX - clipW / 2, y: placement.exit.y + chainGap,
-                                  width: clipW, height: clipZoneH)
+            let clipRect = CGRect(x: centerX - boxedClipW / 2, y: placement.exit.y + chainGap,
+                                  width: boxedClipW, height: clipZoneH)
             clipZone = clipRect
             placement.cables.append(
                 Cable(from: placement.exit, to: CGPoint(x: centerX, y: clipRect.minY), style: .connector))
@@ -921,7 +944,7 @@ enum SynopticLayout {
         let footGap = sendsEnabled ? postFaderGap : (mix ? ioGap : chainGap)
 
         // The foot box: the 'stems' zone (a selectable output) or the 'Out' pill.
-        let bottomW = stems ? stemsZoneW : outW
+        let bottomW = boxedFootW
         let bottomH = stems ? stemsZoneH : pillH
         let outPill = CGRect(x: centerX - bottomW / 2, y: wireTop + footGap, width: bottomW, height: bottomH)
         let stemsZone: CGRect? = stems ? outPill : nil
@@ -942,7 +965,7 @@ enum SynopticLayout {
         var frame: CGRect? = nil
         if objectFrame {
             let bottom = (clipZone ?? outPill).midY
-            frame = CGRect(x: innerEdge, y: leadRect.midY, width: contentW + 2 * framePad,
+            frame = CGRect(x: leadRect.minX, y: leadRect.midY, width: leadRect.width,
                            height: bottom - leadRect.midY)
         }
 
@@ -1001,7 +1024,7 @@ enum SynopticLayout {
             }
         }
 
-        let contentRight = contentLeft + contentW + framePad
+        let contentRight = contentLeft + contentW
         var right = contentRight
         if sendsArea { right = max(right, innerEdge + sendCardW, innerEdge + sendAddW) }
         let canvasW = right + margin

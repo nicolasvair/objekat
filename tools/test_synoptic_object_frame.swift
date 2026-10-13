@@ -2,9 +2,10 @@ import SwiftUI
 
 // Standalone geometry test of the signal view's OBJECT FRAME and of the '+' laid on the wire
 // (docs/plan_synoptic_rework.md §B.2, §B.3, §B.5, §B.7):
-//  - the frame runs from the head zone's midline to the mixer's midline, the whole content width plus
-//    `fxPad`; the head and the mixer straddle its edges; the stems and the sends lie outside; no frame for
-//    a stem / the Main; the trims' 56 pt gaps are gone;
+//  - the frame runs from the head zone's midline to the mixer's midline; its left/right edges ARE the head
+//    zone's and the mixer's (to the pixel, the FX link rule), its line is drawn inside so the outer edges
+//    coincide; the chain sits fxPad inside; the stems and the sends lie outside; no frame for a stem / the
+//    Main; the trims' 56 pt gaps are gone;
 //  - every '+' sits ON the wire (the wire runs through it), knows the band whose hovering shows it, the
 //    element a branch drag puts in parallel (D3), the gestures it offers, and what a gesture does;
 //  - the audio zone folds to one row.
@@ -50,51 +51,103 @@ struct Main {
         // MARK: the frame
         func object(_ root: SynopticNode, midi: Bool = false, audio: Bool = true, ara: Bool = false,
                     sends: [SynopticSend] = [], expanded: Bool = true, frame: Bool = true,
-                    mix: Bool = true) -> SynopticLayout.Diagram {
+                    mix: Bool = true, mixWide: Bool = false, infinite: Bool = false,
+                    received: Int = 0) -> SynopticLayout.Diagram {
             SynopticLayout.diagram(for: root, midi: midi, audioFile: audio && !midi, audioStereo: true,
                                    araCardWidth: ara ? SynopticLayout.araCardWidth(name: "Melodyne") : nil,
-                                   mix: mix, stems: true, sends: sends, sendsEnabled: true,
+                                   mix: mix, mixWide: mixWide, stems: true, sends: sends, sendsEnabled: true,
+                                   receivedRows: received, infiniteOption: infinite,
                                    objectFrame: frame, clipOptionsExpanded: expanded)
         }
-        for (tag, d) in [("audio", object(trunk)), ("midi", object(trunk, midi: true)),
-                         ("group", object(trunk, audio: false)), ("ara", object(trunk, ara: true)),
-                         ("folded", object(trunk, expanded: false)),
-                         ("sends", object(trunk, sends: [SynopticSend(id: UUID(), name: "Rev", enabled: true, levelDb: -6)])),
-                         ("empty", object(.series([])))] {
+        let wide = SynopticNode.series([a, .parallel([.series([b]), .series([c]), .series([plug("D")])])])
+        let oneSend = [SynopticSend(id: UUID(), name: "Rev", enabled: true, levelDb: -6)]
+        let cases: [(String, SynopticLayout.Diagram)] = [
+            ("audio unfolded", object(trunk)), ("audio folded", object(trunk, expanded: false)),
+            ("midi", object(trunk, midi: true)), ("midi folded", object(trunk, midi: true, expanded: false)),
+            ("group (Source pill)", object(trunk, audio: false)),
+            ("group infinite (bus head)", object(trunk, audio: false, infinite: true)),
+            ("aux receiving (bus head)", object(trunk, audio: false, received: 2)),
+            ("ara", object(trunk, ara: true)), ("ara folded", object(trunk, ara: true, expanded: false)),
+            ("sends", object(trunk, sends: oneSend)),
+            ("empty", object(.series([]))), ("empty group", object(.series([]), audio: false)),
+            ("wide chain", object(wide)), ("wide chain group", object(wide, audio: false)),
+            ("wide mixer", object(trunk, mixWide: true)), ("wide mixer group", object(trunk, audio: false, mixWide: true)),
+        ]
+        /// Equal to the pixel: the same value once rounded to a whole point AND to the half point (retina).
+        func samePixel(_ x: CGFloat, _ y: CGFloat) -> Bool { abs(x - y) < 1e-9 }
+        for (tag, d) in cases {
             guard let f = d.objectFrame, let clip = d.clipZone else { check(false, "\(tag): a frame and a mixer"); continue }
-            check(near(f.minY, d.sourcePill.midY), "\(tag): the frame's top is the head zone's midline")
-            check(near(f.maxY, clip.midY), "\(tag): the frame's bottom is the mixer's midline")
-            check(d.sourcePill.minY < f.minY && d.sourcePill.maxY > f.minY, "\(tag): the head straddles the top edge")
+            let head = d.sourcePill
+            // the head zone and the mixer ARE the frame's sides (the FX link rule): same left, same right, same width
+            check(samePixel(head.minX, f.minX) && samePixel(head.maxX, f.maxX), "\(tag): the head's left/right edges are the frame's")
+            check(samePixel(clip.minX, f.minX) && samePixel(clip.maxX, f.maxX), "\(tag): the mixer's left/right edges are the frame's")
+            check(samePixel(head.width, clip.width), "\(tag): the head and the mixer have one width")
+            // the frame crosses each box at its vertical centre
+            check(samePixel(f.minY, head.midY), "\(tag): the frame's top edge runs through the head's vertical centre")
+            check(samePixel(f.maxY, clip.midY), "\(tag): the frame's bottom edge runs through the mixer's vertical centre")
+            check(head.minY < f.minY && head.maxY > f.minY, "\(tag): the head straddles the top edge")
             check(clip.minY < f.maxY && clip.maxY > f.maxY, "\(tag): the mixer straddles the bottom edge")
-            check(d.sourcePill.minX >= f.minX + SynopticLayout.fxPad - 1e-6 && d.sourcePill.maxX <= f.maxX - SynopticLayout.fxPad + 1e-6,
-                  "\(tag): the head is inside the frame's width, fxPad from its sides")
-            check(clip.minX >= f.minX + SynopticLayout.fxPad - 1e-6 && clip.maxX <= f.maxX - SynopticLayout.fxPad + 1e-6,
-                  "\(tag): the mixer is inside the frame's width")
+            // the head zone the view draws is that rect
+            if let z = d.audioZone { check(z == head, "\(tag): the audio zone is the head rect") }
+            if let z = d.midiZone {
+                check(z == head, "\(tag): the MIDI zone is the head rect")
+                if let s = d.instrumentSlot { check(samePixel(s.midX, f.midX) && f.contains(CGPoint(x: s.midX, y: f.minY)),
+                                                   "\(tag): the instrument card is centred in the frame") }
+            }
+            if let z = d.busHeadZone { check(z == head, "\(tag): the bus head is the head rect") }
+            // the stroke: inside the frame by half its line, so its OUTER edge is the boxes' outer edge
+            let sr = SynopticLayout.objectFrameStrokeRect(f)
+            check(samePixel(sr.minX - SynopticLayout.objectFrameLineWidth / 2, head.minX)
+                  && samePixel(sr.maxX + SynopticLayout.objectFrameLineWidth / 2, head.maxX),
+                  "\(tag): the frame's line's outer edge lies on the head's and the mixer's outer edge")
+            // everything is centred on ONE axis: the frame's
+            check(samePixel(head.midX, f.midX) && samePixel(clip.midX, f.midX), "\(tag): head and mixer on the frame's axis")
+            check(samePixel(d.outPill.midX, f.midX), "\(tag): the stems on the frame's axis")
+            if let p = d.postFaderPlus { check(samePixel(p.center.x, f.midX), "\(tag): the post-fader '+' on the axis") }
             for k in d.placement.cards {
                 check(f.contains(k.frame), "\(tag): card \(k.plugin.name) inside the frame")
                 check(k.frame.minX >= f.minX + SynopticLayout.fxPad - 1e-6 && k.frame.maxX <= f.maxX - SynopticLayout.fxPad + 1e-6,
-                      "\(tag): card \(k.plugin.name) fxPad from the frame's sides")
+                      "\(tag): card \(k.plugin.name) at least fxPad from the frame's sides")
             }
             for z in d.placement.inserts { check(f.contains(z.plusRect), "\(tag): every '+' of the chain is inside the frame") }
-            if let r = d.araCard { check(f.contains(r), "\(tag): the ARA card is inside the frame") }
+            if let r = d.araCard {
+                check(f.contains(r) && r.minX >= f.minX + SynopticLayout.fxPad - 1e-6, "\(tag): the ARA card is inside the frame")
+                check(samePixel(r.midX, f.midX), "\(tag): the ARA card on the axis")
+            }
             check(!f.intersects(d.outPill), "\(tag): the stems lie outside the frame")
             for s in d.sendCards { check(!f.intersects(s.frame), "\(tag): a send box lies outside the frame") }
             check(d.canvasSize.width >= f.maxX + SynopticLayout.margin - 1e-6, "\(tag): the canvas holds the frame")
             check(f.minX >= SynopticLayout.margin - 1e-6, "\(tag): the frame is inside the margin")
-            // the post-fader '+' and the stems: below the frame
             if let p = d.postFaderPlus { check(p.center.y > f.maxY, "\(tag): the post-fader '+' is outside the frame") }
+            // the frame is as narrow as it can be: the widest of the chain + 2·fxPad, the head, the mixer
+            let chainW = d.placement.cards.map(\.frame.maxX).max().map { $0 - d.placement.cards.map(\.frame.minX).min()! } ?? 0
+            check(f.width >= chainW + 2 * SynopticLayout.fxPad - 1e-6, "\(tag): the frame holds the chain with its padding")
         }
-        // no frame for a stem / the Main (their popover has no object)
+        // the frame's width follows the widest of its contents
+        check(near(object(trunk, audio: false).objectFrame!.width, SynopticLayout.clipZoneW),
+              "a narrow group: the frame is the mixer's width (the Source pill widens to it)")
+        check(near(object(trunk, mixWide: true).objectFrame!.width, SynopticLayout.clipZoneWWide),
+              "a wide mixer widens the frame (and the head with it)")
+        check(near(object(trunk).objectFrame!.width, SynopticLayout.audioZoneW), "an audio clip: the audio zone's width")
+        let dw = object(wide)
+        check(near(dw.objectFrame!.width, SynopticLayout.measure(wide).width + 2 * SynopticLayout.fxPad),
+              "a chain wider than the boxes: chain + 2·fxPad, the boxes widen to it")
+        // no frame for a stem / the Main (their popover has no object): the boxes keep their own widths
         let host = SynopticLayout.diagram(for: trunk, mix: false, stems: false)
         check(host.objectFrame == nil, "no frame for a bus host")
-        check(SynopticLayout.diagram(for: trunk, audioFile: true, mix: true, stems: true).objectFrame == nil,
-              "no frame unless asked (the interim default)")
-        // the frame does not move the axis vertically, only right by fxPad
+        check(near(host.sourcePill.width, SynopticLayout.sourceW), "no frame: the Source pill keeps its width")
+        let noFrame = SynopticLayout.diagram(for: trunk, audioFile: true, mix: true, stems: true)
+        check(noFrame.objectFrame == nil, "no frame unless asked (the interim default)")
+        check(near(noFrame.clipZone!.width, SynopticLayout.clipZoneW), "no frame: the mixer keeps its width")
+        // a frame without a mixer (not laid by the app, which frames hosts with a mixer only): the foot box is
+        // the one the frame's bottom crosses, so it takes the frame's sides
+        let footOnly = object(trunk, mix: false)
+        check(samePixel(footOnly.outPill.minX, footOnly.objectFrame!.minX) && samePixel(footOnly.outPill.maxX, footOnly.objectFrame!.maxX)
+              && samePixel(footOnly.objectFrame!.maxY, footOnly.outPill.midY), "no mixer: the foot box takes the frame's sides")
+        // the frame never moves the content DOWN
         let withF = object(trunk), withoutF = object(trunk, frame: false)
-        check(zip(withF.placement.cards, withoutF.placement.cards).allSatisfy {
-                near($0.frame.minY, $1.frame.minY) && near($0.frame.minX - $1.frame.minX, SynopticLayout.fxPad) },
-              "the frame shifts the content right by fxPad, never down")
-        check(near(withF.canvasSize.width - withoutF.canvasSize.width, 2 * SynopticLayout.fxPad), "the frame widens the canvas by 2·fxPad")
+        check(zip(withF.placement.cards, withoutF.placement.cards).allSatisfy { near($0.frame.minY, $1.frame.minY) },
+              "the frame never moves the content down")
 
         // MARK: no 56 pt gap: head → trunk and trunk → mixer are short wires through the trunk's own '+'
         let d = object(trunk)

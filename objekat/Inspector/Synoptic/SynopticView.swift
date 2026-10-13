@@ -680,9 +680,10 @@ struct SynopticView: View {
         // are opaque views laid over it, so they read as straddling the edges.
         if let f = d.objectFrame {
             let color = frameColor ?? Color.secondary
-            let path = Path(roundedRect: f, cornerRadius: SynopticLayout.objectFrameCorner)
+            let path = Path(roundedRect: SynopticLayout.objectFrameStrokeRect(f),
+                            cornerRadius: SynopticLayout.objectFrameCorner)
             ctx.fill(path, with: .color(color.opacity(0.10)))
-            ctx.stroke(path, with: .color(color.opacity(0.95)), lineWidth: 1.5)
+            ctx.stroke(path, with: .color(color.opacity(0.95)), lineWidth: SynopticLayout.objectFrameLineWidth)
         }
 
         for s in d.placement.scopes.sorted(by: { $0.depth < $1.depth }) {
