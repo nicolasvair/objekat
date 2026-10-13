@@ -15020,6 +15020,213 @@
         }
       }
     },
+    "synoptic.plus.ghost.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Branche parallèle"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.gainPanMute": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain · Pan · Mute"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganancia · Pan · Mute"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain · Pan · Mute"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.notHere": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aquí no"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas ici"
+          }
+        }
+      }
+    },
+    "synoptic.plus.ghost.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send from here…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envío desde aquí…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi depuis ici…"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag down and right: a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar abajo a la derecha: una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser en bas à droite : une branche parallèle"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag right: a gain stage (further: gain · pan · mute)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar a la derecha: una etapa de ganancia (más lejos: ganancia · pan · mute)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser à droite : un étage de gain (plus loin : gain · pan · mute)"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag up and right: a send taken here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar arriba a la derecha: un envío tomado aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser en haut à droite : un envoi pris ici"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click, or drag up and right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar arriba a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer, ou glisser en haut à droite"
+          }
+        }
+      }
+    },
     "synoptic.removeBranch": {
       "extractionState": "manual",
       "localizations": {
@@ -15660,6 +15867,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Supprimer cet envoi"
+          }
+        }
+      }
+    },
+    "synoptic.send.tapDot.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taken here, towards “%@”: drag to move where it is taken"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tomado aquí, hacia «%@»: arrastrar para mover la toma"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pris ici, vers « %@ » : glisser pour déplacer la prise"
           }
         }
       }

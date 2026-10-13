@@ -17,11 +17,16 @@ struct SynopticView: View {
     /// cannot touch, and ⌫ would then eat the key to do nothing.
     @Binding var selectedInstrumentID: UUID?
     var scrolls = true              // false = embedded (the parent handles the scrolling)
+    /// IGNORED since the rework (docs/plan_synoptic_rework.md §B.0: the trims became gain stages, plugins
+    /// of the chain): nothing reads them any more. Kept only so that the callers compile; deleted in L8.
     var chainInDb: Float = 0
     var chainOutDb: Float = 0
-    /// Chain trims driven by an automation curve (@see automationLocked).
     var chainInAutomated: Bool = false
     var chainOutAutomated: Bool = false
+    /// The colour of the object's FRAME (§B.5, D7: `customColor ?? stemColor`). The frame is laid for an
+    /// OBJECT host only — one that has a mixer (`mix != nil`): a clip, a MIDI clip, a group, an aux; never
+    /// for a stem or the Main (their popover). nil = a neutral grey until the caller passes the colour.
+    var frameColor: Color? = nil
     /// A MIDI clip: shows the 'MIDI' zone (the instrument) at the head instead of the Source pill.
     var isMIDI: Bool = false
     var midiInstrument: SynopticPlugin? = nil
@@ -65,15 +70,21 @@ struct SynopticView: View {
     /// the name's double tap): without this the double click would only ever see one card.
     @State private var collapsedSelection: (ids: Set<UUID>, at: TimeInterval)? = nil
 
+    // The '+' (§B.2, §B.3). Both are held by a STABLE name (@see SynopticStablePlus): the bound view
+    // rebuilds the graph several times a second (the VU poll) and a parallel's branches get fresh series
+    // ids at every build, so a key of the build would forget the hover and cancel a drag in flight.
+    /// The '+' whose line is under the pointer (the ONE hover hit test, @see SynopticHoverTracker).
+    @State private var hoveredPlus: SynopticStablePlus? = nil
+    /// The drag in flight out of a '+': which one, and how far the hand has gone.
+    @State private var plusDrag: PlusDrag? = nil
+
+    private struct PlusDrag: Equatable {
+        let key: SynopticStablePlus
+        var translation: CGSize
+    }
+
     var body: some View {
-        let d = SynopticLayout.diagram(for: root, chainInDb: chainInDb, chainOutDb: chainOutDb,
-                                       midi: isMIDI, audioFile: audioFile != nil,
-                                       audioStereo: audioFile?.channelMode != nil,
-                                       araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
-                                       mixWide: mix?.attrLinks != nil,
-                                       stems: stems != nil || groupRouting != nil,
-                                       sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
-                                       infiniteOption: infinite != nil)
+        let d = currentDiagram
         Group {
             if scrolls {
                 ScrollView([.horizontal, .vertical]) { canvas(d).padding(20) }
@@ -87,6 +98,9 @@ struct SynopticView: View {
 
     @ViewBuilder
     private func canvas(_ d: SynopticLayout.Diagram) -> some View {
+        // The stable names of this build's series, and the '+' shown whatever the hand does (empty series).
+        let names = SynopticPlusPresentation.seriesNames(of: root)
+        let alwaysShown = Set(d.alwaysVisiblePlusKeys.map { stablePlus($0, names: names) })
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
@@ -157,73 +171,48 @@ struct SynopticView: View {
             }
 
             // A bin's block: its header card (on/off · name · link badge · ✕) straddling the top of the
-            // body, and its mix box (pan · volume · mute) nested at the body's foot. The wire stops at
-            // each and starts again on the other side, so neither is laid over it (@see draw).
+            // body. The wire stops at it and starts again at its foot, so it is never laid over it (@see
+            // draw). No mix box any more (§B.8): a gain on a bin is a stage dragged out of the bin's '+'.
             ForEach(d.placement.fxBlocks) { b in
                 FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
                                   actions: actions)
                     .position(x: b.headerRect.midX, y: b.headerRect.midY)
-                FXBlockMixView(link: b.link, block: b, actions: actions)
-                    .position(x: b.mixRect.midX, y: b.mixRect.midY)
             }
 
             ForEach(d.placement.cards) { c in
-                SynopticCardView(
-                    plugin: c.plugin,
-                    isSelected: selection.contains(c.plugin.id),
-                    onSelect: { clickCard(c.plugin.id, cards: d.placement.cards) },
-                    onOpenEditor: actions.onOpenEditor.map { _ in { openEditorFromCard(c.plugin.id) } },
-                    onToggleBypass: { actions.onToggleBypass(c.plugin.id) },
-                    onRemove: { actions.onRemove(c.plugin.id) },
-                    dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
-                    dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
-                    dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
-                    onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
-                    onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
-                    onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
-                    onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-                    linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
-                    sidechainBadge: actions.sidechainBadge?(c.plugin.id)
-                )
-                .contextMenu {
-                    // A card outside the selection speaks for itself alone (the drag's own rule).
-                    fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
-                }
-                .position(x: c.frame.midX, y: c.frame.midY)
-            }
-
-            // '+': insert a plugin in series at this point.
-            ForEach(d.placement.inserts) { z in
-                Button { actions.onInsertSeries(z.seriesID, z.insertIndex) } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .frame(width: SynopticLayout.plusW, height: SynopticLayout.plusW)
-                        .background(
-                            Circle().strokeBorder(Color.secondary.opacity(0.6),
-                                                  style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                        )
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help(L("synoptic.addPluginSeries"))
-                // On the TRUNK's own insert points (not a branch's): right click = take a send right here.
-                .contextMenu {
-                    if z.seriesID == root.id, actions.sendTargetSections != nil {
-                        Button(L("send.menu.sendHere")) { actions.presentSendMenu(slot: .chain(z.insertIndex)) }
+                pluginCard(c, cards: d.placement.cards)
+                    .contextMenu {
+                        // A card outside the selection speaks for itself alone (the drag's own rule).
+                        fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
                     }
-                }
-                // No `.onDrop` here: the drop is handled by the `CableDropView` (the preview
-                // rectangle) centred on this '+'. The '+' serves only for the click (insertion).
-                .position(z.center)
+                    .position(x: c.frame.midX, y: c.frame.midY)
             }
 
-            // The parallel icon, to the RIGHT of the '+': a branch from this point (before the element).
-            ForEach(d.placement.inserts.filter { $0.branchElementID != nil }) { z in
-                ParallelBranchButton(enabled: actions.onBranch != nil) {
-                    if let f = actions.onBranch, let bid = z.branchElementID { f(bid) }
-                }
-                .position(x: z.center.x + 26, y: z.center.y)
+            // '+' on the wire (§B.2, §B.3): shown while its line is hovered, always in an empty series, and
+            // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for a
+            // gain stage, a parallel branch or a send (@see SynopticPlusGesture), with a ghost under way.
+            // Drawn OPAQUE over the wire, which runs through it. Laid after the cable drop zones, so that a
+            // shown '+' is what the hand grabs; no `.onDrop` on it (the `CableDropView` under it receives).
+            ForEach(d.placement.inserts, id: \.key) { z in
+                let sk = stablePlus(z.key, names: names)
+                let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                             alwaysVisible: alwaysShown)
+                SynopticPlusButton(active: plusDrag?.key == sk,
+                                   onChanged: { plusMoved(sk, $0) },
+                                   onEnded: { plusReleased(sk, $0) })
+                    .help(plusHelp(z))
+                    // On the TRUNK's own insert points (not a branch's): right click = take a send right here,
+                    // at the slot this '+' stands for (head ≡ input, tail ≡ pre-fader, between ≡ chain(i)).
+                    .contextMenu {
+                        if z.role == .trunk, actions.sendTargetSections != nil {
+                            Button(L("send.menu.sendHere")) {
+                                actions.presentSendMenu(slot: z.sendSlot ?? .chain(z.insertIndex))
+                            }
+                        }
+                    }
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .position(z.center)
             }
 
             // The dB gain at the end of each parallel branch (drag ↑/↓).
@@ -248,35 +237,31 @@ struct SynopticView: View {
                 .help(L("synoptic.removeBranch"))
                 .position(x: vg.center.x + 48, y: vg.center.y)
             }
-
-            // The start / end chain gains (always present, even without a parallel).
-            if let cin = d.chainInGain {
-                GainDbControl(dB: cin.dB,
-                              onTouch: { actions.onTouchParam?(.chainInGain) },
-                              onBegin: { actions.onBeginGainEdit?() }) {
-                    actions.onSetChainGain?(false, $0)
-                }
-                .automationLocked(chainInAutomated)
-                .position(cin.center)
-            }
-            if let cout = d.chainOutGain {
-                GainDbControl(dB: cout.dB,
-                              onTouch: { actions.onTouchParam?(.chainOutGain) },
-                              onBegin: { actions.onBeginGainEdit?() }) {
-                    actions.onSetChainGain?(true, $0)
-                }
-                .automationLocked(chainOutAutomated)
-                .position(cout.center)
-            }
             }   // Group FX
             .fxReadOnlyLocked(fxReadOnly)
 
-            // The outgoing sends: a card each, in a column beside the trunk (the wires are drawn in `draw`).
-            // Not in the FX group: a closed consolidated object keeps its sends interactive, as it keeps
-            // its mix. Laid LAST, over the slots' drop bands, so that a card is always the one that is
-            // grabbed; and not a plugin card: it is outside the selection and ignored by the marquee.
-            // A send that carries plugins is a BOX: its plugins' rows on top, the "+", then the card as
-            // the bottom line (the order of the signal, Q-U19).
+            // The '+' on the wire mixer → stems: a send taken after the fader, its only gesture (D2) — a
+            // click opens the same "Send to…" menu. Not in the FX group: a closed consolidated object keeps
+            // its sends interactive, as it keeps its mix.
+            if let p = d.postFaderPlus, actions.sendTargetSections != nil {
+                let sk = SynopticStablePlus.postFader
+                let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                             alwaysVisible: alwaysShown)
+                SynopticPlusButton(active: plusDrag?.key == sk,
+                                   onChanged: { plusMoved(sk, $0) },
+                                   onEnded: { plusReleased(sk, $0) })
+                    .help(L("synoptic.plus.postFader.help"))
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .position(p.center)
+            }
+
+            // The outgoing sends: a BOX each, stacked BELOW the stems and wired by the left (the wires are
+            // drawn in `draw`). Not in the FX group: a closed consolidated object keeps its sends
+            // interactive, as it keeps its mix. Laid over the slots' drop bands, so that a box is always the
+            // one that is grabbed; and not a plugin card: it is outside the selection and ignored by the
+            // marquee. A send that carries plugins is a BOX: its plugins' rows on top, the "+", then the
+            // card as the bottom line (the order of the signal, Q-U19).
             ForEach(d.sendCards) { c in
                 let zone = SendBoxView.zone(of: c)
                 SendBoxView(placement: c, actions: actions)
@@ -284,11 +269,33 @@ struct SynopticView: View {
                     .position(x: zone.midX, y: zone.midY)
             }
 
-            // "+ Send to…", in the post-fader slot after its cards: a send made there is post-fader.
+            // The TAP DOTS: where each send is taken on the trunk. A dot is a handle like the box (§B.6):
+            // dragged onto another place of the chain it moves where the send is taken (the same payload as
+            // the box's, @see sendDragProvider). Laid on the wire just LEFT of the '+' it stands for — the
+            // wire leaves to the left from there — so that the '+' showing on hover never covers it.
+            ForEach(tapDots(d.sendCards), id: \.send.id) { t in
+                SendTapDotView(live: t.send.enabled && t.send.refusal == nil,
+                               help: L("synoptic.send.tapDot.help", t.send.name),
+                               dragProvider: actions.sendDragProvider.map { f in { f(t.send.id) } })
+                    .position(t.point)
+            }
+
+            // "+ Send to…", at the bottom of the stack of boxes: a send made there is post-fader.
             if let b = d.addSendButton, actions.sendTargetSections != nil {
                 AddSendButton { actions.presentSendMenu(slot: .postFader) }
                     .frame(width: b.width, height: b.height)
                     .position(x: b.midX, y: b.midY)
+            }
+
+            // The ghost of a drag out of a '+': what letting go here would make. Deaf to the mouse.
+            if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names) {
+                let command = SynopticPlusPresentation.available(
+                    currentKey(drag.key, in: d, names: names).map { d.command(for: $0, translation: drag.translation) } ?? .none,
+                    availability)
+                SynopticPlusGhostView(from: from, translation: drag.translation,
+                                      ghost: SynopticPlusPresentation.ghost(for: command, translation: drag.translation))
+                    .frame(width: d.canvasSize.width, height: d.canvasSize.height)
+                    .allowsHitTesting(false)
             }
 
             // The marquee under the hand. Drawn last and deaf to the mouse: it is a report of
@@ -303,10 +310,167 @@ struct SynopticView: View {
             }
         }
         .frame(width: d.canvasSize.width, height: d.canvasSize.height, alignment: .topLeading)
+        // The ONE hover hit test of the '+' (§B.3): an AppKit tracking area deaf to clicks, since a SwiftUI
+        // hover on this container goes `.ended` as soon as the pointer enters a card or a zone.
+        .overlay(SynopticHoverTracker { point in
+            let k = point.flatMap { d.plusTarget(at: $0) }.map { stablePlus($0, names: names) }
+            if hoveredPlus != k { hoveredPlus = k }
+        })
         .contentShape(Rectangle())
         .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards,
-                                                   blockers: d.placement.fxBlocks.flatMap { [$0.headerRect, $0.mixRect] } + d.sendCards.map(\.frame)))
+                                                   blockers: marqueeBlockers(d)))
         .contextMenu { fxLinkMenu(ids: Array(selection)) }
+    }
+
+    // MARK: - The '+' (§B.2, §B.3)
+
+    /// Which wave-2 closures this view was given: a gesture whose closure is missing is offered as
+    /// "not here" (@see SynopticPlusPresentation.available).
+    private var availability: SynopticPlusAvailability {
+        SynopticPlusAvailability(gainStage: actions.onPlusGesture != nil,
+                                 sendGainStage: actions.onSendPlusGesture != nil,
+                                 branch: actions.onBranch != nil,
+                                 send: actions.sendTargetSections != nil,
+                                 sendPluginAdd: actions.onSendPluginAdd != nil)
+    }
+
+    private func stablePlus(_ key: SynopticPlusKey, names: [UUID: String]) -> SynopticStablePlus {
+        SynopticPlusPresentation.stable(key, names: names)
+    }
+
+    /// The key of THIS build that a stable name stands for (nil = that '+' is gone).
+    private func currentKey(_ sk: SynopticStablePlus, in d: SynopticLayout.Diagram,
+                            names: [UUID: String]) -> SynopticPlusKey? {
+        switch sk {
+        case .postFader:
+            return d.postFaderPlus?.key
+        case .sendChain(let aux, let i):
+            return .sendChain(aux: aux, index: i)
+        case .series:
+            return d.placement.inserts.first { stablePlus($0.key, names: names) == sk }?.key
+        }
+    }
+
+    private func plusCenter(_ sk: SynopticStablePlus, in d: SynopticLayout.Diagram,
+                            names: [UUID: String]) -> CGPoint? {
+        guard let key = currentKey(sk, in: d, names: names), let r = d.plusRect(for: key) else { return nil }
+        return CGPoint(x: r.midX, y: r.midY)
+    }
+
+    private func plusMoved(_ sk: SynopticStablePlus, _ translation: CGSize) {
+        if plusDrag?.key == sk {
+            plusDrag?.translation = translation
+        } else {
+            plusDrag = PlusDrag(key: sk, translation: translation)
+        }
+    }
+
+    /// The hand lets go of a '+': what the gesture asked for, on the graph AS IT IS NOW (rebuilt since the
+    /// press, perhaps — the stable name finds the same '+' again).
+    private func plusReleased(_ sk: SynopticStablePlus, _ translation: CGSize) {
+        plusDrag = nil
+        let d = currentDiagram
+        let names = SynopticPlusPresentation.seriesNames(of: root)
+        guard let key = currentKey(sk, in: d, names: names) else { return }
+        perform(SynopticPlusPresentation.available(d.command(for: key, translation: translation), availability))
+    }
+
+    /// The command of a '+' carried out through `SynopticActions` (@see SynopticPlusCommand for the table).
+    private func perform(_ command: SynopticPlusCommand) {
+        switch command {
+        case .none:
+            break
+        case .openBrowser(let key):
+            switch key {
+            case .series(let s, let i):     actions.onInsertSeries(s, i)
+            case .sendChain(let aux, _):    actions.onSendPluginAdd?(aux)
+            case .postFader:                actions.presentSendMenu(slot: .postFader)
+            }
+        case .insertGainStage(let key, let face):
+            let result: PlusGestureResult = face == .gain ? .gain : .gainPanMute
+            switch key {
+            case .series(let s, let i):     actions.onPlusGesture?(s, i, result)
+            case .sendChain(let aux, let i): actions.onSendPlusGesture?(aux, i, result)
+            case .postFader:                break
+            }
+        case .branch(let elementID):
+            actions.onBranch?(elementID)
+        case .send(let slot):
+            actions.presentSendMenu(slot: slot)
+        }
+    }
+
+    /// The diagram of the current values: what `body` lays, and what a release is resolved against.
+    private var currentDiagram: SynopticLayout.Diagram {
+        SynopticLayout.diagram(for: root,
+                               midi: isMIDI, audioFile: audioFile != nil,
+                               audioStereo: audioFile?.channelMode != nil,
+                               araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
+                               mixWide: mix?.attrLinks != nil,
+                               stems: stems != nil || groupRouting != nil,
+                               sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
+                               infiniteOption: infinite != nil,
+                               // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
+                               objectFrame: mix != nil,
+                               // The session's fold of the clip options (§B.7, folded by default).
+                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
+    }
+
+    /// A '+''s tooltip: the click, then each drag it really offers here.
+    private func plusHelp(_ z: SynopticLayout.InsertZone) -> String {
+        let offered = SynopticPlusPresentation.offered(z.allowedGestures, key: z.key, availability)
+        var lines = [L("synoptic.addPluginSeries")]
+        if offered.contains(.gain) || offered.contains(.gainPanMute) { lines.append(L("synoptic.plus.help.gain")) }
+        if offered.contains(.branch) { lines.append(L("synoptic.plus.help.branch")) }
+        if offered.contains(.send) { lines.append(L("synoptic.plus.help.send")) }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Where the marquee may not start: what has a gesture of its own there.
+    private func marqueeBlockers(_ d: SynopticLayout.Diagram) -> [CGRect] {
+        var r = d.placement.fxBlocks.map(\.headerRect)
+        r += d.sendCards.map { SendBoxView.zone(of: $0) }
+        r += d.placement.inserts.map(\.plusRect)
+        if let p = d.postFaderPlus { r.append(p.plusRect) }
+        r += tapDots(d.sendCards).map { SendTapDotView.hitRect(at: $0.point) }
+        return r
+    }
+
+    /// One tap dot per send, on the wire just left of the '+' its anchor stands for. Sends taken at the
+    /// SAME point are fanned out along their common wire, so that each dot can be grabbed.
+    private func tapDots(_ cards: [SynopticLayout.SendCardPlacement]) -> [(send: SynopticSend, point: CGPoint)] {
+        var seen: [String: Int] = [:]
+        return cards.map { c in
+            let at = "\(c.anchor.x),\(c.anchor.y)"
+            let k = seen[at, default: 0]
+            seen[at] = k + 1
+            let x = c.anchor.x - SynopticLayout.plusW / 2 - SendTapDotView.firstOffset - CGFloat(k) * SendTapDotView.fanStep
+            return (c.send, CGPoint(x: x, y: c.anchor.y))
+        }
+    }
+
+    /// A plugin card of the chain. A GAIN STAGE (§B.4) is laid by the same view (its face is the card's,
+    /// @see SynopticPlugin.gainStage) but has no editor to open, and no bypass (D2).
+    @ViewBuilder
+    private func pluginCard(_ c: SynopticLayout.CardPlacement, cards: [SynopticLayout.CardPlacement]) -> some View {
+        let isStage = c.plugin.gainStage != nil
+        SynopticCardView(
+            plugin: c.plugin,
+            isSelected: selection.contains(c.plugin.id),
+            onSelect: { clickCard(c.plugin.id, cards: cards) },
+            onOpenEditor: isStage ? nil : actions.onOpenEditor.map { _ in { openEditorFromCard(c.plugin.id) } },
+            onToggleBypass: { if !isStage { actions.onToggleBypass(c.plugin.id) } },
+            onRemove: { actions.onRemove(c.plugin.id) },
+            dragProvider: actions.dragProvider.map { f in { f(c.plugin.id) } },
+            dragCount: selection.contains(c.plugin.id) ? selection.count : 1,
+            dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
+            onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
+            onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
+            onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
+            onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
+            linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
+            sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id)
+        )
     }
 
     /// The FX link entries of the right-click menus: make a bin of the plugins in hand, or join one
@@ -449,8 +613,10 @@ struct SynopticView: View {
     @ViewBuilder
     private func midiZoneView(_ rect: CGRect, slot: CGRect?) -> some View {
         ZStack(alignment: .top) {
+            // OPAQUE: the zone straddles the object frame's top edge (§B.5), which must not show through.
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.accentColor.opacity(0.06))
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(Color.accentColor.opacity(0.4), lineWidth: 1))
                 .frame(width: rect.width, height: rect.height)
@@ -527,6 +693,16 @@ struct SynopticView: View {
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
 
     private func draw(_ ctx: GraphicsContext, diagram d: SynopticLayout.Diagram) {
+        // The object's FRAME (§B.5): drawn like an FX link's body, in the object's colour, UNDER everything.
+        // Its top edge runs through the head zone's middle and its bottom edge through the mixer's; both
+        // are opaque views laid over it, so they read as straddling the edges.
+        if let f = d.objectFrame {
+            let color = frameColor ?? Color.secondary
+            let path = Path(roundedRect: f, cornerRadius: SynopticLayout.objectFrameCorner)
+            ctx.fill(path, with: .color(color.opacity(0.10)))
+            ctx.stroke(path, with: .color(color.opacity(0.95)), lineWidth: 1.5)
+        }
+
         for s in d.placement.scopes.sorted(by: { $0.depth < $1.depth }) {
             let path = Path(roundedRect: s.rect, cornerRadius: 14)
             ctx.fill(path, with: .color(Color.gray.opacity(0.06 + Double(s.depth) * 0.05)))
@@ -575,95 +751,196 @@ struct SynopticView: View {
                      with: .color(Color.secondary.opacity(0.8)))
         }
 
-        // The sends' wires: a branch leaves the trunk at the card's anchor, sideways, and arrives at the
-        // box's left edge, at its TOP — the first plugin's row, or the card itself when the send carries
-        // none (the main signal carries on down the trunk). Dashed: it is a TAP, not the
-        // flow. A refused send is dimmer.
+        // The sends' wires (§B.6): from the tap point on the trunk, out to the LEFT of the frame, down the
+        // send's own gutter, and into the box's top row from the left — the first plugin's row, or the
+        // send's line when it carries none. The highest tap has the outermost gutter and the lowest box,
+        // so the wires nest and never cross. Dashed: it is a TAP, not the flow. A refused send is dimmer.
+        // The tap dot itself is a view (it can be dragged): @see SendTapDotView.
         for c in d.sendCards {
-            let from = CGPoint(x: c.anchor.x + SynopticLayout.plusW / 2 + 2, y: c.anchor.y)
-            let to = c.entry
+            let points = c.wire
+            guard let first = points.first, let to = points.last else { continue }
             var path = Path()
-            path.move(to: from)
-            let midX = (from.x + to.x) / 2
-            path.addCurve(to: to, control1: CGPoint(x: midX, y: from.y), control2: CGPoint(x: midX, y: to.y))
+            path.move(to: first)
+            for p in points.dropFirst() { path.addLine(to: p) }
             let live = c.send.enabled && c.send.refusal == nil
-            ctx.stroke(path, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
-                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [4, 3]))
+            let color = (live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)
+            ctx.stroke(path, with: .color(color),
+                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round, dash: [4, 3]))
+            // An arrowhead pointing RIGHT, into the box.
             var head = Path()
             head.move(to: CGPoint(x: to.x - 6, y: to.y - 4))
             head.addLine(to: to)
             head.addLine(to: CGPoint(x: to.x - 6, y: to.y + 4))
-            ctx.stroke(head, with: .color((live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)),
+            ctx.stroke(head, with: .color(color),
                        style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-            ctx.fill(Path(ellipseIn: CGRect(x: c.anchor.x - 2.5 + SynopticLayout.plusW / 2 + 2, y: c.anchor.y - 2.5, width: 5, height: 5)),
-                     with: .color((live ? Color.accentColor : Color.secondary).opacity(0.8)))
         }
     }
 }
 
-// MARK: - Parallel branch button (discreet: translucent at rest, sharp on hover)
+// MARK: - A '+' on the wire (§B.2): a click opens the browser, a drag asks for a gain, a branch or a send
 
-struct ParallelBranchButton: View {
-    let enabled: Bool
-    let action: () -> Void
-    @State private var hovering = false
+/// The '+' itself: an OPAQUE disc laid over the wire. Its gesture is a `DragGesture(minimumDistance: 0)`
+/// so that the click (< 6 pt, @see SynopticPlusGesture.isClick) and the drags are ONE gesture, whose
+/// meaning is decided at the release by the layout. The view reports, it decides nothing.
+private struct SynopticPlusButton: View {
+    /// A drag is in flight from this '+'.
+    let active: Bool
+    let onChanged: (CGSize) -> Void
+    let onEnded: (CGSize) -> Void
 
     var body: some View {
-        Button(action: action) {
-            ParallelBranchGlyph(color: .secondary)
-                .frame(width: 11, height: 15)
-                .padding(3)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .strokeBorder(Color.secondary.opacity(hovering && enabled ? 0.5 : 0),
-                                      style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 5))
-                .opacity(enabled ? (hovering ? 1 : 0.3) : 0.18)
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .onHover { hovering = $0 }
-        .help(L("synoptic.newBranch"))
+        let tint = active ? Color.accentColor : Color.secondary
+        Image(systemName: "plus")
+            .font(.system(size: 10, weight: active ? .bold : .regular))
+            .foregroundStyle(tint)
+            .frame(width: SynopticLayout.plusW, height: SynopticLayout.plusW)
+            .background(Circle().fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(Circle().strokeBorder(active ? tint : tint.opacity(0.6),
+                                           style: StrokeStyle(lineWidth: 1, dash: active ? [] : [2, 2])))
+            .contentShape(Circle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { onChanged($0.translation) }
+                .onEnded { onEnded($0.translation) })
     }
 }
 
-// MARK: - The parallel branch icon (a vertical 'Y': a trunk splitting into two downward arrows)
+/// What a drag out of a '+' would make if the hand let go here: a dashed line from the '+' to the pointer,
+/// and beside the pointer a ghost card naming the result — or "not here" (§B.2). Pure display.
+private struct SynopticPlusGhostView: View {
+    let from: CGPoint
+    let translation: CGSize
+    let ghost: SynopticPlusGhost
 
-struct ParallelBranchGlyph: View {
-    var color: Color = .secondary
+    private static let labelH: CGFloat = SynopticLayout.cardH - 6
 
     var body: some View {
-        Canvas { ctx, size in
-            let w = size.width, h = size.height
-            let cx = w / 2
-            let ty: CGFloat = 1.5          // the trunk's input (top)
-            let fy = h * 0.42             // the fork point
-            let by = h - 2.5             // the arrowheads (bottom)
-            let xLeft = w * 0.16, xRight = w * 0.84
-            let fork = CGPoint(x: cx, y: fy)
-
-            var p = Path()
-            p.move(to: CGPoint(x: cx, y: ty)); p.addLine(to: fork)         // the trunk
-            p.move(to: fork); p.addLine(to: CGPoint(x: xLeft, y: by))      // the left branch
-            p.move(to: fork); p.addLine(to: CGPoint(x: xRight, y: by))     // the right branch
-            ctx.stroke(p, with: .color(color),
-                       style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-
-            // An arrowhead at the end of each branch.
-            let ah: CGFloat = 4
-            for tip in [CGPoint(x: xLeft, y: by), CGPoint(x: xRight, y: by)] {
-                let dx = tip.x - fork.x, dy = tip.y - fork.y
-                let len = max(0.001, (dx * dx + dy * dy).squareRoot())
-                let ux = dx / len, uy = dy / len      // the branch's direction
-                let px = -uy, py = ux                 // the perpendicular
-                var head = Path()
-                head.move(to: CGPoint(x: tip.x - ux * ah + px * ah * 0.6, y: tip.y - uy * ah + py * ah * 0.6))
-                head.addLine(to: tip)
-                head.addLine(to: CGPoint(x: tip.x - ux * ah - px * ah * 0.6, y: tip.y - uy * ah - py * ah * 0.6))
-                ctx.stroke(head, with: .color(color),
-                           style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        let to = CGPoint(x: from.x + translation.width, y: from.y + translation.height)
+        let valid = ghost != .notHere
+        let tint = valid ? Color.accentColor : Color.secondary
+        ZStack(alignment: .topLeading) {
+            if ghost != .none {
+                Path { p in p.move(to: from); p.addLine(to: to) }
+                    .stroke(tint.opacity(0.7), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, dash: [3, 3]))
+                label(tint: tint, valid: valid)
+                    .fixedSize()
+                    // Left-aligned on the pointer, a little to its right: the hand never covers it. An
+                    // OFFSET (the label's height is fixed), which does not move the stack's own bounds.
+                    .offset(x: to.x + 10, y: to.y - Self.labelH / 2)
             }
         }
+    }
+
+    @ViewBuilder
+    private func label(tint: Color, valid: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(valid ? Color.primary : Color.secondary)
+        .padding(.horizontal, 8)
+        .frame(height: Self.labelH)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor).opacity(0.92)))
+        .overlay(RoundedRectangle(cornerRadius: 6)
+            .strokeBorder(tint.opacity(valid ? 0.9 : 0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+    }
+
+    private var symbol: String {
+        switch ghost {
+        case .gain, .gainPanMute, .none: return "dial.medium"
+        case .branch:                    return "arrow.triangle.branch"
+        case .send:                      return "arrow.up.right"
+        case .notHere:                   return "nosign"
+        }
+    }
+
+    private var text: String {
+        switch ghost {
+        case .gain, .none: return L("synoptic.plus.ghost.gain")
+        case .gainPanMute: return L("synoptic.plus.ghost.gainPanMute")
+        case .branch:      return L("synoptic.plus.ghost.branch")
+        case .send:        return L("synoptic.plus.ghost.send")
+        case .notHere:     return L("synoptic.plus.ghost.notHere")
+        }
+    }
+}
+
+// MARK: - A send's tap dot (§B.6): a handle like its box
+
+/// The dot where a send is taken on the trunk. Dragged, it carries the SAME payload as the send's box
+/// (@see SynopticActions.sendDragProvider): let go on another place of the chain, it moves where the send is
+/// taken. With no provider (the demo) it is only drawn.
+private struct SendTapDotView: View {
+    let live: Bool
+    let help: String
+    let dragProvider: (() -> NSItemProvider)?
+
+    /// The distance from the '+' circle's left edge to the first dot, and between two dots of one tap.
+    static let firstOffset: CGFloat = 6
+    static let fanStep: CGFloat = 10
+    /// The square the hand can grab round a dot.
+    static let hitSize: CGFloat = 10
+    static func hitRect(at p: CGPoint) -> CGRect {
+        CGRect(x: p.x - hitSize / 2, y: p.y - hitSize / 2, width: hitSize, height: hitSize)
+    }
+
+    var body: some View {
+        Circle()
+            .fill((live ? Color.accentColor : Color.secondary).opacity(0.85))
+            .frame(width: 6, height: 6)
+            .frame(width: Self.hitSize, height: Self.hitSize)
+            .contentShape(Rectangle())
+            .onDragIf(dragProvider)
+            .help(help)
+    }
+}
+
+// MARK: - The '+' hover (§B.3): one AppKit tracking area over the whole canvas
+
+/// Reports the pointer's position over the canvas (nil when it leaves), in the canvas's own coordinates,
+/// WITHOUT taking a click (`hitTest` → nil). A SwiftUI `.onContinuousHover` on the canvas would go
+/// `.ended` as soon as the pointer enters a child view (a card, a zone), which is where the lines of the
+/// '+' run between — hence AppKit, as the timeline does (@see HoverTracker).
+private struct SynopticHoverTracker: NSViewRepresentable {
+    var onHover: (CGPoint?) -> Void
+
+    func makeNSView(context: Context) -> TrackerView {
+        let v = TrackerView()
+        v.onHover = onHover
+        return v
+    }
+
+    func updateNSView(_ nsView: TrackerView, context: Context) {
+        nsView.onHover = onHover
+    }
+
+    final class TrackerView: NSView {
+        var onHover: ((CGPoint?) -> Void)?
+        private var trackingArea: NSTrackingArea?
+
+        override var isFlipped: Bool { true }   // SwiftUI's coordinates (origin top-left)
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            guard trackingArea == nil else { return }
+            let t = NSTrackingArea(rect: bounds,
+                                   options: [.activeInActiveApp, .mouseMoved, .mouseEnteredAndExited,
+                                             .inVisibleRect],
+                                   owner: self, userInfo: nil)
+            addTrackingArea(t)
+            trackingArea = t
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.acceptsMouseMovedEvents = true
+        }
+
+        override func mouseMoved(with event: NSEvent) { onHover?(convert(event.locationInWindow, from: nil)) }
+        override func mouseEntered(with event: NSEvent) { onHover?(convert(event.locationInWindow, from: nil)) }
+        override func mouseExited(with event: NSEvent) { onHover?(nil) }
     }
 }
