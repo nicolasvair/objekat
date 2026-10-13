@@ -28,7 +28,7 @@ struct SynopticPlusAvailability: Equatable {
     /// `onSendPluginAdd`: a click on a send's mini-chain "+" opens the browser.
     var sendPluginAdd = false
 
-    /// Everything wired (the bound view once L8 is done; the tests).
+    /// Everything wired (the bound view; the tests).
     static let all = SynopticPlusAvailability(gainStage: true, sendGainStage: true, branch: true,
                                               send: true, sendPluginAdd: true)
 }
@@ -46,12 +46,13 @@ enum SynopticPlusGhost: Equatable {
 }
 
 /// A "+" named so that it survives a REBUILD of the tree. The bound view rebuilds its `SynopticNode`
-/// tree on every refresh (the VU poll, ~70 ms), and the mapping gives a parallel block's branch series a
-/// FRESH `UUID()` each time (@see SynopticModelMapping) — so a `SynopticPlusKey.series(id, i)` held in a
-/// `@State` across two refreshes would name a series that no longer exists: the hover would blink and a
-/// drag would lose its "+" mid-gesture. A branch is named by its PLACE instead — its parallel block's id
-/// (the rack plugin's, stable) and its index; every other series keeps its own id (the root, a bin's
-/// block), which IS stable.
+/// tree on every refresh (the VU poll, ~70 ms). Since L8 the model mapping gives every series a STABLE id
+/// (a branch's is derived from its parallel block's, @see SynopticMapping.voiceSeriesID), so for the bound
+/// view a stable name is simply its series. The naming stays for every OTHER tree — one built with the
+/// `.series(…)` / `.parallel(…)` constructors (the demo, the tests), whose branches get a FRESH `UUID()` at
+/// each build: there a `SynopticPlusKey.series(id, i)` held in a `@State` across two builds would name a
+/// series that no longer exists. A branch is named by its PLACE — its parallel block's id and its index;
+/// every other series keeps its own id (the root, a bin's block), which IS stable.
 enum SynopticStablePlus: Hashable {
     case series(String, Int)
     case postFader

@@ -15158,29 +15158,6 @@
         }
       }
     },
-    "synoptic.newBranch": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "New branch from this point"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nueva rama desde este punto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nouvelle branche depuis ce point"
-          }
-        }
-      }
-    },
     "synoptic.openPlugin": {
       "extractionState": "manual",
       "localizations": {
@@ -16143,29 +16120,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Là où cet envoi est pris. Glissez-le le long de la chaîne pour le faire partir d'ailleurs."
-          }
-        }
-      }
-    },
-    "synoptic.send.tapDot.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Taken here, towards “%@”: drag to move where it is taken"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Tomado aquí, hacia «%@»: arrastrar para mover la toma"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pris ici, vers « %@ » : glisser pour déplacer la prise"
           }
         }
       }

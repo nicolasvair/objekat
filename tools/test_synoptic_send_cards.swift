@@ -132,7 +132,6 @@ struct Main {
         check(abs(full.outPill.minY - none.outPill.minY) < 1e-9 && abs(full.clipZone!.minY - none.clipZone!.minY) < 1e-9,
               "clip zone and stems do not move down")
         check(full.sendCards.count == all.count, "a box per send")
-        check(full.chainInGain == nil && full.chainOutGain == nil, "no trims any more")
 
         // 3. Each slot's tap: the trunk's '+' and the post-fader '+'.
         let ri = rootInserts(full)

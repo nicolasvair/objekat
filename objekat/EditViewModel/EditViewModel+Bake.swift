@@ -104,6 +104,11 @@ extension EditViewModel {
                                                               sidechain: freshSidechain(inst.sidechain))
                                       })
                     link.output = out
+                    // The naming rule travels (plan_synoptic_rework B.0.6): a name typed by hand stays the
+                    // user's; the object the bin follows is followed in the copy (its fresh id when it is
+                    // of the sub-tree, the same object otherwise — the same project, as a sidechain key).
+                    link.userNamed = reg?.userNamed ?? false
+                    link.nameSourceID = reg?.nameSourceID.map { idMap[$0] ?? $0 }
                     createdFXLinks[nb.linkID] = link
                 }
             }

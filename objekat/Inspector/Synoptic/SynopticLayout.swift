@@ -43,25 +43,14 @@ enum SynopticLayout {
     /// straddles the body's top edge (half of it: the body starts at the card's middle line).
     static let fxHeaderOverlap: CGFloat = fxHeaderCardH / 2
     static let fxHeaderGap: CGFloat = 10   // the wire between the header card and the first '+' of the series (room for the arrow)
-    // The old mix box's sizes. `fxMixW` is now the width of a gain + pan + mute stage's card (the old mix
-    // box as a card, §B.4); `fxMixH` / `fxMixGap` are no longer laid (kept until L8).
-    static let fxMixH: CGFloat = 26
+    /// The width of a gain + pan + mute stage's card (the old mix box of a bin, as a card, §B.4).
     static let fxMixW: CGFloat = 150
-    static let fxMixGap: CGFloat = 12
     static let fxPad: CGFloat = 10         // the inner margin round the block's series (sides and bottom)
     static let fxMinW: CGFloat = 176
     /// A FOLDED block's body, under the header card: one line ("3 plugins") the wire runs through.
     static let fxFoldedBodyH: CGFloat = 24
-    /// The body's corner radius. The mix box is flush with the body's bottom edge, so its two bottom corners
-    /// take the SAME radius (otherwise they would poke out of the body's outline).
+    /// The body's corner radius.
     static let fxBodyCorner: CGFloat = 12
-    static let fxMixTopCorner: CGFloat = 8
-    /// The mix box's three slots, left → right: pan · volume · mute.
-    static let fxPanW: CGFloat = 52
-    static let fxVolumeW: CGFloat = 46
-    static let fxMuteW: CGFloat = 18
-    static let fxSlotGap: CGFloat = 6
-    static let fxSlotH: CGFloat = 18
     static let gainBandH: CGFloat = 30     // the band reserved for the mute plus end-of-branch dB gain of a parallel branch (under the branches)
     /// A gain stage's card, `.gain` face: grip · the dB box · ✕ on hover (§B.4). The `.gainPanMute` face
     /// is `fxMixW` wide (the old mix box as a card).
@@ -97,10 +86,10 @@ enum SynopticLayout {
 
     /// A bin's header card width: its name whole, from `cardW` up to the 'audio file' zone's width, like a
     /// plugin card (@see cardWidth) — the chrome is the same, and the link badge is always there:
-    /// on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack.
+    /// on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · the fold chevron ~12 + gap 6 · 4 of slack.
     static func fxHeaderW(name: String) -> CGFloat {
         let nameW = ceil((name as NSString).size(withAttributes: [.font: cardNameFont]).width)
-        let chrome: CGFloat = 26 + 16 + 15 + 24 + 4
+        let chrome: CGFloat = 26 + 16 + 15 + 24 + 18 + 4
         return min(audioZoneW, max(cardW, nameW + chrome))
     }
 
@@ -245,12 +234,6 @@ enum SynopticLayout {
         let rect: CGRect
         let headerRect: CGRect
         let bodyRect: CGRect
-        /// The old mix box and its three slots: NO LONGER LAID (an FX link has no output section, §B.8).
-        /// Always `.zero`; kept only until the views stop reading them (deleted in L8).
-        var mixRect: CGRect = .zero
-        var panSlot: CGRect = .zero
-        var volumeSlot: CGRect = .zero
-        var muteSlot: CGRect = .zero
         /// How many entries the block's series holds (where a drop on the header lands: the end; and what
         /// a folded body says).
         let pluginCount: Int
@@ -578,11 +561,6 @@ enum SynopticLayout {
 
     // MARK: The complete assembly (with Source / Out around the trunk)
 
-    /// A chain gain control (start or end), with its dB value and its position.
-    /// NO LONGER LAID: the start / end trims became gain stages, plugins of the chain (§B.0). Kept only
-    /// until the views stop reading it (deleted in L8); `Diagram.chainInGain` / `chainOutGain` are nil.
-    struct ChainGain { let dB: Float; let center: CGPoint }
-
     /// The '+' laid on the wire between the mixer (the clip zone) and the stems (§B.2, D2): it offers ONE
     /// gesture, a send taken after the fader. A click opens the same "Send to…" menu.
     struct PostFaderPlus {
@@ -612,10 +590,6 @@ enum SynopticLayout {
         var sourcePill: CGRect
         var outPill: CGRect
         var placement: Placement
-        /// Always nil since the rework (the trims are gain stages now). Deleted in L8.
-        var chainInGain: ChainGain? = nil
-        /// Always nil since the rework (the trims are gain stages now). Deleted in L8.
-        var chainOutGain: ChainGain? = nil
         /// A MIDI clip: a 'MIDI' zone at the head of the chain (replacing the Source pill); it holds
         /// the instrument card. nil for an audio clip / group / aux.
         var midiZone: CGRect? = nil
@@ -794,9 +768,6 @@ enum SynopticLayout {
     static let chainGap: CGFloat = 20
     /// The wire mixer → stems when it carries the post-fader '+'.
     static let postFaderGap: CGFloat = 40
-    /// Old constants of the trims, no longer laid (kept until L8).
-    static let chainGainGap: CGFloat = 56
-    static let gainHalfGap: CGFloat = 12
     static let midiZoneW: CGFloat = cardW + 24   // the MIDI zone (instrument card plus margins)
     static let midiZoneH: CGFloat = cardH + 34   // the 'MIDI' title + the card + margins
     static let audioZoneW: CGFloat = 244         // the 'audio file' zone (1× / st / bpm on one line)
@@ -837,8 +808,6 @@ enum SynopticLayout {
     /// The step between two gutters, and the space between the frame and the innermost gutter.
     static let sendGutterStep: CGFloat = 10
     static let sendGutterGap: CGFloat = 10
-    /// The old column's gap beside the trunk — no longer laid (kept until L8).
-    static let sendColumnGap: CGFloat = 34
     static let sendAddW: CGFloat = 120      // the "+ Send to…" button
     static let sendAddH: CGFloat = 24
     static let sendSlotHalfH: CGFloat = 12  // half the height of a fixed slot's detection band
@@ -864,8 +833,6 @@ enum SynopticLayout {
     }
 
     /// - Parameters:
-    ///   - chainInDb / chainOutDb: IGNORED since the rework (the trims are gain stages); kept so that the
-    ///     callers compile until L8.
     ///   - araCardWidth: non-nil = the audio object carries an ARA source: its card (this wide) hangs under the
     ///     'audio file' frame, and the chain moves down by its height.
     ///   - sends: the outgoing sends, one box each, each tapped at its `slot` (@see SendCardPlacement).
@@ -876,7 +843,7 @@ enum SynopticLayout {
     ///   - objectFrame: the host is an OBJECT (clip, MIDI, group, aux): lay its frame (§B.5). False for a
     ///     stem / the Main.
     ///   - clipOptionsExpanded: the audio zone is unfolded (@see SynopticUIState.clipOptionsExpanded).
-    static func diagram(for root: SynopticNode, chainInDb: Float = 0, chainOutDb: Float = 0,
+    static func diagram(for root: SynopticNode,
                         midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         mixWide: Bool = false, stems: Bool = false,
@@ -1041,7 +1008,6 @@ enum SynopticLayout {
         let canvasH = max(outPill.maxY, stackBottom) + margin
         return Diagram(canvasSize: CGSize(width: canvasW, height: canvasH),
                        sourcePill: leadRect, outPill: outPill, placement: placement,
-                       chainInGain: nil, chainOutGain: nil,
                        midiZone: midiZone, instrumentSlot: instrumentSlot,
                        audioZone: audioZone, audioZoneFolded: audioFile && !clipOptionsExpanded,
                        araCard: araCard, clipZone: clipZone, stemsZone: stemsZone,

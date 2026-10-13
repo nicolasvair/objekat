@@ -375,11 +375,9 @@ struct SendBoxView: View {
     /// linked (no badge) and takes no drop of its own: a plugin let go on a card lands on the box's drop
     /// layer, which reads the insertion slot from the pointer.
     ///
-    /// HOOK FOR L8 (docs/plan_synoptic_rework.md §C): `SynopticPlugin.gainStage` is fed here from
-    /// `SynopticSendPlugin.gainStage`. The card of lot L6 (the gain stage's faces — one dB box, or pan ·
-    /// volume · mute —, no power button, values read through `actions.gainStageValues` and written through
-    /// `actions.onSetGainStage`) is not merged yet: until it is, a stage on a send is drawn as an ordinary
-    /// card. When it is, pass its extra parameters HERE and nowhere else.
+    /// A GAIN STAGE on the send (`SynopticSendPlugin.gainStage`) takes its face here as on the trunk: no editor
+    /// to open, no power button, its values read and written through `actions` (@see
+    /// SynopticGainStageControls).
     @ViewBuilder
     private func sendPluginCard(_ p: SynopticSendPlugin, selection: Set<UUID>) -> some View {
         let aux = send.id
@@ -389,11 +387,13 @@ struct SendBoxView: View {
             isSelected: selection.contains(p.id),
             onSelect: { actions.onSendPluginClick?(aux, p.id, NSEvent.modifierFlags) },
             // A refused send has no engine plugin: nothing to open.
-            onOpenEditor: send.refusal == nil ? actions.onSendPluginOpen.map { f in { f(aux, p.id) } } : nil,
-            onToggleBypass: { actions.onSendPluginToggle?(aux, p.id) },
+            onOpenEditor: (send.refusal == nil && p.gainStage == nil)
+                ? actions.onSendPluginOpen.map { f in { f(aux, p.id) } } : nil,
+            onToggleBypass: { if p.gainStage == nil { actions.onSendPluginToggle?(aux, p.id) } },
             onRemove: { actions.onSendPluginRemove?(aux, p.id) },
             dragProvider: actions.sendPluginDragProvider.map { f in { f(aux, p.id) } },
             dragCount: selection.contains(p.id) ? selection.count : 1,
+            actions: actions,
             width: placement.frame.width - 2 * Self.cardInset)
     }
 

@@ -29,8 +29,10 @@ enum SeriesLocation: Hashable {
 enum SynopticMapping {
     /// Builds the signal graph from the `[ObjectPlugin]` tree (recursive over the voices of a
     /// `rack` block) plus the `seriesID → SeriesLocation` table that lets the insertion actions
-    /// find the right series again. The series/branch ids are regenerated on every build: the
-    /// action closures capture the table from the SAME build, so it is consistent.
+    /// find the right series again. Every series id is STABLE across builds (the bound view rebuilds
+    /// the tree at every VU poll, ~70 ms): the root is the host's id, a bin's series its block's id, and
+    /// a parallel's branch an id DERIVED from its block's id and its index (@see voiceSeriesID) — so a
+    /// '+' named by its series survives a rebuild, and a hover or a drag in flight does not lose it.
     static func build(_ plugins: [ObjectPlugin], objectID: UUID, levels: [UUID: Double] = [:],
                       fxLinkInfo: ((ObjectPlugin) -> SynopticFXLink?)? = nil)
         -> (node: SynopticNode, locations: [UUID: SeriesLocation]) {
@@ -53,7 +55,7 @@ enum SynopticMapping {
                 let gains = EditViewModel.paddedWetDb(rack.wetDb, count: rack.voices.count)
                 let mutes = EditViewModel.paddedMutes(rack.voiceMutes, count: rack.voices.count)
                 let voices: [SynopticNode] = rack.voices.enumerated().map { vi, voice in
-                    var vnode = buildSeries(voice, seriesID: UUID(),
+                    var vnode = buildSeries(voice, seriesID: voiceSeriesID(blockID: p.id, voiceIndex: vi),
                                             location: .voice(blockID: p.id, voiceIndex: vi),
                                             locations: &locations, levels: levels,
                                             fxLinkInfo: fxLinkInfo)
@@ -88,12 +90,35 @@ enum SynopticMapping {
         return SynopticNode(id: seriesID, kind: .series(children))
     }
 
+    /// The id of branch `voiceIndex` of the parallel block `blockID`: the block's id with a few bits
+    /// flipped by the index — the same at every build (the block's id is the rack carrier's, stable), and
+    /// never one of the model's ids (a random UUID is not reached by flipping a tagged byte pattern).
+    static func voiceSeriesID(blockID: UUID, voiceIndex: Int) -> UUID {
+        var u = blockID.uuid
+        let i = UInt16(truncatingIfNeeded: voiceIndex + 1)
+        u.0 ^= 0x5A
+        u.1 ^= 0xC3
+        u.14 ^= UInt8(i >> 8)
+        u.15 ^= UInt8(i & 0xFF)
+        return UUID(uuid: u)
+    }
+
     static func leaf(_ p: ObjectPlugin, vu: Double = 0) -> SynopticPlugin {
         SynopticPlugin(id: p.id, name: p.name, category: .infer(from: p),
                        isEnabled: p.isEnabled, vu: vu,
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
-                       color: p.color)
+                       color: p.color,
+                       gainStage: synopticFace(of: p))
+    }
+
+    /// A gain stage's face as the signal view names it (nil = not a stage).
+    static func synopticFace(of p: ObjectPlugin) -> SynopticGainStageFace? {
+        switch p.gainStageFace {
+        case .gain?:        return .gain
+        case .gainPanMute?: return .gainPanMute
+        case nil:           return nil
+        }
     }
 }
 

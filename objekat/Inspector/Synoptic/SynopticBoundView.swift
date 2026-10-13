@@ -130,7 +130,7 @@ struct SynopticBoundView: View {
                                 isAutomated: viewModel.isAutomated(.send(auxID: snd.auxID), on: objectID),
                                 refusal: viewModel.sendCardRefusalText(from: objectID, to: snd.auxID),
                                 slot: EditViewModel.synopticSlot(obj?.sendPosition(auxID: snd.auxID)),
-                                plugins: snd.plugins.map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
+                                plugins: snd.plugins.map(sendPlugin))
         } : []
         let received: [SynopticSend] = (obj?.isAux ?? false)
             ? receivedIDs.compactMap { sid in
@@ -146,7 +146,7 @@ struct SynopticBoundView: View {
                                  slot: EditViewModel.synopticSlot(sender.sendPosition(auxID: objectID)),
                                  // Only their presence is shown at the aux's head (a mark on the row).
                                  plugins: (sender.sends.first { $0.auxID == objectID }?.plugins ?? [])
-                                    .map { SynopticSendPlugin(id: $0.id, name: $0.name, enabled: $0.isEnabled) })
+                                    .map(sendPlugin))
                 }
               }
             : []
@@ -190,10 +190,13 @@ struct SynopticBoundView: View {
                 }
             }
         }
+        // The trunk's top-level entries as the view counts them (a send's marker is not one): its head '+'
+        // is the input slot and its tail '+' the pre-fader one (@see SendDrop.decide(_:trunkCount:)).
+        let trunkCount = model.filter { !$0.isSendMarker }.count
         let sendOutcome: (SynopticSendTarget) -> PluginDropOutcome? = { t in
             guard let payload = SendDragSession.shared.current else { return nil }
             if payload.sendSender != objectID { return .sendRefused(.refusedElsewhere) }
-            switch SendDrop.decide(sendAim(t)) {
+            switch SendDrop.decide(sendAim(t), trunkCount: trunkCount) {
             case .move(_, let line): return .sendTaken(line)
             case .refuse(let line):  return .sendRefused(line)
             }
@@ -201,10 +204,8 @@ struct SynopticBoundView: View {
 
         return SynopticView(root: root, selection: pluginSelection,
                             selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
-                            // No trims any more (format 25, plan_synoptic_rework M.4): the view's trim
-                            // boxes are fed neutral and wired to nothing until L2 / L8 take them out.
-                            chainInDb: 0, chainOutDb: 0,
-                            chainInAutomated: false, chainOutAutomated: false,
+                            // The object's frame takes the block's own colour (§B.5, D7); a bus has none.
+                            frameColor: obj.map { $0.customColor ?? viewModel.stemColor(for: $0.id) },
                             isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
                             audioFile: audioFile, mix: mix, stems: stems,
                             groupRouting: groupRouting,
@@ -304,8 +305,6 @@ struct SynopticBoundView: View {
             // inversion as `onSetSendLevel`, failing which we would remember the touch on the wrong
             // object.
             onTouchParam: { ref in
-                // The old trims are decodable only (format 25): a touch on the neutral boxes names nothing.
-                if ref == .chainInGain || ref == .chainOutGain { return }
                 let isAux = viewModel.find(id: objectID)?.isAux ?? false
                 if isAux, case .send(let senderID) = ref {
                     viewModel.recordAutomationTouch(senderID, .send(auxID: objectID))
@@ -369,7 +368,7 @@ struct SynopticBoundView: View {
             onRetargetSend: { old, new in viewModel.retargetSendFromHand(from: objectID, aux: old, to: new) },
             onSendDrop: { target, payload in
                 guard payload.sendSender == objectID,
-                      case .move(let slot, _) = SendDrop.decide(sendAim(target)) else { return }
+                      case .move(let slot, _) = SendDrop.decide(sendAim(target), trunkCount: trunkCount) else { return }
                 viewModel.setSendPositionFromHand(from: objectID, to: payload.sendAux,
                                                   EditViewModel.sendPosition(of: slot))
             },
@@ -415,9 +414,6 @@ struct SynopticBoundView: View {
             // FX links. The block's id is what every one of these carries; the model resolves the
             // bin (attached) or the block's own copy (detached) itself.
             onFXToggleEnabled: { blockID in fxToggleEnabled(blockID) },
-            // No output section on a bin any more (format 25): its mix box is fed neutral and wired to
-            // nothing until L8 takes it out — a level on a bin is a gain stage among its plugins.
-            onFXBeginEdit: { viewModel.pushUndo() },
             onFXRename: { blockID, name in
                 if let id = fxLinkID(of: blockID) { viewModel.renameFXLink(id, to: name) }
             },
@@ -447,7 +443,29 @@ struct SynopticBoundView: View {
             onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
             onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
             onRemoveARA: { viewModel.removeARASource(objectID: objectID) },
-            onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) }
+            onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) },
+            // Wave 2 of the signal view rework (docs/plan_synoptic_rework.md §B). A gain stage dragged out of
+            // a '+' of a series (the trunk, a branch, a bin's — a bin's joins its DEFINITION), or out of a
+            // send's mini-chain '+': ONE undo point each (@see EditViewModel.insertGainStage).
+            onPlusGesture: { seriesID, index, result in
+                guard let face = Self.gainFace(result), let loc = locations[seriesID] else { return }
+                layGainStage(host: objectID, series: loc, index: index, face: face)
+            },
+            onSendPlusGesture: { aux, index, result in
+                guard let face = Self.gainFace(result) else { return }
+                layGainStage(host: sendHost(aux), series: .root, index: index, face: face)
+            },
+            // The card's boxes: the undo point is `onBeginGainEdit`'s, at the start of each gesture.
+            onSetGainStage: { id, gain, pan, muted in
+                viewModel.setGainStage(pluginID: id, gainDb: gain, pan: pan, muted: muted, undo: false)
+            },
+            gainStageValues: { id in gainStageValues(id) },
+            onToggleClipOptions: { SynopticUIState.shared.toggleClipOptions() },
+            // A bin's fold and its rename are keyed by the BIN (every host of it shows the same state).
+            onToggleFXFold: { blockID in SynopticUIState.shared.toggleFXFold(fxLinkID(of: blockID) ?? blockID) },
+            onRenameFXLink: { blockID in
+                if let id = fxLinkID(of: blockID) { viewModel.beginRenamingFXLink(id) }
+            }
         ))
         .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
         .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
@@ -497,6 +515,45 @@ struct SynopticBoundView: View {
             insertion: insertion
         )
         .frame(width: size.width, height: size.height)
+    }
+
+    // MARK: Gain stages (docs/plan_synoptic_rework.md §B.4)
+
+    /// The face a '+' drag asks for; nil for any other result (a branch and a send have their own closures).
+    private static func gainFace(_ r: PlusGestureResult) -> GainStageFace? {
+        switch r {
+        case .gain:        return .gain
+        case .gainPanMute: return .gainPanMute
+        default:           return nil
+        }
+    }
+
+    /// Lays a NEW gain stage; a chain with no room left says so with a beep, like a plugin that would not fit.
+    private func layGainStage(host: UUID, series: SeriesLocation, index: Int, face: GainStageFace) {
+        if case .failure(let why) = viewModel.insertGainStage(host: host, series: series, index: index, face: face) {
+            NSLog("[SYNOPTIC] gain stage not laid: %@", why.rawValue)
+            NSSound.beep()
+        }
+    }
+
+    /// A stage's values as its card shows them, with the three automation flags: a curve on a parameter
+    /// greys its box (the curve is the authority, the hand no longer moves it). A stage's curves live on the
+    /// object this view shows — a send's mini-chain included (its curves are its sender's).
+    private func gainStageValues(_ id: UUID) -> SynopticGainStageValues? {
+        guard let v = viewModel.gainStageValues(id) else { return nil }
+        func automated(_ param: String) -> Bool {
+            viewModel.isAutomated(.plugin(pluginKey: id, paramID: param), on: objectID)
+        }
+        return SynopticGainStageValues(gainDb: v.gainDb, pan: v.pan, muted: v.muted,
+                                       gainAutomated: automated(GainStageValues.gainParamID),
+                                       panAutomated: automated(GainStageValues.panParamID),
+                                       muteAutomated: automated(GainStageValues.muteParamID))
+    }
+
+    /// A plugin of a send's mini-chain, as its box draws it: identity colour and, for a stage, its face.
+    private func sendPlugin(_ p: ObjectPlugin) -> SynopticSendPlugin {
+        SynopticSendPlugin(id: p.id, name: p.name, enabled: p.isEnabled, color: p.color,
+                           gainStage: SynopticMapping.synopticFace(of: p))
     }
 
     // MARK: FX link helpers (a block's id → what the model needs)

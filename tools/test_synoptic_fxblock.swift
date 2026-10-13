@@ -71,7 +71,7 @@ func card(_ n: String) -> SynopticNode {
 
 func fxLink(_ name: String, detached: Bool = false, folded: Bool = false) -> SynopticFXLink {
     var l = SynopticFXLink(blockID: UUID(), name: name, color: .red, isDetached: detached,
-                           isEnabled: true, gainDb: 0, pan: 0, muted: false, memberCount: 2)
+                           isEnabled: true, memberCount: 2)
     l.isFolded = folded
     return l
 }
@@ -97,9 +97,7 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
           "\(tag): the header card has the body's width and left edge")
     check(f.rect.contains(f.headerRect) && f.rect.contains(f.bodyRect), "\(tag): the extent holds both")
     check(abs(f.rect.maxY - f.bodyRect.maxY) < 0.001, "\(tag): the extent ends at the body's bottom")
-    // §B.8: no output section at all
-    check(f.mixRect == .zero && f.panSlot == .zero && f.volumeSlot == .zero && f.muteSlot == .zero,
-          "\(tag): no mix box is laid")
+    // §B.8: no output section at all — the placement has no mix box field any more (L8).
     // the body ends fxPad under the series' tail '+'
     let inserts = pl.inserts.filter { $0.seriesID == f.link.blockID }
     if let tail = inserts.max(by: { $0.insertIndex < $1.insertIndex }) {
@@ -281,7 +279,6 @@ func checkBlock(_ f: SynopticLayout.FXBlockPlacement, in pl: SynopticLayout.Plac
             check(s.minX > ff.bodyRect.midX, "folded: the line is written beside the wire, never across it")
             check(ff.bodyRect.contains(s), "folded: the line is inside the body")
         } else { check(false, "folded: a summary rect is laid") }
-        check(ff.mixRect == .zero, "folded: no mix box either")
         // the trunk's '+' still surround it: a branch drag above it targets the block
         check(fpl.inserts.first { $0.insertIndex == 1 }?.branchTargetID == folded.id, "folded: the '+' above it branches it")
         // folded is SHORTER than the same block unfolded

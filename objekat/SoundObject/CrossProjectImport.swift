@@ -184,8 +184,13 @@ enum CrossProjectImport {
                         c.sidechain = remapSidechain(d.sidechain)
                         defs.append(c)
                     }
-                    let nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
+                    var nl = FXLink(name: old.name, colorIndex: old.colorIndex, plugins: defs,
                                     isEnabled: old.isEnabled)
+                    // The naming rule travels (plan_synoptic_rework B.0.6): a name typed by hand stays the
+                    // user's; a bin following an object of the batch follows its copy, one following an
+                    // object left behind in the other project follows nobody.
+                    nl.userNamed = old.userNamed
+                    nl.nameSourceID = old.nameSourceID.flatMap { objectIDMap[$0] }
                     newFXLinks.append(nl)
                     fxLinkMap[fb.linkID] = nl.id
                     newLinkID = nl.id

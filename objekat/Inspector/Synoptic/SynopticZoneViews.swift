@@ -12,7 +12,7 @@ struct GainDbControl: View {
     var minDb: Float = -24
     var maxDb: Float = 12
     var unit: String = "dB"              // the unit shown next to the value
-    var muted: Bool? = nil               // nil = no mute button (parallel branches)
+    var muted: Bool? = nil               // nil = no mute button (the clip's volume: its mute is the zone's own)
     var onToggleMute: (() -> Void)? = nil
     var onTouch: (() -> Void)? = nil     // called on TOUCH (click/drag/keyboard), before any change
     var onBegin: (() -> Void)? = nil     // called at the start of a drag (to push an undo point, say)
@@ -23,7 +23,7 @@ struct GainDbControl: View {
 
     var body: some View {
         HStack(spacing: 3) {
-            // Mute — on chain gains only, to the left of the value.
+            // Mute — a parallel branch's, to the left of the value.
             if let muted, let onToggleMute {
                 Button(action: onToggleMute) {
                     Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")

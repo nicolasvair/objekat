@@ -111,7 +111,7 @@ enum SynopticGainStageFace: Equatable, Hashable {
 }
 
 /// What a `.series` node carries when it IS a bin's block (an FX link): the rounded rectangle drawn
-/// round it, and the header card and mix box controls. The series inside is the block's own instances, so
+/// round it, and its header card. The series inside is the block's own instances, so
 /// every '+' / drop zone / card of it is laid by the ordinary series code.
 struct SynopticFXLink: Equatable {
     var blockID: UUID
@@ -121,9 +121,6 @@ struct SynopticFXLink: Equatable {
     var isDetached: Bool
     /// The common on/off (the bin's while attached, the block's own while detached).
     var isEnabled: Bool
-    var gainDb: Float
-    var pan: Float
-    var muted: Bool
     /// How many hosts carry the bin (attached or not), for the tooltip.
     var memberCount: Int
     /// FOLDED: the block shows its header and a one-line body ("3 plugins"); the wire runs straight
@@ -135,9 +132,6 @@ struct SynopticFXLink: Equatable {
 
     /// The key of this block in `SynopticUIState` (the bin's id, else the block's).
     var stateKey: UUID { linkID ?? blockID }
-    // NOTE (docs/plan_synoptic_rework.md, lot L2): `gainDb` / `pan` / `muted` are the old output section,
-    // no longer laid nor drawn by the new layout (an FX link has no mix box any more); they stay until L8
-    // because the model mapping still fills them.
 }
 
 struct SynopticNode: Identifiable, Equatable {

@@ -79,9 +79,7 @@ struct SynopticActions {
     var onRemoveVoice: ((_ blockID: UUID, _ voiceIndex: Int) -> Void)? = nil
     // Muting a parallel branch (listen to one / the other / both; no solo).
     var onSetVoiceMute: ((_ blockID: UUID, _ voiceIndex: Int, _ muted: Bool) -> Void)? = nil
-    // The dB gain at the start (isOutput=false) / end (isOutput=true) of the chain.
-    var onSetChainGain: ((_ isOutput: Bool, _ dB: Float) -> Void)? = nil
-    // The start of a gain drag (a branch or the chain): push an undo point,
+    // The start of a gain drag (a parallel branch's gain, a gain stage's box): push an undo point,
     // the same convention as onBeginMixEdit / onBeginSpeedEdit.
     var onBeginGainEdit: (() -> Void)? = nil
 
@@ -173,11 +171,6 @@ struct SynopticActions {
     // FX links (a bin's block). Every closure that takes a UUID takes the BLOCK's id.
     /// The common on/off of the block.
     var onFXToggleEnabled: ((UUID) -> Void)? = nil
-    var onFXSetGain: ((UUID, Float) -> Void)? = nil
-    var onFXSetPan: ((UUID, Float) -> Void)? = nil
-    var onFXToggleMute: ((UUID) -> Void)? = nil
-    /// The start of a drag on the block's output section: push an undo point.
-    var onFXBeginEdit: (() -> Void)? = nil
     var onFXRename: ((UUID, String) -> Void)? = nil
     /// "Next colour" of the header's right-click menu: the next colour of the palette.
     var onFXCycleColor: ((UUID) -> Void)? = nil

@@ -24,6 +24,9 @@ struct FXBlockHeaderView: View {
     let rect: CGRect
     let pluginCount: Int
     let actions: SynopticActions
+    /// A single click on the header: the canvas makes the BLOCK the signal view's selection, which is what
+    /// the contextual ⌘R reads (@see EditViewModel.fxLinkDesignatedBySelection). nil = the demo.
+    var onSelect: (() -> Void)? = nil
 
     /// The session's fold / rename memory (read here so that a ⌘R from outside turns the name into a field).
     private let ui = SynopticUIState.shared
@@ -138,11 +141,15 @@ struct FXBlockHeaderView: View {
             .padding(.top, 5)
             .padding(.bottom, 4)
             // A double click ANYWHERE on the header's body (the name included) folds / unfolds the block.
-            // The buttons above take their own clicks first; there is no single-click handler, so nothing
-            // waits for a second click. While the name is a field the gesture is off: its clicks stay its own.
+            // The buttons above take their own clicks first. A SINGLE click selects the block (so that ⌘R
+            // renames it): recognised SIMULTANEOUSLY with the double one, so it fires at once and nothing
+            // waits for a second click — the first click of a double click selects, the second folds.
+            // While the name is a field both gestures are off: its clicks stay its own.
             .contentShape(Rectangle())
             .gesture(TapGesture(count: 2).onEnded { toggleFold() },
                      including: isRenaming ? .subviews : .all)
+            .simultaneousGesture(TapGesture().onEnded { onSelect?() },
+                                 including: isRenaming ? .subviews : .all)
         }
         .frame(width: rect.width, height: rect.height, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor))   // OPAQUE: it straddles the body's edge
@@ -269,18 +276,4 @@ struct FXBlockDragPreview: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(link.color, lineWidth: 1.5))
     }
-}
-
-/// RETIRED — the bin's output section (pan · volume · mute) is gone (docs/plan_synoptic_rework.md §B.8): an
-/// FX link has no pan / volume / mute of its own any more, and a gain on a bin is a gain stage dragged out of
-/// the bin's own "+" (@see SynopticCardView's gain-stage faces). This empty shell draws NOTHING; it stays
-/// ONLY so that `SynopticView.swift` (lot L4's) still compiles on the branches that have not dropped its
-/// call yet. It is deleted, with that call and the `onFXSetGain` / `onFXSetPan` / `onFXToggleMute` /
-/// `onFXBeginEdit` actions, by the integration lot (L8).
-struct FXBlockMixView: View {
-    let link: SynopticFXLink
-    let block: SynopticLayout.FXBlockPlacement
-    let actions: SynopticActions
-
-    var body: some View { EmptyView() }
 }

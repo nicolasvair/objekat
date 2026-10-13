@@ -17,12 +17,6 @@ struct SynopticView: View {
     /// cannot touch, and ⌫ would then eat the key to do nothing.
     @Binding var selectedInstrumentID: UUID?
     var scrolls = true              // false = embedded (the parent handles the scrolling)
-    /// IGNORED since the rework (docs/plan_synoptic_rework.md §B.0: the trims became gain stages, plugins
-    /// of the chain): nothing reads them any more. Kept only so that the callers compile; deleted in L8.
-    var chainInDb: Float = 0
-    var chainOutDb: Float = 0
-    var chainInAutomated: Bool = false
-    var chainOutAutomated: Bool = false
     /// The colour of the object's FRAME (§B.5, D7: `customColor ?? stemColor`). The frame is laid for an
     /// OBJECT host only — one that has a mixer (`mix != nil`): a clip, a MIDI clip, a group, an aux; never
     /// for a stem or the Main (their popover). nil = a neutral grey until the caller passes the colour.
@@ -108,7 +102,7 @@ struct SynopticView: View {
             if let mz = d.midiZone {
                 midiZoneView(mz, slot: d.instrumentSlot)
             } else if let az = d.audioZone, let af = audioFile {
-                audioFileZoneView(az, file: af)
+                audioFileZoneView(az, file: af, folded: d.audioZoneFolded)
             } else if let bh = d.busHeadZone {
                 BusHeadZoneView(rect: bh, infinite: infinite, loop: loop, received: receivedSends,
                                 actions: actions)
@@ -175,7 +169,8 @@ struct SynopticView: View {
             // draw). No mix box any more (§B.8): a gain on a bin is a stage dragged out of the bin's '+'.
             ForEach(d.placement.fxBlocks) { b in
                 FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
-                                  actions: actions)
+                                  actions: actions,
+                                  onSelect: { selectedInstrumentID = nil; selection = [b.link.blockID] })
                     .position(x: b.headerRect.midX, y: b.headerRect.midY)
             }
 
@@ -269,15 +264,12 @@ struct SynopticView: View {
                     .position(x: zone.midX, y: zone.midY)
             }
 
-            // The TAP DOTS: where each send is taken on the trunk. A dot is a handle like the box (§B.6):
+            // The HANDLES: where each send is taken on the trunk. A handle is grabbed like the box (§B.6):
             // dragged onto another place of the chain it moves where the send is taken (the same payload as
-            // the box's, @see sendDragProvider). Laid on the wire just LEFT of the '+' it stands for — the
-            // wire leaves to the left from there — so that the '+' showing on hover never covers it.
-            ForEach(tapDots(d.sendCards), id: \.send.id) { t in
-                SendTapDotView(live: t.send.enabled && t.send.refusal == nil,
-                               help: L("synoptic.send.tapDot.help", t.send.name),
-                               dragProvider: actions.sendDragProvider.map { f in { f(t.send.id) } })
-                    .position(t.point)
+            // the box's, @see sendDragProvider). It sits on the wire just LEFT of the '+' ring it stands for,
+            // never under it, and sends taken at one point fan out by their rank (@see SendWire.handleCenter).
+            ForEach(d.sendCards) { c in
+                SendTapDotView(placement: c, rank: SendWire.rank(of: c, in: d.sendCards), actions: actions)
             }
 
             // "+ Send to…", at the bottom of the stack of boxes: a send made there is post-fader.
@@ -432,21 +424,8 @@ struct SynopticView: View {
         r += d.sendCards.map { SendBoxView.zone(of: $0) }
         r += d.placement.inserts.map(\.plusRect)
         if let p = d.postFaderPlus { r.append(p.plusRect) }
-        r += tapDots(d.sendCards).map { SendTapDotView.hitRect(at: $0.point) }
+        r += d.sendCards.map { SendWire.handleRect(of: $0, rank: SendWire.rank(of: $0, in: d.sendCards)) }
         return r
-    }
-
-    /// One tap dot per send, on the wire just left of the '+' its anchor stands for. Sends taken at the
-    /// SAME point are fanned out along their common wire, so that each dot can be grabbed.
-    private func tapDots(_ cards: [SynopticLayout.SendCardPlacement]) -> [(send: SynopticSend, point: CGPoint)] {
-        var seen: [String: Int] = [:]
-        return cards.map { c in
-            let at = "\(c.anchor.x),\(c.anchor.y)"
-            let k = seen[at, default: 0]
-            seen[at] = k + 1
-            let x = c.anchor.x - SynopticLayout.plusW / 2 - SendTapDotView.firstOffset - CGFloat(k) * SendTapDotView.fanStep
-            return (c.send, CGPoint(x: x, y: c.anchor.y))
-        }
     }
 
     /// A plugin card of the chain. A GAIN STAGE (§B.4) is laid by the same view (its face is the card's,
@@ -469,7 +448,10 @@ struct SynopticView: View {
             onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
             onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
             linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
-            sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id)
+            sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id),
+            // A gain stage's faces read and write their values through the bound view (@see
+            // SynopticGainStageControls); a plugin card ignores it.
+            actions: actions
         )
     }
 
@@ -686,8 +668,8 @@ struct SynopticView: View {
     }
 
     /// The 'audio file' zone at the head of the chain (an audio clip): speed / semitones / bpm.
-    private func audioFileZoneView(_ rect: CGRect, file: SynopticAudioFile) -> some View {
-        AudioFileZoneView(rect: rect, file: file, actions: actions)
+    private func audioFileZoneView(_ rect: CGRect, file: SynopticAudioFile, folded: Bool) -> some View {
+        AudioFileZoneView(rect: rect, file: file, actions: actions, folded: folded)
     }
 
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
@@ -752,28 +734,10 @@ struct SynopticView: View {
         }
 
         // The sends' wires (§B.6): from the tap point on the trunk, out to the LEFT of the frame, down the
-        // send's own gutter, and into the box's top row from the left — the first plugin's row, or the
-        // send's line when it carries none. The highest tap has the outermost gutter and the lowest box,
-        // so the wires nest and never cross. Dashed: it is a TAP, not the flow. A refused send is dimmer.
-        // The tap dot itself is a view (it can be dragged): @see SendTapDotView.
-        for c in d.sendCards {
-            let points = c.wire
-            guard let first = points.first, let to = points.last else { continue }
-            var path = Path()
-            path.move(to: first)
-            for p in points.dropFirst() { path.addLine(to: p) }
-            let live = c.send.enabled && c.send.refusal == nil
-            let color = (live ? Color.accentColor : Color.secondary).opacity(live ? 0.75 : 0.4)
-            ctx.stroke(path, with: .color(color),
-                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round, dash: [4, 3]))
-            // An arrowhead pointing RIGHT, into the box.
-            var head = Path()
-            head.move(to: CGPoint(x: to.x - 6, y: to.y - 4))
-            head.addLine(to: to)
-            head.addLine(to: CGPoint(x: to.x - 6, y: to.y + 4))
-            ctx.stroke(head, with: .color(color),
-                       style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round))
-        }
+        // send's own gutter, and into the box from the left — the geometry and the stroke are lot L7's
+        // (@see SendWire.draw, asserted by tools/test_synoptic_send_wire.swift). The handle that moves a send
+        // is a view laid over this (@see SendTapDotView).
+        SendWire.draw(ctx, cards: d.sendCards)
     }
 }
 
@@ -864,36 +828,6 @@ private struct SynopticPlusGhostView: View {
         case .send:        return L("synoptic.plus.ghost.send")
         case .notHere:     return L("synoptic.plus.ghost.notHere")
         }
-    }
-}
-
-// MARK: - A send's tap dot (§B.6): a handle like its box
-
-/// The dot where a send is taken on the trunk. Dragged, it carries the SAME payload as the send's box
-/// (@see SynopticActions.sendDragProvider): let go on another place of the chain, it moves where the send is
-/// taken. With no provider (the demo) it is only drawn.
-private struct SendTapDotView: View {
-    let live: Bool
-    let help: String
-    let dragProvider: (() -> NSItemProvider)?
-
-    /// The distance from the '+' circle's left edge to the first dot, and between two dots of one tap.
-    static let firstOffset: CGFloat = 6
-    static let fanStep: CGFloat = 10
-    /// The square the hand can grab round a dot.
-    static let hitSize: CGFloat = 10
-    static func hitRect(at p: CGPoint) -> CGRect {
-        CGRect(x: p.x - hitSize / 2, y: p.y - hitSize / 2, width: hitSize, height: hitSize)
-    }
-
-    var body: some View {
-        Circle()
-            .fill((live ? Color.accentColor : Color.secondary).opacity(0.85))
-            .frame(width: 6, height: 6)
-            .frame(width: Self.hitSize, height: Self.hitSize)
-            .contentShape(Rectangle())
-            .onDragIf(dragProvider)
-            .help(help)
     }
 }
 

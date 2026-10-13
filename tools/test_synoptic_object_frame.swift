@@ -81,7 +81,6 @@ struct Main {
             for s in d.sendCards { check(!f.intersects(s.frame), "\(tag): a send box lies outside the frame") }
             check(d.canvasSize.width >= f.maxX + SynopticLayout.margin - 1e-6, "\(tag): the canvas holds the frame")
             check(f.minX >= SynopticLayout.margin - 1e-6, "\(tag): the frame is inside the margin")
-            check(d.chainInGain == nil && d.chainOutGain == nil, "\(tag): no trim gains")
             // the post-fader '+' and the stems: below the frame
             if let p = d.postFaderPlus { check(p.center.y > f.maxY, "\(tag): the post-fader '+' is outside the frame") }
         }
@@ -104,7 +103,7 @@ struct Main {
         let head = ri.first!, tail = ri.last!
         check(near(head.plusRect.minY - d.sourcePill.maxY, SynopticLayout.chainGap), "head zone -> head '+': chainGap, no trim gap")
         check(near(d.clipZone!.minY - tail.plusRect.maxY, SynopticLayout.chainGap), "tail '+' -> mixer: chainGap, no trim gap")
-        check(d.sourcePill.maxY + SynopticLayout.chainGainGap > head.plusRect.minY, "the old 56 pt gap is gone")
+        check(d.sourcePill.maxY + 56 > head.plusRect.minY, "the old 56 pt gap is gone")
         let cx = d.sourcePill.midX
         check(wireCovers(d.placement, x: cx, from: d.sourcePill.maxY, to: d.placement.cards[0].frame.minY),
               "an unbroken wire from the head zone into the first card, through the head '+'")
