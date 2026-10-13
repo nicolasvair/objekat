@@ -4969,25 +4969,48 @@
         }
       }
     },
+    "fxlink.help.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold the FX link"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plegar el FX link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replier le FX link"
+          }
+        }
+      }
+    },
     "fxlink.help.members.one": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shared by %d object — double-click to rename"
+            "value": "Shared by %d object — double-click to fold / unfold"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compartido por %d objeto — doble clic para renombrar"
+            "value": "Compartido por %d objeto — doble clic para plegar / desplegar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Partagé par %d objet — double clic pour renommer"
+            "value": "Partagé par %d objet — double clic pour replier / déplier"
           }
         }
       }
@@ -4998,19 +5021,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shared by %d objects — double-click to rename"
+            "value": "Shared by %d objects — double-click to fold / unfold"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Compartido por %d objetos — doble clic para renombrar"
+            "value": "Compartido por %d objetos — doble clic para plegar / desplegar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Partagé par %d objets — double clic pour renommer"
+            "value": "Partagé par %d objets — double clic pour replier / déplier"
           }
         }
       }
@@ -5034,6 +5057,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Activer / désactiver tout le fx link"
+          }
+        }
+      }
+    },
+    "fxlink.help.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfold the FX link"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desplegar el FX link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplier le FX link"
           }
         }
       }
@@ -5103,6 +5149,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Détacher de ce fx link"
+          }
+        }
+      }
+    },
+    "fxlink.menu.fold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fold"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plegar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Replier"
           }
         }
       }
@@ -5241,6 +5310,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Renommer"
+          }
+        }
+      }
+    },
+    "fxlink.menu.unfold": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unfold"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desplegar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Déplier"
           }
         }
       }
@@ -14579,6 +14671,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Vue synoptique (démo) — %@"
+          }
+        }
+      }
+    },
+    "synoptic.gainStage.grip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag: move (⌥ copy, ⌘ linked copy to another object)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+          }
+        }
+      }
+    },
+    "synoptic.gainStage.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this gain stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar esta etapa de ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer cet étage de gain"
           }
         }
       }

@@ -3,28 +3,36 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-// MARK: - FX link block (header card and mix box)
+// MARK: - FX link block (header card)
 
 /// The card that straddles the top edge of a bin's block — a plugin card's sibling, built on
 /// `SynopticCardView`'s model: an opaque body with square-edged on/off at the left (the bin's common
-/// on/off), then the name (the drag handle: it moves the whole block; a double click renames it), the
+/// on/off), then a chevron (fold / unfold), the name (the drag handle: it moves the whole block), the
 /// link badge (solid = follows the bin, hollow = detached; a click flips it), the ✕ and a thin level
 /// line under the name. The ✕ is a small menu rather than a delete, because a bin is shared: removing
 /// it from THIS object, leaving it while keeping the plugins, and dissolving it everywhere are three
 /// different gestures. The colour is the card's rim; there is no colour dot — "next colour" is in the
 /// right-click menu.
+///
+/// FOLDING (docs/plan_synoptic_rework.md §B.7): the chevron AND a double click anywhere on the header
+/// (its name included) fold / unfold the block. The double click no longer renames: renaming is ⌘R or the
+/// menu's "Rename", both of which end up in `SynopticUIState.renamingFXLinkID`, the one thing that turns
+/// the name into a field. A folded block keeps its header; the line "3 plugins" under it is written by
+/// THIS view (it hangs below the header card, beside the wire), so the canvas only draws the body.
 struct FXBlockHeaderView: View {
     let link: SynopticFXLink
     let rect: CGRect
     let pluginCount: Int
     let actions: SynopticActions
 
-    @State private var renaming = false
+    /// The session's fold / rename memory (read here so that a ⌘R from outside turns the name into a field).
+    private let ui = SynopticUIState.shared
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
     @State private var dropTargeted = false
     @State private var dropHintID = UUID()
 
+    private var isRenaming: Bool { ui.renamingFXLinkID == link.stateKey }
     private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
 
@@ -47,14 +55,26 @@ struct FXBlockHeaderView: View {
 
             VStack(spacing: 0) {
                 HStack(spacing: 6) {
-                    if renaming {
+                    // ▾ / ▸ — fold / unfold the block (the double click on the header does the same).
+                    Button(action: toggleFold) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(link.isFolded ? -90 : 0))
+                            .frame(width: 12, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(link.isFolded ? L("fxlink.help.unfold") : L("fxlink.help.fold"))
+
+                    if isRenaming {
                         TextField(noLabel, text: $draft)
                             .textFieldStyle(.plain)
                             .font(Font(SynopticLayout.cardNameFont))
                             .focused($fieldFocused)
-                            .onSubmit { commitRename() }
-                            .onExitCommand { renaming = false }
-                            .onChange(of: fieldFocused) { _, focused in if !focused { commitRename() } }
+                            .onSubmit { endRename(commit: true) }
+                            .onExitCommand { endRename(commit: false) }
+                            .onChange(of: fieldFocused) { _, focused in if !focused { endRename(commit: true) } }
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(link.name)
@@ -64,7 +84,6 @@ struct FXBlockHeaderView: View {
                             .truncationMode(.tail)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { beginRename() }
                             .onDragIf(actions.dragProvider.map { f in { f(link.blockID) } }) {
                                 FXBlockDragPreview(link: link, pluginCount: pluginCount)
                             }
@@ -118,6 +137,12 @@ struct FXBlockHeaderView: View {
             .padding(.horizontal, 8)
             .padding(.top, 5)
             .padding(.bottom, 4)
+            // A double click ANYWHERE on the header's body (the name included) folds / unfolds the block.
+            // The buttons above take their own clicks first; there is no single-click handler, so nothing
+            // waits for a second click. While the name is a field the gesture is off: its clicks stay its own.
+            .contentShape(Rectangle())
+            .gesture(TapGesture(count: 2).onEnded { toggleFold() },
+                     including: isRenaming ? .subviews : .all)
         }
         .frame(width: rect.width, height: rect.height, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor))   // OPAQUE: it straddles the body's edge
@@ -139,6 +164,37 @@ struct FXBlockHeaderView: View {
         )
         .background(dropLayer)
         .contextMenu { menuItems }
+        // The one line of a FOLDED block, written under the header card (outside its frame, after the clip).
+        .overlay(alignment: .topLeading) { foldedSummary }
+        .onChange(of: isRenaming, initial: true) { _, on in
+            guard on else { return }
+            draft = link.name
+            DispatchQueue.main.async { fieldFocused = true }
+        }
+        // Leaving the screen with the field open (another object shown, the block gone) drops the request:
+        // it must not come back, by itself, on the next header with the same key.
+        .onDisappear { if ui.renamingFXLinkID == link.stateKey { ui.renamingFXLinkID = nil } }
+    }
+
+    // MARK: Folded body
+
+    /// "3 plugins", written BESIDE the wire that runs through a folded block's one-line body (@see
+    /// SynopticLayout.place: the same rectangle as `FXBlockPlacement.foldedSummaryRect`, in this view's
+    /// coordinates — the header and the body share their x and their width). A double click on it
+    /// unfolds, like the header's.
+    @ViewBuilder private var foldedSummary: some View {
+        if link.isFolded {
+            let x = rect.width / 2 + 8
+            Text(Ln("fxlink.drag.plugins", pluginCount, pluginCount))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: max(0, rect.width - SynopticLayout.fxPad - x),
+                       height: SynopticLayout.fxFoldedBodyH - 4, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture(count: 2) { toggleFold() }
+                .offset(x: x, y: rect.height + 2)
+        }
     }
 
     @ViewBuilder private var dropLayer: some View {
@@ -156,6 +212,7 @@ struct FXBlockHeaderView: View {
 
     @ViewBuilder private var menuItems: some View {
         Button(L("fxlink.menu.rename")) { beginRename() }
+        Button(link.isFolded ? L("fxlink.menu.unfold") : L("fxlink.menu.fold")) { toggleFold() }
         Button(L("fxlink.menu.next_color")) { actions.onFXCycleColor?(link.blockID) }
         Button(link.isDetached ? L("fxlink.menu.reattach") : L("fxlink.menu.detach")) {
             actions.onFXToggleDetach?(link.blockID)
@@ -166,15 +223,23 @@ struct FXBlockHeaderView: View {
         Button(L("fxlink.menu.delete"), role: .destructive) { actions.onFXDelete?(link.blockID) }
     }
 
-    private func beginRename() {
-        draft = link.name
-        renaming = true
-        fieldFocused = true
+    // MARK: Fold and rename
+
+    /// Folds / unfolds this block: the bound view's closure when it is wired, the session memory itself
+    /// otherwise (the layout reads `SynopticUIState`, so the memory IS the state).
+    private func toggleFold() {
+        if let f = actions.onToggleFXFold { f(link.blockID) } else { ui.toggleFXFold(link.stateKey) }
     }
 
-    private func commitRename() {
-        guard renaming else { return }
-        renaming = false
+    /// Asks for the inline field (the menu's "Rename"; ⌘R asks the same way from outside).
+    private func beginRename() {
+        if let f = actions.onRenameFXLink { f(link.blockID) } else { ui.renamingFXLinkID = link.stateKey }
+    }
+
+    private func endRename(commit: Bool) {
+        guard isRenaming else { return }
+        ui.renamingFXLinkID = nil
+        guard commit else { return }
         let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty, name != link.name { actions.onFXRename?(link.blockID, name) }
     }
@@ -206,81 +271,16 @@ struct FXBlockDragPreview: View {
     }
 }
 
-/// The bin's OUTPUT SECTION, as a rounded box nested at the foot of its block — pan · volume · mute,
-/// left to right, in the order and the style of the 'clip' zone (@see ClipMixZoneView) but with no title:
-/// the box has nothing to name, the block already does. While the block follows the bin these are the
-/// bin's (every member moves together); once detached they are the block's own. The wire stops at the
-/// box's head and starts again at its foot, so the controls sit on a plain background.
+/// RETIRED — the bin's output section (pan · volume · mute) is gone (docs/plan_synoptic_rework.md §B.8): an
+/// FX link has no pan / volume / mute of its own any more, and a gain on a bin is a gain stage dragged out of
+/// the bin's own "+" (@see SynopticCardView's gain-stage faces). This empty shell draws NOTHING; it stays
+/// ONLY so that `SynopticView.swift` (lot L4's) still compiles on the branches that have not dropped its
+/// call yet. It is deleted, with that call and the `onFXSetGain` / `onFXSetPan` / `onFXToggleMute` /
+/// `onFXBeginEdit` actions, by the integration lot (L8).
 struct FXBlockMixView: View {
     let link: SynopticFXLink
     let block: SynopticLayout.FXBlockPlacement
     let actions: SynopticActions
 
-    private func panLabel(_ p: Double) -> String {
-        if abs(p) < 0.01 { return "C" }
-        return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
-    }
-
-    /// A slot's centre in the box's own coordinates.
-    private func local(_ slot: CGRect) -> CGPoint {
-        CGPoint(x: slot.midX - block.mixRect.minX, y: slot.midY - block.mixRect.minY)
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Flush with the body's bottom edge: the bottom corners are the body's own radius.
-            UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
-                                   bottomLeadingRadius: SynopticLayout.fxBodyCorner,
-                                   bottomTrailingRadius: SynopticLayout.fxBodyCorner,
-                                   topTrailingRadius: SynopticLayout.fxMixTopCorner)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(UnevenRoundedRectangle(topLeadingRadius: SynopticLayout.fxMixTopCorner,
-                                                bottomLeadingRadius: SynopticLayout.fxBodyCorner,
-                                                bottomTrailingRadius: SynopticLayout.fxBodyCorner,
-                                                topTrailingRadius: SynopticLayout.fxMixTopCorner)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-
-            DragValueBox(value: Double(link.pan),
-                         format: { panLabel($0) },
-                         range: -1...1, pointsPerStep: 80, snap: false, width: block.panSlot.width,
-                         keyStep: 0.1,
-                         parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
-                         help: L("help.drag.pan"),
-                         onBegin: { actions.onFXBeginEdit?() },
-                         onChange: { actions.onFXSetPan?(link.blockID, Float($0)) },
-                         onReset: { actions.onFXBeginEdit?(); actions.onFXSetPan?(link.blockID, 0) })
-                .position(local(block.panSlot))
-
-            GainDbControl(dB: link.gainDb, minDb: -96, maxDb: 40,
-                          onBegin: { actions.onFXBeginEdit?() }) { newDB in
-                actions.onFXSetGain?(link.blockID, newDB)
-            }
-            .position(local(block.volumeSlot))
-
-            muteButton
-                .position(local(block.muteSlot))
-        }
-        .frame(width: block.mixRect.width, height: block.mixRect.height)
-        .opacity(link.isEnabled ? 1 : 0.5)
-    }
-
-    /// The same button as the 'clip' zone's (@see ClipMixZoneView.muteButton).
-    private var muteButton: some View {
-        Button {
-            actions.onFXBeginEdit?()
-            actions.onFXToggleMute?(link.blockID)
-        } label: {
-            Image(systemName: link.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(link.muted ? Color.red : Color.secondary)
-                .frame(width: block.muteSlot.width, height: block.muteSlot.height)
-                .background(RoundedRectangle(cornerRadius: 4)
-                    .fill(link.muted ? Color.red.opacity(0.18) : Color.secondary.opacity(0.18)))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder((link.muted ? Color.red : Color.secondary).opacity(0.45)))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(L("common.mute"))
-    }
+    var body: some View { EmptyView() }
 }
