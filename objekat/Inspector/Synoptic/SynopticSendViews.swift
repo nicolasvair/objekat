@@ -3,12 +3,16 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-// MARK: - Sends: one row, the foot zone (departures) and a bus's head (infinite + received sends)
+// MARK: - Sends: the boxes below the stems, their wires' handles, and a bus's head (received sends)
 //
-// Sends are no longer a column of the inspector: a departure is taken at the foot of the
-// chain (after the mix, before the stems) and reads as a branch leaving the trunk — hence the
-// 'up and to the right' arrow on each row. Symmetrically, the sends an aux RECEIVES come in
-// at the head, at the level of its source.
+// Signal view rework, lot L7 (docs/plan_synoptic_rework.md §B.6, request 12). A departure is a BOX stacked
+// BELOW the stems (@see SendBoxView); the line that says where it is taken from leaves the trunk at the
+// send's tap, runs out to the LEFT of the object's frame and down to the box (the geometry is the layout's,
+// @see SynopticLayout.SendCardPlacement.wire; the drawing and the handle are @see SendWire /
+// SendTapDotView). A send is moved by dragging its BOX onto the place it should be taken from, or by
+// dragging its source point (the handle) along the chain: the same `SendDragPayload` either way.
+// Symmetrically, the sends an aux RECEIVES come in at the head, at the level of its source
+// (@see SynopticSendRow).
 
 /// One send row: the branch arrow, the name, a draggable level, a switch.
 struct SynopticSendRow: View {
@@ -157,7 +161,9 @@ struct SendCardView: View {
                 Spacer(minLength: 2)
             }
             .contentShape(Rectangle())
-            .onDragIf(actions.sendDragProvider.map { f in { f(send.id) } })
+            .onDragIf(actions.sendDragProvider.map { f in { f(send.id) } }) {
+                SendDragPreview(name: send.name, live: isRouted)
+            }
             DragValueBox(value: Double(send.levelDb),
                          format: { levelLabel($0) },
                          range: Double(sendMinDb)...Double(sendMaxDb),
@@ -244,12 +250,18 @@ struct SendCardView: View {
     }
 }
 
-// MARK: - A send's box (INC 3): the plugins ON the send
+// MARK: - A send's box (INC 3, reworked in L7): the plugins ON the send
 
-/// A send as the signal view draws it. With no plugin: today's card, plus a small "+" that shows above
-/// it on hover. With plugins: a BOX, read top to bottom in the order of the signal (Q-U19) — one compact
-/// row per plugin, the "+" after the last one, then the send's own line (the card: aux, level, on/off)
-/// at the bottom. The wire from the trunk arrives at the top.
+/// A send as the signal view draws it. With no plugin: the send's line, plus a small "+" that shows just
+/// above it while the hand is over it. With plugins: a BOX, read top to bottom in the order of the signal
+/// (Q-U19) — one CARD per plugin (the very card of a plugin of the chain, @see sendPluginCard), the "+" after
+/// the last one, then the send's own line (aux, level, on/off) at the bottom. The wire from the trunk
+/// arrives at the top row, from the left (@see SendWire).
+///
+/// The "+" of the mini-chain shows only while the hand is over the box (or a drag out of it is in flight):
+/// a click opens the plugin picker aimed at this send, a drag to the RIGHT puts a gain stage on the send
+/// (further right: gain + pan + mute), under a ghost that says what letting go would do (§B.2). A send's
+/// chain takes no branch and no send, so every other direction shows "not here".
 ///
 /// A plugin is let go on the box, between two rows (the insertion line says where), on the "+" or on the
 /// line (= the end): nothing = move, ⌥ = copy, ⌘ = copy as well — a send's plugin is never linked. A send
@@ -258,15 +270,29 @@ struct SendBoxView: View {
     let placement: SynopticLayout.SendCardPlacement
     let actions: SynopticActions
     @State private var hovering = false
+    /// The pending "hand left" (see `setHover`): cancelled if the hand comes back within `hoverLinger`.
+    @State private var leaveWork: DispatchWorkItem? = nil
+    /// The translation of a drag in flight out of the "+" (nil = none): keeps the "+" shown, and the ghost.
+    @State private var plusDrag: CGSize? = nil
     /// The insertion slot a plugin drag is aiming at (nil = none).
     @State private var dropIndex: Int? = nil
     @State private var dropHintID = UUID()
 
+    /// The margin between the box's border and its plugin cards, each side.
+    static let cardInset: CGFloat = 4
+    /// How long the "+" outlives the hand leaving the box. The hand goes from the line to the "+" through
+    /// the strip's edge, where the hover is lost for a frame: without this the "+" would flicker off
+    /// under it and could not be reached.
+    static let hoverLinger: TimeInterval = 0.12
+
     private var send: SynopticSend { placement.send }
     private var isRouted: Bool { send.enabled && send.levelDb > sendMinDb && send.refusal == nil }
+    /// The "+" is shown while the hand is over the box, or a drag out of it is in flight.
+    private var plusShown: Bool { hovering || plusDrag != nil }
 
     /// The rect this view fills on the canvas: the box; with no plugin, the card plus the strip above
-    /// it where the hover "+" shows.
+    /// it where the hover "+" shows. The canvas' marquee must treat it as a blocker (the "+" strip lies
+    /// outside `placement.frame`).
     static func zone(of p: SynopticLayout.SendCardPlacement) -> CGRect {
         p.hasPlugins ? p.frame : p.frame.union(p.plusRect)
     }
@@ -277,24 +303,14 @@ struct SendBoxView: View {
         VStack(spacing: 0) {
             if placement.hasPlugins {
                 ForEach(send.plugins) { p in
-                    SendPluginRowView(
-                        plugin: p,
-                        isSelected: selection.contains(p.id),
-                        onSelect: { actions.onSendPluginClick?(send.id, p.id, NSEvent.modifierFlags) },
-                        // A refused send has no engine plugin: nothing to open.
-                        onOpen: send.refusal == nil ? actions.onSendPluginOpen.map { f in { f(send.id, p.id) } } : nil,
-                        onToggle: { actions.onSendPluginToggle?(send.id, p.id) },
-                        onRemove: { actions.onSendPluginRemove?(send.id, p.id) },
-                        dragProvider: actions.sendPluginDragProvider.map { f in { f(send.id, p.id) } })
-                        .frame(height: SynopticLayout.sendPluginRowH)
+                    sendPluginCard(p, selection: selection)
+                        .frame(width: placement.frame.width, height: SynopticLayout.sendPluginRowH)
                 }
                 plusRow.frame(height: SynopticLayout.sendPlusRowH)
             } else {
-                // No box yet: the "+" only shows while the hand is over the card (the menu has the
-                // same entry). Not hit-testable otherwise — the strip may lie over the card above.
+                // No box yet: the "+" strip lies just above the line (it may overlap the box above: the
+                // strip is not hit-testable unless shown, and it is shown only while this view is hovered).
                 plusRow.frame(height: SynopticLayout.sendPlusRowH)
-                    .opacity(hovering ? 1 : 0)
-                    .allowsHitTesting(hovering)
             }
             SendCardView(send: send, actions: actions, boxed: placement.hasPlugins)
                 .frame(height: SynopticLayout.sendCardH)
@@ -313,7 +329,7 @@ struct SendBoxView: View {
                     .allowsHitTesting(false)
             }
         }
-        // The drop layer: a SIBLING behind the content, never an ancestor of the rows' drag sources
+        // The drop layer: a SIBLING behind the content, never an ancestor of the cards' drag sources
         // (@see SynopticCardView.dropLayer). It covers the box — the card alone for a plugin-less send.
         .background(alignment: .bottom) { dropLayer }
         // Where the plugin in the hand would be inserted.
@@ -333,32 +349,106 @@ struct SendBoxView: View {
                 }
             }
         }
-        .onHover { hovering = $0 }
-        // A refused send: the whole box greyed, the reason as its tooltip (the card's own text).
+        .onHover { setHover($0) }
+        // A refused send: the whole box greyed. The reason is the tooltip of the line's name (the card's
+        // own text): no `.help` here, a tooltip on the box would gag its children's.
         .opacity(placement.hasPlugins && send.refusal != nil ? 0.55 : 1)
-        .helpIf(placement.hasPlugins ? send.refusal : nil)
     }
 
-    /// The "+": the plugin picker, aimed at this send.
+    /// The hand enters at once, and leaves after `hoverLinger` unless it came back.
+    private func setHover(_ on: Bool) {
+        leaveWork?.cancel()
+        leaveWork = nil
+        if on {
+            hovering = true
+        } else {
+            let work = DispatchWorkItem { hovering = false }
+            leaveWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverLinger, execute: work)
+        }
+    }
+
+    // MARK: A plugin of the send, as a card
+
+    /// A plugin of the send's mini-chain: the SAME card as a plugin of the chain (on/off column in its
+    /// identity colour, name, ✕, VU line, halo), fed from the send's gestures. A send's plugin is never
+    /// linked (no badge) and takes no drop of its own: a plugin let go on a card lands on the box's drop
+    /// layer, which reads the insertion slot from the pointer.
+    ///
+    /// HOOK FOR L8 (docs/plan_synoptic_rework.md §C): `SynopticPlugin.gainStage` is fed here from
+    /// `SynopticSendPlugin.gainStage`. The card of lot L6 (the gain stage's faces — one dB box, or pan ·
+    /// volume · mute —, no power button, values read through `actions.gainStageValues` and written through
+    /// `actions.onSetGainStage`) is not merged yet: until it is, a stage on a send is drawn as an ordinary
+    /// card. When it is, pass its extra parameters HERE and nowhere else.
+    @ViewBuilder
+    private func sendPluginCard(_ p: SynopticSendPlugin, selection: Set<UUID>) -> some View {
+        let aux = send.id
+        SynopticCardView(
+            plugin: SynopticPlugin(id: p.id, name: p.name, category: .utility, isEnabled: p.enabled,
+                                   color: p.color, gainStage: p.gainStage),
+            isSelected: selection.contains(p.id),
+            onSelect: { actions.onSendPluginClick?(aux, p.id, NSEvent.modifierFlags) },
+            // A refused send has no engine plugin: nothing to open.
+            onOpenEditor: send.refusal == nil ? actions.onSendPluginOpen.map { f in { f(aux, p.id) } } : nil,
+            onToggleBypass: { actions.onSendPluginToggle?(aux, p.id) },
+            onRemove: { actions.onSendPluginRemove?(aux, p.id) },
+            dragProvider: actions.sendPluginDragProvider.map { f in { f(aux, p.id) } },
+            dragCount: selection.contains(p.id) ? selection.count : 1,
+            width: placement.frame.width - 2 * Self.cardInset)
+    }
+
+    // MARK: The "+" of the mini-chain
+
+    /// The ghost under the hand while the "+" is dragged (nothing for a click).
+    private var ghost: SendPlusGhost {
+        guard let t = plusDrag else { return .hidden }
+        let g = SendPlusGhost.of(command: placement.command(for: t), translation: t)
+        // No door to put a stage on a send (the demo): "not here" for what would have been one.
+        if case .stage = g, actions.onSendPlusGesture == nil { return .refused }
+        return g
+    }
+
+    /// What letting go of the "+" at `translation` does, handed to the view-model.
+    private func perform(_ translation: CGSize) {
+        switch SendPlusIntent(placement.command(for: translation)) {
+        case .none:
+            break
+        case .openBrowser(let aux):
+            actions.onSendPluginAdd?(aux)
+        case .gainStage(let aux, let index, let result):
+            actions.onSendPlusGesture?(aux, index, result)
+        }
+    }
+
+    /// The "+": a click opens the plugin picker aimed at this send, a drag to the right puts a gain stage
+    /// on it. Shown while the hand is over the box; not hit-testable otherwise.
     private var plusRow: some View {
         HStack(spacing: 0) {
-            Button { actions.onSendPluginAdd?(send.id) } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 20, height: 16)
-                    .background(RoundedRectangle(cornerRadius: 4)
-                        .fill(Color(nsColor: .controlBackgroundColor)))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(actions.onSendPluginAdd == nil)
-            .help(L("synoptic.send.plugin.add.help"))
+            Image(systemName: "plus")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 16)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color.secondary.opacity(0.45), style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { plusDrag = $0.translation }
+                    .onEnded { v in
+                        plusDrag = nil
+                        perform(v.translation)
+                    })
+                .overlay { SendPlusGhostView(ghost: ghost, translation: plusDrag ?? .zero) }
+                .opacity(actions.onSendPluginAdd == nil ? 0.4 : 1)
+                .help(L("synoptic.send.plus.help"))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6)
+        // The whole strip answers the hand while shown (no gap between the line and the "+").
+        .contentShape(Rectangle())
+        .opacity(plusShown ? 1 : 0)
+        .allowsHitTesting(plusShown)
     }
 
     @ViewBuilder private var dropLayer: some View {
@@ -378,55 +468,105 @@ struct SendBoxView: View {
     }
 }
 
-/// One plugin of a send's box: the bypass dot, the name (click = select, double click = editor, drag =
-/// take it), the cross on hover. No link pastille — a send's plugin is never linked — and no VU.
-struct SendPluginRowView: View {
-    let plugin: SynopticSendPlugin
-    let isSelected: Bool
-    let onSelect: () -> Void
-    var onOpen: (() -> Void)? = nil
-    let onToggle: () -> Void
-    let onRemove: () -> Void
-    var dragProvider: (() -> NSItemProvider)? = nil
+/// What the "+" of a send's mini-chain shows under the hand while it is dragged: a dashed pill naming the
+/// stage that letting go would put on the send, or a crossed one for a direction the "+" does not offer.
+/// Deaf to the mouse; it follows the hand by `translation`, from the "+" it is laid over.
+struct SendPlusGhostView: View {
+    let ghost: SendPlusGhost
+    let translation: CGSize
+
+    var body: some View {
+        switch ghost {
+        case .hidden:
+            EmptyView()
+        case .stage(let face):
+            pill {
+                Text(L(face == .gain ? "synoptic.send.plus.ghost.gain" : "synoptic.send.plus.ghost.gainPanMute"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .overlay(Capsule().strokeBorder(Color.accentColor,
+                                            style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
+        case .refused:
+            pill {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.secondary)
+            }
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.7),
+                                            style: StrokeStyle(lineWidth: 1, dash: [2, 2])))
+        }
+    }
+
+    private func pill<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(.horizontal, 8)
+            .frame(minWidth: 30, minHeight: 20)
+            .background(Capsule().fill(Color(nsColor: .controlBackgroundColor).opacity(0.92)))
+            .fixedSize()
+            .offset(x: translation.width, y: translation.height)
+            .allowsHitTesting(false)
+    }
+}
+
+// MARK: - A send in the hand: its preview, and the handle that takes it
+
+/// The image AppKit shows under the pointer while a send is dragged — by its box or by its handle. Like
+/// `PluginDragPreview` it is rendered outside the view hierarchy (explicit colours throughout), and it
+/// names the send, which the default snapshot of a grip (an arrow and a cropped label) did not.
+struct SendDragPreview: View {
+    let name: String
+    let live: Bool
+
+    var body: some View {
+        let tint = live ? Color(nsColor: .controlAccentColor) : Color.gray
+        HStack(spacing: 5) {
+            Image(systemName: "arrow.turn.down.right")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(tint)
+            Text(name)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(tint, lineWidth: 1.5))
+    }
+}
+
+/// The send's SOURCE POINT: a small dot on the send's wire, just left of the trunk's "+" it is taken at
+/// (@see SendWire.handleCenter). Taken in the hand it carries the same payload as the send's box, so the
+/// send is moved by dropping it on the "+" / cable / slot it should leave from — along the chain — exactly
+/// as the box is. Laid by the canvas' ZStack over the wires, one per send; it positions itself.
+///
+/// `rank` is the send's order among those taken at the SAME point (`SendWire.rank(of:in:)`): their handles
+/// would otherwise sit on one another, and only the last would be reachable.
+struct SendTapDotView: View {
+    let placement: SynopticLayout.SendCardPlacement
+    var rank: Int = 0
+    let actions: SynopticActions
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Button(action: onToggle) {
-                Circle()
-                    .fill(plugin.enabled ? Color.accentColor : Color.secondary.opacity(0.35))
-                    .frame(width: 8, height: 8)
-                    .frame(width: 16, height: SynopticLayout.sendPluginRowH)
-                    .contentShape(Rectangle())
+        let send = placement.send
+        let live = SendWire.state(of: send) == .live
+        let tint = (live ? Color.accentColor : Color.secondary)
+        let c = SendWire.handleCenter(of: placement, rank: rank)
+        Circle()
+            .fill(tint.opacity(live ? 0.9 : 0.6))
+            .frame(width: SendWire.dotDiameter, height: SendWire.dotDiameter)
+            .overlay(Circle().strokeBorder(tint.opacity(hovering ? 0.9 : 0), lineWidth: 1.5)
+                .frame(width: SendWire.dotDiameter + 6, height: SendWire.dotDiameter + 6))
+            .frame(width: SendWire.handleDiameter, height: SendWire.handleDiameter)
+            .contentShape(Circle())
+            .onHover { hovering = $0 }
+            .onDragIf(actions.sendDragProvider.map { f in { f(send.id) } }) {
+                SendDragPreview(name: send.name, live: live)
             }
-            .buttonStyle(.plain)
-            .help(L("synoptic.bypass"))
-            Text(plugin.name)
-                .font(.system(size: 10))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(plugin.enabled ? .primary : .secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { (onOpen ?? onSelect)() }
-                .onDragIf(dragProvider)
-                .help(L("synoptic.openPlugin"))
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14, height: SynopticLayout.sendPluginRowH)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering ? 1 : 0)
-            .help(L("synoptic.send.plugin.remove.help"))
-        }
-        .padding(.horizontal, 5)
-        .background(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-        .onHover { hovering = $0 }
+            .help(L("synoptic.send.tap.help"))
+            .position(c)
     }
 }
 
