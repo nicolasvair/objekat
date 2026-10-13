@@ -249,18 +249,19 @@ struct Main {
         let pf = full.postFaderPlus!
         check(pf.allowedGestures == [.send], "the mixer -> stems '+' allows .send only")
         check(pf.command(for: CGSize(width: 2, height: 2)) == .send(.postFader), "a click on it: the Send to... menu, post-fader")
-        check(pf.command(for: CGSize(width: 60, height: -35)) == .send(.postFader), "up-right: a post-fader send")
+        check(pf.command(for: CGSize(width: -60, height: 0)) == .send(.postFader), "left: a post-fader send")
+        check(pf.command(for: CGSize(width: 60, height: -35)) == .none, "up-right: nothing any more")
         check(pf.command(for: CGSize(width: 60, height: 0)) == .none, "right: no gain there")
         check(pf.command(for: CGSize(width: 120, height: 0)) == .none, "far right: no gain there")
         check(pf.command(for: CGSize(width: 60, height: 35)) == .none, "down-right: no branch there")
         check(full.plusTarget(at: pf.center) == .postFader, "hovering its wire names it")
-        check(full.command(for: .postFader, translation: CGSize(width: 50, height: -29)) == .send(.postFader),
+        check(full.command(for: .postFader, translation: CGSize(width: -50, height: 6)) == .send(.postFader),
               "the diagram dispatches the post-fader key")
         let expectedSlots: [Int: SynopticSendSlot] = [0: .input, 1: .chain(1), 2: .chain(2), 3: .preFader]
         for z in ri {
             check(z.sendSlot == expectedSlots[z.insertIndex], "trunk '+' \(z.insertIndex) carries its slot")
-            check(z.command(for: CGSize(width: 60, height: -35)) == .send(expectedSlots[z.insertIndex]!),
-                  "trunk '+' \(z.insertIndex): up-right asks for a send at its slot")
+            check(z.command(for: CGSize(width: -60, height: 0)) == .send(expectedSlots[z.insertIndex]!),
+                  "trunk '+' \(z.insertIndex): left asks for a send at its slot")
         }
 
         // 10. The BOX of a send that carries plugins: real cards on top, the "+" row, the line at the bottom.
@@ -309,7 +310,7 @@ struct Main {
         check(c3.command(for: CGSize(width: 40, height: 0)) == .insertGainStage(k3, .gain), "right: a gain stage on the send")
         check(c3.command(for: CGSize(width: 100, height: 5)) == .insertGainStage(k3, .gainPanMute), "far right: gain + pan + mute")
         check(c3.command(for: CGSize(width: 60, height: 35)) == .none, "down-right: no branch on a send")
-        check(c3.command(for: CGSize(width: 60, height: -35)) == .none, "up-right: no send from a send")
+        check(c3.command(for: CGSize(width: -60, height: 0)) == .none, "left: no send from a send")
         let d3 = layout(trunk, sends: [three])
         check(d3.plusTarget(at: CGPoint(x: c3.plusRect.midX, y: c3.plusRect.midY)) == k3, "hovering the box names its '+'")
         check(d3.plusRect(for: k3) == c3.plusRect, "the diagram finds the box's '+'")

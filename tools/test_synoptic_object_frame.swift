@@ -201,7 +201,8 @@ struct Main {
             check(z.command(for: CGSize(width: 40, height: 0)) == .insertGainStage(z.key, .gain), "right: a gain")
             check(z.command(for: CGSize(width: 90, height: 0)) == .insertGainStage(z.key, .gainPanMute), "far right: gain + pan + mute")
             check(z.command(for: CGSize(width: 60, height: 35)) == .branch(elementID: z.branchTargetID!), "down-right: the branch")
-            check(z.command(for: CGSize(width: -40, height: 0)) == .none, "left: nothing")
+            check(z.command(for: CGSize(width: -40, height: 0)) == .send(z.sendSlot!), "left: a send at its slot")
+            check(z.command(for: CGSize(width: 60, height: -35)) == .none, "up-right: nothing any more")
             check(d.command(for: z.key, translation: CGSize(width: 60, height: 35)) == .branch(elementID: z.branchTargetID!),
                   "the diagram dispatches the same command by key")
         }
@@ -220,7 +221,7 @@ struct Main {
         check(ez[0].branchTargetID == nil && !ez[0].allowedGestures.contains(.branch), "an empty chain: no branch offered")
         check(ez[0].command(for: CGSize(width: 60, height: 35)) == .none, "branch on an empty chain -> none")
         check(ez[0].command(for: CGSize(width: 40, height: 0)) == .insertGainStage(ez[0].key, .gain), "an empty chain: a gain")
-        check(ez[0].command(for: CGSize(width: 60, height: -35)) == .send(.input), "an empty chain: a send at the input")
+        check(ez[0].command(for: CGSize(width: -60, height: 0)) == .send(.input), "an empty chain: a send at the input (left)")
         check(wireCovers(de.placement, x: ez[0].center.x, from: de.sourcePill.maxY, to: de.clipZone!.minY),
               "an empty chain: the wire runs unbroken through its '+'")
 
@@ -236,7 +237,7 @@ struct Main {
             for z in zs {
                 check(z.role == .branch && z.sendSlot == nil, "a branch's '+': no send")
                 check(z.allowedGestures == [.gain, .gainPanMute, .branch], "a branch's '+': gain and branch")
-                check(z.command(for: CGSize(width: 60, height: -35)) == .none, "a branch's '+': up-right does nothing")
+                check(z.command(for: CGSize(width: -60, height: 0)) == .none, "a branch's '+': left (a send) does nothing")
                 check(dp.plusTarget(at: z.center) == z.key, "a branch's '+' wins the hit test over the trunk round it")
             }
             check(zs.first { $0.insertIndex == 1 }?.branchTargetID == (v.id == vA.id ? p1.id : p2.id),

@@ -166,7 +166,7 @@ enum SynopticLayout {
         var hoverRect: CGRect = .zero
         /// The series holds nothing: its '+' is always shown (there is nothing else to aim at).
         var seriesIsEmpty: Bool = false
-        /// The trunk only: the send slot a drag up-right takes (head ≡ input, tail ≡ pre-fader, between
+        /// The trunk only: the send slot a drag to the left takes (head ≡ input, tail ≡ pre-fader, between
         /// entries ≡ chain(i) — @see SynopticSendSlot.forTrunkInsert). nil elsewhere.
         var sendSlot: SynopticSendSlot? = nil
 

@@ -1,9 +1,9 @@
 import Foundation
 
 // Standalone test of the "+" gesture classifier of the signal view (docs/plan_synoptic_rework.md §B.2, the
-// user's decisions of 12 October 2026): under 6 pt a click; right = a gain, past 80 pt gain + pan + mute;
-// −30° (down-right) = a parallel branch; +30° (up-right) = a send; ±15° round each direction; left, or too
-// steep = nothing; a result the "+" does not offer = nothing.
+// user's decisions of 12 and 13 October 2026): under 6 pt a click; right = a gain, past 80 pt gain + pan +
+// mute; −30° (down-right) = a parallel branch; LEFT (180°) = a send; ±15° round each direction; up-right,
+// too steep, or anything else = nothing; a result the "+" does not offer = nothing.
 //
 //     swiftc -parse-as-library -o /tmp/t_plus \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift test_synoptic_plus_gesture.swift \
@@ -53,24 +53,34 @@ struct Main {
         check(G.classify(polar(50, 14.9), allowed: every) == .gain, "+14.9°: still a gain")
         check(G.classify(polar(50, -14.9), allowed: every) == .gain, "−14.9°: still a gain")
 
-        // The two diagonals, ±15° round ±30°.
+        // The branch, ±15° round −30°; the send, ±15° round 180° (LEFT).
+        check(G.sendAngle == 180, "the send points left")
         for deg in [15.01, 17.5, 20, 25, 30, 35, 40, 44.99] {
-            check(G.classify(polar(60, deg), allowed: every) == .send, "+\(deg)°: a send")
             check(G.classify(polar(60, -deg), allowed: every) == .branch, "−\(deg)°: a branch")
+            check(G.classify(polar(60, deg), allowed: every) == .none, "+\(deg)° (up-right): nothing any more")
         }
-        check(G.classify(polar(60, 30), allowed: every) == .send, "+30° exactly: a send")
         check(G.classify(polar(60, -30), allowed: every) == .branch, "−30° exactly: a branch")
-        // the three sectors tile −45°…+45° without a hole: every angle in there asks for something
-        for deg in stride(from: -45.0, through: 45.0, by: 0.5) {
-            check(G.intent(polar(60, deg)) != .none, "\(deg)°: inside the fan, something is asked for")
+        for deg in [165.01, 170.0, 175, 180, -180, -175, -170, -165.01] {
+            check(G.classify(polar(60, deg), allowed: every) == .send, "\(deg)°: a send (left)")
         }
-        // beyond ±45° (too steep), or going left, nothing
-        for deg in [46.0, 60, 89, 90, 120, 180, -46, -60, -90, -135, -179] {
+        check(G.classify(CGSize(width: -60, height: 0), allowed: every) == .send, "straight left: a send")
+        check(G.classify(CGSize(width: -6, height: 0), allowed: every) == .send, "6 pt left: a send (the click threshold)")
+        check(G.classify(CGSize(width: -5.9, height: 0), allowed: every) == .none, "5.9 pt left: a click")
+        check(G.classify(CGSize(width: -200, height: 30), allowed: every) == .send, "far left, slightly down: still a send")
+        check(G.classify(polar(60, 164.9), allowed: every) == .none, "164.9°: just outside the send's sector")
+        check(G.classify(polar(60, -164.9), allowed: every) == .none, "−164.9°: just outside the send's sector")
+        // the right fan −45°…+15° and the left sector 165°…195° ask for something; nothing else does
+        for deg in stride(from: -45.0, through: 14.5, by: 0.5) {
+            check(G.intent(polar(60, deg)) != .none, "\(deg)°: inside the right fan, something is asked for")
+        }
+        for deg in stride(from: 165.5, through: 194.5, by: 0.5) {
+            check(G.intent(polar(60, deg)) == .send, "\(deg)°: inside the left sector, a send")
+        }
+        for deg in [15.5, 46.0, 60, 89, 90, 120, 150, 164, -164, -150, -135, -90, -60, -46] {
             check(G.classify(polar(60, deg), allowed: every) == .none, "\(deg)°: nothing")
         }
         check(G.classify(CGSize(width: 0, height: -60), allowed: every) == .none, "straight up: nothing")
-        check(G.classify(CGSize(width: -60, height: 0), allowed: every) == .none, "left: nothing")
-        check(G.classify(CGSize(width: -60, height: -30), allowed: every) == .none, "up-left: nothing")
+        check(G.classify(CGSize(width: -60, height: -60), allowed: every) == .none, "up-left: nothing")
         check(G.classify(CGSize(width: 0, height: 60), allowed: every) == .none, "straight down: nothing")
 
         // `allowed`: a result the "+" does not offer is nothing (the ghost says "not here").
@@ -78,16 +88,17 @@ struct Main {
         let sendOnly: Set<PlusGestureResult> = [.send]
         let branchWithout: Set<PlusGestureResult> = [.gain, .gainPanMute, .send]   // the trunk of an EMPTY chain
         check(G.classify(polar(60, -30), allowed: gainsOnly) == .none, "a bin / a send's chain: no branch")
-        check(G.classify(polar(60, 30), allowed: gainsOnly) == .none, "a bin / a send's chain: no send")
+        check(G.classify(polar(60, 180), allowed: gainsOnly) == .none, "a bin / a send's chain: no send")
         check(G.classify(CGSize(width: 40, height: 0), allowed: gainsOnly) == .gain, "a bin: a gain")
         check(G.classify(CGSize(width: 40, height: 0), allowed: sendOnly) == .none, "mixer -> stems: no gain")
         check(G.classify(CGSize(width: 120, height: 0), allowed: sendOnly) == .none, "mixer -> stems: no gain + pan + mute")
         check(G.classify(polar(60, -30), allowed: sendOnly) == .none, "mixer -> stems: no branch")
-        check(G.classify(polar(60, 30), allowed: sendOnly) == .send, "mixer -> stems: the send")
+        check(G.classify(polar(60, 180), allowed: sendOnly) == .send, "mixer -> stems: the send, to the left")
+        check(G.classify(polar(60, 30), allowed: sendOnly) == .none, "mixer -> stems: up-right is nothing any more")
         check(G.classify(polar(60, -30), allowed: branchWithout) == .none, "an empty chain: the branch is refused")
         check(G.classify(polar(60, -30), allowed: []) == .none, "nothing offered: nothing")
         // intent ignores `allowed`
-        check(G.intent(polar(60, -30)) == .branch && G.intent(polar(60, 30)) == .send, "intent is the raw direction")
+        check(G.intent(polar(60, -30)) == .branch && G.intent(polar(60, 180)) == .send, "intent is the raw direction")
 
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)

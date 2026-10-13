@@ -15394,19 +15394,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag up and right: a send taken here"
+            "value": "Drag left: a send taken here"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar arriba a la derecha: un envío tomado aquí"
+            "value": "Arrastrar a la izquierda: un envío tomado aquí"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser en haut à droite : un envoi pris ici"
+            "value": "Glisser à gauche : un envoi pris ici"
           }
         }
       }
@@ -15417,19 +15417,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A send taken after the fader: click, or drag up and right"
+            "value": "A send taken after the fader: click, or drag left"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envío tomado después del fader: hacer clic, o arrastrar arriba a la derecha"
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar a la izquierda"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envoi pris après le fader : cliquer, ou glisser en haut à droite"
+            "value": "Un envoi pris après le fader : cliquer, ou glisser à gauche"
           }
         }
       }

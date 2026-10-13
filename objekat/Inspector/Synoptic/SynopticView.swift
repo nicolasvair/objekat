@@ -185,7 +185,8 @@ struct SynopticView: View {
 
             // '+' on the wire (§B.2, §B.3): shown while its line is hovered, always in an empty series, and
             // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for a
-            // gain stage, a parallel branch or a send (@see SynopticPlusGesture), with a ghost under way.
+            // gain stage (right), a parallel branch (down-right) or a send (left) (@see SynopticPlusGesture), with a
+            // ghost under way.
             // Drawn OPAQUE over the wire, which runs through it. Laid after the cable drop zones, so that a
             // shown '+' is what the hand grabs; no `.onDrop` on it (the `CableDropView` under it receives).
             ForEach(d.placement.inserts, id: \.key) { z in
@@ -816,7 +817,7 @@ private struct SynopticPlusGhostView: View {
         switch ghost {
         case .gain, .gainPanMute, .none: return "dial.medium"
         case .branch:                    return "arrow.triangle.branch"
-        case .send:                      return "arrow.up.right"
+        case .send:                      return "arrow.turn.down.left"   // the app's send arrow, leaving LEFT
         case .notHere:                   return "nosign"
         }
     }
