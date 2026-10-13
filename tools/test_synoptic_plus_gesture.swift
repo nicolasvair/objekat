@@ -86,7 +86,7 @@ struct Main {
         // `allowed`: a result the "+" does not offer is nothing (the ghost says "not here").
         let gainsOnly: Set<PlusGestureResult> = [.gain, .gainPanMute]
         let sendOnly: Set<PlusGestureResult> = [.send]
-        let branchWithout: Set<PlusGestureResult> = [.gain, .gainPanMute, .send]   // the trunk of an EMPTY chain
+        let branchWithout: Set<PlusGestureResult> = [.gain, .gainPanMute, .send]   // a "+" that does not offer the branch
         check(G.classify(polar(60, -30), allowed: gainsOnly) == .none, "a bin / a send's chain: no branch")
         check(G.classify(polar(60, 180), allowed: gainsOnly) == .none, "a bin / a send's chain: no send")
         check(G.classify(CGSize(width: 40, height: 0), allowed: gainsOnly) == .gain, "a bin: a gain")
@@ -95,7 +95,7 @@ struct Main {
         check(G.classify(polar(60, -30), allowed: sendOnly) == .none, "mixer -> stems: no branch")
         check(G.classify(polar(60, 180), allowed: sendOnly) == .send, "mixer -> stems: the send, to the left")
         check(G.classify(polar(60, 30), allowed: sendOnly) == .none, "mixer -> stems: up-right is nothing any more")
-        check(G.classify(polar(60, -30), allowed: branchWithout) == .none, "an empty chain: the branch is refused")
+        check(G.classify(polar(60, -30), allowed: branchWithout) == .none, "a \"+\" without the branch: refused")
         check(G.classify(polar(60, -30), allowed: []) == .none, "nothing offered: nothing")
         // intent ignores `allowed`
         check(G.intent(polar(60, -30)) == .branch && G.intent(polar(60, 180)) == .send, "intent is the raw direction")

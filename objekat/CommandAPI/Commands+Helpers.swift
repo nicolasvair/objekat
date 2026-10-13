@@ -354,7 +354,13 @@ extension CommandAdapters {
         ]
         // A parallel block is not a plugin: saying so keeps a script from trying to read its
         // parameters (it has no engine instance of its own).
-        if plugin.isRack { payload["is_rack"] = .bool(true) }
+        if let rack = plugin.rack {
+            payload["is_rack"] = .bool(true)
+            // Its branches, in order: each a series of entries (what `plugin.branch` makes and the tests read).
+            payload["voices"] = .array(rack.voices.map { voice in
+                .array(voice.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
+            })
+        }
         // A send's marker is not a plugin either: it only says where the send towards `send_marker.aux`
         // taps the chain (`send.list` gives the position as a person reads it).
         if let marker = plugin.sendMarker {

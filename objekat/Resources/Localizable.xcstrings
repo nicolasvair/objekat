@@ -15066,6 +15066,29 @@
         }
       }
     },
+    "synoptic.menu.createBranch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crear una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Créer une branche parallèle"
+          }
+        }
+      }
+    },
     "synoptic.midi": {
       "extractionState": "manual",
       "localizations": {

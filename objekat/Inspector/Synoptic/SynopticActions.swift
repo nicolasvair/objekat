@@ -51,7 +51,9 @@ struct SynopticActions {
     var onToggleBypass: (UUID) -> Void = { _ in }
     var onRemove: (UUID) -> Void = { _ in }
     var onInsertSeries: (_ seriesID: UUID, _ index: Int) -> Void = { _, _ in }
-    var onBranch: ((UUID) -> Void)? = nil   // nil = parallel branching disabled (not routed)
+    /// A parallel branch: from a '+' (a drag down-right) or from a card's menu (@see SynopticBranchRequest;
+    /// the receiver reads the selection). nil = parallel branching disabled (not routed).
+    var onBranch: ((SynopticBranchRequest) -> Void)? = nil
 
     // Carried over from the chips (step 1.x):
     var instanceState: ((UUID) -> Int)? = nil       // 0 unknown · 1 loading · 2 ready · 3 error

@@ -797,6 +797,7 @@ after its fader and its window, like a send): a muted source stops keying. Desig
 | | |
 |---|---|
 | `plugin.list` | each plugin (leaf or instrument) also carries `sidechain`: `null`, or `{source, active, reason}` — `reason` is the refusal's raw value, null when active |
+| `plugin.list` (racks) | a parallel block (`is_rack: true`) also carries `voices`: its branches in order, each a list of entries in the same shape (13 October 2026) |
 | `plugin.sidechain_sources` | `host` + `plugin` → `{can_sidechain, current, sources: [{id, kind, name}], refused: [{id, kind, name, reason}]}`. `kind` is object / group / stem. `can_sidechain` false = the live instance has no sidechain input, or is still loading (`wait_idle`, ask again). Reads only |
 | `plugin.set_sidechain` | `host` + `plugin` + `source` (a uuid; null or absent clears) → `{ok, active, reason}`. One undo step, and undoing it does not rebuild the object. `bad_params` with `details.reason` when refused; `invalid_state` when the live plugin has no sidechain input; `not_found` when `plugin` is not a leaf of `host` |
 
@@ -1006,6 +1007,7 @@ commands drive.
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
 | `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip; `plugin` may also be an FX link's BLOCK id (what the bin's header carries); answers `outcome`, `refused`, `reason` |
 | `plugin.drop_at` | the same drop at a PLACE of a host's chain — `series` (`"root"`, `{"block": id}` = into a bin, `{"voice": id, "index": n}` = a parallel branch) and `at` — with `dry_run` returning the resolver's `outcome` and refusal `reason` without touching anything |
+| `plugin.branch` | a PARALLEL BRANCH, as the signal view makes it (13 October 2026): from a '+' — `series` (`"root"` default, `{"voice": id, "index": n}`) and `at` (the '+''s index, markers not counted; default the tail '+') — or from a card's menu — `plugin`. The host's CURRENT card selection decides the run: a '+' takes the element under it (the one above it for the tail '+'), or the selected run that STARTS there (going up from the last one for the tail '+'); a card takes the selected run round it, or itself alone when it is not selected. A non-contiguous selection keeps the part touching the start; a send's marker stops a run; a '+' with nothing under it makes an EMPTY branch (a block of two empty branches — the dry signal twice, +6 dB). One run of several → a 2-branch block `[[run], []]` in its place; one block → one more empty branch on it. A bin's series or instance is refused (`invalid_state`). One undo point. Answers `branched` (ids, in order; `[]` = an empty branch), `empty_branch`, `block` (the block the run went into) and the root `plugins` |
 
 Three things are worth knowing before driving them:
 

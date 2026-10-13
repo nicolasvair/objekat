@@ -179,6 +179,11 @@ struct SynopticView: View {
                     .contextMenu {
                         // A card outside the selection speaks for itself alone (the drag's own rule).
                         fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
+                        // A parallel branch of this card — of the selected run round it when it is selected
+                        // (@see SynopticBranchRun.around). Never for a bin's instance: its block is branched whole.
+                        if !fxReadOnly, !c.plugin.inFXBlock, let branch = actions.onBranch {
+                            Button(L("synoptic.menu.createBranch")) { branch(.plugin(c.plugin.id)) }
+                        }
                     }
                     .position(x: c.frame.midX, y: c.frame.midY)
             }
@@ -396,8 +401,8 @@ struct SynopticView: View {
             case .sendChain(let aux, let i): actions.onSendPlusGesture?(aux, i, result)
             case .postFader:                break
             }
-        case .branch(let elementID):
-            actions.onBranch?(elementID)
+        case .branch(let key):
+            if case .series(let s, let i) = key { actions.onBranch?(.plus(seriesID: s, index: i)) }
         case .send(let slot):
             actions.presentSendMenu(slot: slot)
         }

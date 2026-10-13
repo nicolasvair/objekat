@@ -66,14 +66,14 @@ struct Main {
             .openBrowser(k), .openBrowser(.sendChain(aux: aux, index: 0)),
             .insertGainStage(k, .gain), .insertGainStage(k, .gainPanMute),
             .insertGainStage(.sendChain(aux: aux, index: 2), .gain),
-            .branch(elementID: el), .send(.chain(1)), .send(.postFader),
+            .branch(.series(el, 1)), .send(.chain(1)), .send(.postFader),
         ]
         for c in commands { check(P.available(c, all) == c, "\(c) is carried out when everything is wired") }
         check(P.available(.openBrowser(k), none) == .openBrowser(k), "a click on a series '+' is never lost (onInsertSeries)")
         for c in commands.dropFirst() { check(P.available(c, none) == .none, "\(c) → none with nothing wired") }
         check(P.available(.insertGainStage(.postFader, .gain), all) == .none, "never a gain after the fader")
         var onlyBranch = SynopticPlusAvailability(); onlyBranch.branch = true
-        check(P.available(.branch(elementID: el), onlyBranch) == .branch(elementID: el), "branch wired alone")
+        check(P.available(.branch(.series(el, 1)), onlyBranch) == .branch(.series(el, 1)), "branch wired alone")
         check(P.available(.insertGainStage(k, .gain), onlyBranch) == .none, "gain not wired → none")
         var onlySendGain = SynopticPlusAvailability(); onlySendGain.sendGainStage = true
         check(P.available(.insertGainStage(.sendChain(aux: aux, index: 0), .gain), onlySendGain) != .none,
@@ -98,7 +98,7 @@ struct Main {
         check(P.ghost(for: .none, translation: CGSize(width: 3, height: 0)) == .none, "…even for a refusal")
         check(P.ghost(for: .insertGainStage(k, .gain), translation: far) == .gain, "gain")
         check(P.ghost(for: .insertGainStage(k, .gainPanMute), translation: far) == .gainPanMute, "gain · pan · mute")
-        check(P.ghost(for: .branch(elementID: el), translation: far) == .branch, "branch")
+        check(P.ghost(for: .branch(.series(el, 1)), translation: far) == .branch, "branch")
         check(P.ghost(for: .send(.chain(0)), translation: far) == .send, "send")
         check(P.ghost(for: .none, translation: far) == .notHere, "a refused drag says 'not here'")
         check(P.ghost(for: .openBrowser(k), translation: far) == .none, "the browser is a click's, never a ghost")

@@ -240,7 +240,19 @@ struct SynopticBoundView: View {
             onInsertSeries: { seriesID, index in
                 if let loc = locations[seriesID] { activeSheet = .insert(location: loc, index: index) }
             },
-            onBranch: { elementID in viewModel.synopticBranch(objectID: objectID, elementID: elementID) },
+            // A parallel branch (§B.2): the selection of THIS host decides the run (@see SynopticBranchRun).
+            onBranch: { request in
+                let selected = pluginSelection.wrappedValue
+                let made: [UUID]?
+                switch request {
+                case .plus(let seriesID, let index):
+                    guard let loc = locations[seriesID] else { return }
+                    made = viewModel.synopticBranch(objectID: objectID, location: loc, at: index, selection: selected)
+                case .plugin(let id):
+                    made = viewModel.synopticBranch(objectID: objectID, pluginID: id, selection: selected)
+                }
+                if made == nil { NSSound.beep() }
+            },
             instanceState: { instanceStates[$0] ?? 0 },
             loadError: { loadErrors[$0] },
             onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
@@ -813,7 +825,12 @@ struct SynopticSheet: View {
                     selection.remove($0)
                 },
                 onInsertSeries: { sid, idx in root = root.insertingPlaceholder(intoSeries: sid, atIndex: idx) },
-                onBranch: { root = root.branching($0) }
+                onBranch: { request in
+                    switch request {
+                    case .plugin(let id): root = root.branching(id)
+                    case .plus(let s, let i): if let id = root.branchTarget(series: s, index: i) { root = root.branching(id) }
+                    }
+                }
             ))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: .windowBackgroundColor))

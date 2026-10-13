@@ -200,10 +200,10 @@ struct Main {
             check(z.command(for: CGSize(width: 2, height: 1)) == .openBrowser(.series(trunk.id, z.insertIndex)), "click: the browser")
             check(z.command(for: CGSize(width: 40, height: 0)) == .insertGainStage(z.key, .gain), "right: a gain")
             check(z.command(for: CGSize(width: 90, height: 0)) == .insertGainStage(z.key, .gainPanMute), "far right: gain + pan + mute")
-            check(z.command(for: CGSize(width: 60, height: 35)) == .branch(elementID: z.branchTargetID!), "down-right: the branch")
+            check(z.command(for: CGSize(width: 60, height: 35)) == .branch(z.key), "down-right: the branch, at this '+'")
             check(z.command(for: CGSize(width: -40, height: 0)) == .send(z.sendSlot!), "left: a send at its slot")
             check(z.command(for: CGSize(width: 60, height: -35)) == .none, "up-right: nothing any more")
-            check(d.command(for: z.key, translation: CGSize(width: 60, height: 35)) == .branch(elementID: z.branchTargetID!),
+            check(d.command(for: z.key, translation: CGSize(width: 60, height: 35)) == .branch(z.key),
                   "the diagram dispatches the same command by key")
         }
         // the gestures each '+' offers, by key, as the canvas asks for its zones
@@ -216,14 +216,14 @@ struct Main {
               "over a card: no '+'")
         check(d.alwaysVisiblePlusKeys.isEmpty, "nothing always shown on a full trunk")
 
-        // An EMPTY chain: one '+', always shown, no branch (refused), still a gain and a send.
+        // An EMPTY chain: one '+', always shown; a branch there is an EMPTY branch (13 October 2026); a gain, a send.
         let empty = SynopticNode.series([])
         let de = object(empty)
         let ez = de.placement.inserts.filter { $0.seriesID == empty.id }
         check(ez.count == 1 && ez[0].seriesIsEmpty && ez[0].alwaysVisible, "an empty chain: one '+', always shown")
         check(de.alwaysVisiblePlusKeys == [ez[0].key], "the diagram lists it as always shown")
-        check(ez[0].branchTargetID == nil && !ez[0].allowedGestures.contains(.branch), "an empty chain: no branch offered")
-        check(ez[0].command(for: CGSize(width: 60, height: 35)) == .none, "branch on an empty chain -> none")
+        check(ez[0].branchTargetID == nil && ez[0].allowedGestures.contains(.branch), "an empty chain: a branch offered (an empty one)")
+        check(ez[0].command(for: CGSize(width: 60, height: 35)) == .branch(ez[0].key), "branch on an empty chain -> an empty branch there")
         check(ez[0].command(for: CGSize(width: 40, height: 0)) == .insertGainStage(ez[0].key, .gain), "an empty chain: a gain")
         check(ez[0].command(for: CGSize(width: -60, height: 0)) == .send(.input), "an empty chain: a send at the input (left)")
         check(wireCovers(de.placement, x: ez[0].center.x, from: de.sourcePill.maxY, to: de.clipZone!.minY),
@@ -248,7 +248,7 @@ struct Main {
                   "a branch's tail '+' branches the element above it")
         }
         let vz = dp.placement.inserts.filter { $0.seriesID == vC.id }
-        check(vz.count == 1 && vz[0].alwaysVisible && !vz[0].allowedGestures.contains(.branch), "an empty branch: '+' always shown, no branch")
+        check(vz.count == 1 && vz[0].alwaysVisible && vz[0].allowedGestures.contains(.branch), "an empty branch: '+' always shown, an (empty) branch offered")
         let rz = dp.placement.inserts.filter { $0.seriesID == withPar.id }
         check(rz.first { $0.insertIndex == 1 }?.branchTargetID == par.id, "the '+' above a parallel branches the parallel")
         check(rz.first { $0.insertIndex == 2 }?.branchTargetID == par.id, "the tail '+' under a parallel branches it")

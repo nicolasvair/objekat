@@ -394,6 +394,68 @@ extension CommandRegistry {
             return .object(result)
         }
 
+        // A parallel branch, as the signal view makes it (§B.2): from a '+' (`series` + `at`, the drag
+        // down-right) or from a card's menu (`plugin`). The CURRENT card selection of this host decides the
+        // run, exactly as for the hand (@see SynopticBranchRun): select first with `plugin.select`.
+        register("plugin.branch",
+                 summary: "Creates a parallel branch in a host's chain, as the signal view does: from the '+' "
+                        + "at `at` of `series` (a drag down-right) or from the card `plugin` (its menu). The "
+                        + "host's current card selection extends it to the selected run (a '+': the element "
+                        + "under it and the selected ones that follow; a card: the selected run round it). "
+                        + "An empty series gets an EMPTY branch. One undo point.",
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the chain."),
+                          ParamSpec("plugin", "uuid", required: false,
+                                    "The card whose menu is used. Excludes 'series' / 'at'."),
+                          ParamSpec("series", "string|object", required: false,
+                                    "The '+''s series: \"root\" (default) or {\"voice\": <parallel block id>, "
+                                  + "\"index\": <branch>}. A bin's series refuses (no branch inside a bin)."),
+                          ParamSpec("at", "int", required: false,
+                                    "The '+''s index in that series, markers not counted (default: the tail '+').")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard let chain = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let selection = vm.selectedPluginHostID == host ? vm.selectedPluginIDs : []
+            let made: [UUID]?
+            if p.raw["plugin"] != nil {
+                if p.raw["series"] != nil || p.raw["at"] != nil {
+                    throw CommandError(code: .bad_params, message: "'plugin' excludes 'series' and 'at'")
+                }
+                let id = try p.uuid("plugin")
+                guard EditViewModel.locate(id, in: chain) != nil else {
+                    throw CommandError(code: .not_found, message: "no such card on this host: \(id.uuidString)")
+                }
+                made = vm.synopticBranch(objectID: host, pluginID: id, selection: selection)
+            } else {
+                var raw = p.raw
+                if raw["series"] == nil { raw["series"] = .string("root") }
+                let q = CommandParams(raw)
+                guard case .series(let location, let index) = try CommandAdapters.dropSite(q, chain: chain) else {
+                    throw CommandError(code: .bad_params, message: "series: \"root\" or {\"voice\": id, \"index\": n}")
+                }
+                made = vm.synopticBranch(objectID: host, location: location, at: index, selection: selection)
+            }
+            guard let made else {
+                throw CommandError(code: .invalid_state,
+                                   message: "refused: a bin's instance or series is never branched on its own")
+            }
+            // The block the branch was made in: the carrier holding the first entry of the run (a block that
+            // received one more branch is that block itself).
+            let after = vm.chainPlugins(host) ?? []
+            var block: UUID? = nil
+            if let first = made.first {
+                if made.count == 1, let e = EditViewModel.findEntry(first, in: after), e.isRack { block = first }
+                else if case .voice(let b, _)? = EditViewModel.locate(first, in: after)?.0 { block = b }
+            }
+            return .object(["host": .string(host.uuidString),
+                            "branched": .array(made.map { .string($0.uuidString) }),
+                            "empty_branch": .bool(made.isEmpty),
+                            "block": block.map { .string($0.uuidString) } ?? .null,
+                            "plugins": .array(after.map { CommandAdapters.pluginPayload($0) })])
+        }
+
         register("plugin.unlink",
                  summary: "Detaches a plugin from its link group (it becomes independent again).",
                  params: [ParamSpec("host", "uuid", "Carrying host."),

@@ -65,6 +65,25 @@ extension SynopticNode {
         }
     }
 
+    /// The element a '+' at `index` of the series `seriesID` branches (D3: the one under it; the last one for
+    /// the tail '+'). nil = no such series, or an empty one. The demo's reading of `SynopticBranchRequest.plus`.
+    func branchTarget(series seriesID: UUID, index: Int) -> UUID? {
+        switch kind {
+        case .plugin:
+            return nil
+        case .series(let a):
+            if id == seriesID {
+                guard !a.isEmpty else { return nil }
+                return a[min(max(0, index), a.count - 1)].id
+            }
+            for k in a { if let f = k.branchTarget(series: seriesID, index: index) { return f } }
+            return nil
+        case .parallel(let a):
+            for k in a { if let f = k.branchTarget(series: seriesID, index: index) { return f } }
+            return nil
+        }
+    }
+
     // MARK: Removing a plugin (folding the emptied containers back)
 
     /// Returns `nil` if the whole node disappears (having become empty). To be applied at the root

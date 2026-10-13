@@ -160,7 +160,9 @@ enum SynopticLayout {
         let center: CGPoint          // the centre of the '+', laid on the wire
         var role: InsertRole = .trunk
         /// The element a drag down-right puts in parallel (D3): the element UNDER the '+' (after it in the
-        /// flow); for the series' tail '+', the element ABOVE it; nil in an empty series (refused).
+        /// flow); for the series' tail '+', the element ABOVE it; nil in an empty series (where the drag
+        /// makes an EMPTY branch). With a selection, the receiver extends it to the selected run that starts
+        /// there (@see SynopticBranchRun.forPlus, which applies the same rule to the model).
         var branchTargetID: UUID? = nil
         /// The line's band round the '+' (the cable segment it sits on): hovering it shows the '+'.
         var hoverRect: CGRect = .zero
@@ -180,10 +182,11 @@ enum SynopticLayout {
                    width: SynopticLayout.plusW, height: SynopticLayout.plusW)
         }
         /// The drags this '+' offers (§B.2): a gain on every series; a branch on the trunk and in a
-        /// parallel's branch when there is an element to branch; a send on the trunk only.
+        /// parallel's branch — an EMPTY one when the series holds nothing (user rule of 13 October 2026);
+        /// a send on the trunk only.
         var allowedGestures: Set<PlusGestureResult> {
             var s: Set<PlusGestureResult> = [.gain, .gainPanMute]
-            if role != .fxSeries, branchTargetID != nil { s.insert(.branch) }
+            if role != .fxSeries { s.insert(.branch) }
             if role == .trunk, sendSlot != nil { s.insert(.send) }
             return s
         }
@@ -194,7 +197,7 @@ enum SynopticLayout {
             case .none:        return .none
             case .gain:        return .insertGainStage(key, .gain)
             case .gainPanMute: return .insertGainStage(key, .gainPanMute)
-            case .branch:      return branchTargetID.map { .branch(elementID: $0) } ?? .none
+            case .branch:      return .branch(key)
             case .send:        return sendSlot.map { .send($0) } ?? .none
             }
         }
@@ -1072,12 +1075,13 @@ enum SynopticPlusKey: Hashable {
 ///  - `.openBrowser(.sendChain(a, _))`  → `onSendPluginAdd(a)`;
 ///  - `.insertGainStage(.series(s, i), face)` → `onPlusGesture(s, i, face == .gain ? .gain : .gainPanMute)`;
 ///  - `.insertGainStage(.sendChain(a, i), face)` → `onSendPlusGesture(a, i, …)`;
-///  - `.branch(elementID:)`             → `onBranch(elementID)`;
+///  - `.branch(.series(s, i))`          → `onBranch(.plus(seriesID: s, index: i))` (the receiver reads the
+///                                        element under the '+' and the selection, @see SynopticBranchRun);
 ///  - `.send(slot)`                     → `presentSendMenu(slot:)` (the existing "Send to…" menu at that slot).
 enum SynopticPlusCommand: Equatable {
     case none
     case openBrowser(SynopticPlusKey)
     case insertGainStage(SynopticPlusKey, SynopticGainStageFace)
-    case branch(elementID: UUID)
+    case branch(SynopticPlusKey)
     case send(SynopticSendSlot)
 }
