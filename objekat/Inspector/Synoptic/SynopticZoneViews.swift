@@ -3,9 +3,10 @@ import AppKit
 import Combine
 import UniformTypeIdentifiers
 
-// MARK: - dB gain control (a parallel branch, or the start/end of the chain)
+// MARK: - dB gain control (a parallel branch's gain, the clip's volume)
 
 /// A small dB readout: dragging ↑/↓ adjusts in 1 dB steps (without recompiling), double click = 0 dB.
+/// (The chain's start/end gains it once served are gone: a gain is a stage now, with a card of its own.)
 struct GainDbControl: View {
     let dB: Float
     var minDb: Float = -24
@@ -262,12 +263,36 @@ struct DragValueBox: View {
     }
 }
 
-// MARK: - The 'audio file' zone (an audio clip): speed / semitones / bpm
+// MARK: - The box of the zones that straddle the object frame
+
+/// The box of a head / mixer zone: OPAQUE (docs/plan_synoptic_rework.md §B.5). The object frame runs from the
+/// head zone's midline to the mixer's midline, so its edge passes BEHIND these zones and they straddle it:
+/// a translucent tint would show the frame's line through them. The tint is the one the zones always had,
+/// laid over the same opaque ground as a plugin card's.
+struct SynopticZoneBox: View {
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10)
+        shape.fill(Color(nsColor: .controlBackgroundColor))
+            .overlay(shape.fill(Color.secondary.opacity(0.06)))
+            .overlay(shape.strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+    }
+}
+
+// MARK: - The 'audio file' zone (an audio clip): loop / reverse, and the options speed / semitones / bpm / channels
+//
+// FOLDED (the default, @see SynopticUIState.clipOptionsExpanded) the zone is ONE row: the title, a pill for
+// each hidden setting that is not neutral, then loop, reverse and the chevron. Loop and reverse stay one
+// click away. UNFOLDED, the options come under that same row. The chevron AND a double click anywhere on
+// the zone (a value box keeps its own double click, "reset") fold and unfold it. The memory is global to
+// the session, not per object.
 
 struct AudioFileZoneView: View {
     let rect: CGRect
     let file: SynopticAudioFile
     let actions: SynopticActions
+    /// Is the zone laid folded? nil = read it off the room the layout gave it (one row), which is the one
+    /// source of truth: the content can never overflow the rect it was handed.
+    var folded: Bool? = nil
     @State private var bpmBaseText: String = ""
     @FocusState private var baseFocused: Bool
     /// Same fallback as `TransportView`'s tempo field, and for the same reason: ⌘↑/⌘↓ risk being
@@ -307,174 +332,263 @@ struct AudioFileZoneView: View {
     private var semis: Double { 12 * log2(max(1e-6, file.speedRatio)) }
     private var targetBPM: Double? { file.baseBPM.map { $0 * file.speedRatio } }
 
+    /// The zone is folded: laid on one row (or told so by the caller).
+    private var isFolded: Bool { folded ?? (rect.height < SynopticLayout.audioZoneH - 0.5) }
+
     private func stLabel(_ s: Double) -> String {
         let r = s.rounded()
         if abs(s - r) < 0.05 { return r == 0 ? "0 st" : String(format: "%+.0f st", r) }
         return String(format: "%+.1f st", s)
     }
 
+    /// Folds / unfolds the options. The closure is the caller's (`SynopticActions.onToggleClipOptions`); with
+    /// none, the zone flips the session memory itself — it is app-wide and not an edit, so there is nothing
+    /// else for a caller to add. Folding first lets go of what was being typed (a hidden field would drop it).
+    private func toggleFold() {
+        if !isFolded {
+            if baseFocused { commitBase() }
+            KeyboardClaim.shared.revoke()      // a value box mid-entry commits ("leaving is validating")
+        }
+        if let toggle = actions.onToggleClipOptions { toggle() }
+        else { SynopticUIState.shared.toggleClipOptions() }
+    }
+
     var body: some View {
+        zone
+            .frame(width: rect.width, height: rect.height)
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+            // Anywhere on the zone but a button or a value box (their own gestures win over this one).
+            .onTapGesture(count: 2) { toggleFold() }
+            .position(x: rect.midX, y: rect.midY)
+            .onAppear { syncBaseText() }
+            .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
+    }
+
+    private var zone: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
+            SynopticZoneBox()
 
             VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
-                    Text(L("synoptic.audioFile"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button { actions.onToggleLoop?() } label: {
-                        Text(L("synoptic.loop.label"))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(file.isLooping ? Color.white : Color.secondary.opacity((file.isReversed || file.ara != nil) ? 0.4 : 1))
-                            .padding(.horizontal, 6).frame(height: 16)
-                            .background(RoundedRectangle(cornerRadius: 4)
-                                .fill(file.isLooping ? Color.accentColor : Color.secondary.opacity(0.18)))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(Color.secondary.opacity(0.35)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(file.isReversed || file.ara != nil)
-                    // Looping is not handled in reverse yet: the source anchor is recomputed from the
-                    // length, which becomes unbounded precisely when looping (@see [[loop-item-plan]]).
-                    .help(file.ara != nil ? L("synoptic.ara.timeLocked")
-                          : file.isReversed ? L("synoptic.loop.unavailableReversed")
-                          : file.isLooping ? L("synoptic.loop.on")
-                          : L("synoptic.loop.off"))
-                    Button { actions.onToggleReverse?() } label: {
-                        Text(L("synoptic.reverse.label"))
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(file.isReversed ? Color.white : Color.secondary)
-                            .padding(.horizontal, 6).frame(height: 16)
-                            .background(RoundedRectangle(cornerRadius: 4)
-                                .fill(file.isReversed ? Color.accentColor : Color.secondary.opacity(0.18)))
-                            .overlay(RoundedRectangle(cornerRadius: 4)
-                                .strokeBorder(Color.secondary.opacity(0.35)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(file.ara != nil && !file.isReversed)
-                    .opacity(file.ara != nil && !file.isReversed ? 0.4 : 1)
-                    .help(file.ara != nil && !file.isReversed ? L("synoptic.ara.timeLocked")
-                          : file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
-                }
+                titleRow
 
-                // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
-                // SynopticLayout.audioZoneStereoExtraH).
-                if let current = file.channelMode {
-                    HStack(spacing: 4) {
-                        Text(L("inspector.channelMode.title"))
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1).fixedSize()
-                        ForEach(ChannelMode.allCases, id: \.self) { mode in
-                            Button { actions.onSetChannelMode?(mode) } label: {
-                                Text(channelModeLabel(mode))
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(current == mode ? Color.white : Color.secondary)
-                                    .padding(.horizontal, 6).frame(height: 16)
-                                    .background(RoundedRectangle(cornerRadius: 4)
-                                        .fill(current == mode ? Color.accentColor : Color.secondary.opacity(0.18)))
-                                    .overlay(RoundedRectangle(cornerRadius: 4)
-                                        .strokeBorder(Color.secondary.opacity(0.35)))
+                if !isFolded {
+                    // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
+                    // SynopticLayout.audioZoneStereoExtraH).
+                    if let current = file.channelMode {
+                        HStack(spacing: 4) {
+                            Text(L("inspector.channelMode.title"))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1).fixedSize()
+                            ForEach(ChannelMode.allCases, id: \.self) { mode in
+                                Button { actions.onSetChannelMode?(mode) } label: {
+                                    Text(channelModeLabel(mode))
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundStyle(current == mode ? Color.white : Color.secondary)
+                                        .padding(.horizontal, 6).frame(height: 16)
+                                        .background(RoundedRectangle(cornerRadius: 4)
+                                            .fill(current == mode ? Color.accentColor : Color.secondary.opacity(0.18)))
+                                        .overlay(RoundedRectangle(cornerRadius: 4)
+                                            .strokeBorder(Color.secondary.opacity(0.35)))
+                                }
+                                .buttonStyle(.plain)
+                                .help(channelModeHelp(mode))
                             }
-                            .buttonStyle(.plain)
-                            .help(channelModeHelp(mode))
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
-                    }
-                }
-
-                // 1× / st / bpm on the same line (saving height).
-                HStack(spacing: 6) {
-                    DragValueBox(value: semis,
-                                 format: { String(format: "%.2f×", pow(2.0, $0 / 12.0)) },
-                                 range: -48...48, pointsPerStep: 6, snap: false, width: 52,
-                                 keyStep: 1,
-                                 parse: { Double($0.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "×", with: "").replacingOccurrences(of: "x", with: "")).map { 12 * log2(max(1e-6, $0)) } },
-                                 help: L("help.drag.speed"),
-                                 onBegin: { actions.onBeginSpeedEdit?() },
-                                 onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
-                                 onReset: { actions.onSetSpeed?(1.0) })
-                    DragValueBox(value: semis,
-                                 format: stLabel,
-                                 range: -48...48, pointsPerStep: 6, width: 48,
-                                 keyStep: 1,
-                                 help: L("help.drag.semitones"),
-                                 onBegin: { actions.onBeginSpeedEdit?() },
-                                 onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
-                                 onReset: { actions.onSetSpeed?(1.0) })
-
-                    Spacer(minLength: 0)
-
-                    TextField(text: $bpmBaseText) { Text(verbatim: "—") }
-                        .frame(width: baseBpmFieldWidth(for: bpmBaseText)).multilineTextAlignment(.center)
-                        .font(.system(size: 10, design: .monospaced))
-                        .textFieldStyle(.plain)
-                        .padding(.horizontal, 3).padding(.vertical, 2)
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
-                        .focused($baseFocused)
-                        .onSubmit { commitBase() }
-                        .onChange(of: baseFocused) { _, focused in
-                            if focused { installBaseCommandArrowMonitorIfNeeded() }
-                            else { removeBaseCommandArrowMonitor() }
-                        }
-                        .onDisappear { removeBaseCommandArrowMonitor() }
-                        .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                            let step: Double = press.modifiers.contains(.command) ? 0.1
-                                : press.modifiers.contains(.shift) ? 10
-                                : 1
-                            nudgeBaseBPM(by: press.key == .upArrow ? step : -step)
-                            return .handled
-                        }
-                        .help(L("synoptic.wavBPM"))
-
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 8)).foregroundStyle(.tertiary)
-
-                    if let base = file.baseBPM, base > 0 {
-                        // Same rules as the wav BPM field and the transport tempo: up to 4 decimals shown
-                        // only when needed, ',' or '.', ⌘↑/↓ ±0.1, ⇧ ±10, width follows the text.
-                        DragValueBox(value: targetBPM ?? base,
-                                     format: { TempoText.display(TempoText.rounded($0)) },
-                                     range: 20...400, pointsPerStep: 2, width: 38,
-                                     keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
-                                     fitsContent: true,
-                                     parse: { TempoText.parse($0) },
-                                     help: L("help.drag.bpm"),
-                                     onBegin: { actions.onBeginSpeedEdit?() },
-                                     onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) },
-                                     // ⌫ / double-click: back to the wav's own BPM (speed 1).
-                                     onReset: { actions.onBeginSpeedEdit?(); actions.onSetSpeed?(1.0) })
-                    } else {
-                        Text(verbatim: "—")
-                            .font(.system(size: 10, weight: .medium)).monospacedDigit()
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 38, height: 18)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)))
                     }
 
-                    // Never squeezed: the two BPM fields widen with their text, and without this
-                    // the unit was what gave way — shrinking, then gone.
-                    Text(verbatim: "bpm").font(.system(size: 9)).foregroundStyle(.secondary)
-                        .fixedSize()
-                        .layoutPriority(1)
+                    optionsRow
                 }
-                // An ARA source needs speed 1: the speed / semitone / bpm boxes only show it then.
-                .allowsHitTesting(file.ara == nil)
-                .opacity(file.ara == nil ? 1 : 0.45)
             }
-            .padding(.horizontal, 10).padding(.top, 8)
+            .padding(.horizontal, 10)
+            .padding(.top, isFolded ? (SynopticLayout.audioZoneFoldedH - 16) / 2 : 8)
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-            .position(x: rect.midX, y: rect.midY)
         }
-        .onAppear { syncBaseText() }
-        .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
+    }
+
+    // MARK: Row 1 — always visible: title, [pills], loop, reverse, chevron
+
+    private var titleRow: some View {
+        HStack(spacing: 4) {
+            Text(L("synoptic.audioFile"))
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            if isFolded {
+                // A hidden setting that is not neutral says so (§B.7). Passive: a double click on one opens
+                // the zone like anywhere else.
+                ForEach(Array(file.hiddenNonNeutralSettings.enumerated()), id: \.offset) { _, setting in
+                    hiddenPill(setting)
+                }
+            }
+            Spacer(minLength: 0)
+            loopButton
+            reverseButton
+            chevronButton
+        }
+        .frame(height: 16)
+    }
+
+    private var loopButton: some View {
+        Button { actions.onToggleLoop?() } label: {
+            Text(L("synoptic.loop.label"))
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(file.isLooping ? Color.white : Color.secondary.opacity((file.isReversed || file.ara != nil) ? 0.4 : 1))
+                .padding(.horizontal, 6).frame(height: 16)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(file.isLooping ? Color.accentColor : Color.secondary.opacity(0.18)))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color.secondary.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .disabled(file.isReversed || file.ara != nil)
+        // Looping is not handled in reverse yet: the source anchor is recomputed from the
+        // length, which becomes unbounded precisely when looping (@see [[loop-item-plan]]).
+        .help(file.ara != nil ? L("synoptic.ara.timeLocked")
+              : file.isReversed ? L("synoptic.loop.unavailableReversed")
+              : file.isLooping ? L("synoptic.loop.on")
+              : L("synoptic.loop.off"))
+    }
+
+    private var reverseButton: some View {
+        Button { actions.onToggleReverse?() } label: {
+            Text(L("synoptic.reverse.label"))
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(file.isReversed ? Color.white : Color.secondary)
+                .padding(.horizontal, 6).frame(height: 16)
+                .background(RoundedRectangle(cornerRadius: 4)
+                    .fill(file.isReversed ? Color.accentColor : Color.secondary.opacity(0.18)))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(Color.secondary.opacity(0.35)))
+        }
+        .buttonStyle(.plain)
+        .disabled(file.ara != nil && !file.isReversed)
+        .opacity(file.ara != nil && !file.isReversed ? 0.4 : 1)
+        .help(file.ara != nil && !file.isReversed ? L("synoptic.ara.timeLocked")
+              : file.isReversed ? L("synoptic.reverse.on") : L("synoptic.reverse.off"))
+    }
+
+    /// The fold's chevron: points right when the options are hidden, down when shown.
+    private var chevronButton: some View {
+        Button { toggleFold() } label: {
+            Image(systemName: isFolded ? "chevron.right" : "chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isFolded ? L("synoptic.audioFile.unfold") : L("synoptic.audioFile.fold"))
+    }
+
+    // MARK: A pill for a hidden setting that is not neutral
+
+    private func hiddenPill(_ setting: SynopticHiddenSetting) -> some View {
+        let text: String
+        let help: String
+        switch setting {
+        case .pitch(let semitones, let ratio):
+            text = SynopticZonePills.pitchText(semitones: semitones, ratio: ratio)
+            help = L("synoptic.audioFile.pill.speed", SynopticZonePills.ratioText(ratio))
+        case .tempo(let bpm):
+            text = SynopticZonePills.tempoText(targetBPM: bpm)
+            help = L("synoptic.audioFile.pill.tempo", TempoText.display(TempoText.rounded(bpm)))
+        case .channel(let mode):
+            text = channelModeLabel(mode)
+            help = channelModeHelp(mode)
+        }
+        return Text(verbatim: text)
+            .font(.system(size: 9, weight: .medium)).monospacedDigit()
+            .foregroundStyle(Color.accentColor)
+            .lineLimit(1).fixedSize()
+            .padding(.horizontal, 6).frame(height: 16)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.15)))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor.opacity(0.45)))
+            .help(help)
+    }
+
+    // MARK: Row 2 (unfolded) — 1× / st / bpm on the same line (saving height)
+
+    private var optionsRow: some View {
+        HStack(spacing: 6) {
+            DragValueBox(value: semis,
+                         format: { String(format: "%.2f×", pow(2.0, $0 / 12.0)) },
+                         range: -48...48, pointsPerStep: 6, snap: false, width: 52,
+                         keyStep: 1,
+                         parse: { Double($0.replacingOccurrences(of: ",", with: ".").replacingOccurrences(of: "×", with: "").replacingOccurrences(of: "x", with: "")).map { 12 * log2(max(1e-6, $0)) } },
+                         help: L("help.drag.speed"),
+                         onBegin: { actions.onBeginSpeedEdit?() },
+                         onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
+                         onReset: { actions.onSetSpeed?(1.0) })
+            DragValueBox(value: semis,
+                         format: stLabel,
+                         range: -48...48, pointsPerStep: 6, width: 48,
+                         keyStep: 1,
+                         help: L("help.drag.semitones"),
+                         onBegin: { actions.onBeginSpeedEdit?() },
+                         onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
+                         onReset: { actions.onSetSpeed?(1.0) })
+
+            Spacer(minLength: 0)
+
+            TextField(text: $bpmBaseText) { Text(verbatim: "—") }
+                .frame(width: baseBpmFieldWidth(for: bpmBaseText)).multilineTextAlignment(.center)
+                .font(.system(size: 10, design: .monospaced))
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 3).padding(.vertical, 2)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.18)))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
+                .focused($baseFocused)
+                .onSubmit { commitBase() }
+                .onChange(of: baseFocused) { _, focused in
+                    if focused { installBaseCommandArrowMonitorIfNeeded() }
+                    else { removeBaseCommandArrowMonitor() }
+                }
+                .onDisappear { removeBaseCommandArrowMonitor() }
+                .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                    let step: Double = press.modifiers.contains(.command) ? 0.1
+                        : press.modifiers.contains(.shift) ? 10
+                        : 1
+                    nudgeBaseBPM(by: press.key == .upArrow ? step : -step)
+                    return .handled
+                }
+                .help(L("synoptic.wavBPM"))
+
+            Image(systemName: "arrow.right")
+                .font(.system(size: 8)).foregroundStyle(.tertiary)
+
+            if let base = file.baseBPM, base > 0 {
+                // Same rules as the wav BPM field and the transport tempo: up to 4 decimals shown
+                // only when needed, ',' or '.', ⌘↑/↓ ±0.1, ⇧ ±10, width follows the text.
+                DragValueBox(value: targetBPM ?? base,
+                             format: { TempoText.display(TempoText.rounded($0)) },
+                             range: 20...400, pointsPerStep: 2, width: 38,
+                             keyStep: 1, fineKeyStep: 0.1, coarseKeyStep: 10,
+                             fitsContent: true,
+                             parse: { TempoText.parse($0) },
+                             help: L("help.drag.bpm"),
+                             onBegin: { actions.onBeginSpeedEdit?() },
+                             onChange: { actions.onSetSpeed?(TempoText.rounded($0) / base) },
+                             // ⌫ / double-click: back to the wav's own BPM (speed 1).
+                             onReset: { actions.onBeginSpeedEdit?(); actions.onSetSpeed?(1.0) })
+            } else {
+                Text(verbatim: "—")
+                    .font(.system(size: 10, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 38, height: 18)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08)))
+            }
+
+            // Never squeezed: the two BPM fields widen with their text, and without this
+            // the unit was what gave way — shrinking, then gone.
+            Text(verbatim: "bpm").font(.system(size: 9)).foregroundStyle(.secondary)
+                .fixedSize()
+                .layoutPriority(1)
+        }
+        // An ARA source needs speed 1: the speed / semitone / bpm boxes only show it then.
+        .allowsHitTesting(file.ara == nil)
+        .opacity(file.ara == nil ? 1 : 0.45)
     }
 
     // One literal key per case, on purpose: `orphans` reads the code for key-shaped strings.
@@ -530,10 +644,8 @@ struct ClipMixZoneView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.06))
-                .overlay(RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+            // OPAQUE: the mixer straddles the object frame's lower edge (@see SynopticZoneBox).
+            SynopticZoneBox()
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: rect.midY)
 
