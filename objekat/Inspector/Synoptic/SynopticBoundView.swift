@@ -23,13 +23,13 @@ extension PluginCategory {
 enum SynopticSheetKind: Identifiable {
     case insert(location: SeriesLocation, index: Int)   // a series '+' inside a target series
     case instrument                                      // the '+' of the instruments zone (a MIDI clip)
-    case insertSend(aux: UUID)                           // the '+' of a send's box (INC 3): the end of its mini-chain
+    case insertSend(aux: UUID, index: Int?)              // a '+' of a send's mini-chain (INC 3); nil = its end
 
     var id: String {
         switch self {
         case .insert(let loc, let i): return "insert-\(loc.key)-\(i)"
         case .instrument:             return "instrument"
-        case .insertSend(let aux):    return "insertSend-\(aux.uuidString)"
+        case .insertSend(let aux, let i): return "insertSend-\(aux.uuidString)-\(i.map(String.init) ?? "end")"
         }
     }
 }
@@ -408,7 +408,7 @@ struct SynopticBoundView: View {
                     viewModel.removePlugin(objectID: host, pluginID: id)
                 }
             },
-            onSendPluginAdd: { aux in activeSheet = .insertSend(aux: aux) },
+            onSendPluginAdd: { aux, index in activeSheet = .insertSend(aux: aux, index: index) },
             sendPluginDragProvider: { aux, id in sendPluginDragProvider(aux: aux, pluginID: id) },
             sendBoxDropOutcome: { aux, index, flags in
                 // A send card in the hand: a box takes plugins, not sends.
@@ -493,14 +493,16 @@ struct SynopticBoundView: View {
                 pickerSheet(instrumentsOnly: true) { available in
                     viewModel.setInstrument(objectID: objectID, available: available)
                 }
-            case .insertSend(let aux):
-                // The send's own chain host: the plugin lands at the END of its mini-chain. No ARA source
-                // there (a source is an object's), and instruments are left out like in any FX chain.
+            case .insertSend(let aux, let index):
+                // The send's own chain host: the plugin lands at the '+' clicked (the END from the line's
+                // menu). No ARA source there (a source is an object's), and instruments are left out like in
+                // any FX chain.
                 let host = sendHost(aux)
                 pickerSheet(title: L("synoptic.sheet.addPluginOnSend", viewModel.find(id: aux)?.displayName ?? ""),
                             showsARASource: false) { available in
+                    let count = viewModel.chainPlugins(host)?.count ?? 0
                     viewModel.synopticInsert(objectID: host, available: available, into: .root,
-                                             at: viewModel.chainPlugins(host)?.count ?? 0)
+                                             at: min(max(0, index ?? count), count))
                 }
             }
         }

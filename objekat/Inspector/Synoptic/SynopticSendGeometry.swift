@@ -2,12 +2,13 @@ import SwiftUI
 
 // MARK: - The sends' wires, handles and "+" intents (PURE: no view, no model)
 //
-// Signal view rework, lot L7 (docs/plan_synoptic_rework.md §B.6, request 12). A send is a BOX stacked below
-// the stems; the line that shows where it is taken from leaves the TRUNK at the send's tap, runs out to the
-// LEFT of the object's frame, down its own gutter, and into the box (@see SynopticLayout.SendCardPlacement.wire,
-// whose points the layout guarantees never cross). This file holds what the VIEWS need of that and nothing
-// else: how the polyline is rounded and stroked, where the handle that moves the send sits, and what a
-// gesture on a send's "+" means. Compiled alone by `tools/test_synoptic_send_wire.swift`.
+// Signal view rework, lot L7 (docs/plan_synoptic_rework.md §B.6, request 12), reworked on 13 October 2026
+// (request 5: a send drawn like the object). A send is a COLUMN stacked below the stems; the line that shows
+// where it is taken from leaves the TRUNK at the send's tap, runs out to the LEFT of the object's frame, down
+// its own gutter, in at the column's top, and then DOWN the column through the send's plugins to its line
+// (@see SynopticLayout.SendCardPlacement.wire / .chain, whose points the layout guarantees never cross). This
+// file holds what the VIEWS need of that and nothing else: how the polyline is rounded and stroked, and where
+// the handle that moves the send sits. Compiled alone by `tools/test_synoptic_send_wire.swift`.
 //
 // Who calls it: the wires are drawn in the canvas' `Canvas` (`SendWire.draw(_:cards:)`), the handle is a
 // view of `SynopticSendViews.swift` (`SendTapDotView`) laid in the canvas' ZStack. The canvas (lot L4) owns
@@ -19,7 +20,8 @@ enum SendWire {
 
     /// The radius of a wire's corners (clamped to half of the shorter leg it turns between).
     static let cornerRadius: CGFloat = 6
-    /// The arrowhead where the wire enters the box: it points RIGHT (the wire arrives from the gutter).
+    /// The arrowheads of the wire's run down the column (into each card, into the line): they point DOWN,
+    /// the signal's way, as the trunk's do.
     static let arrowLength: CGFloat = 6
     static let arrowHalfWidth: CGFloat = 4
     /// The visible dot of the handle, and the square the hand can take it by.
@@ -101,15 +103,41 @@ enum SendWire {
         return path
     }
 
-    /// The send's wire: tap → left to the gutter → down the gutter → right into the box.
-    static func path(of c: SynopticLayout.SendCardPlacement) -> Path { roundedPath(c.wire) }
+    /// The send's wire as ONE polyline: tap → left to the gutter → down the gutter → right to the column's
+    /// axis → down into the column's first element (its first card, or the line of a plugin-less send). The
+    /// turn down is part of it, so that corner is rounded like the others.
+    static func points(of c: SynopticLayout.SendCardPlacement) -> [CGPoint] {
+        var p = c.wire
+        if let first = c.chain.cables.first, startsAtEntry(first, c) { p.append(first.to) }
+        return p
+    }
 
-    /// The arrowhead whose tip is `tip`, pointing right.
+    static func path(of c: SynopticLayout.SendCardPlacement) -> Path { roundedPath(points(of: c)) }
+
+    /// The column's first segment leaves from where the wire arrives (always, as laid; checked to the
+    /// sub-pixel so a rounding never draws one segment twice).
+    private static func startsAtEntry(_ cable: SynopticLayout.Cable, _ c: SynopticLayout.SendCardPlacement) -> Bool {
+        abs(cable.from.x - c.entry.x) < 1e-6 && abs(cable.from.y - c.entry.y) < 1e-6
+    }
+
+    /// The rest of the run down the column (every segment after the one `points(of:)` already holds).
+    static func columnCables(of c: SynopticLayout.SendCardPlacement) -> [SynopticLayout.Cable] {
+        guard let first = c.chain.cables.first, startsAtEntry(first, c) else { return c.chain.cables }
+        return Array(c.chain.cables.dropFirst())
+    }
+
+    /// The arrowheads of the column: one where each segment ARRIVES at an element (a card, the line) — the
+    /// trunk's own rule (the arrow belongs to the segment that arrives; a `.plain` one carries none).
+    static func arrowTips(of c: SynopticLayout.SendCardPlacement) -> [CGPoint] {
+        c.chain.cables.filter { $0.style == .connector }.map(\.to)
+    }
+
+    /// The arrowhead whose tip is `tip`, pointing DOWN.
     static func arrowHead(at tip: CGPoint) -> Path {
         var p = Path()
-        p.move(to: CGPoint(x: tip.x - arrowLength, y: tip.y - arrowHalfWidth))
+        p.move(to: CGPoint(x: tip.x - arrowHalfWidth, y: tip.y - arrowLength))
         p.addLine(to: tip)
-        p.addLine(to: CGPoint(x: tip.x - arrowLength, y: tip.y + arrowHalfWidth))
+        p.addLine(to: CGPoint(x: tip.x + arrowHalfWidth, y: tip.y - arrowLength))
         return p
     }
 
@@ -132,59 +160,23 @@ enum SendWire {
 
     // MARK: Drawing
 
-    /// Strokes every send's wire into the canvas' context, dashed (it is a TAP, not the flow), with the
-    /// arrow where it enters the box. The handles are views, laid over this.
+    /// Strokes every send's wire into the canvas' context, dashed (it is a TAP, not the flow): from the trunk
+    /// to the column, then on down the column through the send's cards to its line — ONE wire, in one style,
+    /// with an arrow into each card and into the line. The handles and the '+' are views, laid over this.
     static func draw(_ ctx: GraphicsContext, cards: [SynopticLayout.SendCardPlacement]) {
         for c in cards {
             let state = state(of: c.send)
             let color = (state == .live ? Color.accentColor : Color.secondary).opacity(opacity(state))
-            ctx.stroke(path(of: c), with: .color(color),
-                       style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round, dash: dash))
-            ctx.stroke(arrowHead(at: c.entry), with: .color(color),
-                       style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
-        }
-    }
-}
-
-// MARK: - The "+" of a send's mini-chain
-
-/// What a gesture on the "+" of a send's box asks of the view-model: the layout's command
-/// (@see SynopticLayout.SendCardPlacement.command(for:)) translated to the closure it goes to.
-enum SendPlusIntent: Equatable {
-    /// Nothing (a drag the "+" does not offer).
-    case none
-    /// A click: the plugin picker aimed at this send.
-    case openBrowser(aux: UUID)
-    /// A gain stage dragged out of the "+" (`onSendPlusGesture`): `result` is `.gain` or `.gainPanMute`.
-    case gainStage(aux: UUID, index: Int, result: PlusGestureResult)
-
-    init(_ command: SynopticPlusCommand) {
-        switch command {
-        case .openBrowser(.sendChain(let aux, _)):
-            self = .openBrowser(aux: aux)
-        case .insertGainStage(.sendChain(let aux, let index), let face):
-            self = .gainStage(aux: aux, index: index, result: face == .gain ? .gain : .gainPanMute)
-        default:
-            self = .none
-        }
-    }
-}
-
-/// The ghost the "+" shows under the hand while it is dragged (§B.2): what letting go would put there, or
-/// that this "+" does not offer what the hand is asking for.
-enum SendPlusGhost: Equatable {
-    /// Under the click threshold: no ghost, the gesture is still a click.
-    case hidden
-    /// A gain stage of that face.
-    case stage(SynopticGainStageFace)
-    /// A direction this "+" does not offer: "not here".
-    case refused
-
-    static func of(command: SynopticPlusCommand, translation: CGSize) -> SendPlusGhost {
-        if SynopticPlusGesture.isClick(translation) { return .hidden }
-        switch command {
-        case .insertGainStage(_, let face): return .stage(face)
-        default:                            return .refused
+            let dashed = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round, dash: dash)
+            ctx.stroke(path(of: c), with: .color(color), style: dashed)
+            for cable in columnCables(of: c) {
+                var p = Path()
+                p.move(to: cable.from)
+                p.addLine(to: cable.to)
+                ctx.stroke(p, with: .color(color), style: dashed)
+            }
+            let solid = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+            for tip in arrowTips(of: c) { ctx.stroke(arrowHead(at: tip), with: .color(color), style: solid) }
         }
     }
 }

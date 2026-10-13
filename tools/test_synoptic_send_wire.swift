@@ -2,8 +2,8 @@ import SwiftUI
 
 // Standalone test of the SEND WIRES' pure side (signal view rework of October 2026, lot L7,
 // docs/plan_synoptic_rework.md §B.6): how a send's polyline is rounded, where the handle that takes the
-// send in the hand sits (it must never cover the '+' it is taken at, nor any other element), and what a
-// gesture on a send box's '+' asks of the view-model.
+// send in the hand sits (it must never cover the '+' it is taken at, nor any other element), how the wire runs
+// down a send's column (arrows pointing down), and what a gesture on a send's '+' asks of the view-model.
 //
 //     swiftc -parse-as-library -o /tmp/t_sw \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
@@ -208,37 +208,51 @@ struct Main {
             SendWire.handleCenter(of: c, rank: SendWire.rank(of: c, in: many.sendCards)).x > c.gutterX
         }, "12 sends at one tap: every handle stays right of its gutter")
 
-        // The wire's path starts at the tap, ends at the entry, and the arrow's tip is the entry.
-        if let c = d3.sendCards.first {
+        // The wire's path starts at the tap and comes in at the column's top, on its axis; it carries on DOWN
+        // into the column (its first segment), and every arrow points DOWN at what it arrives at (request 5,
+        // 13 October 2026: a send drawn like the object).
+        for (tag, dd) in [("no plugin", layout(trunk, sends: [send("e", .postFader)])),
+                          ("two plugins", layout(trunk, sends: [send("p", .postFader, plugins: 2)]))] {
+            let c = dd.sendCards[0]
+            let pts = SendWire.points(of: c)
+            check(pts.first == c.tapDot, "\(tag): the wire starts at the tap dot")
+            check(pts.contains(c.entry), "\(tag): the wire passes the column's entry")
+            let first = c.chain.cables.first { $0.from == c.entry }
+            check(first != nil && pts.last == first!.to, "\(tag): the wire carries on into the column's first segment")
+            check(SendWire.columnCables(of: c).count == c.chain.cables.count - 1, "\(tag): the merged segment is not drawn twice")
             let els = elements(SendWire.path(of: c))
-            check(els.first == .move(c.tapDot), "the wire starts at the tap dot")
-            if case .line(let e) = els.last! { check(e == c.entry, "the wire ends at the box's entry") } else { check(false, "wire ends with a line") }
-            let tip = elements(SendWire.arrowHead(at: c.entry))
-            check(tip.count == 3 && tip[1] == .line(c.entry), "the arrow's tip is the entry")
-            if case .line(let a) = tip[0 + 1], case .move(let m) = tip[0] {
-                check(m.x < a.x && abs(m.y - c.entry.y) <= SendWire.arrowHalfWidth, "the arrow points right")
+            check(els.first == .move(c.tapDot), "\(tag): the path starts at the tap dot")
+            if case .line(let e) = els.last! { check(e == pts.last!, "\(tag): the path ends where the points end") }
+            else { check(false, "\(tag): the path ends with a line") }
+            let tips = SendWire.arrowTips(of: c)
+            check(tips.contains(CGPoint(x: c.axisX, y: c.lineRect.minY)), "\(tag): an arrow arrives at the send's line")
+            check(tips.count == 1 + c.chain.cards.count, "\(tag): one arrow per card, plus the line's")
+            for t in tips {
+                let tip = elements(SendWire.arrowHead(at: t))
+                check(tip.count == 3 && tip[1] == .line(t), "\(tag): the arrow's tip is where it arrives")
+                if case .move(let m) = tip[0], case .line(let z) = tip[2] {
+                    check(m.y < t.y && z.y < t.y && abs(m.x - t.x) <= SendWire.arrowHalfWidth, "\(tag): the arrow points DOWN")
+                }
             }
         }
 
-        // 4. The "+" of a send's box: intents and ghosts.
+        // 4. A send's "+": the trunk's own gesture, restricted to a gain stage.
         let boxed = send("b", .postFader, plugins: 2)
         let db = layout(trunk, sends: [boxed])
         let c = db.sendCards[0]
-        func intent(_ w: CGFloat, _ h: CGFloat) -> SendPlusIntent { SendPlusIntent(c.command(for: CGSize(width: w, height: h))) }
-        func ghost(_ w: CGFloat, _ h: CGFloat) -> SendPlusGhost {
-            SendPlusGhost.of(command: c.command(for: CGSize(width: w, height: h)), translation: CGSize(width: w, height: h))
+        let tail = SynopticPlusKey.sendChain(aux: boxed.id, index: 2)
+        func cmd(_ k: SynopticPlusKey, _ w: CGFloat, _ h: CGFloat) -> SynopticPlusCommand {
+            db.command(for: k, translation: CGSize(width: w, height: h))
         }
-        check(intent(2, 1) == .openBrowser(aux: boxed.id), "a click opens the browser for THIS send")
-        check(intent(40, 2) == .gainStage(aux: boxed.id, index: 2, result: .gain), "right: a gain stage at the end of the chain")
-        check(intent(120, 0) == .gainStage(aux: boxed.id, index: 2, result: .gainPanMute), "far right: gain + pan + mute")
-        check(intent(60, 35) == .none && intent(60, -35) == .none && intent(-40, 0) == .none && intent(0, 40) == .none,
-              "branch / send / left / down: nothing")
-        check(ghost(2, 1) == .hidden, "a click shows no ghost")
-        check(ghost(40, 2) == .stage(.gain), "right: the gain ghost")
-        check(ghost(120, 0) == .stage(.gainPanMute), "far right: the gain·pan·mute ghost")
-        check(ghost(60, 35) == .refused && ghost(-40, 0) == .refused && ghost(0, 40) == .refused, "other directions: 'not here'")
-        check(SendPlusIntent(.none) == .none, "no command: no intent")
-        check(SendPlusIntent(.openBrowser(.postFader)) == .none, "a trunk key is not a send's")
+        check(c.insert(2)?.key == tail, "the tail '+' of a send names the send and the end of its chain")
+        check(cmd(tail, 2, 1) == .openBrowser(tail), "a click opens the browser for THIS send, at that '+'")
+        check(cmd(tail, 40, 2) == .insertGainStage(tail, .gain), "right: a gain stage at the end of the chain")
+        check(cmd(tail, 120, 0) == .insertGainStage(tail, .gainPanMute), "far right: gain + pan + mute")
+        let head = SynopticPlusKey.sendChain(aux: boxed.id, index: 0)
+        check(cmd(head, 40, 2) == .insertGainStage(head, .gain), "the head '+': a gain stage at the head")
+        check(cmd(tail, 60, 35) == .none && cmd(tail, 60, -35) == .none && cmd(tail, -60, 0) == .none,
+              "branch / send-up / send-left: nothing on a send")
+        check(db.allowedGestures(for: tail) == [.gain, .gainPanMute], "a send's '+' offers the gain gestures only")
 
         print("\(total - failures)/\(total) send wire checks passed (\(layouts) layouts, \(handles) handles)")
         exit(failures == 0 ? 0 : 1)

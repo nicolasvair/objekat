@@ -144,6 +144,9 @@ enum SynopticLayout {
         case branch
         /// The series inside an FX link's block (a gain dragged out of it joins the bin's DEFINITION).
         case fxSeries
+        /// A send's mini-chain (the series' id is the SEND's, i.e. its aux's): a gain stage only — no
+        /// branch, no FX link, no send from a send (request 5 of 13 October 2026).
+        case sendChain
     }
 
     /// An insertion point laid on the wire: '+' inserts a plugin in series at `insertIndex` (a click), and
@@ -174,8 +177,12 @@ enum SynopticLayout {
 
         /// A STABLE identity across two builds of the layout (`id` is not): what a hovered '+' is
         /// remembered by.
-        var key: SynopticPlusKey { .series(seriesID, insertIndex) }
-        var alwaysVisible: Bool { seriesIsEmpty }
+        var key: SynopticPlusKey {
+            role == .sendChain ? .sendChain(aux: seriesID, index: insertIndex) : .series(seriesID, insertIndex)
+        }
+        /// An empty series shows its '+' whatever the hand does — except a send's: its '+' shows on hover only
+        /// (a plugin-less send is its line and nothing else, request 5).
+        var alwaysVisible: Bool { seriesIsEmpty && role != .sendChain }
         /// The '+' circle itself (what the hand grabs, and a blocker of the marquee).
         var plusRect: CGRect {
             CGRect(x: center.x - SynopticLayout.plusW / 2, y: center.y - SynopticLayout.plusW / 2,
@@ -185,6 +192,7 @@ enum SynopticLayout {
         /// parallel's branch — an EMPTY one when the series holds nothing (user rule of 13 October 2026);
         /// a send on the trunk only.
         var allowedGestures: Set<PlusGestureResult> {
+            if role == .sendChain { return SynopticLayout.sendChainGestures }
             var s: Set<PlusGestureResult> = [.gain, .gainPanMute]
             if role != .fxSeries { s.insert(.branch) }
             if role == .trunk, sendSlot != nil { s.insert(.send) }
@@ -613,12 +621,12 @@ enum SynopticLayout {
         /// The 'stems' zone at the foot (replacing the Out pill): choosing the output stem.
         /// nil for a bus.
         var stemsZone: CGRect? = nil
-        /// One box per outgoing send, stacked BELOW the stems and wired by the LEFT (@see SendCardPlacement).
+        /// One column per outgoing send, stacked BELOW the stems and wired by the LEFT (@see SendCardPlacement).
         var sendCards: [SendCardPlacement] = []
         /// The fixed slots a send card can be dropped on that have no '+' of the trunk: the post-fader one
         /// only (the input ≡ the trunk's head '+', the pre-fader ≡ its tail '+').
         var sendSlotDrops: [SendSlotDrop] = []
-        /// The "+ Send to…" button, at the bottom of the stack of boxes. nil = this object does not send.
+        /// The "+ Send to…" button, at the bottom of the stack of columns. nil = this object does not send.
         var addSendButton: CGRect? = nil
         /// The head of a bus's chain (aux / group): a widened 'source' box carrying the infinite
         /// option and, for an aux, the sends it receives. nil when the head is the plain pill.
@@ -634,12 +642,18 @@ enum SynopticLayout {
         var postFaderPlus: PostFaderPlus? = nil
 
         /// The '+' whose line is under `point` (the ONE hover hit test of the view, §B.3): the post-fader
-        /// '+', a send box's chain '+' (the box and its '+' strip), or the trunk's / a branch's / a bin's
-        /// insert point. nil = no '+' line there.
+        /// '+', a '+' of a send's mini-chain (@see SendCardPlacement.plusTarget), or the trunk's / a branch's /
+        /// a bin's insert point. nil = no '+' line there.
         func plusTarget(at point: CGPoint) -> SynopticPlusKey? {
             if let p = postFaderPlus, p.hoverRect.contains(point) { return p.key }
-            for c in sendCards where c.plusHoverRect.contains(point) { return c.plusKey }
+            for c in sendCards { if let k = c.plusTarget(at: point) { return k } }
             return placement.insertZone(at: point)?.key
+        }
+
+        /// The insert point of a send's mini-chain a key names (nil = that send or that '+' is gone).
+        func sendInsert(_ key: SynopticPlusKey) -> InsertZone? {
+            guard case .sendChain(let aux, let index) = key else { return nil }
+            return sendCards.first { $0.send.id == aux }?.insert(index)
         }
 
         /// The '+' a key names, as laid now (nil when it no longer exists).
@@ -647,8 +661,8 @@ enum SynopticLayout {
             switch key {
             case .postFader:
                 return postFaderPlus?.plusRect
-            case .sendChain(let aux, _):
-                return sendCards.first { $0.send.id == aux }?.plusRect
+            case .sendChain:
+                return sendInsert(key)?.plusRect
             case .series:
                 return placement.inserts.first { $0.key == key }?.plusRect
             }
@@ -659,8 +673,8 @@ enum SynopticLayout {
             switch key {
             case .postFader:
                 return postFaderPlus?.command(for: translation) ?? .none
-            case .sendChain(let aux, _):
-                return sendCards.first { $0.send.id == aux }?.command(for: translation) ?? .none
+            case .sendChain:
+                return sendInsert(key)?.command(for: translation) ?? .none
             case .series:
                 return placement.inserts.first { $0.key == key }?.command(for: translation) ?? .none
             }
@@ -671,8 +685,8 @@ enum SynopticLayout {
             switch key {
             case .postFader:
                 return postFaderPlus?.allowedGestures ?? []
-            case .sendChain(let aux, _):
-                return sendCards.contains { $0.send.id == aux } ? SynopticLayout.sendChainGestures : []
+            case .sendChain:
+                return sendInsert(key)?.allowedGestures ?? []
             case .series:
                 return placement.inserts.first { $0.key == key }?.allowedGestures ?? []
             }
@@ -684,84 +698,68 @@ enum SynopticLayout {
         }
     }
 
-    /// One outgoing send, laid as a BOX in the stack below the stems. `anchor` is the point of the trunk
-    /// the send is taken at (its TAP DOT): the wire leaves it to the LEFT, goes out of the frame, down its
-    /// own gutter, and enters the box's top row from the left (`wire`). The send tapped HIGHEST takes the
-    /// OUTERMOST gutter and the LOWEST box, so no two wires cross (§B.6). Anchors are the ROOT series' own
-    /// insert points and the post-fader '+': never inside a parallel's branch nor a bin.
+    /// One outgoing send, laid as a COLUMN in the stack below the stems (request 5 of 13 October 2026: a send
+    /// is drawn LIKE THE OBJECT). `anchor` is the point of the trunk the send is taken at (its TAP DOT): the
+    /// wire leaves it to the LEFT, goes out of the frame, down its own gutter, and comes in at the column's
+    /// TOP, on its axis (`wire`, `entry`). From there the signal goes DOWN: the send's plugins as a chain of
+    /// real cards — the very cards of the trunk, joined by the wire, a '+' on every segment shown on hover —
+    /// and, at the BOTTOM, the send's own line (aux, level, on/off, …, ×), as the mixer sits at the bottom of
+    /// an object (`lineRect`). A send without plugin is that line under a short stub of wire, whose '+' shows
+    /// on hover. The send tapped HIGHEST takes the OUTERMOST gutter and the LOWEST column, so no two wires
+    /// cross (§B.6). Anchors are the ROOT series' own insert points and the post-fader '+': never inside a
+    /// parallel's branch nor a bin.
     ///
-    /// A send that carries plugins is read top to bottom as the signal goes (Q-U19): one real-card row per
-    /// plugin in processing order, then the "+" row, then, at the BOTTOM, the send's own line (aux, level,
-    /// on/off). A send without plugin is that line and nothing else; its "+" shows on hover just above the
-    /// line (`plusRect` then lies outside `frame`).
+    /// The mini-chain is laid by `place` as a series whose id is the SEND's (role `.sendChain`): its '+' are
+    /// `SynopticPlusKey.sendChain(aux:index:)` and offer a gain stage only (`sendChainGestures`).
     struct SendCardPlacement: Identifiable {
         var id: UUID { send.id }
         let send: SynopticSend
-        /// The whole box (the line alone when the send carries no plugin).
+        /// The whole column: the chain (or the stub) and the line under it.
         let frame: CGRect
         /// The tap point on the trunk's axis (where the tap dot is drawn).
         let anchor: CGPoint
         /// The x of this send's gutter, left of the frame.
         var gutterX: CGFloat = 0
+        /// The send's own line (aux, level, on/off, menu, ×), at the BOTTOM of the column.
+        let lineRect: CGRect
+        /// The mini-chain as laid: its cards, its '+' (`inserts`), its drop bands, and the wire's run down
+        /// the column (`cables`, the last one arriving at the line). A send without plugin: one '+' on the stub.
+        let chain: Placement
 
         var hasPlugins: Bool { !send.plugins.isEmpty }
-        /// The tap dot (the same point as `anchor`: it can be dragged like the box).
+        /// The tap dot (the same point as `anchor`: it can be dragged like the line).
         var tapDot: CGPoint { anchor }
-        /// The send's own line, at the bottom of the box.
-        var headerRect: CGRect {
-            CGRect(x: frame.minX, y: frame.maxY - SynopticLayout.sendCardH,
-                   width: frame.width, height: SynopticLayout.sendCardH)
-        }
-        /// One rect per plugin, top to bottom in processing order (real cards: `cardH` tall).
-        var pluginRows: [CGRect] {
-            send.plugins.indices.map { i in
-                CGRect(x: frame.minX, y: frame.minY + CGFloat(i) * SynopticLayout.sendPluginRowH,
-                       width: frame.width, height: SynopticLayout.sendPluginRowH)
-            }
-        }
-        /// The "+": the row between the last plugin and the line; with no plugin, a strip just ABOVE
-        /// the card (shown on hover only).
-        var plusRect: CGRect {
-            let h = SynopticLayout.sendPlusRowH
-            return CGRect(x: frame.minX, y: headerRect.minY - h, width: frame.width, height: h)
-        }
-        /// Where hovering shows the box's "+": the box and its "+" strip.
-        var plusHoverRect: CGRect { frame.union(plusRect) }
-        /// The box's "+" appends to the send's mini-chain.
-        var plusKey: SynopticPlusKey { .sendChain(aux: send.id, index: send.plugins.count) }
-        /// Where the wire arrives: the left edge, at the middle of the box's TOP row — its first plugin,
-        /// or the line itself when there is no plugin.
-        var entry: CGPoint {
-            CGPoint(x: frame.minX, y: frame.minY + SynopticLayout.sendBoxFirstRowH(plugins: send.plugins.count) / 2)
-        }
-        /// The wire, as a polyline: tap dot → left to the gutter → down the gutter → right into the box.
+        /// The column's axis (the chain's and the line's centre line).
+        var axisX: CGFloat { lineRect.midX }
+        /// Where the wire from the trunk meets the column: its axis, at the top.
+        var entry: CGPoint { CGPoint(x: axisX, y: frame.minY) }
+        /// The wire, as a polyline: tap dot → left to the gutter → down the gutter → right to the column's
+        /// axis. From there it runs down the column (`chain.cables`), drawn in the same style.
         var wire: [CGPoint] {
             [anchor, CGPoint(x: gutterX, y: anchor.y), CGPoint(x: gutterX, y: entry.y), entry]
         }
-        /// The y of insertion slot `index` (0 = above the first row … N = under the last row).
-        func insertLineY(_ index: Int) -> CGFloat {
-            frame.minY + CGFloat(min(max(0, index), send.plugins.count)) * SynopticLayout.sendPluginRowH
+        /// The '+' of the mini-chain at insertion index `index` (nil = no such '+').
+        func insert(_ index: Int) -> InsertZone? {
+            chain.inserts.first { $0.insertIndex == index }
         }
-        /// The insertion slot a plugin let go at `point` lands in, counted from the top: the nearest
-        /// boundary between two rows; anywhere on the "+" row or on the send's line = the end. nil when
-        /// the point is outside the box.
+        /// The '+' whose segment is under `point` (nil = none): the chain's own bands, and — for a send
+        /// without plugin — its stub and its line (hovering the line shows the '+' above it).
+        func plusTarget(at point: CGPoint) -> SynopticPlusKey? {
+            chain.insertZone(at: point)?.key
+        }
+        /// Where a plugin let go at `point` lands in the mini-chain (nil = outside the column): on the line
+        /// or under the chain's tail = the end; elsewhere the '+' NEAREST the pointer vertically (a card's
+        /// upper half = before it, its lower half = after it).
         func insertIndex(at point: CGPoint) -> Int? {
-            let zone = hasPlugins ? frame : frame.union(plusRect)
-            guard zone.contains(point) else { return nil }
+            guard frame.contains(point) else { return nil }
             let n = send.plugins.count
-            guard n > 0 else { return 0 }
-            let k = Int(((point.y - frame.minY) / SynopticLayout.sendPluginRowH).rounded())
-            return min(max(0, k), n)
+            guard n > 0, point.y < chain.exit.y else { return n }
+            return chain.inserts.min { abs($0.center.y - point.y) < abs($1.center.y - point.y) }?.insertIndex ?? n
         }
-        /// What a gesture of `translation` out of the box's "+" does: a click = the browser for the send's
-        /// chain; a drag right = a gain stage; anything else = nothing.
-        func command(for translation: CGSize) -> SynopticPlusCommand {
-            if SynopticPlusGesture.isClick(translation) { return .openBrowser(plusKey) }
-            switch SynopticPlusGesture.classify(translation, allowed: SynopticLayout.sendChainGestures) {
-            case .gain:        return .insertGainStage(plusKey, .gain)
-            case .gainPanMute: return .insertGainStage(plusKey, .gainPanMute)
-            default:           return .none
-            }
+        /// The card-sized rectangle a drop at `index` previews (on that '+').
+        func dropPreview(_ index: Int) -> CGRect {
+            let c = insert(min(max(0, index), send.plugins.count))?.center ?? entry
+            return SynopticLayout.cardFrame(c.x, c.y)
         }
     }
 
@@ -825,11 +823,12 @@ enum SynopticLayout {
     static let zoneTitleH: CGFloat = 20     // the height of the title row of a box holding rows
     static let zonePadV: CGFloat = 6
 
-    // The send BOXES (outgoing sends): stacked below the stems, each wired by the left down its gutter.
+    // The SENDS (outgoing): a column each, stacked below the stems, each wired by the left down its gutter.
+    /// The send's line (aux, level, on/off, menu, ×): its width, and its height.
     static let sendCardW: CGFloat = 236
     static let sendCardH: CGFloat = 28
-    static let sendCardGap: CGFloat = 6     // between two stacked boxes
-    /// The space between the stems (or the foot) and the first box.
+    static let sendCardGap: CGFloat = 10    // between two stacked columns
+    /// The space between the stems (or the foot) and the first column.
     static let sendsTopGap: CGFloat = 18
     /// The step between two gutters, and the space between the frame and the innermost gutter.
     static let sendGutterStep: CGFloat = 10
@@ -837,16 +836,48 @@ enum SynopticLayout {
     static let sendAddW: CGFloat = 120      // the "+ Send to…" button
     static let sendAddH: CGFloat = 24
     static let sendSlotHalfH: CGFloat = 12  // half the height of a fixed slot's detection band
-    // A send's BOX (INC 3): its plugins as REAL cards above the line, and the "+" row between them and the line.
-    static let sendPluginRowH: CGFloat = cardH
-    static let sendPlusRowH: CGFloat = 18
+    /// A send WITHOUT plugin: the stub of wire between the wire's arrival and the line (room for the '+'
+    /// shown on hover, and the arrow into the line).
+    static let sendStubH: CGFloat = 30
+    /// A send WITH plugins: the wire between the chain's tail '+' and the line (the trunk → mixer wire's).
+    static let sendLineGap: CGFloat = chainGap
 
-    /// The height of a send's box: the line alone with no plugin; rows + "+" + the line otherwise.
-    static func sendBoxHeight(plugins n: Int) -> CGFloat {
-        n <= 0 ? sendCardH : CGFloat(n) * sendPluginRowH + sendPlusRowH + sendCardH
+    /// A send's column, laid with its top at `top` and its left edge at `left` (@see SendCardPlacement).
+    static func sendColumn(_ send: SynopticSend, top: CGFloat, left: CGFloat,
+                           anchor: CGPoint, gutterX: CGFloat) -> SendCardPlacement {
+        if send.plugins.isEmpty {
+            let colW = sendCardW
+            let axis = left + colW / 2
+            let line = CGRect(x: left, y: top + sendStubH, width: sendCardW, height: sendCardH)
+            let column = CGRect(x: left, y: top, width: colW, height: line.maxY - top)
+            let plus = CGPoint(x: axis, y: top + plusW / 2 + 2)
+            var chain = Placement(size: column.size, entry: CGPoint(x: axis, y: top), exit: CGPoint(x: axis, y: line.minY))
+            // The '+' shows while the hand is over the stub OR the line (a plugin-less send is its line).
+            chain.inserts = [InsertZone(seriesID: send.id, insertIndex: 0, branchElementID: nil, center: plus,
+                                        role: .sendChain, branchTargetID: nil, hoverRect: column,
+                                        seriesIsEmpty: true)]
+            chain.cables = [Cable(from: chain.entry, to: chain.exit, style: .connector)]
+            chain.cableDrops = [CableDropZone(seriesID: send.id, insertIndex: 0,
+                                              rect: CGRect(x: left, y: top, width: colW, height: sendStubH),
+                                              previewFrame: cardFrame(axis, plus.y))]
+            return SendCardPlacement(send: send, frame: column, anchor: anchor, gutterX: gutterX,
+                                     lineRect: line, chain: chain)
+        }
+        let node = SynopticNode(id: send.id, kind: .series(send.plugins.map { p in
+            SynopticNode(id: p.id, kind: .plugin(SynopticPlugin(id: p.id, name: p.name, category: .utility,
+                                                                isEnabled: p.enabled, color: p.color,
+                                                                gainStage: p.gainStage)))
+        }))
+        let size = measure(node)
+        let colW = max(sendCardW, size.width)
+        let axis = left + colW / 2
+        var chain = place(node, at: CGPoint(x: axis - size.width / 2, y: top), role: .sendChain)
+        let line = CGRect(x: axis - sendCardW / 2, y: chain.exit.y + sendLineGap, width: sendCardW, height: sendCardH)
+        chain.cables.append(Cable(from: chain.exit, to: CGPoint(x: axis, y: line.minY), style: .connector))
+        let column = CGRect(x: left, y: top, width: colW, height: line.maxY - top)
+        return SendCardPlacement(send: send, frame: column, anchor: anchor, gutterX: gutterX,
+                                 lineRect: line, chain: chain)
     }
-    /// The height of the box's FIRST row — where the wire arrives.
-    static func sendBoxFirstRowH(plugins n: Int) -> CGFloat { n <= 0 ? sendCardH : sendPluginRowH }
 
     /// The height of a titled box holding `rows` send rows.
     static func rowsZoneH(_ rows: Int) -> CGFloat {
@@ -861,7 +892,7 @@ enum SynopticLayout {
     /// - Parameters:
     ///   - araCardWidth: non-nil = the audio object carries an ARA source: its card (this wide) hangs under the
     ///     'audio file' frame, and the chain moves down by its height.
-    ///   - sends: the outgoing sends, one box each, each tapped at its `slot` (@see SendCardPlacement).
+    ///   - sends: the outgoing sends, one column each, each tapped at its `slot` (@see SendCardPlacement).
     ///   - sendsEnabled: this object can send (it gets the post-fader '+' and the "+ Send to…" button even
     ///     with no send yet).
     ///   - receivedRows: the sends an aux receives, listed in its chain head.
@@ -903,7 +934,7 @@ enum SynopticLayout {
             ? max(frameW, stems ? stemsZoneW : outW)
             : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0)
         let sendsArea = sendsEnabled || !sends.isEmpty
-        let innerEdge = margin + sendGutterSpace(sends.count)   // the column's left edge (and the boxes')
+        let innerEdge = margin + sendGutterSpace(sends.count)   // the content's left edge (and the send columns')
         let contentLeft = innerEdge
         let centerX = contentLeft + contentW / 2
 
@@ -984,8 +1015,8 @@ enum SynopticLayout {
                            height: bottom - leadRect.midY)
         }
 
-        // The send boxes: stacked BELOW the foot, lowest tap first (top) — the highest tap takes the lowest
-        // box and the outermost gutter, so the wires nest and never cross.
+        // The send columns: stacked BELOW the foot, lowest tap first (top) — the highest tap takes the lowest
+        // column and the outermost gutter, so the wires nest and never cross.
         var sendCards: [SendCardPlacement] = []
         var sendSlotDrops: [SendSlotDrop] = []
         var addSendButton: CGRect? = nil
@@ -1018,13 +1049,11 @@ enum SynopticLayout {
             }
             var y = outPill.maxY + sendsTopGap
             for (b, item) in ordered.enumerated() {
-                let n = item.send.plugins.count
-                let f = CGRect(x: innerEdge, y: y, width: sendCardW, height: sendBoxHeight(plugins: n))
-                sendCards.append(SendCardPlacement(
-                    send: item.send, frame: f, anchor: item.anchor,
-                    gutterX: innerEdge - sendGutterGap - CGFloat(b) * sendGutterStep))
-                y = f.maxY + sendCardGap
-                stackBottom = max(stackBottom, f.maxY)
+                let c = sendColumn(item.send, top: y, left: innerEdge, anchor: item.anchor,
+                                   gutterX: innerEdge - sendGutterGap - CGFloat(b) * sendGutterStep)
+                sendCards.append(c)
+                y = c.frame.maxY + sendCardGap
+                stackBottom = max(stackBottom, c.frame.maxY)
             }
             if sendsEnabled {
                 let r = CGRect(x: innerEdge, y: y, width: sendAddW, height: sendAddH)
@@ -1041,7 +1070,7 @@ enum SynopticLayout {
 
         let contentRight = contentLeft + contentW
         var right = contentRight
-        if sendsArea { right = max(right, innerEdge + sendCardW, innerEdge + sendAddW) }
+        if sendsArea { right = ([right, innerEdge + sendCardW, innerEdge + sendAddW] + sendCards.map(\.frame.maxX)).max() ?? right }
         let canvasW = right + margin
         let canvasH = max(outPill.maxY, stackBottom) + margin
         return Diagram(canvasSize: CGSize(width: canvasW, height: canvasH),

@@ -145,26 +145,27 @@ struct SynopticActions {
     /// send in flight to answer for.
     var sendDropOutcome: ((_ target: SynopticSendTarget) -> PluginDropOutcome?)? = nil
 
-    // The plugins ON a send (INC 3): the rows of its box. Every closure names the send by its AUX (the
-    // card's id); the plugin by its own id. The chain behind them is a chain host like any other
+    // The plugins ON a send (INC 3): the cards of its column. Every closure names the send by its AUX (the
+    // line's id); the plugin by its own id. The chain behind them is a chain host like any other
     // (@see SendChain.hostID), so these are the trunk's gestures aimed at another host.
-    /// The selected rows of that send's box (empty when the plugin selection is elsewhere).
+    /// The selected cards of that send (empty when the plugin selection is elsewhere).
     var sendPluginSelection: ((_ aux: UUID) -> Set<UUID>)? = nil
-    /// A click on a row: plain = that row alone, ⌘ = toggle it, ⇧ = extend, inside the box.
+    /// A click on a card: plain = that card alone, ⌘ = toggle it, ⇧ = extend, inside the send's chain.
     var onSendPluginClick: ((_ aux: UUID, _ plugin: UUID, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
-    /// A double click on a row's name: its editor (open / close).
+    /// A double click on a card's name: its editor (open / close).
     var onSendPluginOpen: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
-    /// The row's dot (bypass) and its cross: a row IN the selection speaks for the whole selection.
+    /// The card's dot (bypass) and its cross: a card IN the selection speaks for the whole selection.
     var onSendPluginToggle: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
     var onSendPluginRemove: ((_ aux: UUID, _ plugin: UUID) -> Void)? = nil
-    /// The box's "+" and the card's menu entry: the plugin picker, aimed at that send.
-    var onSendPluginAdd: ((_ aux: UUID) -> Void)? = nil
-    /// A row taken in the hand (nil = rows are not draggable).
+    /// A click on a '+' of the send's mini-chain (`index` = where the plugin goes) and the line's menu entry
+    /// (`index` nil = the end): the plugin picker, aimed at that send.
+    var onSendPluginAdd: ((_ aux: UUID, _ index: Int?) -> Void)? = nil
+    /// A card taken in the hand (nil = the cards are not draggable).
     var sendPluginDragProvider: ((_ aux: UUID, _ plugin: UUID) -> NSItemProvider)? = nil
-    /// What the drag in flight would do let go on that box at insertion slot `index` (counted from the
-    /// top). nil = no drag in flight to answer for.
+    /// What the drag in flight would do let go on that send's column at insertion slot `index` (counted from
+    /// the top). nil = no drag in flight to answer for.
     var sendBoxDropOutcome: ((_ aux: UUID, _ index: Int, _ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
-    /// A plugin let go on that box at slot `index`. nil = the boxes do not receive (the demo).
+    /// A plugin let go on that send's column at slot `index`. nil = the columns do not receive (the demo).
     var onSendBoxDrop: ((_ aux: UUID, _ index: Int, _ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
 
     // A bus's chain head: the 'infinite' toggle (a top-level aux / group).

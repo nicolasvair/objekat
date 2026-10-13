@@ -257,28 +257,46 @@ struct SynopticView: View {
                     .position(p.center)
             }
 
-            // The outgoing sends: a BOX each, stacked BELOW the stems and wired by the left (the wires are
-            // drawn in `draw`). Not in the FX group: a closed consolidated object keeps its sends
-            // interactive, as it keeps its mix. Laid over the slots' drop bands, so that a box is always the
-            // one that is grabbed; and not a plugin card: it is outside the selection and ignored by the
-            // marquee. A send that carries plugins is a BOX: its plugins' rows on top, the "+", then the
-            // card as the bottom line (the order of the signal, Q-U19).
+            // The outgoing sends: a COLUMN each, stacked BELOW the stems and wired by the left (the wires are
+            // drawn in `draw`), drawn like the object (request 5): the send's plugins as the trunk's own cards,
+            // a '+' on each segment of the wire, and the send's LINE at the bottom. Not in the FX group: a closed
+            // consolidated object keeps its sends interactive, as it keeps its mix. Laid over the slots' drop
+            // bands; outside the trunk's selection, and ignored by the marquee.
             ForEach(d.sendCards) { c in
-                let zone = SendBoxView.zone(of: c)
-                SendBoxView(placement: c, actions: actions)
-                    .frame(width: zone.width, height: zone.height)
-                    .position(x: zone.midX, y: zone.midY)
+                // The column's drop layer first (under the cards and the line, never their ancestor).
+                SendColumnDropView(placement: c, actions: actions)
+                SendCardView(send: c.send, actions: actions)
+                    .frame(width: c.lineRect.width, height: c.lineRect.height)
+                    .position(x: c.lineRect.midX, y: c.lineRect.midY)
+                ForEach(c.chain.cards) { card in
+                    SendChainCardView(card: card, send: c.send, actions: actions)
+                        .position(x: card.frame.midX, y: card.frame.midY)
+                }
+                // The '+' of the send's mini-chain: shown on hover only (even a plugin-less send's), the
+                // canvas' own button — a click = the picker aimed at the send, a drag right = a gain stage.
+                ForEach(c.chain.inserts, id: \.key) { z in
+                    let sk = stablePlus(z.key, names: names)
+                    let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
+                                                                 alwaysVisible: alwaysShown)
+                    SynopticPlusButton(active: plusDrag?.key == sk,
+                                       onChanged: { plusMoved(sk, $0) },
+                                       onEnded: { plusReleased(sk, $0) })
+                        .help(plusHelp(z))
+                        .opacity(shown ? 1 : 0)
+                        .allowsHitTesting(shown)
+                        .position(z.center)
+                }
             }
 
-            // The HANDLES: where each send is taken on the trunk. A handle is grabbed like the box (§B.6):
+            // The HANDLES: where each send is taken on the trunk. A handle is grabbed like the line (§B.6):
             // dragged onto another place of the chain it moves where the send is taken (the same payload as
-            // the box's, @see sendDragProvider). It sits on the wire just LEFT of the '+' ring it stands for,
+            // the line's, @see sendDragProvider). It sits on the wire just LEFT of the '+' ring it stands for,
             // never under it, and sends taken at one point fan out by their rank (@see SendWire.handleCenter).
             ForEach(d.sendCards) { c in
                 SendTapDotView(placement: c, rank: SendWire.rank(of: c, in: d.sendCards), actions: actions)
             }
 
-            // "+ Send to…", at the bottom of the stack of boxes: a send made there is post-fader.
+            // "+ Send to…", at the bottom of the stack of columns: a send made there is post-fader.
             if let b = d.addSendButton, actions.sendTargetSections != nil {
                 AddSendButton { actions.presentSendMenu(slot: .postFader) }
                     .frame(width: b.width, height: b.height)
@@ -353,7 +371,7 @@ struct SynopticView: View {
         case .postFader:
             return d.postFaderPlus?.key
         case .sendChain(let aux, let i):
-            return .sendChain(aux: aux, index: i)
+            return d.sendInsert(.sendChain(aux: aux, index: i))?.key
         case .series:
             return d.placement.inserts.first { stablePlus($0.key, names: names) == sk }?.key
         }
@@ -391,7 +409,7 @@ struct SynopticView: View {
         case .openBrowser(let key):
             switch key {
             case .series(let s, let i):     actions.onInsertSeries(s, i)
-            case .sendChain(let aux, _):    actions.onSendPluginAdd?(aux)
+            case .sendChain(let aux, let i): actions.onSendPluginAdd?(aux, i)
             case .postFader:                actions.presentSendMenu(slot: .postFader)
             }
         case .insertGainStage(let key, let face):
@@ -437,7 +455,7 @@ struct SynopticView: View {
     /// Where the marquee may not start: what has a gesture of its own there.
     private func marqueeBlockers(_ d: SynopticLayout.Diagram) -> [CGRect] {
         var r = d.placement.fxBlocks.map(\.headerRect)
-        r += d.sendCards.map { SendBoxView.zone(of: $0) }
+        r += d.sendCards.map(\.frame)
         r += d.placement.inserts.map(\.plusRect)
         if let p = d.postFaderPlus { r.append(p.plusRect) }
         r += d.sendCards.map { SendWire.handleRect(of: $0, rank: SendWire.rank(of: $0, in: d.sendCards)) }
@@ -751,7 +769,7 @@ struct SynopticView: View {
         }
 
         // The sends' wires (§B.6): from the tap point on the trunk, out to the LEFT of the frame, down the
-        // send's own gutter, and into the box from the left — the geometry and the stroke are lot L7's
+        // send's own gutter, in at the column's top and down it — the geometry and the stroke are lot L7's
         // (@see SendWire.draw, asserted by tools/test_synoptic_send_wire.swift). The handle that moves a send
         // is a view laid over this (@see SendTapDotView).
         SendWire.draw(ctx, cards: d.sendCards)
