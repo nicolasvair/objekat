@@ -2565,9 +2565,9 @@ What has landed since mid-August, in order:
   the gap not investigated).
 
 - **The signal view rework: gain stages, the object frame, the "+" gestures, sends below** (12-13 October
-  2026, ON THE BRANCH `feat/synoptic-rework`, NOT on `main`, nothing pushed; engine patch **`0041`** on the
-  LOCAL engine branch `objekat-gainstage-0041`, `8f3e51a6beb`, NOT on the fork — `engine-patches/3.5/0041-*`
-  is its only backup, the next free number is `0042`). Authority: `docs/plan_synoptic_rework.md` (the user's
+  2026, branch `feat/synoptic-rework`, MERGED into `main` and pushed on 13 October 2026; engine patch
+  **`0041`** on the fork branch `objekat-gainstage-0041`, `8f3e51a6beb`, published on the fork the same day,
+  `objekat-patches-3.5` fast-forwarded onto it; the next free number is `0042`). Authority: `docs/plan_synoptic_rework.md` (the user's
   requests 1–12, decisions D1–D8, lots L0 → L8, journal H with every measurement); the decision in
   `architecture_decisions.md` ("The signal view rework").
   **Session format 25: the trims and the FX link's output section are GONE**, model and engine. An old file's
