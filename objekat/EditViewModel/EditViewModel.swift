@@ -1322,7 +1322,8 @@ final class EditViewModel {
                 if m.isRegion { out.append(e.absStart + m.endTime) }
             }
         }
-        return out
+        // An edge (or a mark) before 0 is not drawn, so nothing may land on it (@see ZeroFloor, R9).
+        return out.filter(ZeroFloor.isSnapTarget)
     }
 
     /// A pure snap (the grid + the marks), with NO side effect. Usable on every

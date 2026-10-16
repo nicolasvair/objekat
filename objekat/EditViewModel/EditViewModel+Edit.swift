@@ -99,22 +99,19 @@ extension EditViewModel {
         }
     }
 
-    /// True if nothing is above the object: it is a ROOT object, the only kind the wall at t = 0
-    /// applies to (@see ZeroClamp). Asked only when a start would go negative — it walks the tree.
-    func isRootObject(_ id: UUID) -> Bool { parentGroup(for: id) == nil }
-
     /// - `snap`: true = the start is put on the timeline's snap (the API's `object.move`, ONE
     ///   object). A move of SEVERAL objects passes false: the gesture already snapped ONE common
     ///   travel off the grabbed object, and snapping each start again on its own pulled every
     ///   object to its nearest grid line — the gaps between them changed (5 October 2026).
     func updateStartTime(id: UUID, newStart: Double, snap: Bool = true) {
-        // The wall at zero belongs to the ROOT object: a descendant of a group may start before 0
-        // (the group's window is a frame, its children keep an absolute start) — it is the root group
-        // above that cannot (@see ZeroClamp, [[project-negative-start-convention]]). The engine bridge
-        // already translates the head cut into a source offset (OBJEngineCore, `_headCutMap`).
+        // The floor at 0, at any depth (@see ZeroFloor): the object stops at 0 — unless it already
+        // starts before it, in which case it is free while it stays there (a group's window is a
+        // frame and its children keep an absolute start; the engine bridge translates such a head
+        // into a source offset, OBJEngineCore `_headCutMap`, [[project-negative-start-convention]]).
+        // A group's children follow it wherever that takes them.
         let raw = snap ? snapTime(newStart) : newStart
-        let snapped = raw >= 0 ? raw : ZeroClamp.clamp(raw, isRoot: isRootObject(id))
         guard let obj = find(id: id) else { return }
+        let snapped = ZeroFloor.clampedStart(from: obj.startTime, to: raw)
         let delta = snapped - obj.startTime
         update(id: id) { item in
             item.startTime = snapped

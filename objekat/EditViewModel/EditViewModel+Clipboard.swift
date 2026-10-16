@@ -321,12 +321,18 @@ extension EditViewModel {
         typealias PasteTarget = (copy: SoundObject, groupID: UUID?, lane: Int)
         var targets: [PasteTarget] = []
         var maxAbsEnd = pasteTime
+        // What is pasted is laid down anew, so every pasted object is floored at 0 whatever the
+        // original started at (@see ZeroFloor, R1); its descendants follow it. The paste point is
+        // never before 0, so this only holds the rule.
+        let pasteDt = ZeroFloor.clampedDelta(
+            starts: cb.clips.map { (absStart: $0.startTime, startedNegative: false, crossedZero: false) },
+            proposedDelta: pasteTime - cb.originTime)
         // The origin → copy table of the WHOLE batch: an aux pasted at the same time as its senders
         // must receive from them, not stay plugged into the original aux (@see remappingSends).
         var idMap: [UUID: UUID] = [:]
 
         for src in cb.clips {
-            let newAbsStart = pasteTime + (src.startTime - cb.originTime)
+            let newAbsStart = src.startTime + pasteDt
             let targetDL    = src.lane + laneShift
             let copy        = makeCopy(src, startTime: newAbsStart, lane: targetDL, idMap: &idMap)
             maxAbsEnd       = max(maxAbsEnd, newAbsStart + src.duration)
@@ -995,7 +1001,10 @@ extension EditViewModel {
     /// put back at (start + dt, displayLane + dl) through placeClip — so it can change
     /// lane, enter a group or leave one freely.
     func moveTranslatedItems(_ anchors: [UUID: (start: Double, lane: Int)],
-                             dt: Double, dl: Int) {
+                             dt rawDt: Double, dl: Int) {
+        // The one floor of every move (@see ZeroFloor): the carried objects stop at 0 (the drag
+        // has floored `dt` already; this holds it for any other caller), their descendants follow.
+        let dt = ZeroFloor.clampedDelta(startsAt: anchors.values.map(\.start), proposedDelta: rawDt)
         // A translate lifts each object out and puts it back somewhere else — another
         // lane, inside a group, out of one. Every one of those ENDS a crossfade, and
         // the fades have to go with it (@see withCrossfadeRefit).
@@ -1034,7 +1043,7 @@ extension EditViewModel {
                 }
 
                 // The new position (a group's descendants shifted by the same delta).
-                let newStart = max(0, anchor.start + dt)
+                let newStart = anchor.start + dt
                 let dStart   = newStart - obj.startTime
                 obj.startTime = newStart
                 if case .group(var ch, let e) = obj.kind, dStart != 0 {
@@ -1054,12 +1063,14 @@ extension EditViewModel {
 
     /// Places the fragments of an alt-translate of a time selection (a copy):
     /// a shift of (dt, dl display lanes) then routing through placeClip (top-level or a group).
-    func placeTranslatedFragments(_ frags: [SoundObject], dt: Double, dl: Int) -> Set<UUID> {
+    func placeTranslatedFragments(_ frags: [SoundObject], dt rawDt: Double, dl: Int) -> Set<UUID> {
+        // The one floor of every move (@see ZeroFloor); the drag has applied it already.
+        let dt = ZeroFloor.clampedDelta(startsAt: frags.map(\.startTime), proposedDelta: rawDt)
         let snapshot = laneEntries
         var placed: [SoundObject] = []
         for frag in frags {
             let f = makeCopy(frag,
-                             startTime: max(0, frag.startTime + dt),
+                             startTime: frag.startTime + dt,
                              lane: max(0, frag.lane + dl))
             placed.append(placeClip(f, snapshot: snapshot))
         }

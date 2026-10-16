@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """c09 — REAL DRAG (input.drag; needs an UNLOCKED screen, the window key) of child N1 (G5, start -2 s) by
-+50 px at 50 pps (= +1 s): it lands at -1 (the rule: clamped at 0 except inside a group — the GROUP is the
-clamped one; ZeroClamp.swift). Before: `max(0, anchor.start + dt)` and the drag wall forced +2 s -> 0.
++50 px at 50 pps (= +1 s): it lands at -1 (since 16 October 2026 the rule is ZeroFloor.swift: every moved
+object is floored at 0, except one that STARTS negative, free while it stays negative — N1 is that case). Before: `max(0, anchor.start + dt)` and the drag wall forced +2 s -> 0.
 Then ONE edit.undo gives the tree back, and G5 never moved. Usage: c09_...py [socket]"""
 import sys, json
 sys.path.insert(0, __file__.rsplit('/canvas_nested_cases', 1)[0])
