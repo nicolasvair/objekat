@@ -87,20 +87,9 @@ final class ObjekatPreferences {
 }
 
 struct PreferencesView: View {
-    /// The session's view model: the "+ shortcuts" tab lists its plugin catalogue.
-    let viewModel: EditViewModel
     @State private var prefs = ObjekatPreferences.shared
 
     var body: some View {
-        TabView {
-            general
-                .tabItem { Label(L("prefs.tab.general"), systemImage: "gearshape") }
-            PlusShortcutsPreferencesView(viewModel: viewModel)
-                .tabItem { Label(L("prefs.tab.plusShortcuts"), systemImage: "plus.circle") }
-        }
-    }
-
-    private var general: some View {
         Form {
             Section(L("prefs.api.section")) {
                 Toggle(L("prefs.api.enable"), isOn: $prefs.apiEnabled)

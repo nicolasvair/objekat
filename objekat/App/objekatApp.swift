@@ -383,7 +383,7 @@ struct objekatApp: App {
         }
 
         Settings {
-            PreferencesView(viewModel: viewModel)
+            PreferencesView()
         }
     }
 }

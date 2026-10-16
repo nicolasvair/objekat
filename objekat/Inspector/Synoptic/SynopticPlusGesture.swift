@@ -4,16 +4,17 @@ import Foundation
 //
 // A "+" of the signal view is taken in the hand (docs/plan_synoptic_rework.md §B.2):
 //   - let go under `clickThreshold` = a CLICK (the plugin browser, as before);
-//   - dragged in one of the eight DIRECTIONS (@see PlusDirection: ±15° each) = the action the user put on
-//     that direction (@see PlusShortcutMap, an app preference kept by PlusShortcutStore). The DEFAULT map is
-//     the "+" as it was designed:
-//       - RIGHT (0°)          → a gain stage; past `panMuteThreshold` of travel → gain + pan + mute;
-//       - right and DOWN (−30°) → a parallel branch of the element under the "+";
+//   - dragged in one of the eight DIRECTIONS (@see PlusDirection: ±15° each), at one of two LEVELS — NEAR,
+//     or FAR from `panMuteThreshold` of travel along the direction's axis (@see PlusLevel) — = the action
+//     the user put on that slot (@see PlusShortcutMap, an app preference kept by PlusShortcutStore). An
+//     empty far slot does what the near one does. The DEFAULT map is the "+" as it was designed:
+//       - RIGHT (0°)          → a gain stage; FAR → gain + pan + mute;
+//       - right and DOWN (−30°) → a parallel branch of the element under the "+" (at any distance);
 //       - LEFT (180°)          → a send taken at that "+" (the send wires leave the trunk by the left, user
-//                                decision of 13 October 2026);
+//                                decision of 13 October 2026; at any distance);
 //     and the five other directions ask for nothing.
-// The gain / gain + pan + mute cut of a `.gainStage` direction is the travel ALONG that direction's axis
-// (for the right one: the horizontal travel, a vertical line at 80 pt — exactly the historical cut).
+// The near / far cut is the travel ALONG the direction's axis (for the right one: the horizontal travel, a
+// vertical line at 80 pt — exactly the historical cut).
 //
 // The angle is measured from the horizontal, POSITIVE UPWARD — the screen's y grows downwards, so
 // the translation's height is negated. Which results a given "+" offers is the caller's (`allowed`, and
@@ -28,7 +29,7 @@ import Foundation
 
 /// What a drag started on a "+" asks for.
 enum PlusGestureResult: Equatable, Hashable {
-    /// Nothing: a click, a drag in no offered direction (a dead angle, a direction mapped to nothing…), or a
+    /// Nothing: a click, a drag in no offered direction (a dead angle, a slot mapped to nothing…), or a
     /// result this "+" does not offer.
     case none
     /// A gain stage (one dB box).
@@ -39,16 +40,30 @@ enum PlusGestureResult: Equatable, Hashable {
     case branch
     /// A send taken at this "+".
     case send
-    /// This plugin, inserted at this "+" (a direction the user bound to it).
+    /// This plugin, inserted at this "+" (a slot the user bound to it).
     case plugin(PlusPluginRef)
+}
+
+extension PlusAction {
+    /// The gesture result this action asks for.
+    var gestureResult: PlusGestureResult {
+        switch self {
+        case .none:          return .none
+        case .gain:          return .gain
+        case .gainPanMute:   return .gainPanMute
+        case .branch:        return .branch
+        case .send:          return .send
+        case .plugin(let r): return .plugin(r)
+        }
+    }
 }
 
 enum SynopticPlusGesture {
 
     /// Under this distance (pt) the gesture is a CLICK.
     static let clickThreshold: CGFloat = 6
-    /// From this travel (pt) along its direction, a `.gainStage` direction asks for gain + pan + mute instead
-    /// of gain.
+    /// From this travel (pt) along its direction, a drag is at the FAR level (@see PlusLevel) — the right
+    /// direction's historical gain → gain + pan + mute cut.
     static let panMuteThreshold: CGFloat = 80
     /// The direction of the branch in the DEFAULT map (down-right, −`diagonalAngle`), in degrees.
     static let diagonalAngle: Double = 30
@@ -83,18 +98,22 @@ enum SynopticPlusGesture {
         return translation.width * CGFloat(cos(a)) - translation.height * CGFloat(sin(a))
     }
 
+    /// The level the drag reached along `direction`.
+    static func level(_ translation: CGSize, along direction: PlusDirection) -> PlusLevel {
+        travel(translation, along: direction) < panMuteThreshold ? .near : .far
+    }
+
+    /// The slot whose action the drag carries out under `map` (nil = a click or a dead angle): its
+    /// direction, at the level it reached — the near slot when the far one is empty.
+    static func slot(_ translation: CGSize, map: PlusShortcutMap = .defaults) -> PlusSlot? {
+        guard let d = direction(translation) else { return nil }
+        return map.effective(d, level(translation, along: d))
+    }
+
     /// What the drag asks for under `map`, whatever the "+" offers.
     static func intent(_ translation: CGSize, map: PlusShortcutMap = .defaults) -> PlusGestureResult {
-        guard let d = direction(translation) else { return .none }
-        switch map.action(d) {
-        case .none:            return .none
-        case .gainStage:       return travel(translation, along: d) < panMuteThreshold ? .gain : .gainPanMute
-        case .gain:            return .gain
-        case .gainPanMute:     return .gainPanMute
-        case .branch:          return .branch
-        case .send:            return .send
-        case .plugin(let r):   return .plugin(r)
-        }
+        guard let s = slot(translation, map: map) else { return .none }
+        return map.action(s).gestureResult
     }
 
     /// Whether a "+" that offers `allowed` (and plugins when `pluginAllowed`) offers `result`.
@@ -113,64 +132,57 @@ enum SynopticPlusGesture {
 
     // MARK: The zones drawn round a "+" while it is dragged (§B.2, user request of 13 October 2026)
     //
-    // As soon as a drag leaves a "+", the directions it offers are drawn round it, faintly, each with its
-    // icon; the one the hand is in lights up. The zones are THIS classifier drawn: every point inside a zone
+    // As soon as a drag leaves a "+", the slots it offers are drawn round it, faintly, each with its icon;
+    // the one the hand is in lights up. The zones are THIS classifier drawn: every point inside a zone
     // classifies to that zone's result (asserted by tools/test_synoptic_plus_gesture.swift), so what is
-    // drawn can never disagree with what letting go does. The gain / gain + pan + mute cut of a `.gainStage`
-    // direction is the classifier's own: a line ACROSS the direction at `panMuteThreshold` of travel along it
-    // (for the right direction, the vertical line at 80 pt), not an arc.
+    // drawn can never disagree with what letting go does. The near / far cut is the classifier's own: a line
+    // ACROSS the direction at `panMuteThreshold` of travel along it (for the right direction, the vertical
+    // line at 80 pt), not an arc. A direction whose far slot is empty is ONE zone, from the disc to the end.
 
     /// Where a zone starts: just outside the "+" disc (its radius is 10 pt).
     static let sectorInnerRadius: CGFloat = 14
-    /// Where a zone ends (the gain + pan + mute zone runs from the 80 pt line to here).
+    /// Where a zone ends (a far zone runs from the 80 pt line to here).
     static let sectorOuterRadius: CGFloat = 120
 
     /// The zones a "+" that offers `allowed` (and plugins when `pluginAllowed`) draws under `map` — one per
-    /// offered direction (two for a `.gainStage` one: gain, then gain + pan + mute), directions in
-    /// `PlusDirection.allCases` order. A direction it does not offer has NO zone (absent, not greyed).
+    /// offered slot (a direction with a far action: near, then far), directions in `PlusDirection.allCases`
+    /// order. A slot it does not offer has NO zone (absent, not greyed).
     static func sectors(allowed: Set<PlusGestureResult>, pluginAllowed: Bool = false,
                         map: PlusShortcutMap = .defaults) -> [PlusSector] {
         let tol = angleTolerance, r0 = sectorInnerRadius, r1 = sectorOuterRadius
         var out: [PlusSector] = []
         for d in PlusDirection.allCases {
             let from = d.angle - tol, to = d.angle + tol
-            func zone(_ r: PlusGestureResult, _ inner: PlusSector.Bound = .radius(r0),
-                      _ outer: PlusSector.Bound = .radius(r1)) {
-                guard offers(r, allowed: allowed, pluginAllowed: pluginAllowed) else { return }
-                out.append(PlusSector(result: r, direction: d, fromAngle: from, toAngle: to, inner: inner, outer: outer))
+            func zone(_ level: PlusLevel, _ inner: PlusSector.Bound, _ outer: PlusSector.Bound) {
+                let r = map.action(d, level).gestureResult
+                guard r != .none, offers(r, allowed: allowed, pluginAllowed: pluginAllowed) else { return }
+                out.append(PlusSector(result: r, direction: d, level: level, fromAngle: from, toAngle: to,
+                                      inner: inner, outer: outer))
             }
-            switch map.action(d) {
-            case .none:           break
-            case .gainStage:
+            if map.action(d, .far) == .none {
+                zone(.near, .radius(r0), .radius(r1))
+            } else {
                 let cut = PlusSector.Bound.across(panMuteThreshold, axis: d.angle)
-                zone(.gain, .radius(r0), cut)
-                zone(.gainPanMute, cut, .radius(r1))
-            case .gain:           zone(.gain)
-            case .gainPanMute:    zone(.gainPanMute)
-            case .branch:         zone(.branch)
-            case .send:           zone(.send)
-            case .plugin(let r):  zone(.plugin(r))
+                zone(.near, .radius(r0), cut)
+                zone(.far, cut, .radius(r1))
             }
         }
         return out
     }
 
     /// The zone a drag of `translation` is in, among `sectors`: the one of its classified result (nil = none —
-    /// a click, or a direction nothing is offered in).
+    /// a click, or a slot nothing is offered in).
     static func highlighted(_ translation: CGSize, in sectors: [PlusSector],
                             map: PlusShortcutMap = .defaults) -> PlusGestureResult? {
         highlightedIndex(translation, in: sectors, map: map).map { sectors[$0].result }
     }
 
-    /// The INDEX of the zone a drag of `translation` is in (nil = none). By direction AND result: two
-    /// directions may carry the same result (a `.gainStage` one and a `.gain` one both make gains), and only
-    /// the one the hand is in lights up.
+    /// The INDEX of the zone a drag of `translation` is in (nil = none): the zone of the slot the drag
+    /// carries out.
     static func highlightedIndex(_ translation: CGSize, in sectors: [PlusSector],
                                  map: PlusShortcutMap = .defaults) -> Int? {
-        guard let d = direction(translation) else { return nil }
-        let r = intent(translation, map: map)
-        guard r != .none else { return nil }
-        return sectors.firstIndex { $0.direction == d && $0.result == r }
+        guard let s = slot(translation, map: map), map.action(s) != .none else { return nil }
+        return sectors.firstIndex { $0.direction == s.direction && $0.level == s.level }
     }
 }
 
@@ -197,6 +209,8 @@ struct PlusSector: Equatable {
     let result: PlusGestureResult
     /// The direction this zone is drawn in.
     var direction: PlusDirection = .right
+    /// The level: near (or the whole direction when its far slot is empty), or far.
+    var level: PlusLevel = .near
     /// The angular range, `fromAngle` < `toAngle` (the left one runs 165…195: past 180 is the same as −180…).
     let fromAngle: Double
     let toAngle: Double
@@ -206,10 +220,11 @@ struct PlusSector: Equatable {
     /// drawn greyed and letting go in it does nothing. Set by the presentation (@see SynopticPlusPresentation).
     var isAvailable: Bool = true
 
-    init(result: PlusGestureResult, direction: PlusDirection = .right, fromAngle: Double, toAngle: Double,
-         inner: Bound, outer: Bound, isAvailable: Bool = true) {
+    init(result: PlusGestureResult, direction: PlusDirection = .right, level: PlusLevel = .near,
+         fromAngle: Double, toAngle: Double, inner: Bound, outer: Bound, isAvailable: Bool = true) {
         self.result = result
         self.direction = direction
+        self.level = level
         self.fromAngle = fromAngle
         self.toAngle = toAngle
         self.inner = inner

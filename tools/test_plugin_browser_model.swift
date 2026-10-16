@@ -117,6 +117,11 @@ struct Main {
         check(PluginBrowserModel.resolvedPage(.fxLink, usedCategories: [], hasFXLinkPage: false, hasSendPage: true) == allPage, "FX link page gone -> All")
         check(PluginBrowserModel.resolvedPage(.send, usedCategories: [], hasFXLinkPage: true, hasSendPage: true) == .send, "Send page stays when offered")
         check(PluginBrowserModel.resolvedPage(.send, usedCategories: [], hasFXLinkPage: true, hasSendPage: false) == allPage, "Send page gone -> All")
+        check(PluginBrowserModel.resolvedPage(.plusShortcuts, usedCategories: [], hasFXLinkPage: false, hasSendPage: false, hasPlusPage: true) == .plusShortcuts,
+              "'+' page stays when offered (with no FX link or send page)")
+        check(PluginBrowserModel.resolvedPage(.plusShortcuts, usedCategories: [], hasFXLinkPage: true, hasSendPage: true) == allPage,
+              "'+' page gone (the instruments zone) -> All")
+        check(!PluginBrowserPage.plusShortcuts.isPluginList, "the '+' page is not a plugin-list page")
         check(allPage.isPluginList && PluginBrowserPage.plugins(.category(2)).isPluginList && !PluginBrowserPage.fxLink.isPluginList && !PluginBrowserPage.send.isPluginList,
               "isPluginList")
 

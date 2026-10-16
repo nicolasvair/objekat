@@ -57,8 +57,9 @@ struct PluginBrowserInsertion {
 /// then the footer as the LAST child (a footer laid as a safe-area inset over a list that scrolls
 /// under it, with no background, was drawn on top of the rows).
 ///
-/// Pages: "All", one tab per colour the hand has already given to a plugin (right click on a row), and
-/// — for an insertion point of an FX chain only — "FX link" and "Send".
+/// Pages: "All", one tab per colour the hand has already given to a plugin (right click on a row), — for an
+/// insertion point of an FX chain only — "FX link" and "Send", and at the far right — for any effect picker —
+/// "+", what each direction of the signal view's "+" asks for (@see PluginBrowserPlusPage).
 struct PluginBrowserView: View {
     var viewModel: EditViewModel
     let objectID: UUID
@@ -84,6 +85,8 @@ struct PluginBrowserView: View {
     @State private var outsideClickMonitor: Any? = nil
     /// The colour tab being dragged along the bar (its place in the row, the hand's travel).
     @State private var colourDrag: (from: Int, dx: CGFloat)? = nil
+    /// The "+" page's selected slot: the one a click in the list binds a plugin to.
+    @State private var plusSlot = PlusSlot(.right, .near)
 
     // MARK: Derived
 
@@ -104,6 +107,10 @@ struct PluginBrowserView: View {
             hostCanSend: viewModel.find(id: objectID).map { !$0.isAux } ?? false)
     }
 
+    /// The "+" page exists for every EFFECT picker (a "+" of an FX chain, of a send's chain, a branch): the
+    /// directions are bound to effects only, so the instruments zone has no use for it.
+    private var hasPlusPage: Bool { kind != .instrumentsOnly }
+
     private var formats: PluginBrowserFormats {
         PluginBrowserFormats(au: categories.showsAU, vst3: categories.showsVST3)
     }
@@ -119,7 +126,8 @@ struct PluginBrowserView: View {
     /// The page on screen: the chosen one while it still exists, "All" otherwise.
     private var currentPage: PluginBrowserPage {
         PluginBrowserModel.resolvedPage(page, usedCategories: usedCategories,
-                                        hasFXLinkPage: extraPages.fxLink, hasSendPage: extraPages.send)
+                                        hasFXLinkPage: extraPages.fxLink, hasSendPage: extraPages.send,
+                                        hasPlusPage: hasPlusPage)
     }
 
     private var sections: [PluginBrowserSection<AvailablePlugin>] {
@@ -160,6 +168,11 @@ struct PluginBrowserView: View {
                     PluginBrowserSendPage(viewModel: viewModel, objectID: objectID,
                                           insertion: insertion, dismiss: dismiss)
                 }
+            case .plusShortcuts:
+                // The compass, then the list: a click on a plugin binds it to the selected slot.
+                PluginBrowserPlusPage(viewModel: viewModel, selected: $plusSlot)
+                searchRow
+                content
             }
             Divider()
             footer
@@ -237,13 +250,21 @@ struct PluginBrowserView: View {
                     }
                 }
             }
-            if extraPages.fxLink || extraPages.send {
+            if extraPages.fxLink || extraPages.send || hasPlusPage {
                 Divider().frame(height: 12)
                 if extraPages.fxLink {
                     tabCapsule(.fxLink) { Text(L("pluginBrowser.tab.fxLink")) }
                 }
                 if extraPages.send {
                     tabCapsule(.send) { Text(L("pluginBrowser.tab.send")) }
+                }
+                // Far right, always last.
+                if hasPlusPage {
+                    tabCapsule(.plusShortcuts, help: L("pluginBrowser.tab.plus.help")) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .accessibilityLabel(L("pluginBrowser.tab.plus.help"))
+                    }
                 }
             }
         }
@@ -315,10 +336,11 @@ struct PluginBrowserView: View {
     }
 
     /// The search field takes the keyboard back after a tab change and after a menu — on the plugin
-    /// pages, the only ones that have a field. Deferred: a field that was just (re)created is not in
-    /// the window yet.
+    /// pages and the "+" page, the only ones that have a field. Deferred: a field that was just
+    /// (re)created is not in the window yet.
     private func refocusSearch(on target: PluginBrowserPage? = nil) {
-        guard (target ?? currentPage).isPluginList else { return }
+        let page = target ?? currentPage
+        guard page.isPluginList || page == .plusShortcuts else { return }
         DispatchQueue.main.async { searchFocused = true }
     }
 
@@ -448,13 +470,16 @@ struct PluginBrowserView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// The model's sections with the built-in and the external plugins folded into one list, by name.
+    /// The model's sections with the built-in and the external plugins folded into one list, by name. On
+    /// the "+" page, the plain effects only: an ARA source is not a plugin a direction can insert.
     private var listedSections: [PluginBrowserSection<AvailablePlugin>] {
         let all = sections
+        let plusPage = currentPage == .plusShortcuts
         let plugins = all.filter { $0.kind != .ara }.flatMap(\.plugins)
+            .filter { !plusPage || $0.canBindToPlusDirection }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return (plugins.isEmpty ? [] : [PluginBrowserSection(kind: .external, plugins: plugins)])
-            + all.filter { $0.kind == .ara }
+            + (plusPage ? [] : all.filter { $0.kind == .ara })
     }
 
     /// What a format badge stands for, spelled out (its tooltip).
@@ -525,7 +550,15 @@ struct PluginBrowserView: View {
 
     @ViewBuilder
     private func pluginRow(_ plugin: AvailablePlugin) -> some View {
+        // On the "+" page a click BINDS the plugin to the selected slot (and the sheet stays open, so the
+        // compass shows the result); everywhere else it inserts the plugin and closes the sheet.
+        let plusPage = currentPage == .plusShortcuts
         PluginBrowserCard(action: {
+            if plusPage {
+                PlusShortcutStore.shared.assign(.plugin(PlusPluginRef(plugin)), to: plusSlot)
+                refocusSearch()
+                return
+            }
             if let onSelect { onSelect(plugin) }
             else { viewModel.addPlugin(objectID: objectID, available: plugin) }
             dismiss()
@@ -542,14 +575,23 @@ struct PluginBrowserView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if plusPage {
+                    // The slots this plugin is already on (an arrow; doubled for a far slot).
+                    let glyphs = PluginBrowserPlusPage.boundGlyphs(plugin, map: PlusShortcutStore.shared.map)
+                    if !glyphs.isEmpty {
+                        Text(verbatim: glyphs)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
                 categoryDots(plugin)
                 Text(plugin.formatLabel)
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(.tertiary)
             }
         }
-        .overlay(categoryMenuOverlay(for: plugin, plusDirections: plugin.canBindToPlusDirection))
-        .help(L(plugin.canBindToPlusDirection ? "pluginBrowser.row.help.plus" : "pluginBrowser.row.help"))
+        .overlay(categoryMenuOverlay(for: plugin))
+        .help(L("pluginBrowser.row.help"))
         // Above the right-click layer, over the badge alone: the badge's own tooltip.
         .overlay(alignment: .trailing) {
             Text(plugin.formatLabel)
@@ -564,8 +606,8 @@ struct PluginBrowserView: View {
 
     /// A transparent layer that answers the RIGHT click only (@see RightClickCaptureView): the left
     /// click, the hover and the wheel of the row below it are untouched. The menu is built at the click.
-    private func categoryMenuOverlay(for plugin: AvailablePlugin, plusDirections: Bool = false) -> some View {
-        RightClickMenuOverlay(menu: { categoryMenu(for: plugin, plusDirections: plusDirections) },
+    private func categoryMenuOverlay(for plugin: AvailablePlugin) -> some View {
+        RightClickMenuOverlay(menu: { categoryMenu(for: plugin) },
                               onClose: { refocusSearch() })
     }
 
@@ -573,7 +615,7 @@ struct PluginBrowserView: View {
     /// that gives one more — and "Uncategorised". A plugin takes SEVERAL colours: a click on a swatch gives it that
     /// colour or takes it back. Written into the shared store: the tabs and the dots follow, the store
     /// being observed.
-    private func categoryMenu(for plugin: AvailablePlugin, plusDirections: Bool = false) -> NSMenu {
+    private func categoryMenu(for plugin: AvailablePlugin) -> NSMenu {
         let store = categories
         let format = plugin.formatName
         let identifier = plugin.identifier
@@ -606,50 +648,7 @@ struct PluginBrowserView: View {
         none.representedObject = proxy
         none.state = current.isEmpty ? .on : .off
         menu.addItem(none)
-        if plusDirections {
-            menu.addItem(.separator())
-            menu.addItem(plusDirectionItem(for: plugin))
-        }
         return menu
-    }
-
-    /// "Assign to a direction of the + ▸": the eight directions, each naming what it asks for now; the
-    /// directions bound to THIS plugin are ticked. A click binds the plugin there (the action it replaces
-    /// moves to where the plugin was, @see PlusShortcutMap.assign), a click on a ticked one takes it off
-    /// (the direction then asks for nothing). The same map as the settings' "+ shortcuts" tab.
-    private func plusDirectionItem(for plugin: AvailablePlugin) -> NSMenuItem {
-        let store = PlusShortcutStore.shared
-        let ref = PlusPluginRef(plugin)
-        let map = store.map
-        let sub = NSMenu()
-        sub.autoenablesItems = false
-        for d in PlusDirection.allCases {
-            let action = map.action(d)
-            let mine = action.pluginRef == ref
-            let missing = action.pluginRef.map { viewModel.availablePlugin(for: $0) == nil } ?? false
-            let proxy = MenuActionProxy {
-                if mine { store.clear(d) } else { store.assign(.plugin(ref), to: d) }
-            }
-            let item = NSMenuItem(title: PlusShortcutText.directionLabel(d) + " — "
-                                         + PlusShortcutText.actionName(action, missing: missing),
-                                  action: #selector(MenuActionProxy.run), keyEquivalent: "")
-            item.target = proxy
-            item.representedObject = proxy
-            item.state = mine ? .on : .off
-            sub.addItem(item)
-        }
-        sub.addItem(.separator())
-        let clearProxy = MenuActionProxy { store.unbind(ref) }
-        let clear = NSMenuItem(title: L("pluginBrowser.plusDirection.clear"),
-                               action: #selector(MenuActionProxy.run), keyEquivalent: "")
-        clear.target = clearProxy
-        clear.representedObject = clearProxy
-        clear.isEnabled = map.direction(of: .plugin(ref)) != nil
-        sub.addItem(clear)
-
-        let item = NSMenuItem(title: L("pluginBrowser.plusDirection.menu"), action: nil, keyEquivalent: "")
-        item.submenu = sub
-        return item
     }
 }
 

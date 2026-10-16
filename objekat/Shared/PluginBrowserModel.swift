@@ -20,12 +20,15 @@ enum PluginBrowserTab: Hashable {
     case category(Int)
 }
 
-/// The browser's PAGE: the plugin list (on a tab), or one of the two pages that are not plugins at
-/// all — the FX links this host could join, and the targets of a send taken at the insertion point.
+/// The browser's PAGE: the plugin list (on a tab), or one of the pages that are not plugins at all —
+/// the FX links this host could join, the targets of a send taken at the insertion point, and the "+"
+/// page (what each direction of the signal view's "+" asks for — it shows the plugin list too, but a
+/// click there binds the plugin to a direction instead of inserting it).
 enum PluginBrowserPage: Hashable {
     case plugins(PluginBrowserTab)
     case fxLink
     case send
+    case plusShortcuts
 
     static let all: PluginBrowserPage = .plugins(.all)
 
@@ -287,13 +290,15 @@ enum PluginBrowserModel {
         _ current: PluginBrowserPage,
         usedCategories: [Int],
         hasFXLinkPage: Bool,
-        hasSendPage: Bool
+        hasSendPage: Bool,
+        hasPlusPage: Bool = false
     ) -> PluginBrowserPage {
         switch current {
         case .plugins(.all):          return current
         case .plugins(.category(let i)): return usedCategories.contains(i) ? current : .all
         case .fxLink:                 return hasFXLinkPage ? current : .all
         case .send:                   return hasSendPage ? current : .all
+        case .plusShortcuts:          return hasPlusPage ? current : .all
         }
     }
 

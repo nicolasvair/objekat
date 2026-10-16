@@ -9845,48 +9845,140 @@
         }
       }
     },
-    "pluginBrowser.plusDirection.clear": {
+    "pluginBrowser.plus.description": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Remove from every direction"
+            "value": "Dragging a + of the signal view in a direction gives what that direction shows: the left box near, the right box further (beyond 80 pt). An empty far box does what the near one does. Giving a box the action another one had swaps the two."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quitar de todas las direcciones"
+            "value": "Arrastrar un + de la vista sinóptica en una dirección da lo que esta muestra: la casilla izquierda cerca, la derecha más lejos (más allá de 80 pt). Una casilla lejana vacía hace lo mismo que la cercana. Dar a una casilla la acción de otra intercambia ambas."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Retirer de toutes les directions"
+            "value": "Glisser un + de la vue synoptique dans une direction donne ce qu'elle affiche : la case de gauche tout près, celle de droite plus loin (au-delà de 80 pt). Une case lointaine vide fait comme la proche. Donner à une case l'action d'une autre échange les deux."
           }
         }
       }
     },
-    "pluginBrowser.plusDirection.menu": {
+    "pluginBrowser.plus.noCatalog": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Assign to a direction of the +"
+            "value": "No plugin scanned yet"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Asignar a una dirección del +"
+            "value": "Ningún plugin escaneado todavía"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Assigner à une direction du +"
+            "value": "Aucun plugin scanné pour l'instant"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.pickHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a plugin below to put it on the selected box."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hacer clic en un plugin de abajo lo coloca en la casilla elegida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquer un plugin ci-dessous le place sur la case choisie."
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.pluginMenu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert a plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar un plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer un plugin"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to defaults"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer valores por defecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.sameAsNear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same as near"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Igual que cerca"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comme près"
           }
         }
       }
@@ -9910,29 +10002,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clic droit : choisir la couleur de catégorie"
-          }
-        }
-      }
-    },
-    "pluginBrowser.row.help.plus": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Right click: choose the category colour, or put this plugin on a direction of the +"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clic derecho: elegir el color de categoría, o poner este plugin en una dirección del +"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clic droit : choisir la couleur de catégorie, ou placer ce plugin sur une direction du +"
           }
         }
       }
@@ -10048,6 +10117,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "FX link"
+          }
+        }
+      }
+    },
+    "pluginBrowser.tab.plus.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Directions of the +: what dragging a + of the signal view gives"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direcciones del +: lo que da arrastrar un + en la vista sinóptica"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Directions du + : ce que donne un glisser du + dans la vue synoptique"
           }
         }
       }
@@ -10765,29 +10857,6 @@
         }
       }
     },
-    "plusAction.gainStage": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gain / Gain · Pan · Mute"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ganancia / Ganancia · Pan · Mute"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Gain / Gain · Pan · Mute"
-          }
-        }
-      }
-    },
     "plusAction.help.branch": {
       "extractionState": "manual",
       "localizations": {
@@ -10853,29 +10922,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "un étage gain · pan · mute"
-          }
-        }
-      }
-    },
-    "plusAction.help.gainStage": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "a gain stage (further: gain · pan · mute)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "una etapa de ganancia (más lejos: ganancia · pan · mute)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "un étage de gain (plus loin : gain · pan · mute)"
           }
         }
       }
@@ -11179,6 +11225,52 @@
         }
       }
     },
+    "plusLevel.far": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Further"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Más lejos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plus loin"
+          }
+        }
+      }
+    },
+    "plusLevel.near": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Near"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerca"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Près"
+          }
+        }
+      }
+    },
     "prefs.api.description": {
       "extractionState": "manual",
       "localizations": {
@@ -11267,144 +11359,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "API de commandes"
-          }
-        }
-      }
-    },
-    "prefs.plus.description": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Dragging a + of the signal view in one of these directions gives what the direction shows. Giving a direction the action another one had swaps the two."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arrastrar un + de la vista sinóptica en una de estas direcciones da lo que la dirección muestra. Dar a una dirección la acción que tenía otra intercambia ambas."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Glisser un + de la vue synoptique dans l'une de ces directions donne ce que la direction affiche. Donner à une direction l'action qu'avait une autre échange les deux."
-          }
-        }
-      }
-    },
-    "prefs.plus.noCatalog": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No plugin scanned yet"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ningún plugin escaneado todavía"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun plugin scanné pour l'instant"
-          }
-        }
-      }
-    },
-    "prefs.plus.pluginMenu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insert a plugin"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insertar un plugin"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insérer un plugin"
-          }
-        }
-      }
-    },
-    "prefs.plus.reset": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Reset to defaults"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Restablecer valores por defecto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Réinitialiser"
-          }
-        }
-      }
-    },
-    "prefs.tab.general": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "General"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "General"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Général"
-          }
-        }
-      }
-    },
-    "prefs.tab.plusShortcuts": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "+ shortcuts"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Atajos del +"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Raccourcis du +"
           }
         }
       }
@@ -16032,6 +15986,52 @@
         }
       }
     },
+    "synoptic.plus.help.dragFar": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag %1$@: %2$@, further: %3$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar %1$@: %2$@, más lejos: %3$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser %1$@ : %2$@, plus loin : %3$@"
+          }
+        }
+      }
+    },
+    "synoptic.plus.help.dragFarOnly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag %1$@ further: %2$@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar %1$@ más lejos: %2$@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser %1$@ plus loin : %2$@"
+          }
+        }
+      }
+    },
     "synoptic.plus.postFader.help": {
       "extractionState": "manual",
       "localizations": {
@@ -16074,6 +16074,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Un envoi pris après le fader : cliquer"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help.far": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click, or drag %@ further"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar %@ más lejos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer, ou glisser %@ plus loin"
           }
         }
       }
