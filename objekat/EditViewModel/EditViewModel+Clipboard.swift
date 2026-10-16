@@ -560,14 +560,13 @@ extension EditViewModel {
     /// undo of its own and touches neither the selection nor `isDirty`: the caller owns the
     /// transaction.
     ///
-    /// `skippingInfiniteBuses`: an infinite bus has no window to hollow (it spans the whole
-    /// project by definition). The plain delete still carves it, as it always has; the ripple,
-    /// which widens the lanes to a whole container, leaves it alone.
+    /// An infinite bus is never carved: it has no start and no end (it spans the whole project by
+    /// definition), so a time selection can neither shorten, split nor remove it. Its finite
+    /// children, when the selection covers them, are carved like any object.
     @discardableResult
-    func carveTimeRange(lo: Double, hi: Double, lanes: Set<Int>,
-                        skippingInfiniteBuses: Bool = false) -> Bool {
+    func carveTimeRange(lo: Double, hi: Double, lanes: Set<Int>) -> Bool {
         let affectedAll = laneEntries.filter { e in
-            if skippingInfiniteBuses && e.item.isInfiniteBus { return false }
+            if e.item.isInfiniteBus { return false }
             return lanes.contains(e.displayLane)
                 && e.absStart < hi
                 && e.absStart + e.item.duration > lo
@@ -665,10 +664,8 @@ extension EditViewModel {
                 }
 
             } else {
-                // The hole splits the object in two. An infinite bus has no window to hollow
-                // (@see `skippingInfiniteBuses`): a split would only lay a second infinite bus
-                // over the first, so it is left whole.
-                if entry.item.isInfiniteBus { continue }
+                // The hole splits the object in two (an infinite bus never gets here: it is
+                // filtered out of `affectedAll`).
                 if _splitInternal(id: id, atTime: hi) == nil {
                     // A safety net (split refused: degenerate bounds…): truncate at the
                     // selection's left edge rather than do nothing. What is left is an object whose
