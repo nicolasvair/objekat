@@ -110,7 +110,7 @@ struct LinkBadge: View {
     var size: CGFloat = 11
 
     var body: some View {
-        Image(systemName: "link")
+        Image(systemName: FeatureIcons.fxLink)
             .font(.system(size: size, weight: .bold))
             .foregroundStyle(.black)
             .padding(size * 0.45)

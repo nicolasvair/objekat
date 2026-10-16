@@ -19,7 +19,7 @@ struct SidechainStripView: View {
     var body: some View {
         let current = viewModel.sidechainCurrent(host: host, plugin: plugin)
         HStack(spacing: 8) {
-            Image(systemName: "waveform.path")
+            Image(systemName: FeatureIcons.sidechainReception)
                 .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.secondary)
 

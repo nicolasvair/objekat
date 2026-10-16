@@ -14,7 +14,7 @@ import Foundation
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
-//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift test_synoptic_plus_presentation.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift test_synoptic_plus_presentation.swift \
 //         && /tmp/t_plus_pres
 
 func L(_ key: String, _ args: CVarArg...) -> String { key }
@@ -164,7 +164,7 @@ struct Main {
         // one icon per result, shared by the zones and the ghost
         let icons = [PlusGestureResult.gain, .gainPanMute, .branch, .send].map { P.symbol(for: $0) }
         check(Set(icons).count == 4, "four distinct icons")
-        check(P.symbol(for: .send) == "arrow.turn.down.left" && P.symbol(for: .branch) == "arrow.triangle.branch"
+        check(P.symbol(for: .send) == FeatureIcons.auxSend && P.symbol(for: .branch) == "arrow.triangle.branch"
               && P.symbol(for: .gain) == "dial.medium" && P.symbol(for: .gainPanMute) == "slider.horizontal.3",
               "the app's own symbols")
 

@@ -1694,6 +1694,7 @@ struct TimelineView: View {
             isSelected: viewModel.isSelected(item.id),
             isMuted: viewModel.isMutedInMix(item),
             containsMissingFile: viewModel.containsMissingDescendant(item),
+            featureBadges: viewModel.featureBadges(of: item),
             blockHeight: blockHeight,
             // Being carried: the band follows the hand, like any block (@see infiniteBusPreviewDY).
             yPos: rulerHeight + Double(dl) * laneStep + infiniteBusPreviewDY(for: item.id),
@@ -2694,6 +2695,7 @@ struct TimelineView: View {
             stemColor: viewModel.stemColor(for: object.id),
             isMutedInMix:     viewModel.isMutedInMix(object),
             isMissingFile:    viewModel.isMissing(object),
+            featureBadges:    viewModel.featureBadges(of: object),
             previewOffset:    previewOffset(for: object),
             previewResizeDX:  previewResizeDX(for: object),
             previewTrimDX:    previewTrimDX(for: object),
@@ -3038,6 +3040,7 @@ struct TimelineView: View {
                                           isOpenConsolidate: viewModel.isInConsolidateEditStack(item.id)),
                 missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
                 mutedInMix: viewModel.isMutedInMix(item),
+                badges: viewModel.featureBadges(of: item),
                 expanded: item.showsChildrenInline,
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
                 toolOverlay: toolOverlays[item.id],
@@ -3213,10 +3216,15 @@ struct TimelineView: View {
                 var labelCache = CanvasLabelCache()
                 func resolvedLabel(_ s: String, icon: String, missing: Bool,
                                    meta: String, muteBadge: Bool,
-                                   lightInk: Bool = false) -> GraphicsContext.ResolvedText {
+                                   lightInk: Bool = false,
+                                   badges: [FeatureBadge] = []) -> GraphicsContext.ResolvedText {
                     labelCache.resolve(ctx, s, icon: icon, missing: missing, meta: meta,
-                                       muteBadge: muteBadge, lightInk: lightInk)
+                                       muteBadge: muteBadge, lightInk: lightInk, badges: badges)
                 }
+                // The feature badges of every object, read ONCE per pass as a value (a memo of the
+                // view model rebuilt once per model change, @see EditViewModel+FeatureBadges): the
+                // per-block lookup below asks the view model nothing.
+                let badgeMap = viewModel.featureBadgeMap
                 // Read ONCE, ahead of the drawing loop and not per block. `isMissing` is a pure
                 // dictionary lookup — that is exactly why it may be read from a drawing pass at
                 // all (@see EditViewModel+MissingFiles) — but the loop below is the one that runs
@@ -3269,15 +3277,26 @@ struct TimelineView: View {
                     let hasMeta = w >= 60
                         && (item.volume <= -96 || abs(item.volume) >= 0.5
                             || abs(item.pan) >= 0.01 || abs(item.speedRatio - 1.0) >= 0.01)
-                    lc.draw(resolvedLabel(item.displayName,
-                                          icon: ObjectKindIcon.name(for: item),
+                    let name = item.displayName
+                    let icon = ObjectKindIcon.name(for: item)
+                    // The feature badges, only when the name and they fit whole in the block (the
+                    // name keeps priority: @see CanvasLabelCache.badgesFit).
+                    var badges = badgeMap[item.id] ?? []
+                    if !badges.isEmpty,
+                       !CanvasLabelCache.badgesFit(ctx, name, icon: icon, missing: missing,
+                                                   badges: badges, room: rect.maxX - labelX) {
+                        badges = []
+                    }
+                    lc.draw(resolvedLabel(name,
+                                          icon: icon,
                                           missing: missing,
                                           meta: hasMeta ? item.timelineMetaSummary : "",
                                           muteBadge: w >= 30 && item.isMuted,
                                           // White over a dark band of the object's own colour
                                           // (@see `SoundObject.bandWantsLightInk`).
                                           lightInk: item.bandWantsLightInk(
-                                              selected: selectedIDs.contains(item.id))),
+                                              selected: selectedIDs.contains(item.id)),
+                                          badges: badges),
                             // The same top inset as the rich views (@see TimelineLabelMetrics).
                             at: CGPoint(x: labelX,
                                         y: rect.minY + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
@@ -3787,6 +3806,7 @@ struct TimelineView: View {
             stemColor: viewModel.stemColor(for: group.id),
             isMutedInMix: viewModel.isMutedInMix(group),
             containsMissingFile: viewModel.containsMissingDescendant(group),
+            featureBadges: viewModel.featureBadges(of: group),
             isOpenConsolidate: viewModel.isInConsolidateEditStack(group.id),
             displayLane: dl,
             scrollOffsetX: cullScrollX,
@@ -4029,7 +4049,7 @@ struct TimelineView: View {
         if let s = PluginDropHint.shared.state, case .send(let line) = s.context {
             // A send card is in the hand: where it would be taken, or why it cannot be (no modifier).
             HStack(spacing: 7) {
-                Image(systemName: line.isRefusal ? "nosign" : "arrow.turn.down.right")
+                Image(systemName: line.isRefusal ? "nosign" : FeatureIcons.auxSend)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(line.isRefusal ? Color.red : Color.accentColor)
                 Text(L(line.titleKey))
@@ -4057,7 +4077,7 @@ struct TimelineView: View {
             .allowsHitTesting(false)
         } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
-                Image(systemName: s.isLink ? "link"
+                Image(systemName: s.isLink ? FeatureIcons.fxLink
                                   : s.isCopy ? "plus.square.on.square"
                                   : s.context == .intoBin ? "tray.and.arrow.down"
                                   : s.context == .outOfBin ? "tray.and.arrow.up"
@@ -4312,7 +4332,7 @@ struct TimelineView: View {
     private var sidechainPickHUD: some View {
         if let route = viewModel.routePick {
             HStack(spacing: 7) {
-                Image(systemName: { if case .send = route { return "arrow.turn.down.right" } else { return "scope" } }())
+                Image(systemName: { if case .send = route { return FeatureIcons.auxSend } else { return "scope" } }())
                     .font(.system(size: 11, weight: .semibold))
                 Text({ () -> String in
                     switch route {
@@ -4349,7 +4369,7 @@ struct TimelineView: View {
             RoundedRectangle(cornerRadius: entry.item.blockCornerRadius)
                 .strokeBorder(refusal == nil ? Color.accentColor : Color.orange, lineWidth: 2)
             HStack(spacing: 5) {
-                Image(systemName: refusal == nil ? "waveform.path" : "nosign")
+                Image(systemName: refusal == nil ? (isSend ? FeatureIcons.auxSend : FeatureIcons.sidechainSend) : "nosign")
                     .font(.system(size: 9, weight: .bold))
                 Text(text)
                     .font(.system(size: 9, weight: .semibold))
@@ -4529,7 +4549,7 @@ struct TimelineView: View {
         case .toolCut:       return "scissors"
         case .toolVolume:    return "speaker.wave.2"
         case .toolPan:       return "slider.horizontal.3"
-        case .toolAux:      return "arrow.triangle.branch"
+        case .toolAux:      return FeatureIcons.auxSend
         case .toolStemAssign: return "paintbrush.pointed"
         }
     }

@@ -13,7 +13,7 @@ import Foundation
 //         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
-//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift test_synoptic_plus_shortcuts.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift test_synoptic_plus_shortcuts.swift \
 //         && /tmp/t_plus_sc
 
 /// The layout's labels go through `L()`; a stub here (the key itself), the catalogue being the app's.

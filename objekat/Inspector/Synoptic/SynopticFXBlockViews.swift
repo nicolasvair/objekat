@@ -96,7 +96,7 @@ struct FXBlockHeaderView: View {
                     // 🔗 — solid: follows the bin; hollow: detached. A click flips it. The same badge
                     // (size and look) as a plugin card's.
                     Button { actions.onFXToggleDetach?(link.blockID) } label: {
-                        Image(systemName: "link")
+                        Image(systemName: FeatureIcons.fxLink)
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(link.isDetached ? link.color.opacity(0.8) : .white)
                             .padding(3)
