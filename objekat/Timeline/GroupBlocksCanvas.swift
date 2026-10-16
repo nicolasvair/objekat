@@ -13,8 +13,7 @@ import SwiftUI
 // It is `GroupBlockView`'s `body`, redrawn value for value (radius 20, tint 0.30 / 0.55, inset
 // 2 pt border at 0.5 / 0.9, the custom colour's name band on 20 % of the height, the composite of
 // the children through `GroupWaveformDrawing`, the fade veils, the mute veil, the glyph, the name,
-// the meta and the chevron). The rich view stays the reference — the Debug A/B switch
-// (`DebugRenderSwitches.forceRichBlocks`) puts every group back on it.
+// the meta and the chevron). The rich view stays the reference.
 //
 // The Canvas draws from VALUES resolved by the blocks layer's body (`CanvasGroup`) and reads
 // nothing from the view model itself: a renderer closure is not a place to count on observation
