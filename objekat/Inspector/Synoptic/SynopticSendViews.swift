@@ -31,7 +31,7 @@ struct SynopticSendRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: outgoing ? "arrow.turn.down.right" : "arrow.turn.right.down")
+            Image(systemName: FeatureIcons.auxSend)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
                 .frame(width: 14)
@@ -145,7 +145,7 @@ struct SendCardView: View {
             // The grip: the arrow and the name take the card in the hand (the level, the switch and the
             // menu keep their own gestures).
             HStack(spacing: 5) {
-                Image(systemName: "arrow.turn.down.right")
+                Image(systemName: FeatureIcons.auxSend)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
                     .frame(width: 14)
@@ -337,7 +337,7 @@ struct SendDragPreview: View {
     var body: some View {
         let tint = live ? Color(nsColor: .controlAccentColor) : Color.gray
         HStack(spacing: 5) {
-            Image(systemName: "arrow.turn.down.right")
+            Image(systemName: FeatureIcons.auxSend)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(tint)
             Text(name)

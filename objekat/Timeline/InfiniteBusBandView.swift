@@ -24,6 +24,8 @@ struct InfiniteBusBandView: View {
     /// this the red would simply vanish the day a group was declared infinite. An aux never
     /// answers true: it has no children.
     var containsMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     let blockHeight: Double
     /// The y of the band's top in the canvas.
     let yPos: Double
@@ -153,10 +155,16 @@ struct InfiniteBusBandView: View {
                         .blockIconStyle(missingFile: containsMissingFile)
                         .layoutPriority(2)
                     Spacer().frame(width: 4)
-                    Text(item.displayName)
-                        .blockNameStyle(missingFile: containsMissingFile)
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    // The feature badges at the name's right (@see ObjectFeatureBadges): the name
+                    // keeps priority, the badges go when the two do not fit.
+                    NameWithFeatureBadges(badges: featureBadges,
+                                          size: TimelineLabelMetrics.featureBadgeSize,
+                                          color: BlockInk.metaColor(light: false)) {
+                        Text(item.displayName)
+                            .blockNameStyle(missingFile: containsMissingFile)
+                            .lineLimit(1)
+                    }
+                    .layoutPriority(1)
                 }
                 if item.isMuted {
                     Text(L("common.muteBadge"))

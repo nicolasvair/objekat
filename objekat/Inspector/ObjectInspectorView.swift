@@ -543,7 +543,7 @@ struct ObjectInspectorView: View {
         let refusals = senders.compactMap { viewModel.sendRouteStatus[SendKey(sender: $0.id, aux: aux.id)] }
         let allRefused = !refusals.isEmpty && refusals.count >= enabledCount
         return HStack(spacing: 6) {
-            Image(systemName: "arrow.turn.down.right")
+            Image(systemName: FeatureIcons.auxSend)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(enabledCount > 0 ? Color.accentColor : Color.secondary.opacity(0.6))
                 .frame(width: 14)

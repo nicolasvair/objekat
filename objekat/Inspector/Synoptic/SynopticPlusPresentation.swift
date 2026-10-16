@@ -150,7 +150,7 @@ enum SynopticPlusPresentation {
         case .gain, .none:  return "dial.medium"
         case .gainPanMute:  return "slider.horizontal.3"
         case .branch:       return "arrow.triangle.branch"
-        case .send:         return "arrow.turn.down.left"
+        case .send:         return FeatureIcons.auxSend
         }
     }
 

@@ -30,6 +30,8 @@ struct SoundBlockView: View {
     /// exactly like `isMutedInMix` — the block stays pure presentation and asks the view model
     /// nothing itself.
     var isMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     let previewOffset: (dx: Double, dy: Double)?
 
     let previewResizeDX: Double
@@ -426,10 +428,16 @@ struct SoundBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(object.label) }
                         } else {
-                            Text(object.displayName)
-                                .blockNameStyle(missingFile: isMissingFile, lightInk: lightInk)
-                                .lineLimit(1)
-                                .layoutPriority(1)
+                            // The feature badges at the name's right (@see ObjectFeatureBadges): the
+                            // name keeps priority, the badges go when the two do not fit.
+                            NameWithFeatureBadges(badges: featureBadges,
+                                                  size: TimelineLabelMetrics.featureBadgeSize,
+                                                  color: BlockInk.metaColor(light: lightInk)) {
+                                Text(object.displayName)
+                                    .blockNameStyle(missingFile: isMissingFile, lightInk: lightInk)
+                                    .lineLimit(1)
+                            }
+                            .layoutPriority(1)
                         }
                         if blockWidth >= 60 {
                             let meta = object.timelineMetaSummary

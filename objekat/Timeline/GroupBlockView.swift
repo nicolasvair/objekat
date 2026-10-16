@@ -23,6 +23,8 @@ struct GroupBlockView: View {
     /// and a red clip nobody can see is a red clip nobody reads. It is its own statement and not a
     /// claim about itself — the group's file is not gone, a group names none.
     var containsMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     /// True if this block is a CONSOLIDATED OBJECT currently open for editing. Opening one materialises
     /// its content, so its `kind` genuinely becomes `.group` for the duration and this view is
     /// what draws it — but what one opened was a consolidated object and still is, so its glyph must not
@@ -280,10 +282,16 @@ struct GroupBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(group.label) }
                         } else {
-                            Text(displayName)
-                                .blockNameStyle(missingFile: containsMissingFile, lightInk: lightInk)
-                                .lineLimit(1)
-                                .layoutPriority(1)
+                            // The feature badges at the name's right (@see ObjectFeatureBadges): the
+                            // name keeps priority, the badges go when the two do not fit.
+                            NameWithFeatureBadges(badges: featureBadges,
+                                                  size: TimelineLabelMetrics.featureBadgeSize,
+                                                  color: BlockInk.metaColor(light: lightInk)) {
+                                Text(displayName)
+                                    .blockNameStyle(missingFile: containsMissingFile, lightInk: lightInk)
+                                    .lineLimit(1)
+                            }
+                            .layoutPriority(1)
                         }
 
                         if blockWidth >= 80 {
