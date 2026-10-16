@@ -553,6 +553,29 @@
         }
       }
     },
+    "automation.pencil.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write automation live: during playback, press and move up or down, or use the wheel"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escribir la automatización en directo: durante la reproducción, pulsar y subir o bajar, o usar la rueda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écrire l'automation en direct : pendant la lecture, appuyer et monter ou descendre, ou utiliser la molette"
+          }
+        }
+      }
+    },
     "automation.scaleReadout": {
       "extractionState": "manual",
       "localizations": {

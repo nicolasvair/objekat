@@ -77,6 +77,12 @@ extension EditViewModel {
         guard let lane = object.automation.first(where: { $0.param == ref }),
               !lane.points.isEmpty else { return [] }
         let origin = object.startTime
+        // Bent segments are SAMPLED into straight ones first: the engine evaluates Tracktion's
+        // own bézier, not the curve family the editor draws (@see AutomationCurveShape), so it is
+        // only ever handed straight segments — and the ±1 steps, which both define identically.
+        // Sampling in the stored unit is exact for every target: the engine reads volume, pan and
+        // sends in that unit, and a plugin's denormalisation below is affine.
+        let sampled = AutomationCurveShape.engineSegments(lane.sortedPoints, range: ref.valueRange)
         // Conversion into EDIT time first, bounding second: a trim of the left edge leaves
         // points at a negative RELATIVE time (matter masked, not destroyed — @see
         // AutomationLane.shifted), and they are perfectly legitimate as long as `start + t` stays
@@ -84,7 +90,7 @@ extension EditViewModel {
         // frame. Only the TIMELINE's zero cannot be crossed, and the engine would clip there in
         // silence (@see AutomationCurveMath.clippedAtZero).
         let edit = AutomationCurveMath.clippedAtZero(
-            lane.sortedPoints.map { AutomationPoint(t: origin + $0.t, v: $0.v, c: $0.c) },
+            sampled.map { AutomationPoint(t: origin + $0.t, v: $0.v, c: $0.c) },
             default: ref.neutralValue)
         // A plugin parameter is stored NORMALISED 0…1 and is not necessarily so on the engine side
         // (a built-in speaks in hertz or in dB, and the engine clamps to ITS range). This is the only

@@ -343,6 +343,8 @@ struct TimelineView: View {
         var sendScrollAccumulator: Float = 0
         var automationScrollAccumulator: Float = 0
         var automationLineScrollAccumulator: Float = 0
+        /// The trackpad's accumulation for the wheel over an automation PENCIL (live write).
+        var automationWriteScrollAccumulator: Float = 0
         /// The precise-delta travel (pt, upwards positive) of the wheel gesture holding a line, since
         /// its grab (@see AutomationHandTravel.wheelSteps).
         var automationLineWheelTravel: Double = 0
@@ -855,6 +857,11 @@ struct TimelineView: View {
                             laneStep: laneStep,
                             rowHeight: blockHeight,
                             bandStartTime: r.minX / pixelsPerSecond,
+                            bandX: r.minX,
+                            isPlaying: isPlaying,
+                            liveScroll: liveScroll,
+                            cullScrollX: cullScrollX,
+                            cullViewportWidth: cullViewportWidth,
                             onSeekToTime: { t in
                                 // It no longer takes the caret away, and that is the change a
                                 // curve's row being a DISPLAY LANE brings: a click here is a click
@@ -1897,6 +1904,31 @@ struct TimelineView: View {
                   pts.indices.contains(owner), pts.indices.contains(right),
                   pts[owner].v != pts[right].v else { return nil }
             return (e.item.id, ref, owner)
+        }
+        return nil
+    }
+
+    /// The automation PENCIL under a point of the timeline (CONTENT coordinates) — the wheel's way
+    /// into a live write (@see EditViewModel.automationWriteWheel). The same geometry the band
+    /// draws its pencils with (@see AutomationWritePencil), read from the EXACT scroll, as the
+    /// band's own `LiveVisibleSpan` does. `origin` / `maxT` are the band's: its x = 0 as an
+    /// instant, and its length.
+    func automationPencilHit(at point: CGPoint)
+        -> (objectID: UUID, param: ParamRef, origin: Double, maxT: Double)? {
+        guard pixelsPerSecond > 0 else { return nil }
+        for e in viewModel.laneEntries {
+            guard let r = automationBandRect(for: e), r.contains(point) else { continue }
+            let g = AutomationBandGeometry(rows: e.item.automationRows,
+                                           pixelsPerSecond: pixelsPerSecond,
+                                           laneStep: laneStep, rowHeight: blockHeight,
+                                           bandWidth: r.width)
+            let span = visibleSpan(blockX: r.minX, blockWidth: r.width,
+                                   scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
+            let local = CGPoint(x: point.x - r.minX, y: point.y - r.minY)
+            guard let row = AutomationWritePencil.row(at: local, geo: g,
+                                                      visibleX: span.x - r.minX,
+                                                      visibleWidth: span.width) else { return nil }
+            return (e.item.id, g.rows[row], r.minX / pixelsPerSecond, r.width / pixelsPerSecond)
         }
         return nil
     }

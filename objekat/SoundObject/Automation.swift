@@ -198,9 +198,11 @@ extension ParamRef {
 /// (`shifted` / `split` / `mirrored` / `timeScaled`); a NEGATIVE time is legitimate there — it is
 /// material hidden by the edge, not an error (@see AutomationLane.audiblePoints).
 ///
-/// `c` is the CURVATURE of the segment leaving this point: 0 = straight, ±1 = extreme log/exp.
-/// It is the engine's point model as it is: converting to a Tracktion curve will be the
-/// identity, not a translation.
+/// `c` is the CURVATURE of the segment leaving this point: 0 = straight, ±1 = a step, a smooth
+/// monotonic bend in between (@see AutomationCurveShape for the family and its exact properties).
+/// The engine does not share that family: a bent segment is SAMPLED into straight ones on the way
+/// to it (@see EditViewModel.engineCurvePoints), only straight segments and the ±1 steps going
+/// through as they are.
 struct AutomationPoint: Codable, Equatable {
     var t: Double   // seconds from the start of the clip
     var v: Float    // the value, within `ParamRef.valueRange`
@@ -295,9 +297,8 @@ extension AutomationLane {
     /// `oldSpeed / newSpeed`: speeding a clip up shortens it, and its curve tightens by as much so
     /// as to stay opposite the same material.
     ///
-    /// CURVATURE is invariant: `c` reads off the segment's proportions (@see
-    /// AutomationCurveMath.bezierPoint, whose control point is a fraction of `run`), which a
-    /// scaling of time leaves unchanged.
+    /// CURVATURE is invariant: `c` shapes the segment's NORMALISED progress (@see
+    /// AutomationCurveShape.progress), which a scaling of time leaves unchanged.
     func timeScaled(by k: Double) -> AutomationLane {
         guard k > 0, k != 1 else { return self }
         var l = self
@@ -312,10 +313,8 @@ extension AutomationLane {
     /// Curvature takes more than mirroring the times: `c` belongs to the OUTGOING segment of a
     /// point (the engine's convention, @see AutomationCurveMath). After the flip, the point that
     /// OPENS a segment is the one that used to close it — so the curvature moves back one place —
-    /// and it changes SIGN, because the bézier's control point is measured from the left of the
-    /// segment: mirroring its abscissa amounts to negating `c` (the computation comes out the same
-    /// for a rising as for a falling segment, and the PLATEAUX of |c| > 0.5, which hold the value
-    /// at the start for c > 0 and at the end for c < 0, flip to the right side).
+    /// and it changes SIGN: the family satisfies `1 − f_c(1 − u) = f_{−c}(u)` EXACTLY (@see
+    /// AutomationCurveShape), for a rising as for a falling segment, the steps of ±1 included.
     func mirrored(over duration: Double) -> AutomationLane {
         let s = sortedPoints
         guard !s.isEmpty else { return self }
@@ -338,16 +337,21 @@ extension AutomationLane {
     /// with no point would therefore fall back on the static setting — the parameter would change
     /// value for the sole reason that we cut.
     ///
-    /// An accepted limit: the segment that STRADDLES the cut is carried over on both sides with the
-    /// SAME curvature over a shorter span, for want of being able to subdivide a bézier exactly in
-    /// this single-parameter model. The values at the three bounds (start, cut, end) are exact;
-    /// only the inside of that one segment is redrawn. A straight segment (`c == 0`), which is to
-    /// say the common case, cuts exactly.
+    /// The segment that STRADDLES the cut keeps its shape EXACTLY on both sides: the curve family
+    /// is closed under restriction (@see AutomationCurveShape.subCurvature), so its left point takes
+    /// the curvature of the part before the cut and the point laid at the cut that of the part
+    /// after. (Until October 2026 both halves carried the SAME curvature over a shorter span — the
+    /// old bézier could not be subdivided in this one-parameter model — and the inside of that
+    /// segment was redrawn.)
     func split(at s: Double) -> (left: AutomationLane, right: AutomationLane) {
-        let sorted = sortedPoints
+        var sorted = sortedPoints
         guard !sorted.isEmpty else { return (self, self) }
         let vCut = AutomationCurveMath.value(at: s, in: sorted, default: param.neutralValue)
-        let cCut = sorted.last(where: { $0.t < s })?.c ?? 0
+        var cCut = sorted.last(where: { $0.t < s })?.c ?? 0
+        if let cut = AutomationCurveMath.cutCurvatures(at: s, in: sorted) {
+            sorted[cut.leftIndex].c = cut.left
+            cCut = cut.right
+        }
 
         var left = sorted.filter { $0.t < s }
         if left.isEmpty {

@@ -89,6 +89,25 @@ extension TimelineView {
                 return nil
             }
 
+            // MARK: Live automation write (the wheel over a row's PENCIL, while playing)
+            // The pencil's second door (@see AutomationWritePencil, EditViewModel+AutomationWrite):
+            // each notch moves the written value by one wheel step at the playhead, notches less
+            // than `valueScrollUndoGap` apart forming ONE write and ONE undo. Stopped or paused,
+            // the pencil does nothing and the wheel scrolls the timeline as anywhere else. A
+            // trackpad's inertia is swallowed without writing (the line wheel's rule).
+            if !flags.contains(.option), !flags.contains(.command), vm.canWriteAutomation,
+               let hit = self.automationPencilHit(at: pos) {
+                if !event.momentumPhase.isEmpty { return nil }
+                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationWriteScrollAccumulator)
+                if steps != 0 {
+                    DispatchQueue.main.async {
+                        vm.automationWriteWheel(objectID: hit.objectID, param: hit.param,
+                                                origin: hit.origin, maxT: hit.maxT, steps: steps)
+                    }
+                }
+                return nil
+            }
+
             // MARK: Automation curvature (⌥ + the wheel on a segment)
             // An alternative to ⌥dragging, and the only gesture of the band that does not go through
             // SwiftUI: there is no 'wheel' gesture on SwiftUI's side, and this monitor already has the

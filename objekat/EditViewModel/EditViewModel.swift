@@ -517,6 +517,14 @@ final class EditViewModel {
     /// push the way the fader or the sends are).
     @ObservationIgnored var pushedPluginParams: [UUID: Set<ParamRef>] = [:]
 
+    /// The live automation write in progress (the band's pencil, @see EditViewModel+AutomationWrite).
+    /// Outside observation: it is driven at 30 Hz.
+    @ObservationIgnored var automationWrite: AutomationWriteSession? = nil
+
+    /// The row the pencil is writing, if any — the one observed slice of the live write, read by
+    /// the band to light its pencil.
+    var automationWriteTarget: AutomationWriteTarget? = nil
+
     /// The position (in timeline canvas coords) of the "link" indicator during a plugin drag
     /// with ⌘ held. nil otherwise. Updated live by the timeline's DropDelegate.
     var pluginLinkDropLocation: CGPoint? = nil

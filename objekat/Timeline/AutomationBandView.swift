@@ -72,6 +72,17 @@ struct AutomationBandView: View {
     /// band spans the whole timeline. The band's own geometry is relative (@see the note above), so
     /// this is the one number needed to turn a click in it back into a moment of the piece.
     var bandStartTime: Double = 0
+    /// The band's x in the canvas — what its VISIBLE part is measured against, to pin the pencils
+    /// to the right end of what the window shows (@see AutomationWritePencil).
+    var bandX: Double = 0
+    /// The transport is playing: the pencils write. Stopped or paused, they are drawn disabled and
+    /// a press on them does nothing.
+    var isPlaying: Bool = false
+    /// The exact scroll, read by the pencils' own small view only (@see LiveVisibleSpan).
+    var liveScroll: LiveScroll? = nil
+    /// The culling window — `LiveVisibleSpan`'s fallback when `liveScroll` is nil.
+    var cullScrollX: CGFloat = 0
+    var cullViewportWidth: CGFloat = 0
     /// Moves the cursor (a plain click), in EDIT time. The counterpart of `PianoRollView`'s
     /// `onSeekToTime`: the parent owns the snap, the seek and the transport.
     var onSeekToTime: (Double) -> Void = { _ in }
@@ -97,10 +108,11 @@ struct AutomationBandView: View {
     private var snapOn: Bool { viewModel.snapEnabled != NSEvent.modifierFlags.contains(.command) }
     private var snapGrid: Double { viewModel.effectiveSnapGrid }       // in SECONDS
 
-    /// The vertical movement (px) that sweeps the whole curvature range (-1 → +1). Fixed, and not
+    /// The vertical movement (px) that sweeps the whole KNOB (-1 → +1, @see
+    /// AutomationCurveShape.knob): 60 px from straight to the near-step. Fixed, and not
     /// proportional to the row's height: a low band has to stay adjustable to the finger, not
     /// become ten times twitchier than a tall one.
-    private static let curveDragTravel: Double = 60
+    private static let curveDragTravel: Double = 120
 
     /// A point's TIME stays put until the hand has travelled this far sideways (px): a vertical
     /// edit must not be snapped onto the grid by a hand that wobbles a pixel or two. A first guess.
@@ -143,6 +155,9 @@ struct AutomationBandView: View {
     /// Where the hand is, in the band's coordinates. The hovered ROW is not enough to decide
     /// whether the grips show: a row crosses the whole band, and the zone is a rectangle inside it.
     @State private var hoverAt: CGPoint? = nil
+    /// The pencil press under way: its row, and whether the live write actually started (a press
+    /// while the transport is stopped is swallowed and writes nothing).
+    @State private var pencilPress: (row: Int, writing: Bool)? = nil
 
     /// One row under a transform — the model's own `AutomationMovedRow`, shared with the wheel
     /// (@see EditViewModel+AutomationLine).
@@ -242,6 +257,14 @@ struct AutomationBandView: View {
                     }
                 }
                 .contextMenu { newLaneMenu }
+
+            // The write PENCILS, one per row, pinned to the right end of the band's VISIBLE part:
+            // their own small view reads the exact scroll, so a frame of scroll invalidates them
+            // and not the band (@see LiveVisibleSpan).
+            LiveVisibleSpan(live: liveScroll, blockX: bandX, blockWidth: max(1, bandWidth),
+                            scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth) { span in
+                pencils(visibleX: span.x, visibleWidth: span.width)
+            }
         }
         .frame(width: max(1, bandWidth), height: geo.interactiveHeight, alignment: .topLeading)
         // ⌘ pressed or released WITHOUT moving the mouse: the gesture under way is replayed in place,
@@ -255,6 +278,86 @@ struct AutomationBandView: View {
         .onChange(of: pending) { _, ref in
             if let ref { viewModel.refreshPluginParamValue(ref) }
         }
+    }
+
+    // MARK: - The write pencils (live automation)
+
+    /// One pencil per row, laid in the band's coordinates (@see AutomationWritePencil). Laid with
+    /// PADDING, never `.offset`: a gesture under an offset is hit-tested where the layout put the
+    /// view, not where it is drawn (@see feedback_swiftui_gestures).
+    private func pencils(visibleX: Double, visibleWidth: Double) -> some View {
+        let g = geo
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { i, ref in
+                if let r = AutomationWritePencil.rect(row: i, geo: g, visibleX: visibleX,
+                                                      visibleWidth: visibleWidth) {
+                    pencil(row: i, ref: ref, rect: r)
+                        .padding(.leading, r.minX)
+                        .padding(.top, r.minY)
+                }
+            }
+        }
+        .frame(width: max(1, bandWidth), height: g.interactiveHeight, alignment: .topLeading)
+    }
+
+    /// A row's pencil: press and move vertically to write while the transport plays (@see
+    /// EditViewModel+AutomationWrite). Lit in the object's colour while it writes; dimmed, and
+    /// inert, while the transport is stopped.
+    private func pencil(row i: Int, ref: ParamRef, rect r: CGRect) -> some View {
+        let writing = viewModel.automationWriteTarget
+            == AutomationWriteTarget(objectID: object.id, param: ref)
+        let enabled = isPlaying
+        return ZStack {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(writing ? tint.opacity(0.85) : Color.black.opacity(enabled ? 0.35 : 0.18))
+            Image(systemName: "pencil")
+                .font(.system(size: max(7, min(12, r.height - 4)), weight: .semibold))
+                .foregroundStyle(Color.white.opacity(enabled ? 0.9 : 0.3))
+        }
+        .frame(width: r.width, height: r.height)
+        .contentShape(Rectangle())
+        .help(L("automation.pencil.help"))
+        .onContinuousHover { phase in
+            guard drag == nil, pencilPress == nil else { return }
+            if case .active = phase {
+                clearHover()
+                TimelineCursorKeeper.set(enabled ? .resizeUpDown : .arrow)
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { v in pencilChanged(row: i, ref: ref, rect: r, value: v) }
+                .onEnded { _ in pencilEnded() }
+        )
+    }
+
+    /// The pencil's drag. The value starts at the curve's value UNDER THE PLAYHEAD (no jump) and
+    /// follows the hand's vertical travel only, through the row's own mapping — the same one a
+    /// point's drag reads (@see AutomationBandGeometry.rowTravel). No detent: a live write is a
+    /// gesture, not a setting.
+    private func pencilChanged(row: Int, ref: ParamRef, rect r: CGRect, value: DragGesture.Value) {
+        if pencilPress == nil {
+            let ok = isPlaying
+                && viewModel.beginAutomationWrite(objectID: object.id, param: ref,
+                                                  origin: bandStartTime, maxT: geo.maxT,
+                                                  source: .drag)
+            pencilPress = (row, ok)
+            clearHover()
+        }
+        guard let p = pencilPress, p.writing, let s = viewModel.automationWrite else { return }
+        let g = geo
+        let dy = Double(value.translation.height)
+        let v = (s.startValue + g.valueDelta(dy: g.rowTravel(handDy: dy, ref: ref), ref: ref))
+            .clamped(to: ref.valueRange)
+        viewModel.setAutomationWriteValue(v)
+        setReadout(row: p.row, x: Double(r.minX) - 70, ref: ref, value: v)
+    }
+
+    /// Release: the curve keeps what was written (@see EditViewModel.endAutomationWrite).
+    private func pencilEnded() {
+        if pencilPress?.writing == true { viewModel.endAutomationWrite() }
+        pencilPress = nil
+        readout = nil
     }
 
     /// The 'add a row' menu: the model's targets flat (they can be counted on one's fingers), then
@@ -984,14 +1087,18 @@ struct AutomationBandView: View {
 
         case .curve(let i):
             guard d.origPoints.indices.contains(i) else { return }
-            let dc = curveDelta(dy: dy, leftIndex: i, points: d.origPoints)
-            let c  = (d.origPoints[i].c + dc).clamped(to: -1...1)
+            // The drag moves the KNOB from the curvature the gesture started on, never `c` itself
+            // (@see AutomationCurveShape.knob): even steps to the eye, the near-step only at the end.
+            let dk = curveDelta(dy: dy, leftIndex: i, points: d.origPoints)
+            let c  = AutomationCurveShape.adjusted(d.origPoints[i].c, knobDelta: dk)
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 guard pts.indices.contains(i) else { return }
                 pts[i].c = c
             }
+            // The readout names the KNOB (−1…+1), the figure the hand actually moves evenly.
             readout = (row: d.row, x: Double(location.x), y: nil,
-                       text: String(format: L("automation.curveReadout"), c))
+                       text: String(format: L("automation.curveReadout"),
+                                    AutomationCurveShape.knob(forCurvature: Double(c))))
 
         case .staticValue:
             if let v = viewModel.shiftAutomationLine(.staticValue(orig: d.origStatic),
@@ -1241,8 +1348,8 @@ struct AutomationBandView: View {
     // MARK: - Curvature
 
     /// The storage index of the point carrying the curvature of the segment under `x`, if it is
-    /// bendable. A FLAT segment is not: the engine returns a straight line whatever the value of
-    /// `c` (@see AutomationCurveMath.bezierY), and storing an invisible curvature would bring it
+    /// bendable. A FLAT segment is not: it stays a straight line whatever the value of
+    /// `c` (@see AutomationCurveShape.value), and storing an invisible curvature would bring it
     /// back later, at the first move of an end point.
     private func curvableSegment(atX x: Double, ref: ParamRef, points pts: [AutomationPoint]) -> Int? {
         guard let seg = geo.segment(atX: x, points: pts),
@@ -1252,16 +1359,16 @@ struct AutomationBandView: View {
         return owner
     }
 
-    /// The curvature difference for a vertical movement. The SIGN depends on the segment's
-    /// direction: in the engine's model, a positive `c` hollows a rising segment but bulges a
+    /// The KNOB difference for a vertical movement (@see AutomationCurveShape.knob). The SIGN
+    /// depends on the segment's direction: a positive `c` hollows a rising segment but bulges a
     /// falling one. We compensate here so that the gesture keeps a single promise — the curve
     /// follows the cursor, upwards as downwards.
-    private func curveDelta(dy: Double, leftIndex: Int, points pts: [AutomationPoint]) -> Float {
+    private func curveDelta(dy: Double, leftIndex: Int, points pts: [AutomationPoint]) -> Double {
         guard let seg = geo.segment(atX: geo.x(ofT: pts[leftIndex].t) + 0.5, points: pts),
               let right = seg.right, pts.indices.contains(right) else { return 0 }
         let ascending = pts[right].v > pts[leftIndex].v
         let sign: Double = ascending ? 1 : -1
-        return Float(sign * dy * 2 / Self.curveDragTravel)
+        return sign * dy * 2 / Self.curveDragTravel
     }
 
     // MARK: - Time and grid
