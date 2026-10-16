@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""c03 — the rule "clamped at zero, EXCEPT inside a group: then the GROUP is clamped, and its objects may
-start before 0" (ZeroClamp.swift), through the API door (`object.move`, `object.trim`). Run after
+"""c03 — the floor at zero (ZeroFloor.swift since 16 October 2026: every moved object stops at 0, except
+one that already STARTS before 0, free while it stays there; a group carries its children wherever that
+takes them), through the API door (`object.move`, `object.trim`). Run after
 `scenario_canvas_nested.py build`. Usage: c03_object_move_clamps_negative_start.py [socket]
 
   child N1 (G5, start -2) +1 s            -> -1 (it was clamped to 0 before); G5 stays at 0
