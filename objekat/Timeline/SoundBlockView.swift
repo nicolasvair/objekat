@@ -20,6 +20,9 @@ struct SoundBlockView: View {
     /// nil = fall back on those. @see LiveScroll
     var liveScroll: LiveScroll? = nil
     let waveformDisplayDB: Double
+    /// The gain (dB) the drawn waveform follows: the fader + the serial gain stages (@see
+    /// SoundObject.waveformDisplayGainDb(offBins:)), resolved by the caller — which knows the FX links.
+    let waveformGainDb: Float
     let displayLane: Int
     let stemColor: Color
     /// True if the object is muted in the mix — its own mute, or its stem's — unless a direct solo.
@@ -190,7 +193,7 @@ struct SoundBlockView: View {
                     clipDuration: effectiveDuration,
                     speedRatio: object.speedRatio,
                     isReversed: object.isReversed,
-                    volumeDb: object.waveformDisplayGainDb,
+                    volumeDb: waveformGainDb,
                     fadeIn: effectiveFadeIn,
                     fadeOut: effectiveFadeOut,
                     curveIn: effectiveFadeInCurve,

@@ -130,8 +130,101 @@ extension ObjectPlugin {
         return out
     }
 
+    /// The same stage whose STORED state carries `values` (clamped): the three attributes of the root
+    /// `<PLUGIN …>` element are rewritten in place, or added when absent, and everything else the
+    /// engine's flushed tree holds is left as it is. A stage with no state (or none `<PLUGIN` opens)
+    /// gets `gainStageStateXML`'s. Not a stage: returned unchanged.
+    ///
+    /// This is the model's MIRROR of the live instance (@see EditViewModel.mirrorGainStageValues): the
+    /// value lives in the engine, which nothing observes, and the drawn waveform reads the model.
+    func withGainStageStoredValues(_ values: GainStageValues) -> ObjectPlugin {
+        guard let face = gainStageFace else { return self }
+        let v = values.clamped
+        var out = self
+        guard let xml = stateXML, let open = xml.range(of: "<PLUGIN"),
+              let close = xml[open.upperBound...].firstIndex(of: ">") else {
+            out.stateXML = Self.gainStageStateXML(face: face, values: v)
+            return out
+        }
+        var tag = String(xml[open.upperBound..<close])
+        func set(_ name: String, _ value: String) {
+            if let r = tag.range(of: " \(name)=\""),
+               let end = tag[r.upperBound...].firstIndex(of: "\"") {
+                tag.replaceSubrange(r.upperBound..<end, with: value)
+            } else {
+                // Before the slash of a self-closing tag, if it has one.
+                let at = tag.hasSuffix("/") ? tag.index(before: tag.endIndex) : tag.endIndex
+                tag.insert(contentsOf: " \(name)=\"\(value)\"", at: at)
+            }
+        }
+        set("gainDb", Self.xmlNumber(v.gainDb))
+        set("pan", Self.xmlNumber(v.pan))
+        set("muted", v.muted ? "1" : "0")
+        out.stateXML = String(xml[..<open.upperBound]) + tag + String(xml[close...])
+        return out
+    }
+
     private static func xmlNumber(_ f: Float) -> String {
         // Shortest exact text: `-6`, `0.25`, `-4.5` (never `-6.000000`).
         f == f.rounded() ? String(Int(f)) : String(f)
+    }
+}
+
+// MARK: - The gain stages in the drawn waveform (pure)
+//
+// The drawn waveform follows the object's fader (`volume`) AND the gain of its own gain stages: a
+// stage is dB in a straight line, so it moves the waveform exactly as far as it moves the sound —
+// what the two chain trims did until format 24 (they became stages, @see LegacyGainMigration).
+//
+// What counts: the stages of the object's MAIN serial chain — its root series, and the series of an
+// FX link's block sitting in it (a bin is serial), unless that bin is switched off (the bin's common
+// on/off: the registry's while attached, `local` while detached). A stage's own `isEnabled` is
+// honoured although a stage has no bypass of its own. What does NOT count: a parallel block's
+// branches (a branch is one voice of a sum, not the object's level), a send's mini-chain (not the
+// object's output), the stem / Main chains (not the object's), any third-party or other built-in
+// plugin (what it does to the level cannot be known without rendering), and a stage's pan and mute
+// (not a gain: an object's own mute greys its block, it does not flatten its waveform).
+//
+// The value is the model's STORED one (`gainStageStoredValues`), kept in step with the instance by
+// every write of the hand or the API (@see EditViewModel.mirrorGainStageValues). An automated stage is
+// drawn at that static value, as an automated fader is drawn at `volume`: the drawing ignores curves.
+enum GainStageDisplay {
+
+    /// The sum (dB) of the gains of the stages of `plugins`' main serial chain. `offBins`: the ids of
+    /// the ATTACHED FX links whose common on/off is off (@see EditViewModel.offFXLinkIDs).
+    static func serialStagesGainDb(_ plugins: [ObjectPlugin], offBins: Set<UUID>) -> Float {
+        var sum: Float = 0
+        for p in plugins {
+            if let fb = p.fxBlock {
+                let on = fb.isDetached ? (fb.local?.isEnabled ?? true) : !offBins.contains(fb.linkID)
+                if on { sum += serialStagesGainDb(fb.plugins, offBins: offBins) }
+                continue
+            }
+            // A parallel block (`rack`) or a send's place on the trunk: not the object's serial level.
+            guard !p.isContainer, p.isEnabled, let v = p.gainStageStoredValues else { continue }
+            sum += v.clamped.gainDb
+        }
+        return sum
+    }
+
+    /// The gain (dB) the drawn waveform follows: the fader plus the serial stages. A fader at -96 dB
+    /// (silence) stays silence whatever the stages add — a muted-by-fader object does not come back on
+    /// the screen because of a +12 (the rule the trims followed until format 24).
+    static func effectiveDisplayGainDb(volume: Float, plugins: [ObjectPlugin], offBins: Set<UUID>) -> Float {
+        if volume <= -96 { return volume }
+        return volume + serialStagesGainDb(plugins, offBins: offBins)
+    }
+}
+
+extension SoundObject {
+    /// The gain the DRAWN waveform follows: the fader plus the gain stages of its main serial chain
+    /// (@see GainStageDisplay). A clip's own drawing, a group's composite (each child's contribution, then
+    /// the group's own, a product) and an infinite bus's band all read it.
+    ///
+    /// A DISPLAY approximation, on purpose. What is heard is `volume` then the chain, and the other
+    /// plugins in between (a compressor, an EQ) can change the level by any amount the drawing cannot
+    /// know without rendering; a stage is dB in a straight line, so it is counted exactly.
+    func waveformDisplayGainDb(offBins: Set<UUID>) -> Float {
+        GainStageDisplay.effectiveDisplayGainDb(volume: volume, plugins: plugins, offBins: offBins)
     }
 }

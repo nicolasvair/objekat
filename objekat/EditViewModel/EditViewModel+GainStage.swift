@@ -131,8 +131,79 @@ extension EditViewModel {
         if let m = muted {
             setPluginParam(pluginID: pluginID, index: GainStageValues.muteIndex, value: m ? 1 : 0)
         }
+        // The model follows (the drawn waveform reads it): what the instance says now, the fields just
+        // written laid over it as written — the engine's answer is not needed to know those.
+        var v = gainStageValues(pluginID) ?? .neutral
+        if let g = gainDb { v.gainDb = min(max(g, r.lowerBound), r.upperBound) }
+        if let p = pan { v.pan = min(max(p, pr.lowerBound), pr.upperBound) }
+        if let m = muted { v.muted = m }
+        mirrorGainStageValues(pluginID, v)
         isDirty = true
         return true
+    }
+
+    // MARK: The model's mirror (the drawn waveform)
+
+    /// Writes `values` into the MODEL's stored state of the stage `pluginID` — and of every stage
+    /// LINKED to it (same `linkGroupID`: an FX link's members, a ⌘-link), which the engine's mirror
+    /// makes follow by index. ONE write of `items`, so ONE invalidation: the same path the fader's
+    /// value takes to the drawn waveform (@see GainStageDisplay). Objects only — their chains and their
+    /// sends' mini-chains; a stem's chain is not drawn, and its state is captured from the engine at
+    /// every save and undo point like every plugin's. Nothing is written when nothing differs.
+    ///
+    /// The value of a stage lives in its INSTANCE; this mirror is what lets the drawing read it without
+    /// asking the engine at every frame. Every hand / API write goes through here (`setGainStage`,
+    /// `plugin.set_param` on a stage); an undo / redo brings the model back with the states captured
+    /// live, so it is right afterwards too.
+    func mirrorGainStageValues(_ pluginID: UUID, _ values: GainStageValues) {
+        guard let entry = chainEntry(ofPlugin: pluginID), entry.plugin.isGainStage else { return }
+        let group = entry.plugin.linkGroupID
+        func isTarget(_ p: ObjectPlugin) -> Bool {
+            p.isGainStage && (p.id == pluginID || (group != nil && p.linkGroupID == group))
+        }
+        func patched(_ plugins: [ObjectPlugin], _ changed: inout Bool) -> [ObjectPlugin] {
+            plugins.map { p in
+                if p.isContainer {
+                    return p.mappingChildSeries { patched($0, &changed) }
+                }
+                guard isTarget(p) else { return p }
+                let q = p.withGainStageStoredValues(values)
+                if q.stateXML != p.stateXML { changed = true }
+                return q
+            }
+        }
+        // The objects that hold a target, then ONE batched write.
+        var hosts: Set<UUID> = []
+        for o in allObjectsFlat {
+            var leaves = Self.flattenLeaves(o.plugins)
+            for s in o.sends { leaves += Self.flattenLeaves(s.plugins) }
+            if leaves.contains(where: isTarget) { hosts.insert(o.id) }
+        }
+        guard !hosts.isEmpty else { return }
+        // A dry run first: an unchanged mirror must not write `items` (a redraw of the whole timeline).
+        var anyChange = false
+        for o in allObjectsFlat where hosts.contains(o.id) {
+            _ = patched(o.plugins, &anyChange)
+            for s in o.sends { _ = patched(s.plugins, &anyChange) }
+            if anyChange { break }
+        }
+        guard anyChange else { return }
+        updateMany(hosts) { o in
+            var changed = false
+            o.plugins = patched(o.plugins, &changed)
+            for i in o.sends.indices where !o.sends[i].plugins.isEmpty {
+                o.sends[i].plugins = patched(o.sends[i].plugins, &changed)
+            }
+        }
+    }
+
+    /// The ATTACHED FX links whose common on/off is off: their blocks' stages are not heard, so the
+    /// drawn waveform does not count them (@see GainStageDisplay). Read by the timeline's drawing; a
+    /// toggle of a bin's on/off changes `fxLinks`, which redraws it.
+    var offFXLinkIDs: Set<UUID> {
+        var out: Set<UUID> = []
+        for l in fxLinks where !l.isEnabled { out.insert(l.id) }
+        return out
     }
 
     // MARK: Tree helpers
