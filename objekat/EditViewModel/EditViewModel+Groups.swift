@@ -268,12 +268,12 @@ extension EditViewModel {
         // Splitting the clips crossing the bounds. The list is recomputed after each pass:
         // _splitInternal creates a new top-level item on the same lane.
         for id in topLevelClipIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t1, c.startTime + c.duration > t1 else { continue }
             _ = _splitInternal(id: id, atTime: t1)
         }
         for id in topLevelClipIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t2, c.startTime + c.duration > t2 else { continue }
             _ = _splitInternal(id: id, atTime: t2)
         }
@@ -338,12 +338,12 @@ extension EditViewModel {
         pushUndo()
 
         for id in childIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t1, c.startTime + c.duration > t1 else { continue }
             _ = _splitInternal(id: id, atTime: t1)
         }
         for id in childIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t2, c.startTime + c.duration > t2 else { continue }
             _ = _splitInternal(id: id, atTime: t2)
         }

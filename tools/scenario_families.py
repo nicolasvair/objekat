@@ -846,6 +846,34 @@ with ObjekatClient(SOCK) as c:
     check("and the refusal moved NOTHING",
           c.send("object.get", {"id": id1})["lane"] == l2
           and c.send("object.get", {"id": ida})["lane"] == 0)
+    # --- a timeline cut does not concern an infinite bus: it is skipped whether it is named alone or
+    #     together with finite objects, and nothing is superposed (no second bus appears).
+    def inf_count():
+        return len([o for o in c.send("object.list")["objects"]
+                    if c.send("object.get", {"id": o["id"]}).get("infinite")])
+    inf_n0 = inf_count()
+    n_all0 = len(c.send("object.list")["objects"])
+    ic = c.send("object.add", {"path": BIP, "lane": 40, "start": 0})["id"]
+    icd = c.send("object.get", {"id": ic})["duration"]
+    n_all1 = len(c.send("object.list")["objects"])
+    r = c.send("object.split_at", {"ids": [id1], "seconds": 0.5 * icd})
+    check("cutting an infinite bus alone produces nothing", r["count"] == 0, str(r))
+    check("…no second bus appears (no superposition)",
+          len(c.send("object.list")["objects"]) == n_all1 and inf_count() == inf_n0)
+    r = c.send("object.split_at", {"ids": [id1, id2, ic], "seconds": 0.5 * icd})
+    check("a multi-object cut splits the finite object and skips the buses",
+          r["count"] == 2 and ic in r["ids"] and id1 not in r["ids"] and id2 not in r["ids"], str(r))
+    check("…the buses are still two, and the clip became two pieces",
+          inf_count() == inf_n0 and len(c.send("object.list")["objects"]) == n_all1 + 1)
+    c.send("selection.set", {"ids": [id1]})
+    r = c.send("object.split_at", {"ids": [id1], "seconds": 0.25 * icd, "keep": "left"})
+    check("a directed cut (keep=left) leaves a selected infinite bus whole",
+          r["count"] == 0 and c.send("object.get", {"id": id1})["infinite"] is True, str(r))
+    c.send("selection.clear")
+    # The clip pieces go away with the rest of this block's fixtures.
+    inf_pieces = [o["id"] for o in c.send("object.list")["objects"] if o["lane"] == 40]
+    step("object.remove cut fixtures", lambda: c.send("object.remove", {"ids": inf_pieces}))
+
     # The two buses go away again: the rest of the scenario lays its own auxes on these rows, and
     # a band left lying about would be one more sender in every `aux.list` below.
     step("object.remove buses", lambda: c.send("object.remove", {"ids": [id1, id2]}))

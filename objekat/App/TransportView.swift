@@ -122,7 +122,19 @@ struct TransportView: View {
             Divider().frame(height: 20)
 
             // Grid mode + Snap
-            Toggle(L("transport.snap"), isOn: $viewModel.snapEnabled)
+            Toggle(isOn: $viewModel.snapEnabled) {
+                // ⌘ held inverts the snap for as long as it is down (`effectiveSnapEnabled`): the
+                // small command glyph beside the word is that hint. No explicit colour — it takes
+                // the label's own, so it follows the button's on/off look — only a lowered opacity
+                // to stay discreet. Constant, so the button never changes size.
+                HStack(spacing: 3) {
+                    Text(L("transport.snap"))
+                    Image(systemName: "command")
+                        .font(.system(size: 8, weight: .semibold))
+                        .opacity(0.55)
+                        .accessibilityHidden(true)
+                }
+            }
                 .toggleStyle(.button)
                 .font(.system(size: 10, weight: .medium))
                 .controlSize(.small)

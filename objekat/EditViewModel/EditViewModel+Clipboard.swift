@@ -665,6 +665,10 @@ extension EditViewModel {
                 }
 
             } else {
+                // The hole splits the object in two. An infinite bus has no window to hollow
+                // (@see `skippingInfiniteBuses`): a split would only lay a second infinite bus
+                // over the first, so it is left whole.
+                if entry.item.isInfiniteBus { continue }
                 if _splitInternal(id: id, atTime: hi) == nil {
                     // A safety net (split refused: degenerate bounds…): truncate at the
                     // selection's left edge rather than do nothing. What is left is an object whose
@@ -960,6 +964,7 @@ extension EditViewModel {
                 let candidates = laneEntries
                     .filter { e in
                         !done.contains(e.item.id)
+                            && !e.item.isInfiniteBus     // no edge to split at (@see `cut`)
                             && sel.lanes.contains(e.displayLane)
                             && e.absStart < t
                             && e.absStart + e.item.duration > t
