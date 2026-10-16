@@ -372,26 +372,25 @@ distinction is the heart of the project's measuring method. `perf.census` counts
 as a rich SwiftUI view of its own, and the two cost very differently, so this is the number every
 "it is slow with many objects" question starts with. Fields: `clips_canvas`, `clips_rich` (every
 block that is not a group and kept a SwiftUI view — an aux and a MIDI clip always do),
-`groups_canvas`, `groups_rich` (a group's block, or an infinite group's band), `group_bands_canvas`,
-`group_bands_rich` (the tinted inline bands of the open groups — one per OPEN group, culled or not; they are in `group_bands_canvas` in production, `group_bands_rich` only under the Debug A/B switch) — all of them the
+`groups_canvas`, `groups_rich` (a group's block, or an infinite group's band), `group_bands_canvas`
+(the tinted inline bands of the open groups — one per OPEN group, culled or not) — all of them the
 counts of the LAST evaluation of the blocks layer, never summed across frames, visible blocks only
 (the viewport plus an 80 px margin) — and the two cumulative `passes` (evaluations of the blocks
 layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census {reset: true}`.
-`groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or having one of its loop bounds dragged — and ALL of them under the Debug A/B switch. Zero everywhere in
+`groups_canvas` counts the groups drawn by the Canvas; a group stays rich (`groups_rich`) when it is an infinite bus, renamed, baking, an open consolidated object, under the volume / pan / aux tools (or hovered under the stem tool), previewing a drag / trim / resize / fade, or having one of its loop bounds dragged. Zero everywhere in
 `--headless` mode: nothing is drawn there. `tools/bench_groups.py` prints them on its `setup` line.
 
 `regimes.rich_reasons` says WHY the rich blocks are rich: a histogram with one entry per block
 (`clips_rich + groups_rich` in all), counted in the same loop as the partition, from the very
 answer that put the block there — the FIRST rule met, in the order `TimelineView.clipRichReason` /
 `groupRichReason` test them, so a block that is both renamed and under the Volume tool counts as
-`rename`. Every key is present, at 0 when unused: `tool` (Volume / Pan / Aux armed), `stem_hover`
+`rename`. Every key is present, at 0 when unused: `tool_hover` (Volume / Pan / Aux armed and the block aimed at), `tool_span` (the same tools, a block a viewport edge cuts), `stem_hover`
 (Stem tool armed and the pointer on the block), `preview` (a drag / trim / resize / fade under
 way — 0 since E7: the Canvas draws the previews, the reason only exists with the fallback
 `objekat.timeline.richPreviews` on), `spill` (the neighbour of a spilling fade; same), `midi` (a MIDI clip whose piano roll is open),
 `aux` (never produced any more: an aux is drawn by the Canvas, an infinite one counts as `infinite`),
 `consolidate` (an instance whose definition is being re-baked), `rename`, `bake`, `loop` (a group
-whose IN / OUT bound is being dragged; only with the same fallback), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object), `force_rich` (the Debug A/B
-switch; always 0 in Release). `regimes.foreach_layers` / `foreach_total` give the element count of
+whose IN / OUT bound is being dragged; only with the same fallback), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object). `regimes.foreach_layers` / `foreach_total` give the element count of
 each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
 `piano_rolls`, `automation_bands`, `automation_bezels`, `alt_ghosts` — the ⌥-copy's ghosts, 0 unless the
 E7 fallback `objekat.timeline.richPreviews` is on) and their sum — an element is the root of
@@ -558,30 +557,11 @@ frame — the only door a script has onto `available_h` changing (a marker row s
 it too, with no command needed: it is read live). There is no `window_h` on `view.set` — this
 already does exactly that, so the plan for this feature does not duplicate it.
 
-**`debug.force_rich_blocks {enabled}`** (`#if DEBUG`, `Commands+Runtime.swift`) is the A/B switch of
-the "everything rich" switch of the batched-Canvas work (`Shared/DebugRenderSwitches.swift`): `true`
-forces every SELECTED clip back onto the rich SwiftUI view it used to be drawn with, EVERY group block back onto `GroupBlockView`, AND the bands of
-the OPEN groups (tint, rise, '+') back onto their old SwiftUI layers; `false` is the production
-behaviour (both drawn in the Canvas). It is volatile — it
-writes nothing into the user's settings, as a test must not — and answers `{was, enabled}`. The
-persistent form is the preference `objekat.debug.forceRichBlocks`, read once at launch:
-`defaults write org.labelpeche.objekat objekat.debug.forceRichBlocks -bool YES` then relaunch
-(`defaults delete …` to go back), or `-objekat.debug.forceRichBlocks YES` for a single launch.
-A Release build has neither the switch nor the command.
-
-**`debug.force_rich_tools {enabled}`** (`#if DEBUG`, `Commands+Runtime.swift`) is the same A/B switch for
-the Volume / Pan / Aux tool overlays (`Shared/DebugRenderSwitches.swift`): `true` puts every block
-back on its rich view under those tools — the regime before the Canvas drew the overlays, census
-reason `tool` — and keeps the Stem tool's old rule (a group hovered, a clip only if selected as well);
-`false` is the production behaviour, where only the block aimed at (`tool_hover`) and the blocks a
-viewport edge can cut (`tool_span`) stay rich. Volatile, answers `{was, enabled}`; the persistent form
-is the preference `objekat.debug.forceRichTools`. A Release build has neither.
-
 **`debug.force_rich_previews {enabled}`** (`#if DEBUG`) flips, volatilely, the fallback of E7
 (`Shared/RenderPreferences.swift`): `true` puts the gestures' previews (move, trim, resize, fade,
 spill, loop-bound drag) back on the rich views, census reasons `preview` / `spill` / `loop`; `false`
-(production) draws them in the batched Canvas from `BlockPreviewGeometry`. Unlike the two switches
-above, the persistent form is readable in a RELEASE build: the preference
+(production) draws them in the batched Canvas from `BlockPreviewGeometry`. The persistent form is
+readable in a RELEASE build: the preference
 `objekat.timeline.richPreviews`, read at launch (`defaults write org.labelpeche.objekat
 objekat.timeline.richPreviews -bool YES`, or `-objekat.timeline.richPreviews YES` for one launch).
 

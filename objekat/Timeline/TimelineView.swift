@@ -538,17 +538,8 @@ struct TimelineView: View {
                 // rebuild it per open group (`focusedDisplayLanes` and `occupiedLanes`' sort, both
                 // O(objects), once per group).
                 let inlineBands = inlineGroupBands(inlineGroupEntries, focused: focusedLanes)
-                // The bands of the open groups: ONE Canvas (the 'selected clips' work's A/B switch,
-                // in Debug builds, puts the old SwiftUI layers back — @see `DebugRenderSwitches`).
-                #if DEBUG
-                if forceRichBands {
-                    richGroupBands(inlineGroupEntries, focusedLanes: focusedLanes)
-                } else {
-                    groupBandsCanvas(inlineBands)
-                }
-                #else
+                // The bands of the open groups: ONE Canvas.
                 groupBandsCanvas(inlineBands)
-                #endif
 
                 // A sub-lane background for MIDI clips whose piano roll is open: the same principle
                 // as the expanded groups' band (it clarifies the MIDI clip's inside), more discreetly
@@ -558,13 +549,7 @@ struct TimelineView: View {
 
                 // The '+' of each open group's drop lane is drawn by the bands' Canvas above (the
                 // piano-roll tint just before touches only a MIDI clip's own sub-lanes, never a
-                // group's drop lane, so the order between the two is not visible). Only the Debug
-                // A/B switch brings the old SwiftUI layer back, at its old place.
-                #if DEBUG
-                if forceRichBands {
-                    richGroupPluses(inlineGroupEntries)
-                }
-                #endif
+                // group's drop lane, so the order between the two is not visible).
 
                 // Grid
                 Canvas { context, size in
@@ -775,8 +760,7 @@ struct TimelineView: View {
                     clipsCanvas: plainVisible.count,
                     clipsRich: richVisible.count - partition.richGroups,
                     groupsCanvas: canvasGroups.count, groupsRich: partition.richGroups,
-                    groupBandsCanvas: forceRichBands ? 0 : inlineBands.count,
-                    groupBandsRich: forceRichBands ? inlineBands.count : 0,
+                    groupBandsCanvas: inlineBands.count,
                     richReasons: partition.reasons)
                 let _ = ensureWaveformsLoaded(plainVisible, groups: canvasGroups)
                 // The blocks, in two draws of ONE function (@see StickyLabel): the notch-driven
@@ -2112,16 +2096,6 @@ struct TimelineView: View {
         }
     }
 
-    /// The A/B switch of the Debug builds (`DebugRenderSwitches.forceRichBlocks`) also puts the
-    /// open groups' bands back on their old SwiftUI layers. Always false in Release.
-    private var forceRichBands: Bool {
-        #if DEBUG
-        DebugRenderSwitches.shared.forceRichBlocks
-        #else
-        false
-        #endif
-    }
-
     /// One band, as the Canvas draws it: every number resolved before the drawing loop.
     private struct GroupBandDrawing {
         let color: Color
@@ -2499,102 +2473,6 @@ struct TimelineView: View {
         return plan
     }
 
-    #if DEBUG
-    /// The OLD drawing of the open groups' bands — one SwiftUI layer stack per group — kept ONLY
-    /// for the Debug A/B switch (`DebugRenderSwitches.forceRichBlocks`), so that the Canvas above
-    /// can be compared with what it replaced, on the same project. Deliberately untouched by the
-    /// optimisations of the new path, `legacyInteriorPaint` included.
-    @ViewBuilder private func richGroupBands(_ inlineGroupEntries: [LaneEntry],
-                                             focusedLanes: Set<Int>) -> some View {
-        ForEach(inlineGroupEntries) { entry in
-            let gY     = rulerHeight + Double(entry.displayLane) * laneStep
-            let color  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
-            let span   = entry.item.childLaneCount
-            let bandH  = Double(span) * laneStep
-            let bandW  = totalDuration * pixelsPerSecond
-            let inside = !focusedLanes.isDisjoint(
-                with: (entry.displayLane + 1)...(entry.displayLane + span))
-            let gX = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
-            let gW = entry.item.isInfiniteBus
-                   ? contentWidth : max(1, entry.item.duration * pixelsPerSecond)
-            let lisX = min(max(0, gX), bandW)
-            let lisR = min(max(0, gX + gW), bandW)
-            ZStack(alignment: .topLeading) {
-                Rectangle()
-                    .fill(color.opacity(inside ? 0.22 : 0.11))
-                    .frame(width: bandW, height: bandH)
-                Rectangle()
-                    .fill(color.opacity(inside ? 0.8 : 0.35))
-                    .frame(width: lisX, height: 1)
-                Rectangle()
-                    .fill(color.opacity(inside ? 0.8 : 0.35))
-                    .frame(width: bandW - lisR, height: 1)
-                    .offset(x: lisR)
-                Rectangle()
-                    .fill(color.opacity(inside ? 0.8 : 0.35))
-                    .frame(width: bandW, height: 1)
-                    .offset(y: bandH - 1)
-            }
-            .frame(width: bandW, height: bandH, alignment: .topLeading)
-            .offset(x: 0, y: gY + laneStep)
-            .allowsHitTesting(false)
-
-            ZStack(alignment: .topLeading) {
-                ForEach(Array(legacyInteriorPaint(for: entry).enumerated()), id: \.offset) { _, layer in
-                    Rectangle().fill(layer)
-                }
-            }
-            .frame(width: gW, height: laneGap + entry.item.blockCornerRadius)
-            .offset(x: gX, y: gY + blockHeight - entry.item.blockCornerRadius)
-            .allowsHitTesting(false)
-        }
-    }
-
-    /// The old '+' layer of the open groups' drop lanes (Debug A/B only).
-    @ViewBuilder private func richGroupPluses(_ inlineGroupEntries: [LaneEntry]) -> some View {
-        ForEach(inlineGroupEntries) { entry in
-            let dropLaneY  = rulerHeight + Double(entry.displayLane + entry.item.childLaneCount) * laneStep
-            let groupStartX = entry.absStart * pixelsPerSecond
-            let groupW      = entry.item.duration * pixelsPerSecond
-            Text(verbatim: "+")
-                .font(.system(size: 64, weight: .light))
-                .foregroundColor(Color.gray.opacity(0.45))
-                .frame(width: groupW, height: blockHeight, alignment: .center)
-                .offset(x: groupStartX, y: dropLaneY)
-                .allowsHitTesting(false)
-        }
-    }
-
-    /// The OLD `interiorPaint`, as it was before the bands got a precomputed list: it rebuilds
-    /// `focusedDisplayLanes` and every open group's `childLaneCount` on each call. Debug A/B only.
-    func legacyInteriorPaint(for e: LaneEntry) -> [Color] {
-        let lane = e.displayLane + 1                 // the row that opens just under the object
-        var layers: [Color] = [Color(nsColor: .controlBackgroundColor)]
-        if lane % 2 == 0 { layers.append(Color.black.opacity(0.02)) }
-        let focused = focusedDisplayLanes
-        for other in viewModel.laneEntries where other.item.showsChildrenInline {
-            let span = other.item.childLaneCount
-            guard span > 0 else { continue }
-            let band = (other.displayLane + 1)...(other.displayLane + span)
-            guard band.contains(lane) else { continue }
-            let color = other.item.customColor ?? viewModel.stemColor(for: other.item.id)
-            layers.append(color.opacity(focused.isDisjoint(with: band) ? 0.11 : 0.22))
-        }
-        if e.item.showsPianoRollInline {
-            layers.append(viewModel.stemColor(for: e.item.id).opacity(0.06))
-        }
-        if e.item.automationOpen {
-            // The background of the band's FIRST row: the 'future automation' row is more muted
-            // than the others, and it comes first when nothing is automated yet
-            // (@see SoundObject.automationRows, which puts the real curves first).
-            let tint = e.item.customColor ?? viewModel.stemColor(for: e.item.id)
-            let isFuture = e.item.automation.allSatisfy { $0.points.isEmpty }
-            layers.append(tint.opacity(isFuture ? 0.05 : 0.10))
-        }
-        return layers
-    }
-    #endif
-
     /// True if the point falls inside the band of an open MIDI piano roll. Those areas are owned
     /// by PianoRollView (interactive); the canvas (tap/drag) has to ignore them so as not to lay
     /// a caret or start a time selection there.
@@ -2871,7 +2749,6 @@ struct TimelineView: View {
 
     /// Splits the visible entries into the clips the shared Canvas draws and the blocks that keep
     /// a rich view, in ONE pass (and counts the rich groups on the way, for `TimelineRegimeMeter`).
-    /// The A/B switch of Debug builds (@see `DebugRenderSwitches`) is read here, once per pass.
     private struct BlockPartition {
         var plain: [LaneEntry] = []        // clips drawn by the Canvas
         var plainGroups: [LaneEntry] = []  // groups drawn by the Canvas
@@ -2919,19 +2796,13 @@ struct TimelineView: View {
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
         var p = BlockPartition()
-        #if DEBUG
-        let forceRichSelected = DebugRenderSwitches.shared.forceRichBlocks
-        #else
-        let forceRichSelected = false
-        #endif
         // The previews go to the Canvas unless the fallback puts them back on the rich views. The
         // gesture test is made ONCE for the pass: at rest no block is asked for its geometry.
         let richPreviews = RenderPreferences.shared.richPreviews
         let previewing = !richPreviews && hasPreviewGesture
         for entry in entries {
             if entry.item.isGroup {
-                if let why = groupRichReason(entry, forceRich: forceRichSelected, tools: tools,
-                                             richPreviews: richPreviews) {
+                if let why = groupRichReason(entry, tools: tools, richPreviews: richPreviews) {
                     p.rich.append(entry)
                     p.richGroups += 1
                     p.reasons[why.rawValue] += 1
@@ -2940,8 +2811,7 @@ struct TimelineView: View {
                     if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
                     if previewing, let g = blockPreviewGeometry(for: entry.item) { p.previews[entry.item.id] = g }
                 }
-            } else if let why = clipRichReason(entry, forceRichSelected: forceRichSelected, tools: tools,
-                                               richPreviews: richPreviews) {
+            } else if let why = clipRichReason(entry, tools: tools, richPreviews: richPreviews) {
                 p.rich.append(entry)
                 p.reasons[why.rawValue] += 1
             } else {
@@ -2966,8 +2836,6 @@ struct TimelineView: View {
     /// another tool never re-evaluates the layer).
     private struct ToolPartitionContext {
         var tool: ToolOverlayPartition.Tool = .none
-        /// The Debug A/B switch (@see `DebugRenderSwitches.forceRichTools`): the pre-Canvas regime.
-        var forceRich = false
         var selected = Set<UUID>()
         /// The blocks AIMED AT: hovered (Volume / Pan / Stem), grabbed by a drag, or holding the
         /// Send tool's focus. The rich view carries the full, live overlay of these.
@@ -3006,9 +2874,6 @@ struct TimelineView: View {
         default:
             return t
         }
-        #if DEBUG
-        t.forceRich = DebugRenderSwitches.shared.forceRichTools
-        #endif
         t.selected = selectedIDs
         t.rows = cullRows
         t.live = liveScroll
@@ -3028,18 +2893,15 @@ struct TimelineView: View {
 
     /// Why the active tool keeps this block rich, nil if the Canvas can draw it (and the tool's
     /// overlay over it). The rule itself is `ToolOverlayPartition.verdict`; this reads the model.
-    private func toolRichReason(_ entry: LaneEntry, isGroup: Bool, tools: ToolPartitionContext) -> RichReason? {
+    private func toolRichReason(_ entry: LaneEntry, tools: ToolPartitionContext) -> RichReason? {
         guard tools.tool != .none else { return nil }
         let item = entry.item
         let aimed = tools.isAimed(item.id)
 
         if tools.tool == .stem {
             guard aimed else { return nil }
-            // The pre-Canvas rule (Debug switch): a group hovered, but a clip only if selected as well.
-            if tools.forceRich, !isGroup, !tools.selected.contains(item.id) { return nil }
             return .stemHover
         }
-        if tools.forceRich { return .tool }
         if aimed { return .toolHover }
 
         // Outside the lanes on screen nothing is seen, whatever the tool would draw there.
@@ -3065,7 +2927,7 @@ struct TimelineView: View {
     /// NARROW block keeps the culling window's span, in the rich views as here. A wide block that an
     /// edge can cut never gets here — the partition keeps it rich.
     private func canvasToolOverlay(for entry: LaneEntry, tools: ToolPartitionContext) -> CanvasToolOverlay? {
-        guard tools.tool != .none, tools.tool != .stem, !tools.forceRich else { return nil }
+        guard tools.tool != .none, tools.tool != .stem else { return nil }
         let item = entry.item
         let y = rulerHeight + Double(entry.displayLane) * laneStep
         guard y + blockHeight >= tools.rows.y0, y <= tools.rows.y1 else { return nil }
@@ -3120,17 +2982,13 @@ struct TimelineView: View {
     /// spinner), a volume / pan / aux tool, a drag / trim / resize / fade preview, a loop (the
     /// composite repeats and the grips are views) — the FIRST one met, in this order (it IS the
     /// rule: the order is what decides what is read, hence what a hover re-evaluates).
-    /// `forceRich` is the Debug A/B switch: every group back on its rich view (always false in
-    /// Release). `richPreviews` is the fallback (`RenderPreferences`): the gestures' previews back
+    /// `richPreviews` is the fallback (`RenderPreferences`): the gestures' previews back
     /// on the rich views — by default the Canvas draws them (@see `BlockPreviewGeometry`).
-    private func groupRichReason(_ entry: LaneEntry, forceRich: Bool, tools: ToolPartitionContext,
+    private func groupRichReason(_ entry: LaneEntry, tools: ToolPartitionContext,
                                  richPreviews: Bool) -> RichReason? {
         // `entry.item` is a group: the partition only asks groups (it tests `isGroup` first).
         let item = entry.item
         if item.isInfiniteBus { return .infinite }
-        #if DEBUG
-        if forceRich { return .forceRich }
-        #endif
         if viewModel.renamingID == item.id { return .rename }
         if viewModel.isBaking(item.id) { return .bake }
         // `isEditing` / `isPreviewing` (the latter is a subset of the former).
@@ -3139,7 +2997,7 @@ struct TimelineView: View {
         // edge cuts while the tool draws on it. The context was read ONCE for the pass, so that
         // `toolHoveredID` is read (and this layer re-evaluated on every hover) under the tools
         // that hover alone.
-        if let why = toolRichReason(entry, isGroup: true, tools: tools) { return why }
+        if let why = toolRichReason(entry, tools: tools) { return why }
         // The previews are the Canvas's (`CanvasGroup.preview`) unless the fallback is on.
         if richPreviews {
             if previewOffset(for: item) != nil { return .preview }
@@ -3192,11 +3050,9 @@ struct TimelineView: View {
 
     /// nil = this clip can be drawn in the shared Canvas (no SwiftUI need); otherwise the FIRST
     /// reason, in this order, it keeps a rich view (the order is the rule, @see `groupRichReason`).
-    /// `forceRichSelected` is the Debug A/B switch (always false in Release, where the line that
-    /// reads it does not exist). `richPreviews` is the fallback (`RenderPreferences`): the gestures'
+    /// `richPreviews` is the fallback (`RenderPreferences`): the gestures'
     /// previews back on the rich views — by default the Canvas draws them.
-    private func clipRichReason(_ entry: LaneEntry, forceRichSelected: Bool = false,
-                                tools: ToolPartitionContext, richPreviews: Bool) -> RichReason? {
+    private func clipRichReason(_ entry: LaneEntry, tools: ToolPartitionContext, richPreviews: Bool) -> RichReason? {
         let item = entry.item
         // A MIDI clip is drawn by the Canvas (its notes: `MidiNotesDrawing`) unless its piano roll
         // is open (or, with the fallback on, its loop's IN / OUT is being dragged).
@@ -3214,10 +3070,7 @@ struct TimelineView: View {
         }
         // A SELECTED clip is drawn in the Canvas like any other (it used to be excluded here: a
         // few hundred selected clips were a few hundred rich views, and the timeline fell to
-        // 2 fps). The Debug A/B switch puts the old behaviour back (@see `DebugRenderSwitches`).
-        #if DEBUG
-        if forceRichSelected && viewModel.isSelected(item.id) { return .forceRich }
-        #endif
+        // 2 fps).
         if viewModel.renamingID == item.id { return .rename }
         if viewModel.isBaking(item.id) { return .bake }
         // An instance of a consolidated object AT REST is drawn by the Canvas (its indigo ring and
@@ -3232,7 +3085,7 @@ struct TimelineView: View {
         // A custom colour (its name band and its border) is drawn by the Canvas: @see phase 1 of
         // `plainBlocksCanvas`, `CustomColorBatch`.
         // The active tool's overlay (@see `toolRichReason`).
-        if let why = toolRichReason(entry, isGroup: false, tools: tools) { return why }
+        if let why = toolRichReason(entry, tools: tools) { return why }
         // A drag/preview under way on this clip: the Canvas draws it (`BlockPreviewGeometry`, in
         // `plainBlocksCanvas`) — unless the fallback is on, which puts the live SwiftUI view back.
         if richPreviews {

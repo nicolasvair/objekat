@@ -61,8 +61,7 @@ the landing check); an older build is refused with a clear message:
     S3@T      S3 (600 children selected, group open) with the tool T armed
     `--only tools` selects every `@T` scenario, `--only nav` the eight of the first table.
     Under Volume / Pan / Aux only the block AIMED AT (`tool_hover`) and the blocks a viewport edge
-    can cut (`tool_span`, at most ~2 per lane on screen) are rich; the rest is the Canvas's. The old
-    regime — every visible clip rich, `rich_reasons.tool = V` — is `debug.force_rich_tools true`.
+    can cut (`tool_span`, at most ~2 per lane on screen) are rich; the rest is the Canvas's.
     Under Stem only the HOVERED block goes rich (`stem_hover`, clip or group), so the sweep below
     is what makes it move.
 
@@ -301,9 +300,9 @@ def regimes_text(regimes):
     `Shared/TimelineRegimeMeter.swift`). A build without `regimes` in its census prints 'n/a'."""
     if not regimes:
         return "regimes n/a"
-    text = ("visible: %s clips canvas / %s rich, %s groups canvas / %s rich, group bands %s canvas / %s rich"
+    text = ("visible: %s clips canvas / %s rich, %s groups canvas / %s rich, group bands %s canvas"
             % (regimes["clips_canvas"], regimes["clips_rich"], regimes["groups_canvas"],
-               regimes["groups_rich"], regimes["group_bands_canvas"], regimes["group_bands_rich"]))
+               regimes["groups_rich"], regimes["group_bands_canvas"]))
     reasons = {k: v for k, v in (regimes.get("rich_reasons") or {}).items() if v}
     if reasons:
         text += "; rich because " + ", ".join("%s %d" % kv for kv in sorted(reasons.items()))

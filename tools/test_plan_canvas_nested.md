@@ -2,6 +2,12 @@
 
 Rédigé le 2026-10-02 par l'architecte, pour l'agent de test. Base testée : HEAD `7b1b1df2` + le commit
 qui ajoute ce plan (`view.snapshot`, `tools/scenario_canvas_nested.py`).
+> **Note du 2026-10-16** : le mode A/B Canvas / vues riches a été supprimé (`debug.force_rich_blocks`,
+> `debug.force_rich_tools`, `Shared/DebugRenderSwitches.swift`, le mode `snap` de
+> `scenario_canvas_nested.py`, `scenario_parity_project.py`). Les passages de ce plan qui s'en servent
+> (§3, parité projet, comparaisons « Canvas vs riche ») sont historiques ; `debug.force_rich_previews`
+> reste.
+
 Budget : **≤ 2 h**, dont ~25 min de marge. Chaque bloc ≤ 10 min. **On rapporte, on ne corrige pas.**
 
 ---

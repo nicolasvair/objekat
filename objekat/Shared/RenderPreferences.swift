@@ -1,8 +1,7 @@
 import Foundation
 import Observation
 
-/// Preferences that choose HOW the timeline draws a thing, readable in a Release build — unlike
-/// `DebugRenderSwitches`, which exists in Debug only. They are fallbacks: the default (everything
+/// Preferences that choose HOW the timeline draws a thing, readable in a Release build. They are fallbacks: the default (everything
 /// off) is the production behaviour, and a switch exists only so that a regime can be put back
 /// without rebuilding, the day a drawing turns out to differ from the view it replaced.
 ///
