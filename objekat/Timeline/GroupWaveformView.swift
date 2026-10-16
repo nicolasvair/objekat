@@ -25,6 +25,9 @@ struct GroupWaveformView: View {
     /// The loop's IN/OUT bounds, in seconds LOCAL to the block (`nil` = no loop).
     /// @see SoundObject.loopMarkerLocalRange
     var loopRange: (start: Double, end: Double)? = nil
+    /// The attached FX links switched off: their gain stages do not count in the descendants' drawn
+    /// gain (@see EditViewModel.offFXLinkIDs, GainStageDisplay).
+    let offBins: Set<UUID>
 
     var body: some View {
         Canvas { ctx, size in
@@ -33,7 +36,7 @@ struct GroupWaveformView: View {
                 groupStartTime: groupStartTime, pixelsPerSecond: pixelsPerSecond,
                 stemColor: stemColor, blockXPos: blockXPos, scrollOffsetX: scrollOffsetX,
                 viewportWidth: viewportWidth, rootMod: rootMod, rootMuted: rootMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: loopRange)
+                waveformDisplayDB: waveformDisplayDB, loopRange: loopRange, offBins: offBins)
         }
         .allowsHitTesting(false)
     }
@@ -46,12 +49,14 @@ enum GroupWaveformDrawing {
     /// unreasonable number of iterations (the same safeguard as MidiNotesPreview).
     fileprivate static let maxLoopRepeats = 2000
 
-    private static func modifier(for o: SoundObject) -> WaveformShaping.Modifier {
+    /// A descendant's own modifier: its fader + its serial gain stages, and its fades (@see
+    /// SoundObject.waveformDisplayGainDb(offBins:)). Composed as a product down the nesting.
+    private static func modifier(for o: SoundObject, offBins: Set<UUID>) -> WaveformShaping.Modifier {
         WaveformShaping.Modifier(
             absStart: o.startTime, duration: o.duration,
             fadeIn: o.fadeIn, fadeOut: o.fadeOut,
             curveIn: o.fadeInCurve, curveOut: o.fadeOutCurve,
-            gain: WaveformShaping.linearGain(dB: o.waveformDisplayGainDb))
+            gain: WaveformShaping.linearGain(dB: o.waveformDisplayGainDb(offBins: offBins)))
     }
 
     /// A ceiling on expanded instances, all depths together: two nested loops multiply their
@@ -85,6 +90,7 @@ enum GroupWaveformDrawing {
                         win: (lo: Double, hi: Double),
                         mods: [WaveformShaping.Modifier],
                         visible: (lo: Double, hi: Double),
+                        offBins: Set<UUID>,
                         into out: inout [ClipInstance]) {
         guard win.hi > win.lo else { return }
         for o in objs {
@@ -98,15 +104,15 @@ enum GroupWaveformDrawing {
 
             switch o.kind {
             case .clip:
-                out.append(ClipInstance(clip: o, mods: mods + [modifier(for: o)],
+                out.append(ClipInstance(clip: o, mods: mods + [modifier(for: o, offBins: offBins)],
                                         shift: shift, winLo: lo, winHi: hi))
             case .aux, .midiClip:
                 continue   // an aux (receive only) / a MIDI clip (no precomputed wave)
             case .group(let sub, _):
-                let subMods = mods + [modifier(for: o)]
+                let subMods = mods + [modifier(for: o, offBins: offBins)]
                 guard let r = o.loopMarkerLocalRange, r.end - r.start > 0.02 else {
                     expand(sub, groupStartTime: groupStartTime, shift: shift, win: (lo, hi),
-                           mods: subMods, visible: visible, into: &out)
+                           mods: subMods, visible: visible, offBins: offBins, into: &out)
                     continue
                 }
                 let period = r.end - r.start
@@ -119,7 +125,7 @@ enum GroupWaveformDrawing {
                            shift: shift + origin + Double(k) * period - r.start,
                            win: (max(lo, start + origin + Double(k) * period),
                                  min(hi, start + origin + Double(k + 1) * period)),
-                           mods: subMods, visible: visible, into: &out)
+                           mods: subMods, visible: visible, offBins: offBins, into: &out)
                     k += 1
                 }
             }
@@ -148,7 +154,8 @@ enum GroupWaveformDrawing {
                      rootMod: WaveformShaping.Modifier,
                      rootMuted: Bool,
                      waveformDisplayDB: Double,
-                     loopRange: (start: Double, end: Double)?) {
+                     loopRange: (start: Double, end: Double)?,
+                     offBins: Set<UUID>) {
         let h = size.height
         let mid = h * 0.5
         // the block's edge = 0 dBFS; waveform zoom (display dB, without touching the sound).
@@ -207,7 +214,7 @@ enum GroupWaveformDrawing {
             let repHi = looping ? min(blockDuration, loopOrigin + Double(k + 1) * groupPeriod)
                                 : blockDuration
             expand(children, groupStartTime: groupStartTime, shift: shift, win: (repLo, repHi), mods: [rootMod],
-                   visible: visible, into: &instances)
+                   visible: visible, offBins: offBins, into: &instances)
         }
 
         for inst in instances {
@@ -313,11 +320,12 @@ enum GroupWaveformDrawing {
     /// otherwise — and shared by the rich view and the Canvas (@see `GroupBlockView.rootMod`).
     static func rootModifier(for group: SoundObject, absStart: Double, duration: Double,
                              fadeIn: Double, fadeOut: Double,
-                             curveIn: FadeCurve, curveOut: FadeCurve) -> WaveformShaping.Modifier {
+                             curveIn: FadeCurve, curveOut: FadeCurve,
+                             offBins: Set<UUID>) -> WaveformShaping.Modifier {
         WaveformShaping.Modifier(
             absStart: absStart, duration: duration,
             fadeIn: fadeIn, fadeOut: fadeOut,
             curveIn: curveIn, curveOut: curveOut,
-            gain: WaveformShaping.linearGain(dB: group.waveformDisplayGainDb))
+            gain: WaveformShaping.linearGain(dB: group.waveformDisplayGainDb(offBins: offBins)))
     }
 }

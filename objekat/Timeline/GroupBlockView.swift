@@ -37,6 +37,9 @@ struct GroupBlockView: View {
     /// nil = fall back on those. @see LiveScroll
     var liveScroll: LiveScroll? = nil
     let waveformDisplayDB: Double
+    /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
+    /// left out of the drawn gain of the group and of its children.
+    let offBins: Set<UUID>
 
     let previewOffset: (dx: Double, dy: Double)?
     let previewResizeDX: Double
@@ -127,7 +130,8 @@ struct GroupBlockView: View {
         return GroupWaveformDrawing.rootModifier(
             for: group, absStart: effectiveStartTime, duration: effDur,
             fadeIn: effectiveFadeIn, fadeOut: effectiveFadeOut,
-            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve)
+            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve,
+            offBins: offBins)
     }
 
     var body: some View {
@@ -168,7 +172,8 @@ struct GroupBlockView: View {
                     rootMod: rootMod,
                     rootMuted: group.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
-                    loopRange: previewLoopRange
+                    loopRange: previewLoopRange,
+                    offBins: offBins
                 )
                 // The same radius as the block (20): with 4, a child sitting at the very start of the group
                 // spilled out of the rounded corners — the composite bled out of the border on the left.

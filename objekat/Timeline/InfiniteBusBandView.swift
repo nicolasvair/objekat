@@ -42,6 +42,9 @@ struct InfiniteBusBandView: View {
     var waveformCache: WaveformCache
     let pixelsPerSecond: Double
     let waveformDisplayDB: Double
+    /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
+    /// left out of the drawn gain of the bus and of its children.
+    let offBins: Set<UUID>
     var isRenaming: Bool = false
     var onRename: (String?) -> Void = { _ in }
 
@@ -65,7 +68,7 @@ struct InfiniteBusBandView: View {
     /// composite must be neither bounded nor faded at the edges (fadeIn/Out = 0 ⇒ no gate).
     private var rootMod: WaveformShaping.Modifier {
         WaveformShaping.Modifier(absStart: 0, duration: 0, fadeIn: 0, fadeOut: 0,
-                                 gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb))
+                                 gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb(offBins: offBins)))
     }
 
     var body: some View {
@@ -94,7 +97,8 @@ struct InfiniteBusBandView: View {
                     viewportWidth: viewportWidth,
                     rootMod: rootMod,
                     rootMuted: item.isMuted,
-                    waveformDisplayDB: waveformDisplayDB
+                    waveformDisplayDB: waveformDisplayDB,
+                    offBins: offBins
                 )
                 .frame(width: bandWidth, height: blockHeight)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))

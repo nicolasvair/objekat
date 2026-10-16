@@ -661,8 +661,12 @@ extension CommandRegistry {
             let value = Float(try p.double("value")).clamped(to: target.min...target.max)
             // A GAIN STAGE's parameters are the hand's (its card): one undo point per write, as the
             // card's drag takes one (@see EditViewModel.setGainStage). Any other plugin: unchanged.
-            if vm.gainStageEntry(pluginID) != nil { vm.pushUndo() }
+            let isStage = vm.gainStageEntry(pluginID) != nil
+            if isStage { vm.pushUndo() }
             vm.setPluginParam(pluginID: pluginID, index: index, value: value)
+            // A stage's value is mirrored into the model, which the drawn waveform reads (@see
+            // EditViewModel.mirrorGainStageValues) — as the card's write does.
+            if isStage, let v = vm.gainStageValues(pluginID) { vm.mirrorGainStageValues(pluginID, v) }
             return .object(["plugin": .string(pluginID.uuidString),
                             "index": .int(index),
                             "value": .number(Double(value))])

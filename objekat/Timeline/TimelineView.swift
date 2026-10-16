@@ -1712,6 +1712,7 @@ struct TimelineView: View {
             waveformCache: waveformCache,
             pixelsPerSecond: pixelsPerSecond,
             waveformDisplayDB: viewModel.waveformDisplayDB,
+            offBins: viewModel.offFXLinkIDs,
             isRenaming: viewModel.renamingID == item.id,
             onRename: { label in
                 if let label { viewModel.renameObject(id: item.id, label: label) }
@@ -2778,6 +2779,7 @@ struct TimelineView: View {
             viewportWidth: cullViewportWidth,
             liveScroll: liveScroll,
             waveformDisplayDB: waveformDisplayDB,
+            waveformGainDb: object.waveformDisplayGainDb(offBins: viewModel.offFXLinkIDs),
             displayLane: dLane,
             stemColor: viewModel.stemColor(for: object.id),
             isMutedInMix:     viewModel.isMutedInMix(object),
@@ -3282,6 +3284,9 @@ struct TimelineView: View {
                 // and it says exactly what the engine hears.
                 let audibility = viewModel.audibility
                 func isMutedItem(_ item: SoundObject) -> Bool { audibility.isMutedInMix(item) }
+                // The FX links switched off, read ONCE per pass: their gain stages are left out of the
+                // drawn gain (@see GainStageDisplay). Read here, a bin's on/off redraws the layer.
+                let offBins = viewModel.offFXLinkIDs
                 func rectFor(_ entry: LaneEntry) -> CGRect {
                     let x = entry.item.startTime * pixelsPerSecond
                     let w = max(2, entry.item.duration * pixelsPerSecond)
@@ -3584,7 +3589,7 @@ struct TimelineView: View {
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: selected,
                             clipDuration: blockLook.duration, speedRatio: item.speedRatio,
-                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
+                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb(offBins: offBins),
                             fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
                             curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
@@ -3606,7 +3611,7 @@ struct TimelineView: View {
                         sourceOffset: blockLook.sourceOffset, pixelsPerSecond: pixelsPerSecond,
                         scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
                         clipDuration: blockLook.duration, speedRatio: item.speedRatio,
-                        isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
+                        isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb(offBins: offBins),
                         fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
                         curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
                         waveformDisplayDB: waveformDisplayDB, loopRange: blockLook.loopRange,
@@ -3621,7 +3626,7 @@ struct TimelineView: View {
                             scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth, xPos: x,
                             stemColor: stem, isSelected: selected,
                             clipDuration: blockLook.duration, speedRatio: item.speedRatio,
-                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb,
+                            isReversed: item.isReversed, volumeDb: item.waveformDisplayGainDb(offBins: offBins),
                             fadeIn: blockLook.fadeIn, fadeOut: blockLook.fadeOut,
                             curveIn: blockLook.curveIn, curveOut: blockLook.curveOut,
                             isMuted: isMutedItem(item), waveformDisplayDB: waveformDisplayDB,
@@ -3661,7 +3666,8 @@ struct TimelineView: View {
                 GroupBlocksCanvas.drawComposites(
                     into: ctx, groups: groups, geo: groupGeo, waveformCache: waveformCache,
                     waveformDisplayDB: waveformDisplayDB,
-                    scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth)
+                    scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
+                    offBins: offBins)
 
                 // ── Phase 3: FADES / MUTE / LABEL per block (over the waveform) ──────
                 // Skipped when the block is too narrow → when scrolling zoomed out, an empty loop.
@@ -3902,6 +3908,7 @@ struct TimelineView: View {
             viewportWidth: cullViewportWidth,
             liveScroll: liveScroll,
             waveformDisplayDB: waveformDisplayDB,
+            offBins: viewModel.offFXLinkIDs,
             previewOffset:   previewOffset(for: group),
             previewResizeDX: previewResizeDX(for: group),
             previewTrimDX:   previewTrimDX(for: group),

@@ -228,7 +228,8 @@ enum GroupBlocksCanvas {
     /// the backgrounds, which is what keeps a crossfaded neighbour's content visible.
     static func drawComposites(into ctx: GraphicsContext, groups: [CanvasGroup], geo: Geometry,
                                waveformCache: WaveformCache, waveformDisplayDB: Double,
-                               scrollOffsetX: CGFloat, viewportWidth: CGFloat) {
+                               scrollOffsetX: CGFloat, viewportWidth: CGFloat,
+                               offBins: Set<UUID>) {
         for g in groups {
             guard case .group(let children, _) = g.item.kind, !children.isEmpty else { continue }
             let rect = geo.rect(of: g)
@@ -247,14 +248,15 @@ enum GroupBlocksCanvas {
             let rootMod = GroupWaveformDrawing.rootModifier(
                 for: item, absStart: startTime, duration: duration,
                 fadeIn: g.fadeIn, fadeOut: g.fadeOut,
-                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve)
+                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve,
+                offBins: offBins)
             GroupWaveformDrawing.draw(
                 into: gc, size: rect.size, waveformCache: waveformCache, children: children,
                 groupStartTime: startTime, pixelsPerSecond: geo.pixelsPerSecond,
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange)
+                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange, offBins: offBins)
         }
     }
 
