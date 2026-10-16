@@ -467,6 +467,27 @@ struct SynopticBoundView: View {
                 guard let face = Self.gainFace(result) else { return }
                 layGainStage(host: sendHost(aux), series: .root, index: index, face: face)
             },
+            // A direction the user bound to a plugin (@see PlusShortcutStore): the plugin is inserted at the
+            // '+' exactly as if it had been chosen in the browser its click opens (same door, same undo point,
+            // same editor opening). Not installed any more → nothing (the zone was drawn greyed already).
+            onPlusInsertPlugin: { seriesID, index, ref in
+                guard let loc = locations[seriesID], let available = viewModel.availablePlugin(for: ref) else {
+                    NSSound.beep()
+                    return
+                }
+                viewModel.synopticInsert(objectID: objectID, available: available, into: loc, at: index)
+            },
+            onSendPlusInsertPlugin: { aux, index, ref in
+                guard let available = viewModel.availablePlugin(for: ref) else {
+                    NSSound.beep()
+                    return
+                }
+                let host = sendHost(aux)
+                let count = viewModel.chainPlugins(host)?.count ?? 0
+                viewModel.synopticInsert(objectID: host, available: available, into: .root,
+                                         at: min(max(0, index), count))
+            },
+            plusPluginInstalled: { ref in viewModel.availablePlugin(for: ref) != nil },
             // The card's boxes: the undo point is `onBeginGainEdit`'s, at the start of each gesture.
             onSetGainStage: { id, gain, pan, muted in
                 viewModel.setGainStage(pluginID: id, gainDb: gain, pan: pan, muted: muted, undo: false)

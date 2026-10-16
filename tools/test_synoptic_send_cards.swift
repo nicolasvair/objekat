@@ -13,6 +13,7 @@ import SwiftUI
 //     swiftc -parse-as-library -o /tmp/t_sc \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift test_synoptic_send_cards.swift \
 //         && /tmp/t_sc
 

@@ -9845,6 +9845,52 @@
         }
       }
     },
+    "pluginBrowser.plusDirection.clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from every direction"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar de todas las direcciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer de toutes les directions"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plusDirection.menu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Assign to a direction of the +"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Asignar a una dirección del +"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Assigner à une direction du +"
+          }
+        }
+      }
+    },
     "pluginBrowser.row.help": {
       "extractionState": "manual",
       "localizations": {
@@ -9864,6 +9910,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clic droit : choisir la couleur de catégorie"
+          }
+        }
+      }
+    },
+    "pluginBrowser.row.help.plus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right click: choose the category colour, or put this plugin on a direction of the +"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic derecho: elegir el color de categoría, o poner este plugin en una dirección del +"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clic droit : choisir la couleur de catégorie, ou placer ce plugin sur une direction du +"
           }
         }
       }
@@ -10696,6 +10765,420 @@
         }
       }
     },
+    "plusAction.gainStage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain / Gain · Pan · Mute"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganancia / Ganancia · Pan · Mute"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain / Gain · Pan · Mute"
+          }
+        }
+      }
+    },
+    "plusAction.help.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "une branche parallèle"
+          }
+        }
+      }
+    },
+    "plusAction.help.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gain stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una etapa de ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un étage de gain"
+          }
+        }
+      }
+    },
+    "plusAction.help.gainPanMute": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gain · pan · mute stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una etapa ganancia · pan · mute"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un étage gain · pan · mute"
+          }
+        }
+      }
+    },
+    "plusAction.help.gainStage": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gain stage (further: gain · pan · mute)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una etapa de ganancia (más lejos: ganancia · pan · mute)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un étage de gain (plus loin : gain · pan · mute)"
+          }
+        }
+      }
+    },
+    "plusAction.help.plugin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insert %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insertar %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insérer %@"
+          }
+        }
+      }
+    },
+    "plusAction.help.pluginMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, not installed: does nothing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, no instalado: no hace nada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, non installé : ne fait rien"
+          }
+        }
+      }
+    },
+    "plusAction.help.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a send taken here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un envío tomado aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un envoi pris ici"
+          }
+        }
+      }
+    },
+    "plusAction.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rien"
+          }
+        }
+      }
+    },
+    "plusAction.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi"
+          }
+        }
+      }
+    },
+    "plusDirection.down": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hacia abajo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vers le bas"
+          }
+        }
+      }
+    },
+    "plusDirection.downLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down and left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "abajo a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en bas à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.downRight": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down and right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "abajo a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en bas à droite"
+          }
+        }
+      }
+    },
+    "plusDirection.left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "à droite"
+          }
+        }
+      }
+    },
+    "plusDirection.up": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hacia arriba"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vers le haut"
+          }
+        }
+      }
+    },
+    "plusDirection.upLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up and left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arriba a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en haut à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.upRight": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up and right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arriba a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en haut à droite"
+          }
+        }
+      }
+    },
     "prefs.api.description": {
       "extractionState": "manual",
       "localizations": {
@@ -10784,6 +11267,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "API de commandes"
+          }
+        }
+      }
+    },
+    "prefs.plus.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dragging a + of the signal view in one of these directions gives what the direction shows. Giving a direction the action another one had swaps the two."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar un + de la vista sinóptica en una de estas direcciones da lo que la dirección muestra. Dar a una dirección la acción que tenía otra intercambia ambas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser un + de la vue synoptique dans l'une de ces directions donne ce que la direction affiche. Donner à une direction l'action qu'avait une autre échange les deux."
+          }
+        }
+      }
+    },
+    "prefs.plus.noCatalog": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No plugin scanned yet"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ningún plugin escaneado todavía"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun plugin scanné pour l'instant"
+          }
+        }
+      }
+    },
+    "prefs.plus.pluginMenu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert a plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar un plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer un plugin"
+          }
+        }
+      }
+    },
+    "prefs.plus.reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to defaults"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer valores por defecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "prefs.tab.general": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "General"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Général"
+          }
+        }
+      }
+    },
+    "prefs.tab.plusShortcuts": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+ shortcuts"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atajos del +"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Raccourcis du +"
           }
         }
       }
@@ -15342,6 +15963,29 @@
         }
       }
     },
+    "synoptic.plus.ghost.pluginMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — not installed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — no instalado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — non installé"
+          }
+        }
+      }
+    },
     "synoptic.plus.ghost.send": {
       "extractionState": "manual",
       "localizations": {
@@ -15365,71 +16009,25 @@
         }
       }
     },
-    "synoptic.plus.help.branch": {
+    "synoptic.plus.help.drag": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag down and right: a parallel branch"
+            "value": "Drag %1$@: %2$@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar abajo a la derecha: una rama paralela"
+            "value": "Arrastrar %1$@: %2$@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser en bas à droite : une branche parallèle"
-          }
-        }
-      }
-    },
-    "synoptic.plus.help.gain": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Drag right: a gain stage (further: gain · pan · mute)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arrastrar a la derecha: una etapa de ganancia (más lejos: ganancia · pan · mute)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Glisser à droite : un étage de gain (plus loin : gain · pan · mute)"
-          }
-        }
-      }
-    },
-    "synoptic.plus.help.send": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Drag left: a send taken here"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Arrastrar a la izquierda: un envío tomado aquí"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Glisser à gauche : un envoi pris ici"
+            "value": "Glisser %1$@ : %2$@"
           }
         }
       }
@@ -15440,19 +16038,42 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A send taken after the fader: click, or drag left"
+            "value": "A send taken after the fader: click, or drag %@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envío tomado después del fader: hacer clic, o arrastrar a la izquierda"
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar %@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envoi pris après le fader : cliquer, ou glisser à gauche"
+            "value": "Un envoi pris après le fader : cliquer, ou glisser %@"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help.click": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer"
           }
         }
       }

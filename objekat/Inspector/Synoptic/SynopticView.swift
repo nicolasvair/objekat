@@ -199,9 +199,9 @@ struct SynopticView: View {
             }
 
             // '+' on the wire (§B.2, §B.3): shown while its line is hovered, always in an empty series, and
-            // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for a
-            // gain stage (right), a parallel branch (down-right) or a send (left) (@see SynopticPlusGesture), with a
-            // ghost under way.
+            // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for the
+            // action the user put on its direction — by default a gain stage (right), a parallel branch
+            // (down-right) or a send (left) (@see SynopticPlusGesture, PlusShortcutMap), with a ghost under way.
             // Drawn OPAQUE over the wire, which runs through it. Laid after the cable drop zones, so that a
             // shown '+' is what the hand grabs; no `.onDrop` on it (the `CableDropView` under it receives).
             ForEach(d.placement.inserts, id: \.key) { z in
@@ -261,7 +261,7 @@ struct SynopticView: View {
                 SynopticPlusButton(active: plusDrag?.key == sk,
                                    onChanged: { plusMoved(sk, $0) },
                                    onEnded: { plusReleased(sk, $0) })
-                    .help(L("synoptic.plus.postFader.help"))
+                    .help(postFaderHelp)
                     .opacity(shown ? 1 : 0)
                     .allowsHitTesting(shown)
                     .position(p.center)
@@ -319,17 +319,17 @@ struct SynopticView: View {
                let key = currentKey(drag.key, in: d, names: names),
                !SynopticPlusGesture.isClick(drag.translation) {
                 let zones = SynopticPlusPresentation.sectors(allowed: d.allowedGestures(for: key), key: key,
-                                                            availability, translation: drag.translation)
+                                                            availability, translation: drag.translation, map: plusMap)
                 SynopticPlusSectorsView(center: from, sectors: zones.sectors, highlighted: zones.highlighted)
                     .frame(width: d.canvasSize.width, height: d.canvasSize.height)
                     .allowsHitTesting(false)
             }
             if let drag = plusDrag, let from = plusCenter(drag.key, in: d, names: names) {
-                let command = SynopticPlusPresentation.available(
-                    currentKey(drag.key, in: d, names: names).map { d.command(for: $0, translation: drag.translation) } ?? .none,
-                    availability)
+                let raw = currentKey(drag.key, in: d, names: names)
+                    .map { d.command(for: $0, translation: drag.translation, map: plusMap) } ?? .none
                 SynopticPlusGhostView(from: from, translation: drag.translation,
-                                      ghost: SynopticPlusPresentation.ghost(for: command, translation: drag.translation))
+                                      ghost: SynopticPlusPresentation.ghost(raw: raw, availability,
+                                                                            translation: drag.translation))
                     .frame(width: d.canvasSize.width, height: d.canvasSize.height)
                     .allowsHitTesting(false)
             }
@@ -363,12 +363,20 @@ struct SynopticView: View {
     /// Which wave-2 closures this view was given: a gesture whose closure is missing is offered as
     /// "not here" (@see SynopticPlusPresentation.available).
     private var availability: SynopticPlusAvailability {
-        SynopticPlusAvailability(gainStage: actions.onPlusGesture != nil,
-                                 sendGainStage: actions.onSendPlusGesture != nil,
-                                 branch: actions.onBranch != nil,
-                                 send: actions.sendTargetSections != nil,
-                                 sendPluginAdd: actions.onSendPluginAdd != nil)
+        let installed = actions.plusPluginInstalled
+        return SynopticPlusAvailability(gainStage: actions.onPlusGesture != nil,
+                                        sendGainStage: actions.onSendPlusGesture != nil,
+                                        branch: actions.onBranch != nil,
+                                        send: actions.sendTargetSections != nil,
+                                        sendPluginAdd: actions.onSendPluginAdd != nil,
+                                        insertPlugin: actions.onPlusInsertPlugin != nil,
+                                        sendInsertPlugin: actions.onSendPlusInsertPlugin != nil,
+                                        missingPlugins: Set(plusMap.pluginRefs.filter { !(installed?($0) ?? true) }))
     }
+
+    /// What each direction of a '+' asks for: the user's map (an app preference, @see PlusShortcutStore).
+    /// Read while drawing, so a change made in the settings or the plugin browser shows at once.
+    private var plusMap: PlusShortcutMap { PlusShortcutStore.shared.map }
 
     private func stablePlus(_ key: SynopticPlusKey, names: [UUID: String]) -> SynopticStablePlus {
         SynopticPlusPresentation.stable(key, names: names)
@@ -408,7 +416,8 @@ struct SynopticView: View {
         let d = currentDiagram
         let names = SynopticPlusPresentation.seriesNames(of: root)
         guard let key = currentKey(sk, in: d, names: names) else { return }
-        perform(SynopticPlusPresentation.available(d.command(for: key, translation: translation), availability))
+        perform(SynopticPlusPresentation.available(d.command(for: key, translation: translation, map: plusMap),
+                                                   availability))
     }
 
     /// The command of a '+' carried out through `SynopticActions` (@see SynopticPlusCommand for the table).
@@ -433,6 +442,12 @@ struct SynopticView: View {
             if case .series(let s, let i) = key { actions.onBranch?(.plus(seriesID: s, index: i)) }
         case .send(let slot):
             actions.presentSendMenu(slot: slot)
+        case .insertPlugin(let key, let ref):
+            switch key {
+            case .series(let s, let i):      actions.onPlusInsertPlugin?(s, i, ref)
+            case .sendChain(let aux, let i): actions.onSendPlusInsertPlugin?(aux, i, ref)
+            case .postFader:                 break
+            }
         }
     }
 
@@ -452,14 +467,21 @@ struct SynopticView: View {
                                clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
     }
 
-    /// A '+''s tooltip: the click, then each drag it really offers here.
+    /// A '+''s tooltip: the click, then each direction that does something here, as the user's map says.
     private func plusHelp(_ z: SynopticLayout.InsertZone) -> String {
-        let offered = SynopticPlusPresentation.offered(z.allowedGestures, key: z.key, availability)
-        var lines = [L("synoptic.addPluginSeries")]
-        if offered.contains(.gain) || offered.contains(.gainPanMute) { lines.append(L("synoptic.plus.help.gain")) }
-        if offered.contains(.branch) { lines.append(L("synoptic.plus.help.branch")) }
-        if offered.contains(.send) { lines.append(L("synoptic.plus.help.send")) }
-        return lines.joined(separator: "\n")
+        let a = availability
+        let entries = SynopticPlusPresentation.helpEntries(allowed: z.allowedGestures, key: z.key, a, map: plusMap)
+        let lines = entries.map { e in
+            L("synoptic.plus.help.drag", PlusShortcutText.directionLabel(e.direction),
+              PlusShortcutText.helpDescription(e.action, missing: e.action.pluginRef.map(a.missingPlugins.contains) ?? false))
+        }
+        return ([L("synoptic.addPluginSeries")] + lines).joined(separator: "\n")
+    }
+
+    /// The post-fader '+''s tooltip: a click, or a drag in the direction the map gives the send (if any).
+    private var postFaderHelp: String {
+        guard let d = plusMap.direction(of: .send) else { return L("synoptic.plus.postFader.help.click") }
+        return L("synoptic.plus.postFader.help", PlusShortcutText.directionLabel(d))
     }
 
     /// Where the marquee may not start: what has a gesture of its own there.
@@ -822,7 +844,7 @@ private struct SynopticPlusGhostView: View {
 
     var body: some View {
         let to = CGPoint(x: from.x + translation.width, y: from.y + translation.height)
-        let valid = ghost != .notHere
+        let valid = isValid
         let tint = valid ? Color.accentColor : Color.secondary
         ZStack(alignment: .topLeading) {
             if ghost != .none {
@@ -834,6 +856,14 @@ private struct SynopticPlusGhostView: View {
                     // OFFSET (the label's height is fixed), which does not move the stack's own bounds.
                     .offset(x: to.x + 10, y: to.y - Self.labelH / 2)
             }
+        }
+    }
+
+    /// False when letting go would do nothing: "not here", or a plugin no longer installed.
+    private var isValid: Bool {
+        switch ghost {
+        case .notHere, .pluginMissing: return false
+        default:                       return true
         }
     }
 
@@ -854,41 +884,47 @@ private struct SynopticPlusGhostView: View {
             .strokeBorder(tint.opacity(valid ? 0.9 : 0.5), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
     }
 
-    /// The zone's icon (@see SynopticPlusPresentation.symbol), "not here" aside.
+    /// The zone's icon (@see SynopticPlusPresentation.symbol), "not here" and a missing plugin aside.
     private var symbol: String {
         switch ghost {
-        case .gain, .none:  return SynopticPlusPresentation.symbol(for: .gain)
-        case .gainPanMute:  return SynopticPlusPresentation.symbol(for: .gainPanMute)
-        case .branch:       return SynopticPlusPresentation.symbol(for: .branch)
-        case .send:         return SynopticPlusPresentation.symbol(for: .send)
-        case .notHere:      return "nosign"
+        case .gain, .none:             return SynopticPlusPresentation.symbol(for: .gain)
+        case .gainPanMute:             return SynopticPlusPresentation.symbol(for: .gainPanMute)
+        case .branch:                  return SynopticPlusPresentation.symbol(for: .branch)
+        case .send:                    return SynopticPlusPresentation.symbol(for: .send)
+        case .plugin:                  return PlusShortcutText.pluginSymbol
+        case .pluginMissing, .notHere: return "nosign"
         }
     }
 
     private var text: String {
         switch ghost {
-        case .gain, .none: return L("synoptic.plus.ghost.gain")
-        case .gainPanMute: return L("synoptic.plus.ghost.gainPanMute")
-        case .branch:      return L("synoptic.plus.ghost.branch")
-        case .send:        return L("synoptic.plus.ghost.send")
-        case .notHere:     return L("synoptic.plus.ghost.notHere")
+        case .gain, .none:             return L("synoptic.plus.ghost.gain")
+        case .gainPanMute:             return L("synoptic.plus.ghost.gainPanMute")
+        case .branch:                  return L("synoptic.plus.ghost.branch")
+        case .send:                    return L("synoptic.plus.ghost.send")
+        case .plugin(let name):        return name
+        case .pluginMissing(let name): return L("synoptic.plus.ghost.pluginMissing", name)
+        case .notHere:                 return L("synoptic.plus.ghost.notHere")
         }
     }
 }
 
 /// The zones round a '+' while a drag leaves it (@see SynopticPlusGesture.sectors): each a faint wedge with
-/// its icon, the one the hand is in lit up softly. A direction the '+' does not offer has no zone. Pure
-/// display, laid under the ghost.
+/// its icon, the one the hand is in lit up softly. A direction the '+' does not offer has no zone; a
+/// direction bound to a plugin no longer installed keeps its zone, grey and dashed, with the "no" sign
+/// (letting go there does nothing). Pure display, laid under the ghost.
 private struct SynopticPlusSectorsView: View {
     let center: CGPoint
     let sectors: [PlusSector]
-    let highlighted: PlusGestureResult?
+    /// The index of the zone the hand is in (nil = none).
+    let highlighted: Int?
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ForEach(sectors.indices, id: \.self) { i in
                 let s = sectors[i]
-                let on = s.result == highlighted
+                let on = i == highlighted
+                let tint = s.isAvailable ? Color.accentColor : Color.secondary
                 let shape = Path { p in
                     let pts = s.outline().map { CGPoint(x: center.x + $0.width, y: center.y + $0.height) }
                     guard let first = pts.first else { return }
@@ -896,12 +932,12 @@ private struct SynopticPlusSectorsView: View {
                     for q in pts.dropFirst() { p.addLine(to: q) }
                     p.closeSubpath()
                 }
-                shape.fill(Color.accentColor.opacity(on ? 0.14 : 0.04))
-                shape.stroke(Color.accentColor.opacity(on ? 0.45 : 0.15),
-                             style: StrokeStyle(lineWidth: 1, lineJoin: .round))
-                Image(systemName: SynopticPlusPresentation.symbol(for: s.result))
+                shape.fill(tint.opacity(on ? 0.14 : 0.04))
+                shape.stroke(tint.opacity(on ? 0.45 : 0.15),
+                             style: StrokeStyle(lineWidth: 1, lineJoin: .round, dash: s.isAvailable ? [] : [3, 3]))
+                Image(systemName: s.isAvailable ? SynopticPlusPresentation.symbol(for: s.result) : "nosign")
                     .font(.system(size: 10, weight: on ? .semibold : .regular))
-                    .foregroundStyle(on ? Color.accentColor : Color.secondary.opacity(0.7))
+                    .foregroundStyle(on ? tint : Color.secondary.opacity(0.7))
                     .position(x: center.x + s.iconOffset.width, y: center.y + s.iconOffset.height)
             }
         }

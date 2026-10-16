@@ -548,8 +548,8 @@ struct PluginBrowserView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .overlay(categoryMenuOverlay(for: plugin))
-        .help(L("pluginBrowser.row.help"))
+        .overlay(categoryMenuOverlay(for: plugin, plusDirections: plugin.canBindToPlusDirection))
+        .help(L(plugin.canBindToPlusDirection ? "pluginBrowser.row.help.plus" : "pluginBrowser.row.help"))
         // Above the right-click layer, over the badge alone: the badge's own tooltip.
         .overlay(alignment: .trailing) {
             Text(plugin.formatLabel)
@@ -564,8 +564,8 @@ struct PluginBrowserView: View {
 
     /// A transparent layer that answers the RIGHT click only (@see RightClickCaptureView): the left
     /// click, the hover and the wheel of the row below it are untouched. The menu is built at the click.
-    private func categoryMenuOverlay(for plugin: AvailablePlugin) -> some View {
-        RightClickMenuOverlay(menu: { categoryMenu(for: plugin) },
+    private func categoryMenuOverlay(for plugin: AvailablePlugin, plusDirections: Bool = false) -> some View {
+        RightClickMenuOverlay(menu: { categoryMenu(for: plugin, plusDirections: plusDirections) },
                               onClose: { refocusSearch() })
     }
 
@@ -573,7 +573,7 @@ struct PluginBrowserView: View {
     /// that gives one more — and "Uncategorised". A plugin takes SEVERAL colours: a click on a swatch gives it that
     /// colour or takes it back. Written into the shared store: the tabs and the dots follow, the store
     /// being observed.
-    private func categoryMenu(for plugin: AvailablePlugin) -> NSMenu {
+    private func categoryMenu(for plugin: AvailablePlugin, plusDirections: Bool = false) -> NSMenu {
         let store = categories
         let format = plugin.formatName
         let identifier = plugin.identifier
@@ -606,7 +606,50 @@ struct PluginBrowserView: View {
         none.representedObject = proxy
         none.state = current.isEmpty ? .on : .off
         menu.addItem(none)
+        if plusDirections {
+            menu.addItem(.separator())
+            menu.addItem(plusDirectionItem(for: plugin))
+        }
         return menu
+    }
+
+    /// "Assign to a direction of the + ▸": the eight directions, each naming what it asks for now; the
+    /// directions bound to THIS plugin are ticked. A click binds the plugin there (the action it replaces
+    /// moves to where the plugin was, @see PlusShortcutMap.assign), a click on a ticked one takes it off
+    /// (the direction then asks for nothing). The same map as the settings' "+ shortcuts" tab.
+    private func plusDirectionItem(for plugin: AvailablePlugin) -> NSMenuItem {
+        let store = PlusShortcutStore.shared
+        let ref = PlusPluginRef(plugin)
+        let map = store.map
+        let sub = NSMenu()
+        sub.autoenablesItems = false
+        for d in PlusDirection.allCases {
+            let action = map.action(d)
+            let mine = action.pluginRef == ref
+            let missing = action.pluginRef.map { viewModel.availablePlugin(for: $0) == nil } ?? false
+            let proxy = MenuActionProxy {
+                if mine { store.clear(d) } else { store.assign(.plugin(ref), to: d) }
+            }
+            let item = NSMenuItem(title: PlusShortcutText.directionLabel(d) + " — "
+                                         + PlusShortcutText.actionName(action, missing: missing),
+                                  action: #selector(MenuActionProxy.run), keyEquivalent: "")
+            item.target = proxy
+            item.representedObject = proxy
+            item.state = mine ? .on : .off
+            sub.addItem(item)
+        }
+        sub.addItem(.separator())
+        let clearProxy = MenuActionProxy { store.unbind(ref) }
+        let clear = NSMenuItem(title: L("pluginBrowser.plusDirection.clear"),
+                               action: #selector(MenuActionProxy.run), keyEquivalent: "")
+        clear.target = clearProxy
+        clear.representedObject = clearProxy
+        clear.isEnabled = map.direction(of: .plugin(ref)) != nil
+        sub.addItem(clear)
+
+        let item = NSMenuItem(title: L("pluginBrowser.plusDirection.menu"), action: nil, keyEquivalent: "")
+        item.submenu = sub
+        return item
     }
 }
 
