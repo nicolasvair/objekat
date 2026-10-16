@@ -12,8 +12,7 @@ import Foundation
 //
 // What is NOT here, on purpose: the object KINDS (`ObjectKindIcon`), and the glyphs that only
 // LOOK like one of these but say something else — the "choose object" mode's `scope` (a pick
-// action, not the sidechain), and the automation glyph laid on a send knob whose level a curve
-// drives (`ToolSendLayer`, `ToolOverlayDrawing`), which says "automated", not "send".
+// action, not the sidechain).
 nonisolated enum FeatureIcons {
     /// An object carrying effects (at least one real plugin in its chain).
     static let fx = "fx"
@@ -26,4 +25,7 @@ nonisolated enum FeatureIcons {
     static let sidechainSend = "arrow.up.right.circle"
     /// The object has a plugin whose sidechain input is keyed (a key comes in).
     static let sidechainReception = "arrow.down.left.circle"
+    /// A parameter an automation curve drives (its static control greyed out, no longer answering
+    /// the hand): the send knob under the Aux tool, the signal view's locked controls.
+    static let automated = "chart.xyaxis.line"
 }

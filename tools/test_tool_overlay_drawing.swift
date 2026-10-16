@@ -7,7 +7,7 @@
 // fits under its capacity and stops growing.
 //
 //     swiftc -parse-as-library \
-//         ../objekat/Timeline/ToolOverlayDrawing.swift ../objekat/Timeline/ToolOverlayGeometry.swift \
+//         ../objekat/Timeline/ToolOverlayDrawing.swift ../objekat/Timeline/ToolOverlayGeometry.swift ../objekat/Shared/FeatureIcons.swift \
 //         ../objekat/Timeline/SendColumns.swift test_tool_overlay_drawing.swift \
 //         -o /tmp/tooldraw && (cd /tmp && ./tooldraw)
 //

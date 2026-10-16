@@ -289,7 +289,7 @@ func drawSendKnob(_ ctx: GraphicsContext, level: Float, enabled: Bool, focused: 
 
     // The lock's glyph, BRIGHT over the faded knob.
     if automated {
-        drawOverlaySymbol(ctx, "point.topleft.down.curvedto.point.bottomright.up",
+        drawOverlaySymbol(ctx, FeatureIcons.automated,
                           pointSize: max(7, min(size.width, size.height) * 0.5),
                           color: .white.opacity(0.9), at: c)
     }

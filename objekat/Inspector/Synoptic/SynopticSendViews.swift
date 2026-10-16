@@ -29,19 +29,26 @@ struct SynopticSendRow: View {
         db <= Double(sendMinDb) ? "-∞ dB" : (db == 0 ? "0 dB" : String(format: "%+.0f dB", db))
     }
 
+    private var sendGlyph: some View {
+        Image(systemName: FeatureIcons.auxSend)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
+            .frame(width: 14)
+            .help(outgoing ? L("synoptic.send.outgoing") : L("synoptic.send.incoming"))
+    }
+
     var body: some View {
+        // The glyph's SIDE says the direction: a received send comes IN to the name (glyph on its
+        // left), an outgoing one leaves FROM the name towards elsewhere (glyph on its right).
         HStack(spacing: 6) {
-            Image(systemName: FeatureIcons.auxSend)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isRouted ? Color.accentColor : Color.secondary.opacity(0.6))
-                .frame(width: 14)
-                .help(outgoing ? L("synoptic.send.outgoing") : L("synoptic.send.incoming"))
+            if !outgoing { sendGlyph }
             Text(send.name)
                 .font(.system(size: 10))
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(isRouted ? .primary : .secondary)
                 .help(send.refusal ?? "")
+            if outgoing { sendGlyph }
             // A received row says where the sender takes the signal when it is not the usual post-fader.
             if !outgoing, let short = send.slot.shortLabel {
                 Text(short)

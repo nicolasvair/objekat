@@ -379,8 +379,17 @@ extension View {
     @ViewBuilder
     func automationLocked(_ locked: Bool) -> some View {
         if locked {
+            // The fading says 'this no longer answers', the glyph says why — kept BRIGHT, as on the
+            // timeline's send knob (a reason as dim as the thing it explains explains nothing).
             self.disabled(true)
                 .opacity(0.4)
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: FeatureIcons.automated)
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .offset(x: 3, y: -3)
+                        .allowsHitTesting(false)
+                }
                 .help(L("synoptic.lockedByAutomation"))
         } else {
             self
