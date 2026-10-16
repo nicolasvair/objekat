@@ -271,16 +271,18 @@ extension EditViewModel {
         guard pts.indices.contains(index) else { return }
         // The segment's right-hand end = the next point in TIME, not in storage.
         guard let right = pts.filter({ $0.t > pts[index].t }).min(by: { $0.t < $1.t }) else { return }
-        let sign: Float = right.v > pts[index].v ? -1 : 1
-        let delta = Float(steps) * Self.automationCurveScrollStep * sign
+        let sign: Double = right.v > pts[index].v ? -1 : 1
+        // A notch moves the KNOB, not `c` (@see AutomationCurveShape.knob): even steps to the
+        // eye, fine near the straight line, the near-step only at the end of the travel.
+        let delta = Double(steps) * Self.automationCurveScrollStep * sign
         updateAutomationPoints(objectID: objectID, param: param) { p in
             guard p.indices.contains(index) else { return }
-            p[index].c += delta
+            p[index].c = AutomationCurveShape.adjusted(p[index].c, knobDelta: delta)
         }
     }
 
-    /// The curvature added per wheel notch: 20 notches sweep the whole -1…+1 range.
-    static let automationCurveScrollStep: Float = 0.05
+    /// The KNOB travel per wheel notch: 20 notches from the straight line to the near-step.
+    static let automationCurveScrollStep: Double = AutomationCurveShape.knobStepPerNotch
 
     // MARK: - The PLAYED value (playback)
 
