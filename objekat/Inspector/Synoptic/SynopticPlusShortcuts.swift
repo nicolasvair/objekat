@@ -14,6 +14,10 @@ import Foundation
 // mapped to `.none` having no zone at all. Between two sectors there is still dead angle (45°…75°, 105°…135°
 // and their mirrors): a drag there asks for nothing.
 //
+// EVERY DIRECTION HAS TWO LEVELS (@see PlusLevel): near, and far from 80 pt of travel along the direction —
+// the right direction's historical gain / gain · pan · mute pair, generalised. Each (direction, level) SLOT
+// holds its own action; an empty far slot does what the near one does.
+//
 // This file is compiled alone by `tools/test_synoptic_plus_shortcuts.swift` and alongside
 // `SynopticPlusGesture.swift` by `tools/test_synoptic_plus_gesture.swift`: it must stay free of every other
 // type of the app.
@@ -103,16 +107,35 @@ struct PlusPluginRef: Codable, Hashable {
     func hash(into h: inout Hasher) { h.combine(key) }
 }
 
-/// What a direction asks for.
+/// How far along its direction a drag went: NEAR (under `SynopticPlusGesture.panMuteThreshold`, 80 pt of
+/// travel along the direction's axis) or FAR (from there on). Every direction has the two levels — the right
+/// direction's historical pair, gain then gain · pan · mute, generalised.
+enum PlusLevel: String, Codable, CaseIterable, Hashable {
+    case near, far
+}
+
+/// One assignable place of the map: a direction and a level.
+struct PlusSlot: Hashable {
+    var direction: PlusDirection
+    var level: PlusLevel
+
+    init(_ direction: PlusDirection, _ level: PlusLevel) {
+        self.direction = direction
+        self.level = level
+    }
+
+    /// Every slot, directions in `PlusDirection.allCases` order, near before far.
+    static let allCases: [PlusSlot] = PlusDirection.allCases.flatMap { d in PlusLevel.allCases.map { PlusSlot(d, $0) } }
+}
+
+/// What a slot asks for.
 enum PlusAction: Hashable, Codable {
-    /// Nothing: the direction has no zone, a drag there asks for nothing.
+    /// Nothing. A FAR slot left at nothing is not a hole: its zone does what the NEAR slot does
+    /// (@see PlusShortcutMap.effective) — a direction with one action is one zone, at any distance.
     case none
-    /// A gain stage, then — past `SynopticPlusGesture.panMuteThreshold` of travel along the direction — a
-    /// gain · pan · mute stage (the right direction's historical pair).
-    case gainStage
-    /// A gain stage only (one dB box), at any distance.
+    /// A gain stage (one dB box).
     case gain
-    /// A gain · pan · mute stage, at any distance.
+    /// A gain · pan · mute stage.
     case gainPanMute
     /// A parallel branch of the element under the "+".
     case branch
@@ -122,7 +145,7 @@ enum PlusAction: Hashable, Codable {
     case plugin(PlusPluginRef)
 
     /// The built-in actions, in the order a menu lists them (`.none` first).
-    static let builtIns: [PlusAction] = [.none, .gainStage, .gain, .gainPanMute, .branch, .send]
+    static let builtIns: [PlusAction] = [.none, .gain, .gainPanMute, .branch, .send]
 
     var pluginRef: PlusPluginRef? {
         if case .plugin(let r) = self { return r }
@@ -136,19 +159,21 @@ enum PlusAction: Hashable, Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        switch (try? c.decode(String.self, forKey: .kind)) ?? "" {
-        case "gainStage":   self = .gainStage
-        case "gain":        self = .gain
-        case "gainPanMute": self = .gainPanMute
-        case "branch":      self = .branch
-        case "send":        self = .send
+        let kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
+        self = Self.decoded(kind: kind, plugin: try? c.decode(PlusPluginRef.self, forKey: .plugin))
+    }
+
+    /// `kind` read back; anything unknown (or a plugin with no identifier) is `.none`.
+    static func decoded(kind: String, plugin: PlusPluginRef?) -> PlusAction {
+        switch kind {
+        case "gain":        return .gain
+        case "gainPanMute": return .gainPanMute
+        case "branch":      return .branch
+        case "send":        return .send
         case "plugin":
-            if let r = try? c.decode(PlusPluginRef.self, forKey: .plugin), !r.identifier.isEmpty {
-                self = .plugin(r)
-            } else {
-                self = .none
-            }
-        default:            self = .none
+            if let r = plugin, !r.identifier.isEmpty { return .plugin(r) }
+            return .none
+        default:            return .none
         }
     }
 
@@ -156,7 +181,6 @@ enum PlusAction: Hashable, Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
         case .none:            try c.encode("none", forKey: .kind)
-        case .gainStage:       try c.encode("gainStage", forKey: .kind)
         case .gain:            try c.encode("gain", forKey: .kind)
         case .gainPanMute:     try c.encode("gainPanMute", forKey: .kind)
         case .branch:          try c.encode("branch", forKey: .kind)
@@ -168,88 +192,132 @@ enum PlusAction: Hashable, Codable {
     }
 }
 
-/// Which action each of the eight directions asks for. A pure value: the store persists it, the gesture
-/// reads it, the settings and the plugin browser edit it through `assign` / `swap` / `clear`.
+/// Which action each of the sixteen slots (eight directions × near / far) asks for. A pure value: the store
+/// persists it, the gesture reads it, the browser's "+" page edits it through `assign` / `swap` / `clear`.
 ///
-/// ONE direction per action: assigning an action that another direction already holds MOVES it there, the
-/// other direction taking the old action of this one in exchange (a SWAP). So reorganising never loses a
-/// built-in that was merely displaced, and a plugin is never bound twice. Assigning over a direction whose
-/// action nobody else holds simply replaces it (`reset` brings the defaults back).
+/// ONE slot per action: assigning an action that another slot already holds MOVES it there, the other slot
+/// taking the old action of this one in exchange (a SWAP). So reorganising never loses a built-in that was
+/// merely displaced, and a plugin is never bound twice. Assigning over a slot whose action nobody else holds
+/// simply replaces it (`reset` brings the defaults back).
 struct PlusShortcutMap: Equatable, Codable {
 
-    /// The format version written with the map (a later version may add fields; this one reads what it knows).
-    static let version = 1
+    /// The format version written with the map. 1 = one action per direction (a "gainStage" kind for the
+    /// right direction's near/far pair); 2 = one action per SLOT. A v1 map is read and migrated.
+    static let version = 2
 
-    private var actions: [PlusDirection: PlusAction]
+    private var actions: [PlusSlot: PlusAction]
 
-    /// The "+" as it always was: right = a gain stage (further: gain · pan · mute), down-right = a parallel
-    /// branch, left = a send; the five other directions ask for nothing.
-    static let defaults = PlusShortcutMap(actions: [.right: .gainStage, .downRight: .branch, .left: .send])
+    /// The "+" as it always was: right = a gain stage, further a gain · pan · mute stage; down-right = a
+    /// parallel branch; left = a send (their far slots empty: the same action at any distance); the five
+    /// other directions ask for nothing.
+    static let defaults = PlusShortcutMap(actions: [
+        PlusSlot(.right, .near): .gain, PlusSlot(.right, .far): .gainPanMute,
+        PlusSlot(.downRight, .near): .branch,
+        PlusSlot(.left, .near): .send,
+    ])
 
-    init(actions: [PlusDirection: PlusAction] = [:]) {
+    init(actions: [PlusSlot: PlusAction]) {
         self.actions = actions.filter { $0.value != .none }
     }
 
-    /// What `direction` asks for.
-    func action(_ direction: PlusDirection) -> PlusAction { actions[direction] ?? .none }
-
-    /// The direction holding `action` (nil = none does; always nil for `.none`).
-    func direction(of action: PlusAction) -> PlusDirection? {
-        guard action != .none else { return nil }
-        return PlusDirection.allCases.first { self.action($0) == action }
+    /// An empty map: every slot asks for nothing. (Not a `= [:]` default argument: a default argument is
+    /// evaluated outside the type's main-actor isolation, where `PlusSlot`'s Hashable cannot be used.)
+    init() {
+        self.actions = [:]
     }
 
-    /// The plugins bound to a direction, in the directions' order.
-    var pluginRefs: [PlusPluginRef] { PlusDirection.allCases.compactMap { action($0).pluginRef } }
+    /// What `slot` holds (`.none` for an empty far slot, @see effective).
+    func action(_ slot: PlusSlot) -> PlusAction { actions[slot] ?? .none }
+
+    func action(_ direction: PlusDirection, _ level: PlusLevel) -> PlusAction { action(PlusSlot(direction, level)) }
+
+    /// The slot whose action a drag of `level` in `direction` carries out: the far slot when it holds
+    /// something, the near slot otherwise (an empty far slot extends the near action).
+    func effective(_ direction: PlusDirection, _ level: PlusLevel) -> PlusSlot {
+        level == .far && action(direction, .far) != .none ? PlusSlot(direction, .far) : PlusSlot(direction, .near)
+    }
+
+    /// The slot holding `action` (nil = none does; always nil for `.none`).
+    func slot(of action: PlusAction) -> PlusSlot? {
+        guard action != .none else { return nil }
+        return PlusSlot.allCases.first { self.action($0) == action }
+    }
+
+    /// The plugins bound to a slot, in the slots' order.
+    var pluginRefs: [PlusPluginRef] { PlusSlot.allCases.compactMap { action($0).pluginRef } }
 
     var isDefault: Bool { self == .defaults }
 
-    /// Puts `action` on `direction`. If another direction already holds that action, it takes the action
-    /// `direction` had (a swap); `.none` simply clears `direction`.
-    mutating func assign(_ action: PlusAction, to direction: PlusDirection) {
-        let previous = self.action(direction)
+    /// Puts `action` on `slot`. If another slot already holds that action, it takes the action `slot` had
+    /// (a swap); `.none` simply clears `slot`.
+    mutating func assign(_ action: PlusAction, to slot: PlusSlot) {
+        let previous = self.action(slot)
         guard previous != action else { return }
-        if let other = self.direction(of: action) { set(previous, other) }
-        set(action, direction)
+        if let other = self.slot(of: action) { set(previous, other) }
+        set(action, slot)
     }
 
-    /// Exchanges the actions of two directions.
-    mutating func swap(_ a: PlusDirection, _ b: PlusDirection) {
+    /// Exchanges the actions of two slots.
+    mutating func swap(_ a: PlusSlot, _ b: PlusSlot) {
         guard a != b else { return }
         let (x, y) = (action(a), action(b))
         set(y, a)
         set(x, b)
     }
 
-    /// The direction asks for nothing any more.
-    mutating func clear(_ direction: PlusDirection) { set(.none, direction) }
+    /// The slot asks for nothing any more.
+    mutating func clear(_ slot: PlusSlot) { set(.none, slot) }
 
-    /// Every direction bound to `plugin` asks for nothing any more.
+    /// Every slot bound to `plugin` asks for nothing any more.
     mutating func unbind(_ plugin: PlusPluginRef) {
-        for d in PlusDirection.allCases where action(d).pluginRef == plugin { set(.none, d) }
+        for s in PlusSlot.allCases where action(s).pluginRef == plugin { set(.none, s) }
     }
 
     mutating func reset() { self = .defaults }
 
-    private mutating func set(_ action: PlusAction, _ direction: PlusDirection) {
-        if action == .none { actions.removeValue(forKey: direction) } else { actions[direction] = action }
+    private mutating func set(_ action: PlusAction, _ slot: PlusSlot) {
+        if action == .none { actions.removeValue(forKey: slot) } else { actions[slot] = action }
     }
 
-    // MARK: Codable — `{"version": 1, "directions": {"right": {"kind": "gainStage"}, …}}`
-    //
-    // Keyed by the direction's NAME: a direction a later version adds is ignored on the way in, and one the
-    // stored map does not mention asks for nothing.
+    /// Lays `action` on `slot` unless it is nothing or another slot already holds it (reading a stored map:
+    /// a hand-edited file could name one action twice — the first slot in order keeps it).
+    private mutating func adopt(_ action: PlusAction, _ slot: PlusSlot) {
+        guard action != .none, self.slot(of: action) == nil else { return }
+        set(action, slot)
+    }
 
-    private enum CodingKeys: String, CodingKey { case version, directions }
+    // MARK: Codable — v2: `{"version": 2, "slots": {"right": {"near": {"kind": "gain"}, "far": {…}}, …}}`
+    //
+    // Keyed by the direction's and the level's NAME: one a later version adds is ignored on the way in, and a
+    // slot the stored map does not mention asks for nothing. A v1 map (`"directions": {"right": {"kind": …}}`)
+    // is migrated: its "gainStage" becomes near = gain, far = gain · pan · mute; any other action goes to the
+    // near slot, the far one left empty (the same action at any distance — what v1 did).
+
+    private enum CodingKeys: String, CodingKey { case version, slots, directions }
+
+    /// A v1 action as written (its "gainStage" kind no longer exists as an action).
+    private struct V1Action: Decodable {
+        var kind: String?
+        var plugin: PlusPluginRef?
+    }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let raw = try c.decodeIfPresent([String: PlusAction].self, forKey: .directions) ?? [:]
         var map = PlusShortcutMap()
-        // A hand-edited file could name one action twice: the first direction (in `allCases` order) keeps it.
-        for d in PlusDirection.allCases {
-            guard let a = raw[d.rawValue], a != .none, map.direction(of: a) == nil else { continue }
-            map.set(a, d)
+        if let slots = try c.decodeIfPresent([String: [String: PlusAction]].self, forKey: .slots) {
+            for s in PlusSlot.allCases {
+                map.adopt(slots[s.direction.rawValue]?[s.level.rawValue] ?? .none, s)
+            }
+        } else if let v1 = try c.decodeIfPresent([String: V1Action].self, forKey: .directions) {
+            for d in PlusDirection.allCases {
+                guard let raw = v1[d.rawValue] else { continue }
+                if raw.kind == "gainStage" {
+                    map.adopt(.gain, PlusSlot(d, .near))
+                    map.adopt(.gainPanMute, PlusSlot(d, .far))
+                } else {
+                    map.adopt(PlusAction.decoded(kind: raw.kind ?? "", plugin: raw.plugin), PlusSlot(d, .near))
+                }
+            }
         }
         self = map
     }
@@ -257,8 +325,8 @@ struct PlusShortcutMap: Equatable, Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Self.version, forKey: .version)
-        var raw: [String: PlusAction] = [:]
-        for d in PlusDirection.allCases { raw[d.rawValue] = action(d) }
-        try c.encode(raw, forKey: .directions)
+        var raw: [String: [String: PlusAction]] = [:]
+        for s in PlusSlot.allCases { raw[s.direction.rawValue, default: [:]][s.level.rawValue] = action(s) }
+        try c.encode(raw, forKey: .slots)
     }
 }

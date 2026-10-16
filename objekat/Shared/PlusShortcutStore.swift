@@ -5,11 +5,11 @@ import Observation
 
 /// What each direction of a "+" of the signal view asks for (@see PlusShortcutMap, the pure model). It is the
 /// APP's memory, not the project's — a habit of the hand is the same whatever the session — kept in
-/// `UserDefaults` under one key, the map as JSON (`{"version": 1, "directions": {…}}`).
+/// `UserDefaults` under one key, the map as JSON (`{"version": 2, "slots": {"right": {"near": …, "far": …}}}`).
 ///
-/// Two doors edit it and both write here: the settings' "+ shortcuts" tab (@see PlusShortcutsPreferencesView)
-/// and the plugin browser's right click (@see PluginBrowserView.categoryMenu). The signal view reads `map`
-/// while drawing and on release; the store being observed, a change shows at once.
+/// One door edits it: the "+" page of the plugin browser (@see PluginBrowserPlusPage), at the far right of
+/// the view a click on a "+" opens. The signal view reads `map` while drawing and on release; the store being
+/// observed, a change shows at once. A map stored by an earlier version (v1) is migrated when read.
 ///
 /// A plugin bound to a direction is remembered by `format|identifier` (@see PlusPluginRef) and KEPT when it
 /// is no longer installed: the direction then shows the plugin as unavailable and does nothing, until the
@@ -62,17 +62,18 @@ final class PlusShortcutStore {
 
     // MARK: Writing (each one writes the storage only when the map actually changes)
 
-    /// Puts `action` on `direction` (a swap if another direction held it, @see PlusShortcutMap.assign).
-    func assign(_ action: PlusAction, to direction: PlusDirection) { mutate { $0.assign(action, to: direction) } }
+    /// Puts `action` on `slot` (a swap if another slot held it, @see PlusShortcutMap.assign).
+    func assign(_ action: PlusAction, to slot: PlusSlot) { mutate { $0.assign(action, to: slot) } }
 
-    func swap(_ a: PlusDirection, _ b: PlusDirection) { mutate { $0.swap(a, b) } }
+    func swap(_ a: PlusSlot, _ b: PlusSlot) { mutate { $0.swap(a, b) } }
 
-    func clear(_ direction: PlusDirection) { mutate { $0.clear(direction) } }
+    func clear(_ slot: PlusSlot) { mutate { $0.clear(slot) } }
 
     /// `plugin` asks for nothing any more, wherever it was bound.
     func unbind(_ plugin: PlusPluginRef) { mutate { $0.unbind(plugin) } }
 
-    /// The "+" as it was designed: right = gain stage, down-right = parallel branch, left = send.
+    /// The "+" as it was designed: right = gain (further: gain · pan · mute), down-right = parallel branch,
+    /// left = send.
     func reset() { mutate { $0.reset() } }
 
     private func mutate(_ f: (inout PlusShortcutMap) -> Void) {

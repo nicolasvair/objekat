@@ -467,21 +467,35 @@ struct SynopticView: View {
                                clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
     }
 
-    /// A '+''s tooltip: the click, then each direction that does something here, as the user's map says.
+    /// A '+''s tooltip: the click, then each direction that does something here, as the user's map says — one
+    /// line per direction, its far slot (when it does something here) on the same line ("…, further: …").
     private func plusHelp(_ z: SynopticLayout.InsertZone) -> String {
         let a = availability
         let entries = SynopticPlusPresentation.helpEntries(allowed: z.allowedGestures, key: z.key, a, map: plusMap)
-        let lines = entries.map { e in
-            L("synoptic.plus.help.drag", PlusShortcutText.directionLabel(e.direction),
-              PlusShortcutText.helpDescription(e.action, missing: e.action.pluginRef.map(a.missingPlugins.contains) ?? false))
+        func describe(_ action: PlusAction) -> String {
+            PlusShortcutText.helpDescription(action, missing: action.pluginRef.map(a.missingPlugins.contains) ?? false)
+        }
+        var lines: [String] = []
+        for d in PlusDirection.allCases {
+            let near = entries.first { $0.slot == PlusSlot(d, .near) }?.action
+            let far = entries.first { $0.slot == PlusSlot(d, .far) }?.action
+            let label = PlusShortcutText.directionLabel(d)
+            switch (near, far) {
+            case let (n?, f?): lines.append(L("synoptic.plus.help.dragFar", label, describe(n), describe(f)))
+            case let (n?, nil): lines.append(L("synoptic.plus.help.drag", label, describe(n)))
+            case let (nil, f?): lines.append(L("synoptic.plus.help.dragFarOnly", label, describe(f)))
+            case (nil, nil): break
+            }
         }
         return ([L("synoptic.addPluginSeries")] + lines).joined(separator: "\n")
     }
 
-    /// The post-fader '+''s tooltip: a click, or a drag in the direction the map gives the send (if any).
+    /// The post-fader '+''s tooltip: a click, or a drag in the direction (and at the level) the map gives the
+    /// send, if any.
     private var postFaderHelp: String {
-        guard let d = plusMap.direction(of: .send) else { return L("synoptic.plus.postFader.help.click") }
-        return L("synoptic.plus.postFader.help", PlusShortcutText.directionLabel(d))
+        guard let s = plusMap.slot(of: .send) else { return L("synoptic.plus.postFader.help.click") }
+        let label = PlusShortcutText.directionLabel(s.direction)
+        return s.level == .far ? L("synoptic.plus.postFader.help.far", label) : L("synoptic.plus.postFader.help", label)
     }
 
     /// Where the marquee may not start: what has a gesture of its own there.

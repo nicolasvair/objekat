@@ -231,26 +231,20 @@ enum SynopticPlusPresentation {
 
     // MARK: The tooltip of a "+" (what each direction does, from the map)
 
-    /// The lines of a "+"'s tooltip after its click line: one per direction that does something here, in the
-    /// directions' order — `(direction, action)` pairs, the action as the map has it (a `.gainStage` reads as
-    /// one line). The caller words them (@see SynopticView.plusHelp).
+    /// The lines of a "+"'s tooltip after its click line: one per SLOT that does something here, in the slots'
+    /// order (direction, then near before far) — `(slot, action)` pairs. The caller words them
+    /// (@see SynopticView.plusHelp).
     static func helpEntries(allowed: Set<PlusGestureResult>, key: SynopticPlusKey, _ a: SynopticPlusAvailability,
-                            map: PlusShortcutMap = .defaults) -> [(direction: PlusDirection, action: PlusAction)] {
+                            map: PlusShortcutMap = .defaults) -> [(slot: PlusSlot, action: PlusAction)] {
         let built = offered(allowed, key: key, a)
         let plugins = offersPlugins(key: key, a)
-        return PlusDirection.allCases.compactMap { d in
-            let action = map.action(d)
-            let shown: Bool
-            switch action {
-            case .none:        shown = false
-            case .gainStage:   shown = built.contains(.gain) || built.contains(.gainPanMute)
-            case .gain:        shown = built.contains(.gain)
-            case .gainPanMute: shown = built.contains(.gainPanMute)
-            case .branch:      shown = built.contains(.branch)
-            case .send:        shown = built.contains(.send)
-            case .plugin:      shown = plugins
+        return PlusSlot.allCases.compactMap { s in
+            let action = map.action(s)
+            switch action.gestureResult {
+            case .none:   return nil
+            case .plugin: return plugins ? (s, action) : nil
+            case let r:   return built.contains(r) ? (s, action) : nil
             }
-            return shown ? (d, action) : nil
         }
     }
 }
