@@ -212,6 +212,14 @@ struct SynopticActions {
     var onPlusGesture: ((_ seriesID: UUID, _ index: Int, _ result: PlusGestureResult) -> Void)? = nil
     /// The same, out of the "+" of a send's mini-chain (`aux` = the send's id): a gain stage on the send.
     var onSendPlusGesture: ((_ aux: UUID, _ index: Int, _ result: PlusGestureResult) -> Void)? = nil
+    /// A direction the user bound to a plugin (@see PlusShortcutMap), dragged out of a '+' of a series: insert
+    /// that plugin at `index` of `seriesID`, as the browser would. One undo point.
+    var onPlusInsertPlugin: ((_ seriesID: UUID, _ index: Int, _ plugin: PlusPluginRef) -> Void)? = nil
+    /// The same, out of the "+" of a send's mini-chain (`aux` = the send's id).
+    var onSendPlusInsertPlugin: ((_ aux: UUID, _ index: Int, _ plugin: PlusPluginRef) -> Void)? = nil
+    /// Whether a plugin a direction is bound to is installed and insertable (nil = assume it is). One that is
+    /// not keeps its zone, greyed, and its drag does nothing.
+    var plusPluginInstalled: ((_ plugin: PlusPluginRef) -> Bool)? = nil
     /// A gain stage's card sets its values (nil = left as it is): gain in dB (±24), pan (−1…1), mute.
     /// The undo point is the caller's at the drag's start (`onBeginGainEdit`).
     var onSetGainStage: ((_ pluginID: UUID, _ gainDb: Float?, _ pan: Float?, _ muted: Bool?) -> Void)? = nil
