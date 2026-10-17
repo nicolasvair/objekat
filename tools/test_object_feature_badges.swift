@@ -1,5 +1,5 @@
 // `ObjectFeatureBadges` — the feature badges an object carries after its name (FX, FX link, aux
-// sends, sidechain send, sidechain reception; 16 October 2026), asserted with no screen. The same
+// sends, sidechain send, sidechain reception; 16 October 2026; automation, 17 October 2026), asserted with no screen. The same
 // model dependencies as `test_plugin_id_uniqueness.swift`, minus the uniqueness units, plus the two
 // files under test; run from `tools/`:
 //
@@ -8,6 +8,7 @@
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
+//         ../objekat/SoundObject/AutomationCurveShape.swift \
 //         ../objekat/SoundObject/Marker.swift \
 //         ../objekat/SoundObject/ChannelMode.swift \
 //         ../objekat/Shared/LaneEntryIndex.swift \
@@ -164,15 +165,38 @@ enum ObjectFeatureBadgesTest {
         check("the source is told by the set", badges(kick, [kick.id]) == [.sidechainSend])
         check("a source NOT in the set shows nothing", badges(kick, [UUID()]).isEmpty)
 
-        // MARK: 6. The order, all five at once
+        // MARK: 5b. Automation
 
-        let everything = clip(id: kick.id,
-                              plugins: [plugin(key: UUID()), block(instances: [plugin()])],
-                              sends: [AuxSend(auxID: aux)])
-        check("all five, in order: FX, FX link, aux send, sidechain send, reception",
-              badges(everything, [kick.id]) == [.fx, .fxLink, .auxSend, .sidechainSend, .sidechainReception])
+        func automated(_ o: SoundObject, _ lanes: [AutomationLane]) -> SoundObject {
+            var o = o; o.automation = lanes; return o
+        }
+        let volumeCurve = AutomationLane(param: .volume, points: [AutomationPoint(t: 0, v: -6)])
+        check("a curve with a point → automation", badges(automated(clip(), [volumeCurve])) == [.automation])
+        check("a curve with NO point is not an automation",
+              badges(automated(clip(), [AutomationLane(param: .volume)])).isEmpty)
+        check("a plugin parameter's curve counts too",
+              badges(automated(clip(plugins: [plugin()]),
+                               [AutomationLane(param: .pan, points: []),
+                                AutomationLane(param: .pan, points: [AutomationPoint(t: 1, v: 0.2)])]))
+                == [.fx, .automation])
+        check("a group does not inherit a child's curve",
+              badges(group(children: [automated(clip(), [volumeCurve])])).isEmpty)
+        check("a group's own curve → automation",
+              badges(automated(group(children: [clip()]), [volumeCurve])) == [.automation])
+
+        // MARK: 6. The order, all six at once
+
+        let everything = automated(clip(id: kick.id,
+                                        plugins: [plugin(key: UUID()), block(instances: [plugin()])],
+                                        sends: [AuxSend(auxID: aux)]),
+                                   [volumeCurve])
+        check("all six, in order: FX, FX link, aux send, sidechain send, reception, automation",
+              badges(everything, [kick.id])
+                == [.fx, .fxLink, .auxSend, .sidechainSend, .sidechainReception, .automation])
         check("FeatureBadge.allCases is the drawing order",
-              FeatureBadge.allCases == [.fx, .fxLink, .auxSend, .sidechainSend, .sidechainReception])
+              FeatureBadge.allCases == [.fx, .fxLink, .auxSend, .sidechainSend, .sidechainReception, .automation])
+        check("the automation badge reads the shared automation glyph",
+              FeatureBadge.automation.symbol == FeatureIcons.automated)
         check("the cache key tells two different lists apart",
               FeatureBadge.cacheKey([.fx, .auxSend]) != FeatureBadge.cacheKey([.fx, .fxLink])
                 && FeatureBadge.cacheKey([]) == "")
