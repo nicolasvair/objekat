@@ -245,6 +245,7 @@ final class CommandRegistry {
         registerAuxCommands()
         registerMIDICommands()
         registerConsolidateCommands()
+        registerDiskUsageCommands()
         registerExportCommands()
         registerTimeSelectionCommands()
         registerCrossfadeCommands()

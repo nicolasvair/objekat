@@ -323,6 +323,12 @@ enum ProjectFileUsageTest {
     check("looksLikeSession: a package.json is not a session", !U.looksLikeSession(Data("{\"name\":\"x\"}".utf8)))
     check("looksLikeSession: garbage is not a session", !U.looksLikeSession(Data("zzz".utf8)))
 
+    check("verdict: a session", U.verdict(of: Data(sessionJSON.utf8)) == .session)
+    check("verdict: other JSON is not a session", U.verdict(of: Data("{\"name\":\"x\"}".utf8)) == .notASession)
+    check("verdict: a JSON array is not a session", U.verdict(of: Data("[1]".utf8)) == .notASession)
+    check("verdict: truncated JSON is invalid", U.verdict(of: Data("{\"items\":[".utf8)) == .invalid)
+    check("verdict: empty data is invalid", U.verdict(of: Data()) == .invalid)
+
     // Sidecar decoding: the root object of the sidecar is an object, whose clips and instances are walked.
     do {
         let sidecar = """

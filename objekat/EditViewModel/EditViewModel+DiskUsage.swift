@@ -102,7 +102,11 @@ nonisolated enum DiskUsageScanner {
             let isCurrent = input.currentVersion.map { sameFile($0, url) } ?? false
             if isCurrent && !input.protectSavedCurrent { continue }
             guard let data = try? Data(contentsOf: url) else { unreadable.append(url.lastPathComponent); continue }
-            guard ProjectFileUsage.looksLikeSession(data) else { continue }   // some other tool's JSON
+            switch ProjectFileUsage.verdict(of: data) {
+            case .notASession: continue            // some other tool's JSON
+            case .invalid: unreadable.append(url.lastPathComponent); continue
+            case .session: break
+            }
             guard let refs = try? ProjectFileUsage.decodeSession(data) else {
                 unreadable.append(url.lastPathComponent)
                 continue

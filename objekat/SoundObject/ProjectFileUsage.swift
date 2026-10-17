@@ -487,6 +487,22 @@ nonisolated enum ProjectFileUsage {
         try JSONDecoder().decode(RefNode.self, from: data).ref
     }
 
+    enum FileVerdict: Equatable, Sendable {
+        /// A JSON object with the marks of a session.
+        case session
+        /// Valid JSON that is not a session (some other tool's file): ignored.
+        case notASession
+        /// Not JSON at all (truncated, garbage): it may well be a damaged session, so it is
+        /// reported as unreadable rather than ignored.
+        case invalid
+    }
+
+    static func verdict(of data: Data) -> FileVerdict {
+        guard let any = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return .invalid }
+        guard let object = any as? [String: Any] else { return .notASession }
+        return object["items"] != nil || object["_readme"] != nil ? .session : .notASession
+    }
+
     /// True if `data` is a JSON OBJECT carrying the marks of a session (`items`, or the `_readme`
     /// notice a session starts with). A `.json` that is some other tool's file (a `package.json`
     /// lying in the folder) is not a session, and must not stand in the way of a clean-up.
