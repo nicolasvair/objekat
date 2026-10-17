@@ -2722,12 +2722,12 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   for a session: **every new dependency must be AGPLv3-compatible** — no MIT-only-in-appearance
   library whose transitive dependencies are not, and nothing under a licence that forbids
   redistribution. In doubt, ask rather than add.
-  The legal notice an interactive programme owes its user — copyright, absence of warranty,
-  licence, where the sources are — lives in the build setting
-  `INFOPLIST_KEY_NSHumanReadableCopyright`, and macOS shows it in the "About OBJEKAT" panel it
-  offers for free. It is the ONE visible sentence that does NOT go through `L()`: it is not a
-  `.swift`, and a legal notice is not translated lightly. Leave it in English, and keep it in
-  step with `NOTICE`.
+  The legal notice an interactive programme owes its user (copyright, absence of warranty,
+  licence, where the sources are) sits at the HEAD of `objekat/Resources/Credits.rtf`, which the
+  "About objekat" panel shows. `INFOPLIST_KEY_NSHumanReadableCopyright` was REMOVED on 17 October
+  2026 (the panel printed it under the credits, a duplicate that read oddly). It does not go
+  through `L()`: a legal notice is not translated lightly. Keep it in English and in step with
+  `NOTICE`.
   The same panel shows `objekat/Resources/Credits.rtf` (third-party components, licences, links; English,
   no hardcoded text colour so dark mode works) — keep it in step with `NOTICE` too, which ships in the
   bundle along with `LICENSE`. `CFBundleVersion` is the commit count (`git rev-list --count HEAD`), written
