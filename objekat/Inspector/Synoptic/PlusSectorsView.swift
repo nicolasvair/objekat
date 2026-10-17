@@ -16,6 +16,9 @@ struct PlusSectorsView: View {
     var emphasis: Double = 1
     /// The drawing's size (1 = the signal view's, where a zone is the gesture's own geometry).
     var scale: CGFloat = 1
+    /// An opaque ground laid under each wedge, so the zones read over the cards they cover (0 = none, the
+    /// "+" page having its own plain ground).
+    var backdrop: Double = 0.85
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -24,6 +27,7 @@ struct PlusSectorsView: View {
                 let on = i == highlighted
                 let tint = Self.tint(of: s)
                 let shape = Self.path(of: s, center: center, scale: scale)
+                if backdrop > 0 { shape.fill(Color(nsColor: .windowBackgroundColor).opacity(backdrop)) }
                 shape.fill(tint.opacity((on ? 0.14 : 0.04) * emphasis))
                 shape.stroke(tint.opacity(min(1, (on ? 0.45 : 0.15) * emphasis)),
                              style: StrokeStyle(lineWidth: 1, lineJoin: .round, dash: s.isAvailable ? [] : [3, 3]))
