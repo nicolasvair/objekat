@@ -268,12 +268,12 @@ extension EditViewModel {
         // Splitting the clips crossing the bounds. The list is recomputed after each pass:
         // _splitInternal creates a new top-level item on the same lane.
         for id in topLevelClipIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t1, c.startTime + c.duration > t1 else { continue }
             _ = _splitInternal(id: id, atTime: t1)
         }
         for id in topLevelClipIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t2, c.startTime + c.duration > t2 else { continue }
             _ = _splitInternal(id: id, atTime: t2)
         }
@@ -338,12 +338,12 @@ extension EditViewModel {
         pushUndo()
 
         for id in childIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t1, c.startTime + c.duration > t1 else { continue }
             _ = _splitInternal(id: id, atTime: t1)
         }
         for id in childIDsInSelection() {
-            guard let c = find(id: id),
+            guard let c = find(id: id), !c.isInfiniteBus,   // no edge to split at (@see `cut`)
                   c.startTime < t2, c.startTime + c.duration > t2 else { continue }
             _ = _splitInternal(id: id, atTime: t2)
         }
@@ -680,7 +680,8 @@ extension EditViewModel {
                 guard let obj = find(id: clipID), let anchor = anchors[clipID] else { continue }
                 if isSelfOrDescendant(groupID, of: clipID) { continue }   // anti-cycle
                 var child = withCapturedPluginStates(obj)   // freezes the state before the engine round trip
-                let newStart = max(0, anchor.start + dt)
+                // `dt` comes floored (@see ZeroFloor, commitMoveDrop).
+                let newStart = anchor.start + dt
                 let dStart   = newStart - obj.startTime
                 child.startTime = newStart
                 child.lane = max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))
@@ -726,8 +727,9 @@ extension EditViewModel {
                 guard let child = children.first(where: { $0.id == childID }),
                       let anchor = anchors[childID] else { continue }
                 var top = withCapturedPluginStates(child)   // freezes the state before the engine round trip
-                // It becomes a ROOT object: the wall at 0 applies on arrival (@see ZeroClamp).
-                let newStart = max(0, anchor.start + dt)
+                // It becomes a ROOT object: floored at 0 on arrival, whatever it started at
+                // (@see ZeroFloor.rootStart).
+                let newStart = ZeroFloor.rootStart(anchor.start + dt)
                 let dStart   = newStart - child.startTime
                 top.startTime = newStart
                 top.lane = max(0, baseLane + (anchor.lane - grabbedBaseLane))
@@ -786,7 +788,7 @@ extension EditViewModel {
                       let anchor = anchors[childID] else { continue }
                 if isSelfOrDescendant(targetGroupID, of: childID) { continue }   // anti-cycle
                 var c = withCapturedPluginStates(child)   // freezes the state before the engine round trip
-                // A child going from one group to another: no wall at 0 (@see ZeroClamp).
+                // `dt` comes floored (@see ZeroFloor, commitMoveDrop).
                 let newStart = anchor.start + dt
                 let dStart   = newStart - child.startTime
                 c.startTime = newStart
@@ -834,8 +836,9 @@ extension EditViewModel {
         for childID in childIDs {
             guard let child = children.first(where: { $0.id == childID }),
                   let anchor = anchors[childID] else { continue }
+            // A copy laid at the ROOT: floored there on arrival (@see ZeroFloor.rootStart).
             copies.append(makeAltCopy(child,
-                startTime: max(0, anchor.start + dt),
+                startTime: ZeroFloor.rootStart(anchor.start + dt),
                 lane: max(0, baseLane + (anchor.lane - grabbedBaseLane))))
         }
         for obj in copies { add(obj) }
@@ -862,7 +865,7 @@ extension EditViewModel {
         for childID in childIDs {
             guard let child = srcChildren.first(where: { $0.id == childID }),
                   let anchor = anchors[childID] else { continue }
-            let copyStart = anchor.start + dt   // a child into a group: no wall at 0 (@see ZeroClamp)
+            let copyStart = anchor.start + dt   // `dt` comes floored (@see ZeroFloor, commitMoveDrop)
             copies.append(makeAltCopy(child,
                 startTime: copyStart,
                 lane: max(0, grabbedChildLane + (anchor.lane - grabbedBaseLane))))
@@ -888,7 +891,7 @@ extension EditViewModel {
         for childID in childIDs {
             guard let child = children.first(where: { $0.id == childID }),
                   let anchor = anchors[childID] else { continue }
-            // A copy INSIDE its group: no wall at 0 (@see ZeroClamp).
+            // A copy INSIDE its group: `dt` comes floored (@see ZeroFloor, commitMoveDrop).
             copies.append(makeAltCopy(child,
                 startTime: anchor.start + dt,
                 lane: max(0, anchor.lane + dl)))

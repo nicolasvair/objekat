@@ -9,6 +9,7 @@ import SwiftUI
 //     swiftc -parse-as-library -o /tmp/t_branch \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
 //         ../objekat/Inspector/Synoptic/SynopticBranchRun.swift test_synoptic_branch_run.swift \
 //         && /tmp/t_branch

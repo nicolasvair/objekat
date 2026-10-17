@@ -9,6 +9,7 @@
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
+//         ../objekat/SoundObject/AutomationCurveShape.swift \
 //         ../objekat/SoundObject/Marker.swift \
 //         ../objekat/SoundObject/ChannelMode.swift \
 //         ../objekat/Shared/LaneEntryIndex.swift \

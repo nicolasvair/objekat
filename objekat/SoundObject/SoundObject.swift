@@ -467,14 +467,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// non-neutral one into a gain stage at load and zeroes it (plan_synoptic_rework D1).
     var legacyChainInGainDb: Float = 0
     var legacyChainOutGainDb: Float = 0
-    /// The gain the DRAWN waveform follows: the fader.
-    ///
-    /// A DISPLAY approximation, on purpose. What is heard is `volume` then the chain, and the
-    /// plugins in between (a compressor, an EQ) can change the level by any amount the drawing
-    /// cannot know without rendering. Until format 24 the two chain trims were counted here too (pure
-    /// dB in a straight line); since they became gain stages — plugins, whose value lives in the
-    /// instance and not in the model — they are not (plan_synoptic_rework M.4: reported, open point).
-    var waveformDisplayGainDb: Float { volume }
+    // The gain the DRAWN waveform follows (the fader + the serial gain stages): `waveformDisplayGainDb(offBins:)`,
+    // in GainStage.swift (@see GainStageDisplay).
     var label: String?
     /// A custom colour (an index into `ObjectColorPalette.palette`), independent of the stem —
     /// assignable through the context menu on a clip / MIDI clip / group / aux. `nil` = no colour

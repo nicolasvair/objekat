@@ -14,6 +14,9 @@ enum TimelineLabelMetrics {
     static let groupIconSize: CGFloat = 12
     /// `InfiniteBusBandView`'s icon: 10 → 12.
     static let infiniteBusIconSize: CGFloat = 12
+    /// The feature badges after a block's name (@see ObjectFeatureBadges), in the four drawings
+    /// alike: the meta's size, so the badges read as part of the name's trailing information.
+    static let featureBadgeSize: CGFloat = 9
 
     /// The gap above a block's icon+name, the same for every kind of block (user decision,
     /// 24 September 2026: 3 px for all — plain sounds had it, groups / consolidated / MIDI did not).

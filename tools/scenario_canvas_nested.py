@@ -4,12 +4,11 @@
 `tools/test_plan_canvas_nested.md`. No verdict on looks: it lays the scene, takes the pictures and
 the model states, and prints what differs; the eye (an agent opening the PNGs) does the rest.
 
-    # a DEBUG build in UI mode (view.snapshot and the debug.* switches exist in Debug only)
+    # a DEBUG build in UI mode (view.snapshot and the debug.* commands exist in Debug only)
     A=build/dd/Build/Products/Debug/objekat.app/Contents/MacOS/objekat
     $A --api --no-recent --no-audio --socket=/tmp/cc501/n.sock &
 
     ./scenario_canvas_nested.py /tmp/cc501/n.sock build --scene /tmp/cc501/nested/scene.json
-    ./scenario_canvas_nested.py /tmp/cc501/n.sock snap  --scene ... --out /tmp/cc501/nested/snap
     ./scenario_canvas_nested.py /tmp/cc501/n.sock drag  --scene ... --out /tmp/cc501/nested/drag [--only D1,D3]
     ./scenario_canvas_nested.py /tmp/cc501/n.sock perf-scene --pieces 480     # for bench_navigation
 
@@ -30,15 +29,9 @@ the model states, and prints what differs; the eye (an agent opening the PNGs) d
 
 Each depth reads a DIFFERENT wav, so `perf.waveforms` can tell whether the deep files were loaded.
 
-`snap`: for pps 5 / 50 / 400 and three selections (none / [A1, C1, G3] / [B1]), the visible timeline
-in production (Canvas) and with `debug.force_rich_blocks` on (rich views), then the tools Volume,
-Pan, Aux with and without `debug.force_rich_tools`. Writes `<case>_canvas.png`, `<case>_rich.png`,
-`<case>_diff.png` (red = differing pixel) and `snap_report.json`; prints the differing-pixel count
-per case. Method: `cache` (NSView.cacheDisplay; `window` gave a blank image on 2 Oct 2026).
-
 `drag`: the critical real-mouse drags (`input.drag`), each from a fresh `project.open` of the scene:
-the state UNDER the held gesture (perf.census, a Canvas picture, the same with
-`debug.force_rich_previews`, and the MODEL must not have moved), then the release, the model
+the state UNDER the held gesture (perf.census, a Canvas picture, and the MODEL must not have
+moved), then the release, the model
 diff, ONE `edit.undo` that must give back the exact pre-drag `project.get_state` items.
 """
 
@@ -309,68 +302,6 @@ def open_scene(c, scene, pps=50, sx=0, sy=0):
     settle(c, 600)
 
 
-def set_rich(c, blocks=None, tools=None, previews=None):
-    if blocks is not None:
-        c.send("debug.force_rich_blocks", {"enabled": blocks})
-    if tools is not None:
-        c.send("debug.force_rich_tools", {"enabled": tools})
-    if previews is not None:
-        c.send("debug.force_rich_previews", {"enabled": previews})
-
-
-# ----------------------------------------------------------------------------- snap
-
-def snap(c, scene, out):
-    os.makedirs(out, exist_ok=True)
-    ids = scene["ids"]
-    report = {}
-    open_scene(c, scene)
-    w = c.send("perf.waveforms")
-    report["waveforms_after_open"] = w
-    selections = {"none": [], "mixed": [ids["A1"], ids["C1"], ids["G3"]], "deepchild": [ids["B1"]]}
-
-    def pair(name, flip):
-        a = os.path.join(out, name + "_canvas.png")
-        b = os.path.join(out, name + "_rich.png")
-        snapshot(c, a)
-        census_a = c.send("perf.census").get("regimes")
-        flip(True)
-        settle(c, 500)
-        snapshot(c, b)
-        census_b = c.send("perf.census").get("regimes")
-        flip(False)
-        d = diff_png(a, b, os.path.join(out, name + "_diff.png"))
-        d["census_canvas"] = {k: census_a.get(k) for k in ("clips_canvas", "clips_rich", "groups_canvas", "groups_rich",
-                                                          "group_bands_canvas", "group_bands_rich")} if census_a else None
-        d["census_rich"] = {k: census_b.get(k) for k in ("clips_rich", "groups_rich", "group_bands_rich")} if census_b else None
-        report[name] = d
-        print("  %-28s diff_px=%-7s bbox=%s" % (name, d.get("diff_px", d.get("error")), d.get("bbox_px")))
-
-    for pps in (5, 50, 400):
-        c.send("view.set", {"pps": pps, "block_height": BLOCK_H, "scroll_x": 0, "scroll_y": 0})
-        for sname, sel in selections.items():
-            if sel:
-                c.send("selection.set", {"ids": sel})
-            else:
-                c.send("selection.clear")
-            settle(c, 300)
-            pair("p%d_%s" % (pps, sname), lambda on: set_rich(c, blocks=on))
-    c.send("selection.set", {"ids": [ids["A1"], ids["C1"]]})
-    c.send("view.set", {"pps": 50, "block_height": BLOCK_H, "scroll_x": 0, "scroll_y": 0})
-    for tool in ("volume", "pan", "aux"):
-        c.send("tool.set", {"tool": tool})
-        settle(c, 300)
-        pair("tool_%s" % tool, lambda on: set_rich(c, tools=on))
-    c.send("tool.set", {"tool": "selection"})
-    # a mid-height scroll: the vertical cull (cullScrollY) with the open bands
-    c.send("view.set", {"pps": 50, "block_height": BLOCK_H, "scroll_x": 37, "scroll_y": 333})
-    c.send("selection.clear")
-    pair("scrolled_mid", lambda on: set_rich(c, blocks=on))
-    with open(os.path.join(out, "snap_report.json"), "w") as f:
-        json.dump(report, f, indent=1)
-    print("report:", os.path.join(out, "snap_report.json"))
-
-
 # ----------------------------------------------------------------------------- drag
 
 # Each case: (name, object grabbed, zone, how far in px (dx, dy) — dy in LANES —, what to check)
@@ -414,14 +345,9 @@ def run_drag(c, scene, out, only=None):
             settle(c, 300)
             res["census_held"] = (c.send("perf.census").get("regimes") or {}).get("rich_reasons")
             res["model_untouched_while_held"] = items_state(c) == before
-            a = os.path.join(out, name + "_held_canvas.png")
-            b = os.path.join(out, name + "_held_rich.png")
-            snapshot(c, a)
-            set_rich(c, previews=True)
-            settle(c, 400)
-            snapshot(c, b)
-            set_rich(c, previews=False)
-            res["held_diff"] = diff_png(a, b, os.path.join(out, name + "_held_diff.png"))
+            # The rich-preview fallback is gone (16 Oct 2026): the held picture is kept to be read
+            # by eye, there is no second regime left to compare it with.
+            snapshot(c, os.path.join(out, name + "_held_canvas.png"))
             c.send("input.release")
             settle(c, 600)
             after = items_state(c)
@@ -433,7 +359,6 @@ def run_drag(c, scene, out, only=None):
             settle(c, 500)
             res["undo_one_step_restores"] = items_state(c) == before
             print("   held model untouched:", res["model_untouched_while_held"],
-                  "| held diff px:", res["held_diff"].get("diff_px"),
                   "| changed:", sorted(res["changed"]), "| undo restores:", res["undo_one_step_restores"])
         except Exception as e:
             res["error"] = repr(e)
@@ -489,7 +414,7 @@ def perf_scene(c, pieces, out_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("socket")
-    ap.add_argument("what", choices=["build", "snap", "drag", "perf-scene"])
+    ap.add_argument("what", choices=["build", "drag", "perf-scene"])
     ap.add_argument("--scene", default="/tmp/cc501/nested/scene.json")
     ap.add_argument("--out", default="/tmp/cc501/nested/out")
     ap.add_argument("--only", default="")
@@ -504,10 +429,7 @@ def main():
         perf_scene(c, a.pieces, a.out)
     else:
         scene = json.load(open(a.scene))
-        if a.what == "snap":
-            snap(c, scene, a.out)
-        else:
-            run_drag(c, scene, a.out, set(x for x in a.only.split(",") if x) or None)
+        run_drag(c, scene, a.out, set(x for x in a.only.split(",") if x) or None)
 
 
 if __name__ == "__main__":

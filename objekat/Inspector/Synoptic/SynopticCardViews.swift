@@ -124,7 +124,7 @@ struct SynopticCardView: View {
         .overlay(alignment: .topLeading) {
             if let badge = sidechainBadge {
                 HStack(spacing: 3) {
-                    Image(systemName: "waveform.path")
+                    Image(systemName: FeatureIcons.sidechainReception)
                         .font(.system(size: 8, weight: .bold))
                     Text(verbatim: badge.text)
                         .font(.system(size: 9, weight: .semibold))
@@ -201,7 +201,7 @@ struct SynopticCardView: View {
                     // Never inside a bin's block: the block's header carries the link.
                     if plugin.showsLinkBadge {
                         Button(action: { plugin.isLinked ? onUnlink?() : onRelink?() }) {
-                            Image(systemName: "link")
+                            Image(systemName: FeatureIcons.fxLink)
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundStyle(plugin.isLinked ? .white : plugin.color.opacity(0.8))
                                 .padding(3)

@@ -211,6 +211,7 @@ struct SoundObjectListView: View {
             isSelected: viewModel.isSelected(row.id),
             isDimmed: !viewModel.selectedIDs.isEmpty && !viewModel.isSelected(row.id),
             isMissing: viewModel.isMissing(row.object),
+            featureBadges: viewModel.featureBadges(of: row.object),
             isExpanded: row.object.isExpanded,
             isOpenConsolidate: viewModel.isInConsolidateEditStack(row.id),
             stemColor: viewModel.stemColor(of: row.object),
@@ -508,6 +509,9 @@ private struct SoundListRowView: View {
     /// Something is selected and this row is not: it steps back so the selection reads at a glance.
     let isDimmed: Bool
     let isMissing: Bool
+    /// The feature badges after the name — the same glyphs, order and rule as the timeline's blocks
+    /// (@see ObjectFeatureBadges, `NameWithFeatureBadges`).
+    let featureBadges: [FeatureBadge]
     let isExpanded: Bool
     /// Open for editing — @see `ObjectKindIcon.name(for:isOpenConsolidate:)`.
     let isOpenConsolidate: Bool
@@ -564,7 +568,11 @@ private struct SoundListRowView: View {
                     .font(.system(size: 10))
                     .frame(width: 13, alignment: .center)
                     .foregroundStyle(isMissing ? MissingFileLabel.color : Color.secondary)
-                name
+                // The name keeps priority: the badges go when the two do not fit whole.
+                NameWithFeatureBadges(badges: featureBadges, size: 9, color: Color.secondary) {
+                    name
+                }
+                .layoutPriority(1)
                 Spacer(minLength: 0)
             }
             // The depth is drawn and not computed: one indent per level, from the strip.

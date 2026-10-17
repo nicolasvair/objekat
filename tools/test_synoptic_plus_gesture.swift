@@ -6,6 +6,7 @@ import Foundation
 // too steep, or anything else = nothing; a result the "+" does not offer = nothing.
 //
 //     swiftc -parse-as-library -o /tmp/t_plus \
+//         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift test_synoptic_plus_gesture.swift \
 //         && /tmp/t_plus
 
@@ -137,7 +138,7 @@ struct Main {
         }
         // the gain / gain+pan+mute cut is the classifier's vertical line at 80 pt
         let gz = zones[0], pz = zones[1]
-        check(gz.outer == .vertical(G.panMuteThreshold) && pz.inner == .vertical(G.panMuteThreshold), "the cut is the 80 pt line")
+        check(gz.outer == .across(G.panMuteThreshold, axis: 0) && pz.inner == .across(G.panMuteThreshold, axis: 0), "the cut is the 80 pt line")
         check(abs(gz.outer.distance(at: 10) * CGFloat(cos(10 * Double.pi / 180)) - 80) < 1e-6, "the 80 pt line, at 10°")
         // placement: gain right, branch down-right, send left (screen coordinates, y down)
         check(gz.iconOffset.width > 0 && abs(gz.iconOffset.height) < 1e-6, "the gain icon: right of the '+'")

@@ -470,23 +470,20 @@ extension CommandRegistry {
 
         register("object.trim",
                  summary: "Trims a clip: a new start AND a new length in one gesture "
-                        + "(non-destructive, the source content does not move). A root object's start "
-                        + "is clamped at 0; a child of a group may start before 0 (the group is what "
-                        + "is clamped).",
+                        + "(non-destructive, the source content does not move). The start is "
+                        + "floored at 0 at any depth; an object whose start is already before 0 may "
+                        + "have that head cropped, never extended further left.",
                  params: [ParamSpec("id", "uuid", "Target object."),
                           ParamSpec("start", "number", "New start, in seconds."),
                           ParamSpec("duration", "number", "New length, in seconds.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard vm.find(id: id) != nil else {
+            guard let current = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
-            // The wall at zero is the ROOT object's (@see ZeroClamp): the child of a group may start
-            // before 0, it is the group that cannot.
-            let requestedStart = try p.double("start")
-            let start = requestedStart >= 0
-                ? requestedStart : ZeroClamp.clamp(requestedStart, isRoot: vm.isRootObject(id))
+            // The floor at 0, at any depth (@see ZeroFloor.trimmedStart, R7).
+            let start = ZeroFloor.trimmedStart(from: current.startTime, to: try p.double("start"))
             let duration = try p.double("duration")
             guard duration > 0 else {
                 throw CommandError(code: .bad_params, message: "length is zero or negative")

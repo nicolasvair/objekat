@@ -17,11 +17,10 @@ struct MoveDragState {
     /// sub-group, piano roll or automation band standing above the object in its own group.
     /// Unused by the time-selection translate, whose anchors already hold display rows.
     var grabbedDisplayLane: Int = 0
-    /// The moved objects that sit INSIDE a group: the wall at t = 0 is not theirs (@see ZeroClamp —
-    /// it belongs to the root objects, and to the root group above a child). Read ONCE when the
-    /// gesture opens, from one walk of the tree: asking the model per frame, per anchor, would be
-    /// O(N²) on a large selection. Empty = every anchor is at the root, i.e. the old behaviour.
-    var freeIDs: Set<UUID> = []
+    /// The floor at t = 0 of THIS gesture (@see ZeroFloor): every moved object, at any depth, stops
+    /// at 0 — except one that started negative, while it stays negative — and remembers the
+    /// objects that have reached 0 since the hand took them (sticky until the release).
+    var zeroFloor = ZeroFloor.Gesture<UUID>()
     /// The INSERTION between two lanes the block is straddling right now, or nil when it is
     /// being dropped ON a lane (@see LaneInsertion). Recomputed only when `insertionProbe` — the
     /// gap and the ⌥ it was asked for — changes: an O(N) read of the model per CHANGE of gap, not
@@ -49,8 +48,6 @@ struct TrimDragState {
     var anchors: [UUID: (start: Double, duration: Double, room: Double)]
     var grabbedID: UUID
     var dStart: Double = 0
-    /// The trimmed objects inside a group: no wall at t = 0 for them (@see MoveDragState.freeIDs).
-    var freeIDs: Set<UUID> = []
 }
 
 struct TimeSelectionDragState {
@@ -838,8 +835,11 @@ extension TimelineView {
                 var gaps:  [UUID: Double] = [:]
                 /// How far this edge can travel at all: its own file, which is also how far it can
                 /// REACH for a neighbour that is no longer touching.
+                /// A fade-in pulled outwards EXTENDS the left edge, which is a trim: the floor at
+                /// 0 is the trim's (@see ZeroFloor.trimLimit, R7).
                 func ownRoom(_ obj: SoundObject) -> Double {
-                    side == .in ? min(obj.startTime, obj.contentRoomBefore) : obj.contentRoomAfter
+                    side == .in ? -ZeroFloor.trimLimit(start: obj.startTime, room: obj.contentRoomBefore)
+                                : obj.contentRoomAfter
                 }
                 for obj in objs {
                     guard let n = viewModel.seamNeighbourAndGap(of: obj.id, onRight: side == .out,
@@ -903,9 +903,7 @@ extension TimelineView {
                                   room: obj.contentRoomBefore))
                     }
                 )
-                let trimParents = viewModel.parentIDMap()
-                trimDrag = TrimDragState(ids: ids, anchors: anchors, grabbedID: item.id,
-                                         freeIDs: Set(ids.filter { trimParents[$0] != nil }))
+                trimDrag = TrimDragState(ids: ids, anchors: anchors, grabbedID: item.id)
 
             case .resizeRight:
                 if !viewModel.selectedIDs.contains(item.id) {
@@ -955,13 +953,11 @@ extension TimelineView {
                     ids.compactMap { viewModel.find(id: $0) }
                         .map { ($0.id, (start: $0.startTime, lane: $0.lane)) }
                 )
-                let moveParents = viewModel.parentIDMap()
                 moveDrag = MoveDragState(ids: ids, anchors: anchors,
                                          grabbedID: item.id, dt: 0, dl: 0,
                                          isAltCopy: alt,
                                          sourceGroupID: hitSourceGroupID,
-                                         grabbedDisplayLane: hitDL,
-                                         freeIDs: Set(ids.filter { moveParents[$0] != nil }))
+                                         grabbedDisplayLane: hitDL)
             }
         }
 
@@ -1234,12 +1230,11 @@ extension TimelineView {
                                                   excluding: Set(state.anchors.keys))
             var dStart = snappedStart - grabbed.start
 
-            // The left limit: timeline 0 (root objects), and the end of the source content available before the edge.
-            // The wall at 0 is the ROOT object's: a child of a group may be trimmed to a negative start,
-            // only the source content bounds it (@see ZeroClamp).
-            let minDStart: Double = state.anchors.map {
-                ZeroClamp.trimLimit(start: $0.value.start, room: $0.value.room,
-                                    isRoot: !state.freeIDs.contains($0.key))
+            // The left limit: timeline 0 for every object at any depth, and the end of the source
+            // content available before the edge. An edge already before 0 is not extended at all
+            // (@see ZeroFloor.trimLimit, R7).
+            let minDStart: Double = state.anchors.values.map {
+                ZeroFloor.trimLimit(start: $0.start, room: $0.room)
             }.max() ?? -.infinity
             let maxDStart = state.anchors.values.map { $0.duration - 0.01 }.min() ?? .infinity
             dStart = max(minDStart, min(maxDStart, dStart))
@@ -1251,6 +1246,9 @@ extension TimelineView {
 
             if phase == .ended {
                 viewModel.snapGuide = nil
+                // An edge held where it was (by the floor at 0, the head of the file or the
+                // minimum length) changed nothing: no empty undo point.
+                guard abs(dStart) >= ZeroFloor.epsilon else { trimDrag = nil; return }
                 viewModel.pushUndo()
                 viewModel.withCrossfadeRefit(around: state.ids) {
                     for (id, anchor) in state.anchors {
@@ -1297,6 +1295,10 @@ extension TimelineView {
                 : viewModel.selectionMoveExcluded(range: anchor.timeRange, lanes: anchor.lanes, moved: excl)
             dt = viewModel.snapSelectionMove(range: anchor.timeRange, rawDt: rawDt,
                                              excluding: selExcl).dt
+            // The one floor of every move (@see ZeroFloor). Cut at the bounds, the carried objects
+            // all start at or after the range's start, so the range's own wall is the stronger and
+            // this changes nothing — it is here so that a single rule answers for every move.
+            dt = state.zeroFloor.clamp(starts: state.anchors.mapValues(\.start), proposedDelta: dt)
         } else {
             // The ONLY references are the grabbed object's two edges; the other moved objects
             // only follow with the same `dt`. Nothing carried by the hand is a target — the
@@ -1312,15 +1314,13 @@ extension TimelineView {
             viewModel.snapGuide = useEnd ? guideEnd : guideStart
 
             dt = snappedStart - grabbedAnchor.start
-            // The wall at t = 0 is the ROOT objects' (@see ZeroClamp): the leftmost of them stops
-            // there while the hand carries on, a root GROUP carrying its children with it — and the
-            // children of a group, moved on their own, have no wall (they may go before 0).
-            dt = max(dt, ZeroClamp.leftTravelLimit(starts: state.anchors.map {
-                (start: $0.value.start, isRoot: !state.freeIDs.contains($0.key))
-            }))
-            // The move too comes up against t = 0 — the leftmost object of the selection stops there
-            // while the hand carries on. The guide is drawn on the grabbed object's edge, whichever of
-            // the two won the snap, so it is that edge it must be pinned to (@see pinSnapGuide).
+            // The floor at t = 0, for every moved object at any depth (@see ZeroFloor): the most
+            // constraining of them stops there while the hand carries on, a GROUP carrying its
+            // children with it whatever they become; an object that started negative is free until
+            // it reaches 0, and held there from then on, for the rest of the gesture.
+            dt = state.zeroFloor.clamp(starts: state.anchors.mapValues(\.start), proposedDelta: dt)
+            // The guide is drawn on the grabbed object's edge, whichever of the two won the snap,
+            // so it is that edge it must be pinned to (@see pinSnapGuide).
             viewModel.pinSnapGuide(to: grabbedAnchor.start + dt + (useEnd ? grabbedDur : 0))
         }
         var dl = rawDl

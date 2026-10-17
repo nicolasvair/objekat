@@ -87,7 +87,7 @@ struct ToolSendLayer: View {
                     // answer', the glyph says why, and a reason as dim as the thing it explains
                     // explains nothing.
                     if row.automated {
-                        Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                        Image(systemName: FeatureIcons.automated)
                             .font(.system(size: max(7, knobD * 0.5), weight: .bold))
                             .foregroundStyle(.white.opacity(0.9))
                     }

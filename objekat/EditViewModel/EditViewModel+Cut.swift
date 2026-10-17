@@ -76,8 +76,16 @@ extension EditViewModel {
     /// oriented cut) — NOT the selection, which may differ or may be untouched. A caller that
     /// wants to know what came out of the matter (@see `object.split_at`) needs that, independently
     /// of what the eye is watching.
+    ///
+    /// An INFINITE BUS (an aux or a group with no start and no end) is not concerned by a timeline
+    /// cut at all: it is dropped from `ids` here, whoever the caller is (the Cut tool, C+⏎, the
+    /// API's `object.split_at`, the isolation of a time selection). Its band spans the whole project,
+    /// so a cut can only produce a second infinite bus laid over the first — a superposition.
+    /// Doing it at this door, rather than at each caller, is what keeps the next caller from
+    /// forgetting it (@see `cuttableIDs`).
     @discardableResult
-    func cut(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
+    func cut(ids requestedIDs: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
+        let ids = cuttableIDs(requestedIDs)
         guard !ids.isEmpty else { return [] }
         // While playing, the cut is HEARD: the left half would go quiet at once while the right
         // one — its plugins still to instantiate, then the 120 ms damper on graph rebuilds —
@@ -163,14 +171,24 @@ extension EditViewModel {
         return result
     }
 
+    /// `ids` without the infinite buses (and without ids that name nothing): the objects a timeline
+    /// cut can actually split. An infinite bus is skipped whether it is selected or under the cut
+    /// line — it has no edge to cut at.
+    func cuttableIDs(_ ids: [UUID]) -> [UUID] {
+        ids.filter { find(id: $0)?.isInfiniteBus != true }
+    }
+
     /// The objects concerned by a cut triggered on `id`. Alone → it. In a multiple selection it
     /// is part of → every selected object the cut instant crosses (the
     /// descendants of a selected object are excluded: cutting the parent already cuts them).
+    /// An infinite bus is never a target: a click on one cuts nothing, and one inside the
+    /// selection is left out.
     func cutTargetIDs(hit id: UUID, atTime t: Double) -> [UUID] {
+        guard find(id: id)?.isInfiniteBus != true else { return [] }
         let selected = effectiveSelectedIDs
         guard selected.count > 1, selected.contains(id) else { return [id] }
         return laneEntries
-            .filter { selected.contains($0.item.id) }
+            .filter { selected.contains($0.item.id) && !$0.item.isInfiniteBus }
             .filter { $0.absStart < t && $0.absStart + $0.item.duration > t }
             .map(\.item.id)
     }
@@ -182,7 +200,8 @@ extension EditViewModel {
         if timeSelection != nil { splitAtTimeSelectionBounds(); return }
         let t = cursorPosition
         let crossing = laneEntries.filter {
-            $0.absStart < t - 0.001 && $0.absStart + $0.item.duration > t + 0.001
+            !$0.item.isInfiniteBus
+                && $0.absStart < t - 0.001 && $0.absStart + $0.item.duration > t + 0.001
         }
         let selected = effectiveSelectedIDs
         let targets: [LaneEntry]
@@ -212,7 +231,7 @@ extension EditViewModel {
         // finds its targets as they were.
         for t in [t2, t1] {
             let targets = laneEntries
-                .filter { sel.lanes.contains($0.displayLane) }
+                .filter { sel.lanes.contains($0.displayLane) && !$0.item.isInfiniteBus }
                 .filter { $0.absStart < t - 0.001 && $0.absStart + $0.item.duration > t + 0.001 }
                 .map(\.item.id)
             for id in targets where find(id: id) != nil {

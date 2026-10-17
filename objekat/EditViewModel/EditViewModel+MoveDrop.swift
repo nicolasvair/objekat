@@ -30,9 +30,15 @@ extension EditViewModel {
                         grabbedDisplayLane: Int,
                         sourceGroupID: UUID?,
                         isAltCopy: Bool,
-                        dt: Double, dl: Int,
+                        dt rawDt: Double, dl: Int,
                         insertionRow: Int? = nil) -> MoveDropResolution.Decision {
         guard rawAnchors[grabbedID] != nil else { return .cancel }
+        // The floor at t = 0, for every moved object at any depth (@see ZeroFloor). The drag has
+        // already applied it — with its own memory of what reached 0 on the way — and this
+        // stateless form is weaker than that, so it changes nothing there; it is what holds the
+        // rule for a release that comes without a drag (`debug.move_drop`). Every primitive below
+        // takes `dt` as it is.
+        let dt = ZeroFloor.clampedDelta(startsAt: rawAnchors.values.map(\.start), proposedDelta: rawDt)
 
         // An insertion hands the primitives the selection brought to RANKS (0, 1, 2… without
         // holes) and the base lane `plan.lane + rank(grabbed)`: every one of them places an anchor
@@ -67,6 +73,17 @@ extension EditViewModel {
         case .cancel: return decision
         case .eject, .moveInSource: if sourceGroupID == nil { return .cancel }
         case .reparent, .root: break
+        }
+        // A release that moves NOTHING — the floor at 0 held the whole travel, and the objects stay
+        // on their own lanes in their own container — leaves no undo point (the project's
+        // convention: no empty undo). A copy, an insertion or a change of container always does
+        // something, and goes on.
+        if !isAltCopy, plan == nil, abs(dt) < ZeroFloor.epsilon {
+            switch decision {
+            case .root(let lane) where lane == grabbedAnchor.lane: return decision
+            case .moveInSource(let lane) where lane == grabbedAnchor.lane: return decision
+            default: break
+            }
         }
         pushUndo()
         if let p = plan { applyLaneChanges(p.laneChanges) }
@@ -125,7 +142,8 @@ extension EditViewModel {
                 // is then invisible to `resolveOverlaps` below; what is not, it settles.
                 withCrossfadeRefit(around: ids) {
                     for (id, anchor) in anchors {
-                        // Children of ONE group: no wall at 0 (@see ZeroClamp).
+                        // `dt` is already floored (@see ZeroFloor): a carried group's children
+                        // follow it wherever they land, before 0 included.
                         let newStart = anchor.start + dt
                         update(id: id) { item in
                             let d = newStart - item.startTime
@@ -162,7 +180,7 @@ extension EditViewModel {
             } else {
                 // The crossfades FOLLOW the objects that carry them (@see refitCrossfade).
                 // `dt` is ONE travel, already snapped by the gesture off the grabbed object (and
-                // already stopped by the wall at 0): it is applied as is to every anchor, NEVER
+                // already stopped by the floor at 0): it is applied as is to every anchor, NEVER
                 // re-snapped per object — that rounded each start to its own grid line and broke
                 // the gaps between the moved objects (@see updateStartTime's `snap`).
                 withCrossfadeRefit(around: ids) {

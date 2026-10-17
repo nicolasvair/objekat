@@ -3,8 +3,7 @@ import AppKit
 import Foundation
 
 /// `view.snapshot` — DEBUG ONLY. A picture of the timeline as the app itself renders it, written to
-/// a PNG, so that a script (or an agent that can open an image) can compare the batched Canvas with
-/// the rich SwiftUI views (`debug.force_rich_blocks` / `force_rich_tools` / `force_rich_previews`)
+/// a PNG, so that a script (or an agent that can open an image) can compare two renders
 /// pixel against pixel without a screen capture tool (`screencapture` needs the Screen Recording
 /// permission, which a test session has no business asking for).
 ///

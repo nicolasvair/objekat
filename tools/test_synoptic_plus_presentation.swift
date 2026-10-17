@@ -12,8 +12,9 @@ import Foundation
 //     swiftc -parse-as-library -o /tmp/t_plus_pres \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
-//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift test_synoptic_plus_presentation.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift test_synoptic_plus_presentation.swift \
 //         && /tmp/t_plus_pres
 
 func L(_ key: String, _ args: CVarArg...) -> String { key }
@@ -148,7 +149,7 @@ struct Main {
         // The zones round a dragged "+": what it offers HERE (a missing closure takes its zone away).
         let trunkZones = P.sectors(allowed: [.gain, .gainPanMute, .branch, .send], key: k, all,
                                    translation: CGSize(width: -50, height: 0))
-        check(trunkZones.sectors.map(\.result) == [.gain, .gainPanMute, .branch, .send] && trunkZones.highlighted == .send,
+        check(trunkZones.sectors.map(\.result) == [.gain, .gainPanMute, .branch, .send] && trunkZones.highlighted.map { trunkZones.sectors[$0].result } == .send,
               "the trunk: four zones, left lights the send")
         var noBranch = SynopticPlusAvailability.all; noBranch.branch = false
         let nb = P.sectors(allowed: [.gain, .gainPanMute, .branch, .send], key: k, noBranch,
@@ -157,13 +158,13 @@ struct Main {
               "no onBranch: no branch zone, and down-right lights nothing")
         let sc = P.sectors(allowed: [.gain, .gainPanMute], key: .sendChain(aux: aux, index: 0), all,
                            translation: CGSize(width: 90, height: 0))
-        check(sc.sectors.map(\.result) == [.gain, .gainPanMute] && sc.highlighted == .gainPanMute, "a send's chain: the gain zones")
+        check(sc.sectors.map(\.result) == [.gain, .gainPanMute] && sc.highlighted.map { sc.sectors[$0].result } == .gainPanMute, "a send's chain: the gain zones")
         check(P.sectors(allowed: [.send], key: .postFader, all, translation: CGSize(width: 2, height: 0)).highlighted == nil,
               "a click lights nothing")
         // one icon per result, shared by the zones and the ghost
         let icons = [PlusGestureResult.gain, .gainPanMute, .branch, .send].map { P.symbol(for: $0) }
         check(Set(icons).count == 4, "four distinct icons")
-        check(P.symbol(for: .send) == "arrow.turn.down.left" && P.symbol(for: .branch) == "arrow.triangle.branch"
+        check(P.symbol(for: .send) == FeatureIcons.auxSend && P.symbol(for: .branch) == "arrow.triangle.branch"
               && P.symbol(for: .gain) == "dial.medium" && P.symbol(for: .gainPanMute) == "slider.horizontal.3",
               "the app's own symbols")
 

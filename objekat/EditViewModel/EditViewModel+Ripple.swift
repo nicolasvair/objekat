@@ -161,7 +161,7 @@ extension EditViewModel {
         // An infinite bus is never carved nor slid, so it cannot be required to be selected.
         let coversScope = scope.allSatisfy { $0.item.isInfiniteBus || takenIDs.contains($0.item.id) }
 
-        let carved = carveTimeRange(lo: lo, hi: hi, lanes: onLanes, skippingInfiniteBuses: true)
+        let carved = carveTimeRange(lo: lo, hi: hi, lanes: onLanes)
 
         // AFTER the carve: it creates objects (the right half of a straddling object, laid down at
         // `hi`), and those are precisely the ones that have to slide.

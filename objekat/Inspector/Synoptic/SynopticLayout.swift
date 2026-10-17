@@ -150,7 +150,8 @@ enum SynopticLayout {
     }
 
     /// An insertion point laid on the wire: '+' inserts a plugin in series at `insertIndex` (a click), and
-    /// a drag out of it asks for a gain stage, a parallel branch or a send (@see SynopticPlusGesture).
+    /// a drag out of it asks for what the user's map puts on its direction — by default a gain stage, a
+    /// parallel branch or a send; possibly a given plugin (@see SynopticPlusGesture, PlusShortcutMap).
     /// The '+' is drawn OVER the wire, which runs through it; it shows only while `hoverRect` is hovered,
     /// or always when its series is empty (`alwaysVisible`).
     struct InsertZone: Identifiable {
@@ -198,15 +199,20 @@ enum SynopticLayout {
             if role == .trunk, sendSlot != nil { s.insert(.send) }
             return s
         }
-        /// What a gesture of `translation` out of this '+' does (a click = the browser).
-        func command(for translation: CGSize) -> SynopticPlusCommand {
+        /// Every insert point inserts plugins (a click opens the browser on it), so every one can carry out a
+        /// direction the user bound to a plugin (@see PlusShortcutMap).
+        var allowsPluginInsertion: Bool { true }
+        /// What a gesture of `translation` out of this '+' does under `map` (a click = the browser).
+        func command(for translation: CGSize, map: PlusShortcutMap = .defaults) -> SynopticPlusCommand {
             if SynopticPlusGesture.isClick(translation) { return .openBrowser(key) }
-            switch SynopticPlusGesture.classify(translation, allowed: allowedGestures) {
-            case .none:        return .none
-            case .gain:        return .insertGainStage(key, .gain)
-            case .gainPanMute: return .insertGainStage(key, .gainPanMute)
-            case .branch:      return .branch(key)
-            case .send:        return sendSlot.map { .send($0) } ?? .none
+            switch SynopticPlusGesture.classify(translation, allowed: allowedGestures,
+                                                pluginAllowed: allowsPluginInsertion, map: map) {
+            case .none:            return .none
+            case .gain:            return .insertGainStage(key, .gain)
+            case .gainPanMute:     return .insertGainStage(key, .gainPanMute)
+            case .branch:          return .branch(key)
+            case .send:            return sendSlot.map { .send($0) } ?? .none
+            case .plugin(let ref): return .insertPlugin(key, ref)
             }
         }
     }
@@ -584,9 +590,12 @@ enum SynopticLayout {
                    width: SynopticLayout.plusW, height: SynopticLayout.plusW)
         }
         var allowedGestures: Set<PlusGestureResult> { SynopticLayout.postFaderGestures }
-        func command(for translation: CGSize) -> SynopticPlusCommand {
+        /// No plugin there: the wire mixer → stems is not a chain.
+        var allowsPluginInsertion: Bool { false }
+        /// A click = the send; a drag = the send in whichever direction `map` puts it, nothing elsewhere.
+        func command(for translation: CGSize, map: PlusShortcutMap = .defaults) -> SynopticPlusCommand {
             if SynopticPlusGesture.isClick(translation) { return .send(.postFader) }
-            return SynopticPlusGesture.classify(translation, allowed: allowedGestures) == .send
+            return SynopticPlusGesture.classify(translation, allowed: allowedGestures, map: map) == .send
                 ? .send(.postFader) : .none
         }
     }
@@ -669,15 +678,25 @@ enum SynopticLayout {
             }
         }
 
-        /// What a gesture of `translation` started on the '+' `key` does (@see SynopticPlusCommand).
-        func command(for key: SynopticPlusKey, translation: CGSize) -> SynopticPlusCommand {
+        /// What a gesture of `translation` started on the '+' `key` does under `map` (@see SynopticPlusCommand).
+        func command(for key: SynopticPlusKey, translation: CGSize,
+                     map: PlusShortcutMap = .defaults) -> SynopticPlusCommand {
             switch key {
             case .postFader:
-                return postFaderPlus?.command(for: translation) ?? .none
+                return postFaderPlus?.command(for: translation, map: map) ?? .none
             case .sendChain:
-                return sendInsert(key)?.command(for: translation) ?? .none
+                return sendInsert(key)?.command(for: translation, map: map) ?? .none
             case .series:
-                return placement.inserts.first { $0.key == key }?.command(for: translation) ?? .none
+                return placement.inserts.first { $0.key == key }?.command(for: translation, map: map) ?? .none
+            }
+        }
+
+        /// Whether the '+' `key` can insert a plugin (false when it no longer exists).
+        func allowsPluginInsertion(for key: SynopticPlusKey) -> Bool {
+            switch key {
+            case .postFader:  return false
+            case .sendChain:  return sendInsert(key)?.allowsPluginInsertion ?? false
+            case .series:     return placement.inserts.first { $0.key == key }?.allowsPluginInsertion ?? false
             }
         }
 
@@ -1109,11 +1128,14 @@ enum SynopticPlusKey: Hashable {
 ///  - `.insertGainStage(.sendChain(a, i), face)` → `onSendPlusGesture(a, i, …)`;
 ///  - `.branch(.series(s, i))`          → `onBranch(.plus(seriesID: s, index: i))` (the receiver reads the
 ///                                        element under the '+' and the selection, @see SynopticBranchRun);
-///  - `.send(slot)`                     → `presentSendMenu(slot:)` (the existing "Send to…" menu at that slot).
+///  - `.send(slot)`                     → `presentSendMenu(slot:)` (the existing "Send to…" menu at that slot);
+///  - `.insertPlugin(.series(s, i), p)` → `onPlusInsertPlugin(s, i, p)` (a direction bound to that plugin);
+///  - `.insertPlugin(.sendChain(a, i), p)` → `onSendPlusInsertPlugin(a, i, p)`.
 enum SynopticPlusCommand: Equatable {
     case none
     case openBrowser(SynopticPlusKey)
     case insertGainStage(SynopticPlusKey, SynopticGainStageFace)
     case branch(SynopticPlusKey)
     case send(SynopticSendSlot)
+    case insertPlugin(SynopticPlusKey, PlusPluginRef)
 }

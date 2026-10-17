@@ -20,6 +20,9 @@ struct SoundBlockView: View {
     /// nil = fall back on those. @see LiveScroll
     var liveScroll: LiveScroll? = nil
     let waveformDisplayDB: Double
+    /// The gain (dB) the drawn waveform follows: the fader + the serial gain stages (@see
+    /// SoundObject.waveformDisplayGainDb(offBins:)), resolved by the caller — which knows the FX links.
+    let waveformGainDb: Float
     let displayLane: Int
     let stemColor: Color
     /// True if the object is muted in the mix — its own mute, or its stem's — unless a direct solo.
@@ -30,6 +33,8 @@ struct SoundBlockView: View {
     /// exactly like `isMutedInMix` — the block stays pure presentation and asks the view model
     /// nothing itself.
     var isMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     let previewOffset: (dx: Double, dy: Double)?
 
     let previewResizeDX: Double
@@ -190,7 +195,7 @@ struct SoundBlockView: View {
                     clipDuration: effectiveDuration,
                     speedRatio: object.speedRatio,
                     isReversed: object.isReversed,
-                    volumeDb: object.waveformDisplayGainDb,
+                    volumeDb: waveformGainDb,
                     fadeIn: effectiveFadeIn,
                     fadeOut: effectiveFadeOut,
                     curveIn: effectiveFadeInCurve,
@@ -426,10 +431,16 @@ struct SoundBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(object.label) }
                         } else {
-                            Text(object.displayName)
-                                .blockNameStyle(missingFile: isMissingFile, lightInk: lightInk)
-                                .lineLimit(1)
-                                .layoutPriority(1)
+                            // The feature badges at the name's right (@see ObjectFeatureBadges): the
+                            // name keeps priority, the badges go when the two do not fit.
+                            NameWithFeatureBadges(badges: featureBadges,
+                                                  size: TimelineLabelMetrics.featureBadgeSize,
+                                                  color: BlockInk.metaColor(light: lightInk)) {
+                                Text(object.displayName)
+                                    .blockNameStyle(missingFile: isMissingFile, lightInk: lightInk)
+                                    .lineLimit(1)
+                            }
+                            .layoutPriority(1)
                         }
                         if blockWidth >= 60 {
                             let meta = object.timelineMetaSummary

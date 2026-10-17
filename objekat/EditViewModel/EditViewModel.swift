@@ -53,6 +53,7 @@ final class EditViewModel {
             sendScopeIndexCache = nil
             sendChainHostsCache = nil
             multiSelectionCache = nil
+            featureBadgeMapCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
             // pass per run-loop turn, and an unchanged topology costs one comparison.
@@ -96,6 +97,10 @@ final class EditViewModel {
     /// @see displayName(of:) — a group's composed name by group id, emptied on EVERY write to
     /// `items` (the name is a function of the group's subtree, which lives in `items`).
     @ObservationIgnored private var composedNameCache: [UUID: String] = [:]
+    /// @see featureBadgeMap — every object's feature badges by id (the badge-less left out), `nil` =
+    /// to rebuild on the next read. Dropped by `items` and `stems` (the sidechain-send badge reads the
+    /// stems' chains too).
+    @ObservationIgnored var featureBadgeMapCache: [UUID: [FeatureBadge]]? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
@@ -353,6 +358,7 @@ final class EditViewModel {
     var stems: [Stem] = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)] {
         didSet {
             sendScopeIndexCache = nil       // a send's scope reads the stems
+            featureBadgeMapCache = nil      // a stem's plugin can be keyed by an object (sidechain-send badge)
             scheduleBridgeSync()            // a stem can be a key's source or host (audio bridge)
         }
     }
@@ -516,6 +522,14 @@ final class EditViewModel {
     /// (@see pushAutomation, which explains why those targets are not swept on every
     /// push the way the fader or the sends are).
     @ObservationIgnored var pushedPluginParams: [UUID: Set<ParamRef>] = [:]
+
+    /// The live automation write in progress (the band's pencil, @see EditViewModel+AutomationWrite).
+    /// Outside observation: it is driven at 30 Hz.
+    @ObservationIgnored var automationWrite: AutomationWriteSession? = nil
+
+    /// The row the pencil is writing, if any — the one observed slice of the live write, read by
+    /// the band to light its pencil.
+    var automationWriteTarget: AutomationWriteTarget? = nil
 
     /// The position (in timeline canvas coords) of the "link" indicator during a plugin drag
     /// with ⌘ held. nil otherwise. Updated live by the timeline's DropDelegate.
@@ -1308,7 +1322,8 @@ final class EditViewModel {
                 if m.isRegion { out.append(e.absStart + m.endTime) }
             }
         }
-        return out
+        // An edge (or a mark) before 0 is not drawn, so nothing may land on it (@see ZeroFloor, R9).
+        return out.filter(ZeroFloor.isSnapTarget)
     }
 
     /// A pure snap (the grid + the marks), with NO side effect. Usable on every

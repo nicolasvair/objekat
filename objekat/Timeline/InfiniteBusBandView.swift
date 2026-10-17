@@ -24,6 +24,8 @@ struct InfiniteBusBandView: View {
     /// this the red would simply vanish the day a group was declared infinite. An aux never
     /// answers true: it has no children.
     var containsMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     let blockHeight: Double
     /// The y of the band's top in the canvas.
     let yPos: Double
@@ -42,6 +44,9 @@ struct InfiniteBusBandView: View {
     var waveformCache: WaveformCache
     let pixelsPerSecond: Double
     let waveformDisplayDB: Double
+    /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
+    /// left out of the drawn gain of the bus and of its children.
+    let offBins: Set<UUID>
     var isRenaming: Bool = false
     var onRename: (String?) -> Void = { _ in }
 
@@ -65,7 +70,7 @@ struct InfiniteBusBandView: View {
     /// composite must be neither bounded nor faded at the edges (fadeIn/Out = 0 ⇒ no gate).
     private var rootMod: WaveformShaping.Modifier {
         WaveformShaping.Modifier(absStart: 0, duration: 0, fadeIn: 0, fadeOut: 0,
-                                 gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb))
+                                 gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb(offBins: offBins)))
     }
 
     var body: some View {
@@ -94,7 +99,8 @@ struct InfiniteBusBandView: View {
                     viewportWidth: viewportWidth,
                     rootMod: rootMod,
                     rootMuted: item.isMuted,
-                    waveformDisplayDB: waveformDisplayDB
+                    waveformDisplayDB: waveformDisplayDB,
+                    offBins: offBins
                 )
                 .frame(width: bandWidth, height: blockHeight)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -153,10 +159,16 @@ struct InfiniteBusBandView: View {
                         .blockIconStyle(missingFile: containsMissingFile)
                         .layoutPriority(2)
                     Spacer().frame(width: 4)
-                    Text(item.displayName)
-                        .blockNameStyle(missingFile: containsMissingFile)
-                        .lineLimit(1)
-                        .layoutPriority(1)
+                    // The feature badges at the name's right (@see ObjectFeatureBadges): the name
+                    // keeps priority, the badges go when the two do not fit.
+                    NameWithFeatureBadges(badges: featureBadges,
+                                          size: TimelineLabelMetrics.featureBadgeSize,
+                                          color: BlockInk.metaColor(light: false)) {
+                        Text(item.displayName)
+                            .blockNameStyle(missingFile: containsMissingFile)
+                            .lineLimit(1)
+                    }
+                    .layoutPriority(1)
                 }
                 if item.isMuted {
                     Text(L("common.muteBadge"))

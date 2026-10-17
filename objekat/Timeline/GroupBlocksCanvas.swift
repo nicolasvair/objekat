@@ -7,14 +7,12 @@ import SwiftUI
 // the drawing. The batched Canvas (`TimelineView.plainBlocksCanvas`) now draws every "simple"
 // group — one that is not renamed, baked, open for editing or under a tool overlay — and this
 // file is that drawing. A group a gesture is previewing (move, trim, resize, fade, spill, loop
-// bound) is drawn here too, from `BlockPreviewGeometry` (`CanvasGroup.preview`); the fallback
-// `RenderPreferences.richPreviews` puts those back on `GroupBlockView`.
+// bound) is drawn here too, from `BlockPreviewGeometry` (`CanvasGroup.preview`).
 //
 // It is `GroupBlockView`'s `body`, redrawn value for value (radius 20, tint 0.30 / 0.55, inset
 // 2 pt border at 0.5 / 0.9, the custom colour's name band on 20 % of the height, the composite of
 // the children through `GroupWaveformDrawing`, the fade veils, the mute veil, the glyph, the name,
-// the meta and the chevron). The rich view stays the reference — the Debug A/B switch
-// (`DebugRenderSwitches.forceRichBlocks`) puts every group back on it.
+// the meta and the chevron). The rich view stays the reference.
 //
 // The Canvas draws from VALUES resolved by the blocks layer's body (`CanvasGroup`) and reads
 // nothing from the view model itself: a renderer closure is not a place to count on observation
@@ -38,6 +36,8 @@ struct CanvasGroup {
     let missing: Bool
     /// Muted in the mix (its own mute or its stem's): the black veil.
     let mutedInMix: Bool
+    /// The feature badges after the name (`EditViewModel.featureBadges(of:)`, @see ObjectFeatureBadges).
+    var badges: [FeatureBadge] = []
     /// `showsChildrenInline`: the chevron points down.
     let expanded: Bool
     /// The span shared with a crossfaded neighbour at each end (px): the white base is punched
@@ -70,9 +70,17 @@ struct CanvasGroup {
 }
 
 /// The text of a block's name run, shared by the clips' pass and the groups' pass of the Canvas:
-/// glyph + name (+ meta, + mute badge) in ONE resolved `Text`, cached by what it says. One
-/// definition of how the run is built, so the two regimes cannot disagree about the glyph, the
-/// red of a missing file or the meta's grey.
+/// glyph + name (+ feature badges, + meta, + mute badge) in ONE resolved `Text`, cached by what it
+/// says. One definition of how the run is built, so the two regimes cannot disagree about the
+/// glyph, the red of a missing file or the meta's grey.
+///
+/// The FEATURE BADGES (@see ObjectFeatureBadges) travel inside the run like the kind glyph, right
+/// after the name: one resolve, one cache entry, one draw. Their rule — the name keeps priority —
+/// is the rich views' (`NameWithFeatureBadges`): the badges are drawn only when the HEAD of the
+/// run (glyph, name, badges) fits WHOLE between the label's left edge and the block's right limit,
+/// else the run is drawn without them. That needs the head's WIDTH, which `badgesFit` reads from
+/// `NameRunWidthCache` — measured once per distinct head and kept across passes, so a frame pays a
+/// dictionary lookup per badged block and nothing for the others.
 struct CanvasLabelCache {
     private var normal: [String: GraphicsContext.ResolvedText] = [:]
     // TWO caches and not one keyed by the pair: two blocks can carry the same name while only one
@@ -80,19 +88,20 @@ struct CanvasLabelCache {
     private var missingOnes: [String: GraphicsContext.ResolvedText] = [:]
 
     mutating func resolve(_ ctx: GraphicsContext, _ s: String, icon: String, missing: Bool,
-                          meta: String, muteBadge: Bool, lightInk: Bool = false) -> GraphicsContext.ResolvedText {
+                          meta: String, muteBadge: Bool, lightInk: Bool = false,
+                          badges: [FeatureBadge] = []) -> GraphicsContext.ResolvedText {
         // The key carries the icon AND the name: two blocks can share a name and not a kind. And the
-        // ink: the same name over a dark band and over a pale one is two different runs.
+        // ink: the same name over a dark band and over a pale one is two different runs. And the
+        // badges: two blocks of one name can carry different ones.
         let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "") + (lightInk ? "\u{0}L" : "")
+            + (badges.isEmpty ? "" : "\u{0}B" + FeatureBadge.cacheKey(badges))
         func build() -> GraphicsContext.ResolvedText {
             // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the rich views
             // read too: a red — or a glyph — that only one regime knows about is one that appears
             // or disappears with the number of objects on screen.
             let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
             let colour = missing ? MissingFileLabel.color : BlockInk.color(light: lightInk)
-            let glyph = Text(Image(systemName: icon))
-                .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
-            var run = glyph + Text(verbatim: " ") + Text(s)
+            var run = Self.head(s, icon: icon, missing: missing, badges: badges, lightInk: lightInk)
             if !meta.isEmpty {
                 run = run + Text(verbatim: " ").font(.system(size: 9))
                           + Text(verbatim: meta).font(.system(size: 9, weight: .regular))
@@ -113,6 +122,75 @@ struct CanvasLabelCache {
         }
         if let r = normal[key] { return r }
         let r = build(); normal[key] = r; return r
+    }
+
+    /// The HEAD of a name run: the kind glyph, the name and the feature badges — what `resolve`
+    /// opens its run with and what `badgesFit` measures, so the two cannot disagree. The run's own
+    /// font and colour are laid by the caller over the whole (a sub-text's own colour wins, as the
+    /// meta's does).
+    static func head(_ s: String, icon: String, missing: Bool, badges: [FeatureBadge],
+                     lightInk: Bool) -> Text {
+        let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
+        let glyph = Text(Image(systemName: icon))
+            .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
+        var run = glyph + Text(verbatim: " ") + Text(s)
+        guard !badges.isEmpty else { return run }
+        // The rich views' look (`FeatureBadgeGlyphs`): the meta's grey, semibold, the badges' size;
+        // a space before the first, a thin space between two (the rich views' 2 pt).
+        let size = TimelineLabelMetrics.featureBadgeSize
+        run = run + Text(verbatim: " ").font(.system(size: size))
+        for (i, badge) in badges.enumerated() {
+            if i > 0 { run = run + Text(verbatim: "\u{2009}").font(.system(size: size)) }
+            run = run + Text(Image(systemName: badge.symbol))
+                .font(.system(size: size, weight: .semibold))
+                .foregroundColor(BlockInk.metaColor(light: lightInk))
+        }
+        return run
+    }
+
+    /// Whether the head of `s`'s run WITH `badges` fits whole in `room` points — the rule that drops
+    /// the badges and never the name. No badge: true, and nothing measured.
+    static func badgesFit(_ ctx: GraphicsContext, _ s: String, icon: String, missing: Bool,
+                          badges: [FeatureBadge], room: Double) -> Bool {
+        guard !badges.isEmpty else { return true }
+        guard room > 0 else { return false }
+        // The weight changes the width, the colour does not: the key carries `missing`, not the ink.
+        let key = icon + "\u{0}" + s + "\u{0}" + FeatureBadge.cacheKey(badges) + (missing ? "\u{0}X" : "")
+        let width = NameRunWidthCache.shared.width(key) {
+            let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
+            let text = head(s, icon: icon, missing: missing, badges: badges, lightInk: false)
+                .font(.system(size: MissingFileLabel.size, weight: weight))
+            return Double(ctx.resolve(text)
+                .measure(in: CGSize(width: CGFloat.greatestFiniteMagnitude,
+                                    height: CGFloat.greatestFiniteMagnitude)).width)
+        }
+        return width <= room
+    }
+}
+
+/// The measured width of a name run's head (glyph, name, feature badges), kept ACROSS passes:
+/// `CanvasLabelCache` lives for one pass, and measuring each badged name at every frame is exactly
+/// the cost the batched Canvas exists to avoid. Keyed by what changes the width (glyph, name,
+/// badges, weight), never by the ink. The same precedent as `GlyphResolveCache`: a lock (a Canvas
+/// may render off the main thread) and a cap that empties the table rather than tracking ages.
+nonisolated final class NameRunWidthCache: @unchecked Sendable {
+    static let shared = NameRunWidthCache()
+    /// Distinct badged names on screen are few; the cap is only a safety net.
+    static let capacity = 4096
+
+    private let lock = NSLock()
+    private var widths: [String: Double] = [:]
+
+    func width(_ key: String, measure: () -> Double) -> Double {
+        lock.lock()
+        if let hit = widths[key] { lock.unlock(); return hit }
+        lock.unlock()
+        // Measured OUTSIDE the lock: it is the slow part and needs nothing the lock guards.
+        let w = measure()
+        lock.lock(); defer { lock.unlock() }
+        if widths.count >= Self.capacity { widths.removeAll(keepingCapacity: true) }
+        widths[key] = w
+        return w
     }
 }
 
@@ -228,7 +306,8 @@ enum GroupBlocksCanvas {
     /// the backgrounds, which is what keeps a crossfaded neighbour's content visible.
     static func drawComposites(into ctx: GraphicsContext, groups: [CanvasGroup], geo: Geometry,
                                waveformCache: WaveformCache, waveformDisplayDB: Double,
-                               scrollOffsetX: CGFloat, viewportWidth: CGFloat) {
+                               scrollOffsetX: CGFloat, viewportWidth: CGFloat,
+                               offBins: Set<UUID>) {
         for g in groups {
             guard case .group(let children, _) = g.item.kind, !children.isEmpty else { continue }
             let rect = geo.rect(of: g)
@@ -247,14 +326,15 @@ enum GroupBlocksCanvas {
             let rootMod = GroupWaveformDrawing.rootModifier(
                 for: item, absStart: startTime, duration: duration,
                 fadeIn: g.fadeIn, fadeOut: g.fadeOut,
-                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve)
+                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve,
+                offBins: offBins)
             GroupWaveformDrawing.draw(
                 into: gc, size: rect.size, waveformCache: waveformCache, children: children,
                 groupStartTime: startTime, pixelsPerSecond: geo.pixelsPerSecond,
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange)
+                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange, offBins: offBins)
         }
     }
 
@@ -295,9 +375,14 @@ enum GroupBlocksCanvas {
         // means nothing): nearly every group has 0 dB and a centred pan.
         let hasMeta = w >= 80
             && (item.volume <= -96 || abs(item.volume) >= 0.5 || abs(item.pan) >= 0.01)
+        // The feature badges, only when the name and they fit whole before the chevron (the name
+        // keeps priority: @see CanvasLabelCache.badgesFit).
+        let badges = CanvasLabelCache.badgesFit(c, g.name, icon: g.icon, missing: g.missing,
+                                                badges: g.badges, room: x + labelRight - labelX)
+            ? g.badges : []
         lc.draw(labels.resolve(c, g.name, icon: g.icon, missing: g.missing,
                                meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false,
-                               lightInk: g.lightInk),
+                               lightInk: g.lightInk, badges: badges),
                 at: CGPoint(x: labelX,
                             y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
                 anchor: .topLeading)

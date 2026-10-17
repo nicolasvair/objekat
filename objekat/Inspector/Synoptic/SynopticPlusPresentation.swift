@@ -14,6 +14,9 @@ import Foundation
 //    that finds one nil offers nothing for it" — a command whose closure is missing becomes `.none`, which
 //    the ghost reads as "not here" (a drag that would silently do nothing is the one thing not to offer);
 //  - what the GHOST says while the hand travels.
+//
+// Which direction asks for what is the user's map (@see PlusShortcutMap); every function here that classifies
+// takes it, `.defaults` when none is given.
 
 /// Which closures of `SynopticActions` the canvas was given — its own reading of the contract.
 struct SynopticPlusAvailability: Equatable {
@@ -27,10 +30,18 @@ struct SynopticPlusAvailability: Equatable {
     var send = false
     /// `onSendPluginAdd`: a click on a send's mini-chain "+" opens the browser.
     var sendPluginAdd = false
+    /// `onPlusInsertPlugin`: a direction bound to a plugin inserts it in a series (trunk, branch, bin).
+    var insertPlugin = false
+    /// `onSendPlusInsertPlugin`: the same, in a send's mini-chain.
+    var sendInsertPlugin = false
+    /// The plugins of the map that are NOT installed (absent from the catalogue): their direction is drawn
+    /// greyed, its ghost says so, and letting go there does nothing.
+    var missingPlugins: Set<PlusPluginRef> = []
 
     /// Everything wired (the bound view; the tests).
     static let all = SynopticPlusAvailability(gainStage: true, sendGainStage: true, branch: true,
-                                              send: true, sendPluginAdd: true)
+                                              send: true, sendPluginAdd: true,
+                                              insertPlugin: true, sendInsertPlugin: true)
 }
 
 /// What the hand sees beside the pointer while it drags out of a "+".
@@ -41,6 +52,10 @@ enum SynopticPlusGhost: Equatable {
     case gainPanMute
     case branch
     case send
+    /// A plugin a direction is bound to, by its name.
+    case plugin(String)
+    /// A plugin a direction is bound to that is no longer installed (letting go does nothing).
+    case pluginMissing(String)
     /// The drag asks for something this "+" does not offer (or nobody is wired to do it).
     case notHere
 }
@@ -121,6 +136,23 @@ enum SynopticPlusPresentation {
             return a.branch ? command : .none
         case .send:
             return a.send ? command : .none
+        case .insertPlugin(let key, let ref):
+            if a.missingPlugins.contains(ref) { return .none }
+            switch key {
+            case .series:    return a.insertPlugin ? command : .none
+            case .sendChain: return a.sendInsertPlugin ? command : .none
+            case .postFader: return .none                          // no chain there
+            }
+        }
+    }
+
+    /// Whether the "+" `key` can carry out a direction bound to a plugin (its closure is wired). A plugin
+    /// that is not installed is still OFFERED here — its zone is drawn, greyed (@see sectors).
+    static func offersPlugins(key: SynopticPlusKey, _ a: SynopticPlusAvailability) -> Bool {
+        switch key {
+        case .series:    return a.insertPlugin
+        case .sendChain: return a.sendInsertPlugin
+        case .postFader: return false
         }
     }
 
@@ -138,6 +170,7 @@ enum SynopticPlusPresentation {
                 }
             case .branch:             return a.branch
             case .send:               return a.send
+            case .plugin:             return offersPlugins(key: key, a)
             }
         }
     }
@@ -150,17 +183,24 @@ enum SynopticPlusPresentation {
         case .gain, .none:  return "dial.medium"
         case .gainPanMute:  return "slider.horizontal.3"
         case .branch:       return "arrow.triangle.branch"
-        case .send:         return "arrow.turn.down.left"
+        case .send:         return FeatureIcons.auxSend
+        case .plugin:       return "puzzlepiece.extension"
         }
     }
 
-    /// The zones to draw round the "+" `key` while a drag of `translation` leaves it: one per gesture it
-    /// really offers here (`offered` — a direction it does not offer has no zone), and the one the hand is
-    /// in (nil = none: a click, or a direction with no zone).
+    /// The zones to draw round the "+" `key` while a drag of `translation` leaves it, under `map`: one per
+    /// direction it really offers here (`offered` — a direction it does not offer has no zone; a plugin no
+    /// longer installed keeps its zone, marked unavailable), and the INDEX of the one the hand is in (nil =
+    /// none: a click, or a direction with no zone).
     static func sectors(allowed: Set<PlusGestureResult>, key: SynopticPlusKey, _ a: SynopticPlusAvailability,
-                        translation: CGSize) -> (sectors: [PlusSector], highlighted: PlusGestureResult?) {
-        let zones = SynopticPlusGesture.sectors(allowed: offered(allowed, key: key, a))
-        return (zones, SynopticPlusGesture.highlighted(translation, in: zones))
+                        translation: CGSize, map: PlusShortcutMap = .defaults)
+        -> (sectors: [PlusSector], highlighted: Int?) {
+        var zones = SynopticPlusGesture.sectors(allowed: offered(allowed, key: key, a),
+                                                pluginAllowed: offersPlugins(key: key, a), map: map)
+        for i in zones.indices {
+            if case .plugin(let ref) = zones[i].result, a.missingPlugins.contains(ref) { zones[i].isAvailable = false }
+        }
+        return (zones, SynopticPlusGesture.highlightedIndex(translation, in: zones, map: map))
     }
 
     /// What the ghost says for a drag of `translation` that would carry out `command` (already filtered
@@ -174,6 +214,37 @@ enum SynopticPlusPresentation {
         case .insertGainStage(_, .gainPanMute):    return .gainPanMute
         case .branch:                              return .branch
         case .send:                                return .send
+        case .insertPlugin(_, let ref):            return .plugin(ref.name)
+        }
+    }
+
+    /// What the ghost says for a drag of `translation` whose RAW command (as the layout decides it, before
+    /// `available`) is `raw`: a plugin that is not installed is NAMED as such rather than "not here" — the
+    /// direction is the user's, only the plugin is missing.
+    static func ghost(raw: SynopticPlusCommand, _ a: SynopticPlusAvailability, translation: CGSize) -> SynopticPlusGhost {
+        if SynopticPlusGesture.isClick(translation) { return .none }
+        if case .insertPlugin(let key, let ref) = raw, a.missingPlugins.contains(ref), offersPlugins(key: key, a) {
+            return .pluginMissing(ref.name)
+        }
+        return ghost(for: available(raw, a), translation: translation)
+    }
+
+    // MARK: The tooltip of a "+" (what each direction does, from the map)
+
+    /// The lines of a "+"'s tooltip after its click line: one per SLOT that does something here, in the slots'
+    /// order (direction, then near before far) — `(slot, action)` pairs. The caller words them
+    /// (@see SynopticView.plusHelp).
+    static func helpEntries(allowed: Set<PlusGestureResult>, key: SynopticPlusKey, _ a: SynopticPlusAvailability,
+                            map: PlusShortcutMap = .defaults) -> [(slot: PlusSlot, action: PlusAction)] {
+        let built = offered(allowed, key: key, a)
+        let plugins = offersPlugins(key: key, a)
+        return PlusSlot.allCases.compactMap { s in
+            let action = map.action(s)
+            switch action.gestureResult {
+            case .none:   return nil
+            case .plugin: return plugins ? (s, action) : nil
+            case let r:   return built.contains(r) ? (s, action) : nil
+            }
         }
     }
 }

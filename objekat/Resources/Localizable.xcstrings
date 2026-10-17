@@ -553,6 +553,29 @@
         }
       }
     },
+    "automation.pencil.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write automation live: during playback, press and move up or down, or use the wheel"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escribir la automatización en directo: durante la reproducción, pulsar y subir o bajar, o usar la rueda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écrire l'automation en direct : pendant la lecture, appuyer et monter ou descendre, ou utiliser la molette"
+          }
+        }
+      }
+    },
     "automation.scaleReadout": {
       "extractionState": "manual",
       "localizations": {
@@ -4643,6 +4666,121 @@
           "stringUnit": {
             "state": "translated",
             "value": "S, bombé d’abord"
+          }
+        }
+      }
+    },
+    "featureBadge.auxSend": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends to an aux"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envíos a un aux"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envois vers un aux"
+          }
+        }
+      }
+    },
+    "featureBadge.fx": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effects"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Efectos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effets"
+          }
+        }
+      }
+    },
+    "featureBadge.fxLink": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FX link"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fx link"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fx link"
+          }
+        }
+      }
+    },
+    "featureBadge.sidechainReception": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidechain received (keyed by another sound)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidechain recibido (clave de otro sonido)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidechain reçu (clé d'un autre son)"
+          }
+        }
+      }
+    },
+    "featureBadge.sidechainSend": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key of a plugin's sidechain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clave del sidechain de un plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clé de sidechain d'un plugin"
           }
         }
       }
@@ -9845,6 +9983,144 @@
         }
       }
     },
+    "pluginBrowser.plus.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dragging a + of the signal view in a direction gives what that direction shows: the left box near, the right box further (beyond 80 pt). An empty far box does what the near one does. Giving a box the action another one had swaps the two."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrastrar un + de la vista sinóptica en una dirección da lo que esta muestra: la casilla izquierda cerca, la derecha más lejos (más allá de 80 pt). Una casilla lejana vacía hace lo mismo que la cercana. Dar a una casilla la acción de otra intercambia ambas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glisser un + de la vue synoptique dans une direction donne ce qu'elle affiche : la case de gauche tout près, celle de droite plus loin (au-delà de 80 pt). Une case lointaine vide fait comme la proche. Donner à une case l'action d'une autre échange les deux."
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.noCatalog": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No plugin scanned yet"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ningún plugin escaneado todavía"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun plugin scanné pour l'instant"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.pickHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a plugin below to put it on the selected box."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hacer clic en un plugin de abajo lo coloca en la casilla elegida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cliquer un plugin ci-dessous le place sur la case choisie."
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.pluginMenu": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert a plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar un plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer un plugin"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.reset": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reset to defaults"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer valores por defecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réinitialiser"
+          }
+        }
+      }
+    },
+    "pluginBrowser.plus.sameAsNear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same as near"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Igual que cerca"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comme près"
+          }
+        }
+      }
+    },
     "pluginBrowser.row.help": {
       "extractionState": "manual",
       "localizations": {
@@ -9979,6 +10255,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "FX link"
+          }
+        }
+      }
+    },
+    "pluginBrowser.tab.plus.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Directions of the +: what dragging a + of the signal view gives"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Direcciones del +: lo que da arrastrar un + en la vista sinóptica"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Directions du + : ce que donne un glisser du + dans la vue synoptique"
           }
         }
       }
@@ -10692,6 +10991,420 @@
           "stringUnit": {
             "state": "translated",
             "value": "Externes (VST3/AU)"
+          }
+        }
+      }
+    },
+    "plusAction.help.branch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a parallel branch"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una rama paralela"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "une branche parallèle"
+          }
+        }
+      }
+    },
+    "plusAction.help.gain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gain stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una etapa de ganancia"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un étage de gain"
+          }
+        }
+      }
+    },
+    "plusAction.help.gainPanMute": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a gain · pan · mute stage"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "una etapa ganancia · pan · mute"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un étage gain · pan · mute"
+          }
+        }
+      }
+    },
+    "plusAction.help.plugin": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insert %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insertar %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "insérer %@"
+          }
+        }
+      }
+    },
+    "plusAction.help.pluginMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, not installed: does nothing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, no instalado: no hace nada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@, non installé : ne fait rien"
+          }
+        }
+      }
+    },
+    "plusAction.help.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a send taken here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un envío tomado aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "un envoi pris ici"
+          }
+        }
+      }
+    },
+    "plusAction.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nothing"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rien"
+          }
+        }
+      }
+    },
+    "plusAction.send": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoi"
+          }
+        }
+      }
+    },
+    "plusDirection.down": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hacia abajo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vers le bas"
+          }
+        }
+      }
+    },
+    "plusDirection.downLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down and left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "abajo a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en bas à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.downRight": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "down and right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "abajo a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en bas à droite"
+          }
+        }
+      }
+    },
+    "plusDirection.left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "à droite"
+          }
+        }
+      }
+    },
+    "plusDirection.up": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hacia arriba"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "vers le haut"
+          }
+        }
+      }
+    },
+    "plusDirection.upLeft": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up and left"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arriba a la izquierda"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en haut à gauche"
+          }
+        }
+      }
+    },
+    "plusDirection.upRight": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "up and right"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "arriba a la derecha"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "en haut à droite"
+          }
+        }
+      }
+    },
+    "plusLevel.far": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Further"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Más lejos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plus loin"
+          }
+        }
+      }
+    },
+    "plusLevel.near": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Near"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerca"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Près"
           }
         }
       }
@@ -15342,6 +16055,29 @@
         }
       }
     },
+    "synoptic.plus.ghost.pluginMissing": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — not installed"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — no instalado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ — non installé"
+          }
+        }
+      }
+    },
     "synoptic.plus.ghost.send": {
       "extractionState": "manual",
       "localizations": {
@@ -15365,71 +16101,71 @@
         }
       }
     },
-    "synoptic.plus.help.branch": {
+    "synoptic.plus.help.drag": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag down and right: a parallel branch"
+            "value": "Drag %1$@: %2$@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar abajo a la derecha: una rama paralela"
+            "value": "Arrastrar %1$@: %2$@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser en bas à droite : une branche parallèle"
+            "value": "Glisser %1$@ : %2$@"
           }
         }
       }
     },
-    "synoptic.plus.help.gain": {
+    "synoptic.plus.help.dragFar": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag right: a gain stage (further: gain · pan · mute)"
+            "value": "Drag %1$@: %2$@, further: %3$@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar a la derecha: una etapa de ganancia (más lejos: ganancia · pan · mute)"
+            "value": "Arrastrar %1$@: %2$@, más lejos: %3$@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser à droite : un étage de gain (plus loin : gain · pan · mute)"
+            "value": "Glisser %1$@ : %2$@, plus loin : %3$@"
           }
         }
       }
     },
-    "synoptic.plus.help.send": {
+    "synoptic.plus.help.dragFarOnly": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag left: a send taken here"
+            "value": "Drag %1$@ further: %2$@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar a la izquierda: un envío tomado aquí"
+            "value": "Arrastrar %1$@ más lejos: %2$@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser à gauche : un envoi pris ici"
+            "value": "Glisser %1$@ plus loin : %2$@"
           }
         }
       }
@@ -15440,19 +16176,65 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "A send taken after the fader: click, or drag left"
+            "value": "A send taken after the fader: click, or drag %@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envío tomado después del fader: hacer clic, o arrastrar a la izquierda"
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar %@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Un envoi pris après le fader : cliquer, ou glisser à gauche"
+            "value": "Un envoi pris après le fader : cliquer, ou glisser %@"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help.click": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer"
+          }
+        }
+      }
+    },
+    "synoptic.plus.postFader.help.far": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A send taken after the fader: click, or drag %@ further"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envío tomado después del fader: hacer clic, o arrastrar %@ más lejos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un envoi pris après le fader : cliquer, ou glisser %@ plus loin"
           }
         }
       }

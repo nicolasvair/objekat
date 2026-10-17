@@ -23,6 +23,8 @@ struct GroupBlockView: View {
     /// and a red clip nobody can see is a red clip nobody reads. It is its own statement and not a
     /// claim about itself — the group's file is not gone, a group names none.
     var containsMissingFile: Bool = false
+    /// The feature badges drawn after the name (@see ObjectFeatureBadges, EditViewModel.featureBadges(of:)).
+    var featureBadges: [FeatureBadge] = []
     /// True if this block is a CONSOLIDATED OBJECT currently open for editing. Opening one materialises
     /// its content, so its `kind` genuinely becomes `.group` for the duration and this view is
     /// what draws it — but what one opened was a consolidated object and still is, so its glyph must not
@@ -37,6 +39,9 @@ struct GroupBlockView: View {
     /// nil = fall back on those. @see LiveScroll
     var liveScroll: LiveScroll? = nil
     let waveformDisplayDB: Double
+    /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
+    /// left out of the drawn gain of the group and of its children.
+    let offBins: Set<UUID>
 
     let previewOffset: (dx: Double, dy: Double)?
     let previewResizeDX: Double
@@ -127,7 +132,8 @@ struct GroupBlockView: View {
         return GroupWaveformDrawing.rootModifier(
             for: group, absStart: effectiveStartTime, duration: effDur,
             fadeIn: effectiveFadeIn, fadeOut: effectiveFadeOut,
-            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve)
+            curveIn: effectiveFadeInCurve, curveOut: effectiveFadeOutCurve,
+            offBins: offBins)
     }
 
     var body: some View {
@@ -168,7 +174,8 @@ struct GroupBlockView: View {
                     rootMod: rootMod,
                     rootMuted: group.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
-                    loopRange: previewLoopRange
+                    loopRange: previewLoopRange,
+                    offBins: offBins
                 )
                 // The same radius as the block (20): with 4, a child sitting at the very start of the group
                 // spilled out of the rounded corners — the composite bled out of the border on the left.
@@ -280,10 +287,16 @@ struct GroupBlockView: View {
                                 .onExitCommand { onRename(nil) }
                                 .onAppear { beginRename(group.label) }
                         } else {
-                            Text(displayName)
-                                .blockNameStyle(missingFile: containsMissingFile, lightInk: lightInk)
-                                .lineLimit(1)
-                                .layoutPriority(1)
+                            // The feature badges at the name's right (@see ObjectFeatureBadges): the
+                            // name keeps priority, the badges go when the two do not fit.
+                            NameWithFeatureBadges(badges: featureBadges,
+                                                  size: TimelineLabelMetrics.featureBadgeSize,
+                                                  color: BlockInk.metaColor(light: lightInk)) {
+                                Text(displayName)
+                                    .blockNameStyle(missingFile: containsMissingFile, lightInk: lightInk)
+                                    .lineLimit(1)
+                            }
+                            .layoutPriority(1)
                         }
 
                         if blockWidth >= 80 {
