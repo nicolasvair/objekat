@@ -63,10 +63,10 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
 
     // MARK: Geometry
 
-    /// The drawing's size: the circle takes about half the page, never smaller than the signal view's.
+    /// The drawing's size: the circle takes about two thirds of the page, never smaller than the signal view's.
     private static func scale(forHeight h: CGFloat) -> CGFloat {
         let outer = SynopticPlusGesture.sectorOuterRadius
-        return min(1.5, max(1, (h * 0.52 - 16) / (2 * outer)))
+        return min(2, max(1, (h * 0.64 - 16) / (2 * outer)))
     }
 
     private static func circleHeight(_ scale: CGFloat) -> CGFloat {
@@ -100,7 +100,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
             ZStack(alignment: .topLeading) {
                 PlusSectorsView(center: c, sectors: sectors, highlighted: lit, showsIcons: false,
-                                emphasis: 2.2, scale: scale)
+                                emphasis: 2.2, scale: scale, backdrop: 0)
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 18))
                     .foregroundStyle(Color.accentColor)
@@ -175,11 +175,13 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
         action.categoryIndex.map { ObjekatPalette.pluginCategory($0) }
     }
 
-    /// An action's face: its icon and its name — side by side in the palette, stacked in a zone.
+    /// An action's face: its icon and its name — side by side in the palette, stacked in a zone. A colour
+    /// category shows its coloured icon alone: it has no name, its tab is a colour.
     private func itemFace(_ action: PlusAction, missing: Bool, width: CGFloat? = nil, stacked: Bool) -> some View {
         let name = PlusShortcutText.actionName(action, missing: missing)
+        let iconOnly = action.categoryIndex != nil
         let icon = Image(systemName: symbol(action, missing: missing))
-            .font(.system(size: stacked ? 11 : 10, weight: .semibold))
+            .font(.system(size: iconOnly ? 13 : (stacked ? 11 : 10), weight: .semibold))
             .foregroundStyle(iconColor(action) ?? (missing ? Color.secondary : Color.accentColor))
         let text = Text(verbatim: name)
             .font(.system(size: stacked ? 9 : 10))
@@ -187,7 +189,9 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .lineLimit(1)
             .truncationMode(.tail)
         return Group {
-            if stacked {
+            if iconOnly {
+                icon.frame(width: 24, height: 22)
+            } else if stacked {
                 VStack(spacing: 1) { icon; text }
                     .frame(maxWidth: width)
                     .padding(.horizontal, 3).padding(.vertical, 2)
@@ -198,7 +202,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             }
         }
         .background(RoundedRectangle(cornerRadius: 5)
-            .fill(Color(nsColor: .controlBackgroundColor).opacity(stacked ? 0.85 : 1)))
+            .fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 5)
             .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: missing ? [3, 2] : [])))
     }
@@ -219,11 +223,25 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
     @ViewBuilder
     private var carriedGhost: some View {
         if let c = carried {
-            itemFace(c.action, missing: isMissing(c.action), stacked: false)
+            ghostFace(c.action)
                 .fixedSize()
-                .shadow(radius: 3)
+                .shadow(color: .black.opacity(0.45), radius: 5, y: 2)
                 .offset(x: c.location.x + 8, y: c.location.y - 11)
                 .allowsHitTesting(false)
+        }
+    }
+
+    /// The carried item: a plugin looks as it does in the list, anything else as its zone face.
+    @ViewBuilder
+    private func ghostFace(_ action: PlusAction) -> some View {
+        if let ref = action.pluginRef, let p = viewModel.availablePlugin(for: ref) {
+            PluginBrowserRowLabel(plugin: p)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .frame(width: 200)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.6)))
+        } else {
+            itemFace(action, missing: isMissing(action), stacked: false)
         }
     }
 
@@ -243,9 +261,12 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .padding(.top, 8)
             searchRow()
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) {
-                    ForEach(plugins) { p in paletteItem(.plugin(PlusPluginRef(p)), help: p.manufacturer) }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6),
+                                         count: PluginBrowserLayout.columnCount(sheetWidth: PluginBrowserLayout.sheetSize().width)),
+                          spacing: 6) {
+                    ForEach(plugins) { p in pluginItem(p) }
                 }
+                .padding(.top, 8)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
             }
@@ -260,6 +281,17 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .gesture(carryGesture(action, from: nil, scale: currentScale))
             .help(help.map { PlusShortcutText.actionName(action) + " — " + $0 }
                   ?? PlusShortcutText.helpDescription(action))
+    }
+
+    /// A plugin of the palette, drawn as the colour tabs draw it (@see PluginBrowserRowLabel), carried by drag.
+    private func pluginItem(_ p: AvailablePlugin) -> some View {
+        PluginBrowserRowLabel(plugin: p)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+            .contentShape(Rectangle())
+            .gesture(carryGesture(.plugin(PlusPluginRef(p)), from: nil, scale: currentScale))
+            .help(PlusShortcutText.helpDescription(.plugin(PlusPluginRef(p))))
     }
 
     /// A colour category: its dot alone (a category has no name, its tab is a colour).

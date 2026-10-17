@@ -560,23 +560,7 @@ struct PluginBrowserView: View {
             else { viewModel.addPlugin(objectID: objectID, available: plugin) }
             dismiss()
         }) {
-            HStack(spacing: 7) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(plugin.name)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    Text(plugin.manufacturer)
-                        .font(.system(size: 9))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                categoryDots(plugin)
-                Text(plugin.formatLabel)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-            }
+            PluginBrowserRowLabel(plugin: plugin)
         }
         .overlay(categoryMenuOverlay(for: plugin))
         .help(L("pluginBrowser.row.help"))
@@ -751,6 +735,40 @@ final class CategorySwatchRowView: NSView {
 
 /// A full-width button dressed like the signal view's cards: `controlBackgroundColor`, radius 8,
 /// the accent at 12 % under the pointer. Shared by the plugin rows, the FX link rows and the send rows.
+/// What a plugin row of the browser shows: name and maker, the category dots, the format badge. One
+/// definition for the colour tabs and the "+" page's palette (@see PluginBrowserPlusPage).
+struct PluginBrowserRowLabel: View {
+    let plugin: AvailablePlugin
+    var categories: PluginCategoryStore = .shared
+
+    var body: some View {
+        HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(plugin.name)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(plugin.manufacturer)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            let indices = categories.colorIndices(format: plugin.formatName, identifier: plugin.identifier)
+            if !indices.isEmpty {
+                HStack(spacing: 2) {
+                    ForEach(indices, id: \.self) { index in
+                        Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 7, height: 7)
+                    }
+                }
+            }
+            Text(plugin.formatLabel)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+
 struct PluginBrowserCard<Label: View>: View {
     var enabled: Bool = true
     let action: () -> Void
