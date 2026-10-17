@@ -85,6 +85,34 @@ final class Workspace {
         session.viewModel.crossProjectPasteHook = { [weak self] in
             self?.attemptCrossProjectPaste() ?? false
         }
+        session.viewModel.diskUsageExtraRootsHook = { [weak self] in
+            self?.diskUsageProtectedRoots() ?? []
+        }
+    }
+
+    /// `EditViewModel.diskUsageExtraRootsHook`: what the projects NOT in front, and the
+    /// cross-project clipboard, still read from disk. Everything is reduced to plain values here
+    /// (the scan runs off the main thread). A parked tab's undo history is deliberately left out,
+    /// as the active one's is: it is restored from the Trash if it ever brings a file back.
+    private func diskUsageProtectedRoots() -> [DiskUsageRoots] {
+        var roots: [DiskUsageRoots] = []
+        for tab in tabs where tab.id != activeTabID {
+            guard let parked = tab.parked else { continue }
+            let doc = parked.doc
+            let defs = (doc.consolidateDefinitions ?? []).map { ProjectFileUsage.DefInfo(id: $0.id, wave: $0.wave) }
+            roots.append(DiskUsageRoots(name: parked.projectName, folder: parked.projectURL?.deletingLastPathComponent(),
+                                        items: doc.items.map(\.fileUsageRef),
+                                        defs: Dictionary(uniqueKeysWithValues: defs.map { ($0.id, $0) })))
+        }
+        if let record = crossProjectClipboard {
+            let cb = record.clipboard
+            roots.append(DiskUsageRoots(name: "clipboard", folder: cb.originFolder,
+                                        items: cb.clips.map(\.fileUsageRef),
+                                        defs: cb.consolidateDefinitions.mapValues {
+                                            ProjectFileUsage.DefInfo(id: $0.id, wave: $0.wave)
+                                        }))
+        }
+        return roots
     }
 
     /// `EditViewModel.clipboardDidChangeHook`: freezes the clipboard `copySelected()` just set,

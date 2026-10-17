@@ -131,6 +131,9 @@ extension EditViewModel {
     /// state of every plugin twice. Absent ⇒ captured here.
     func applySnapshot(_ snapshot: EditSnapshot, live: EditSnapshot? = nil) {
         let t0 = CFAbsoluteTimeGetCurrent()
+        // A file a clean-up sent to the Trash and this state reads again comes back first, before
+        // anything below asks the engine to load it (@see EditViewModel+DiskCleanup).
+        restoreTrashedFiles(forItems: snapshot.items, defs: snapshot.consolidateDefinitions)
         clearPendingFXSources()   // the snapshot brings back plain plugins under the same ids: never re-adopt them
         let live = live ?? currentSnapshot()
         // Q1 (ARA): an undo never touches a live Melodyne retouch. The snapshot's objects wear the LIVE

@@ -302,6 +302,7 @@ extension EditViewModel {
             projectName = displayName(for: fileURL)
             isDirty = false
             recordRecentProject(fileURL)
+            refreshDiskUsage()
             return true
         } catch {
             return false
@@ -383,6 +384,7 @@ extension EditViewModel {
         projectName = L("project.untitled")
         isDirty = false
         projectLoadToken &+= 1   // the canvas rearmed on emptiness (@see projectLoadToken)
+        refreshDiskUsage()       // no folder any more: clears the gauge
         pendingViewRestore = nil
         pendingNewProjectFrame = true
         // Empties the missing-file verdict with the rest: the paths of the project just closed
