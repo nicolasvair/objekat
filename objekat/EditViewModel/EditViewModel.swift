@@ -1001,6 +1001,23 @@ final class EditViewModel {
     /// a script from measuring an empty cache and concluding there is nothing to fix).
     @ObservationIgnored var preloadWaveforms: (([String]) -> Void)?
 
+    /// Forgets the waveform of these files (peaks, overview levels, decoded regions, the `.wfc`)
+    /// and reads them again — the view side of a source file rewritten on disk. Same shape and
+    /// same reason as `preloadWaveforms`: the cache lives in the timeline view (absent in
+    /// `--headless`), so the view model reaches it through a closure. nil with no interface.
+    /// @see EditViewModel+ChangedFiles
+    @ObservationIgnored var invalidateWaveforms: (([String]) -> Void)?
+
+    /// True while the transport is RUNNING (set by `ObjekatSession.isPlaying`'s `didSet`). A source
+    /// file that changed under a playing engine is reloaded at the stop, not under the hand that
+    /// is listening. Paused is not running: the engine is stopped.
+    @ObservationIgnored var isTransportRunning = false
+
+    /// Everything the file-change detection remembers (@see EditViewModel+ChangedFiles). One
+    /// reference so the stored state stays in one place — an extension cannot carry any — and
+    /// invisible to the observation: no view draws it.
+    @ObservationIgnored let fileChanges = FileChangeTracker()
+
 
     var clipboard: ClipboardContent? = nil
     /// A clipboard dedicated to MIDI notes (independent of `clipboard`, which carries clips/groups).

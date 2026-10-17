@@ -34,6 +34,12 @@
 // Edit live — muté incrémentalement, jamais reconstruit
 - (void)addSoundObject:(OBJSoundObjectData*)data withID:(NSString*)uuid;
 - (void)removeSoundObjectWithID:(NSString*)uuid;
+// A source file changed on disk. Re-reads its info (length, channels) and throws away the renders
+// the engine derived from it (the reversed copy, the proxy of a compressed format), whose names
+// carry NO mtime and would otherwise be picked up again for the new content. The caller then
+// re-creates the clips (removeSoundObject + addSoundObject), which is what makes the engine
+// really play the new file. Main thread. No engine patch involved.
+- (void)refreshSourceFileAtPath:(NSString*)path;
 // loopRangeStart/loopRangeEnd : bornes IN/OUT de la boucle en SECONDES FICHIER (repère
 // sourceOffset), ignorées si loopEnabled=NO. @see [[loop-item-plan]]
 - (void)updatePosition:(double)startTime duration:(double)duration sourceOffset:(double)sourceOffset loopEnabled:(BOOL)loopEnabled loopRangeStart:(double)loopRangeStart loopRangeEnd:(double)loopRangeEnd forID:(NSString*)uuid;

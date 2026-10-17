@@ -64,6 +64,11 @@ enum Quiescence {
             if vm.isScanning {
                 reasons.append("plugin scan")
             }
+            // A file-change scan asked for or under way (@see EditViewModel+ChangedFiles). A scan
+            // that is merely DEFERRED (playback, a load…) is not busy: it waits for something else.
+            if vm.fileChanges.isBusy {
+                reasons.append("file change scan")
+            }
         }
         // Tabs (INC 1): the span between parking the outgoing tab and the incoming one's load
         // actually starting, where `vm.isLoadingProject` above is still false.

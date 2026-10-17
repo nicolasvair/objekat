@@ -1207,6 +1207,9 @@ struct TimelineView: View {
             // The one door `waveform.preload` calls through: a script has no Canvas to trigger
             // `ensureWaveformsLoaded`, and this closure is the only other way in.
             viewModel.preloadWaveforms = { paths in for p in paths { waveformCache.load(filePath: p) } }
+            // A source file rewritten on disk: forget its peaks and read them again
+            // (@see EditViewModel+ChangedFiles).
+            viewModel.invalidateWaveforms = { paths in waveformCache.invalidate(paths: paths) }
             viewModel.beginVerticalZoomDrag = {
                 openVerticalZoomSession()
                 vZoomHeld = true

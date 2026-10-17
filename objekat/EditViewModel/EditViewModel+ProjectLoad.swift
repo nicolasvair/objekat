@@ -386,6 +386,17 @@ extension EditViewModel {
         projectLoadToken &+= 1
         rescanMissingFiles()
         armMissingFileWatch()
+        // The source files' identities start over with the document (or come back with the tab
+        // that carried them), and the one scan every opening and every tab return owes is launched.
+        // @see EditViewModel+ChangedFiles
+        fileChanges.epoch &+= 1
+        fileChanges.documentParked = false
+        fileChanges.rescanWanted = false
+        let carriedIdentities = fileChanges.carried
+        fileChanges.carried = nil
+        fileChanges.known = carriedIdentities ?? [:]
+        armFileChangeWatch()
+        rescanChangedFiles(reason: carriedIdentities != nil ? .tabReturn : .open)
         let missing = missingPluginCapture ?? []
         missingPluginCapture = nil
         if !missing.isEmpty {
