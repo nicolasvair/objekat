@@ -46,6 +46,7 @@ enum PlusShortcutText {
         case .branch:         return L("synoptic.plus.ghost.branch")
         case .send:           return L("plusAction.send")
         case .plugin(let r):  return missing ? L("synoptic.plus.ghost.pluginMissing", r.name) : r.name
+        case .category:       return L("plusAction.category")
         }
     }
 
@@ -59,6 +60,7 @@ enum PlusShortcutText {
         case .send:           return L("plusAction.help.send")
         case .plugin(let r):  return missing ? L("plusAction.help.pluginMissing", r.name)
                                              : L("plusAction.help.plugin", r.name)
+        case .category:       return L("plusAction.help.category")
         }
     }
 }

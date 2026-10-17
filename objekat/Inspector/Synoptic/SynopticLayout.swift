@@ -213,6 +213,7 @@ enum SynopticLayout {
             case .branch:          return .branch(key)
             case .send:            return sendSlot.map { .send($0) } ?? .none
             case .plugin(let ref): return .insertPlugin(key, ref)
+            case .category(let i): return .openBrowserInCategory(key, i)
             }
         }
     }
@@ -1130,7 +1131,9 @@ enum SynopticPlusKey: Hashable {
 ///                                        element under the '+' and the selection, @see SynopticBranchRun);
 ///  - `.send(slot)`                     → `presentSendMenu(slot:)` (the existing "Send to…" menu at that slot);
 ///  - `.insertPlugin(.series(s, i), p)` → `onPlusInsertPlugin(s, i, p)` (a direction bound to that plugin);
-///  - `.insertPlugin(.sendChain(a, i), p)` → `onSendPlusInsertPlugin(a, i, p)`.
+///  - `.insertPlugin(.sendChain(a, i), p)` → `onSendPlusInsertPlugin(a, i, p)`;
+///  - `.openBrowserInCategory(key, c)`  → `onOpenBrowserInCategory(key, c)` (a direction bound to a colour
+///                                        category: the browser on that tab, the plugin chosen inserted at key).
 enum SynopticPlusCommand: Equatable {
     case none
     case openBrowser(SynopticPlusKey)
@@ -1138,4 +1141,5 @@ enum SynopticPlusCommand: Equatable {
     case branch(SynopticPlusKey)
     case send(SynopticSendSlot)
     case insertPlugin(SynopticPlusKey, PlusPluginRef)
+    case openBrowserInCategory(SynopticPlusKey, Int)
 }

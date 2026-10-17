@@ -215,7 +215,10 @@ struct SynopticActions {
     /// A direction the user bound to a plugin (@see PlusShortcutMap), dragged out of a '+' of a series: insert
     /// that plugin at `index` of `seriesID`, as the browser would. One undo point.
     var onPlusInsertPlugin: ((_ seriesID: UUID, _ index: Int, _ plugin: PlusPluginRef) -> Void)? = nil
-    /// The same, out of the "+" of a send's mini-chain (`aux` = the send's id).
+    /// A direction the user bound to a colour category (@see PlusAction.category): open the plugin browser on
+    /// that colour's tab, the plugin chosen there inserted at `key` (a series' or a send's mini-chain "+").
+    var onOpenBrowserInCategory: ((_ key: SynopticPlusKey, _ category: Int) -> Void)? = nil
+    /// `onPlusInsertPlugin`'s counterpart, out of the "+" of a send's mini-chain (`aux` = the send's id).
     var onSendPlusInsertPlugin: ((_ aux: UUID, _ index: Int, _ plugin: PlusPluginRef) -> Void)? = nil
     /// Whether a plugin a direction is bound to is installed and insertable (nil = assume it is). One that is
     /// not keeps its zone, greyed, and its drag does nothing.

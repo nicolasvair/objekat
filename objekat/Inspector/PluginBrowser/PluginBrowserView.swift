@@ -79,14 +79,19 @@ struct PluginBrowserView: View {
     var insertion: PluginBrowserInsertion? = nil
     /// The colour categories: the app's memory, shared by every browser.
     var categories: PluginCategoryStore = .shared
+    /// The page the sheet opens on (a "+" direction bound to a colour category opens on its tab).
+    var initialPage: PluginBrowserPage = .plugins(.all)
 
     @FocusState private var searchFocused: Bool
-    @State private var page: PluginBrowserPage = .all
+    /// The page the hand chose; nil = still `initialPage`.
+    @State private var chosenPage: PluginBrowserPage? = nil
+    private var page: PluginBrowserPage {
+        get { chosenPage ?? initialPage }
+        nonmutating set { chosenPage = newValue }
+    }
     @State private var outsideClickMonitor: Any? = nil
     /// The colour tab being dragged along the bar (its place in the row, the hand's travel).
     @State private var colourDrag: (from: Int, dx: CGFloat)? = nil
-    /// The "+" page's selected slot: the one a click in the list binds a plugin to.
-    @State private var plusSlot = PlusSlot(.right, .near)
 
     // MARK: Derived
 
@@ -169,10 +174,10 @@ struct PluginBrowserView: View {
                                           insertion: insertion, dismiss: dismiss)
                 }
             case .plusShortcuts:
-                // The compass, then the list: a click on a plugin binds it to the selected slot.
-                PluginBrowserPlusPage(viewModel: viewModel, selected: $plusSlot)
-                searchRow
-                content
+                // The circle, then the palette its zones are filled from by drag and drop.
+                PluginBrowserPlusPage(viewModel: viewModel,
+                                      plugins: listedSections.filter { $0.kind != .ara }.flatMap(\.plugins),
+                                      categories: usedCategories) { searchRow }
             }
             Divider()
             footer
@@ -550,15 +555,7 @@ struct PluginBrowserView: View {
 
     @ViewBuilder
     private func pluginRow(_ plugin: AvailablePlugin) -> some View {
-        // On the "+" page a click BINDS the plugin to the selected slot (and the sheet stays open, so the
-        // compass shows the result); everywhere else it inserts the plugin and closes the sheet.
-        let plusPage = currentPage == .plusShortcuts
         PluginBrowserCard(action: {
-            if plusPage {
-                PlusShortcutStore.shared.assign(.plugin(PlusPluginRef(plugin)), to: plusSlot)
-                refocusSearch()
-                return
-            }
             if let onSelect { onSelect(plugin) }
             else { viewModel.addPlugin(objectID: objectID, available: plugin) }
             dismiss()
@@ -575,15 +572,6 @@ struct PluginBrowserView: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                if plusPage {
-                    // The slots this plugin is already on (an arrow; doubled for a far slot).
-                    let glyphs = PluginBrowserPlusPage.boundGlyphs(plugin, map: PlusShortcutStore.shared.map)
-                    if !glyphs.isEmpty {
-                        Text(verbatim: glyphs)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.accentColor)
-                    }
-                }
                 categoryDots(plugin)
                 Text(plugin.formatLabel)
                     .font(.system(size: 9, design: .monospaced))

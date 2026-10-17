@@ -7,16 +7,15 @@ import Foundation
 // (@see PlusShortcutStore, which keeps a `PlusShortcutMap` in UserDefaults). This file is the model of that
 // choice: the eight directions, the actions one can put on them, and the map with its defaults.
 //
-// THE DIRECTIONS ARE FIXED: eight sectors of ±15° each. The three that existed before the map (right 0°,
-// down-right −30°, left 180°) keep their exact geometry, boundaries included; the five others sit in the
-// angles that asked for nothing until then (up-right +30°, up 90°, up-left 150°, down-left −150°, down −90°),
-// so the DEFAULT map asks for exactly what the "+" always did — and draws exactly the same zones, a direction
-// mapped to `.none` having no zone at all. Between two sectors there is still dead angle (45°…75°, 105°…135°
-// and their mirrors): a drag there asks for nothing.
+// THE DIRECTIONS ARE FIXED: eight EQUAL sectors of 45° (±22.5° round 0°, ±45°, ±90°, ±135°, 180°), which
+// together cover the whole circle — there is no dead angle (user request of 17 October 2026; the diagonals
+// were at ±30° / ±150° with ±15° sectors until then). A direction's NAME is what the stored map keys on, so a
+// map stored before keeps every setting: its diagonals simply moved to ±45° / ±135°.
 //
-// EVERY DIRECTION HAS TWO LEVELS (@see PlusLevel): near, and far from 80 pt of travel along the direction —
-// the right direction's historical gain / gain · pan · mute pair, generalised. Each (direction, level) SLOT
-// holds its own action; an empty far slot does what the near one does.
+// EVERY DIRECTION HAS TWO LEVELS (@see PlusLevel): near, and far beyond a CIRCLE of 80 pt round the "+"
+// (@see SynopticPlusGesture.panMuteThreshold) — the right direction's historical gain / gain · pan · mute
+// pair, generalised. Each (direction, level) SLOT holds its own action; an empty far slot does what the near
+// one does, and an empty near slot does nothing (a drag that does not reach the far circle asks for nothing).
 //
 // This file is compiled alone by `tools/test_synoptic_plus_shortcuts.swift` and alongside
 // `SynopticPlusGesture.swift` by `tools/test_synoptic_plus_gesture.swift`: it must stay free of every other
@@ -27,20 +26,20 @@ import Foundation
 enum PlusDirection: String, Codable, CaseIterable, Hashable {
     case right, downRight, down, downLeft, left, upLeft, up, upRight
 
-    /// Half the angular width of every sector, in degrees.
-    static let tolerance: Double = 15
+    /// Half the angular width of every sector, in degrees (eight sectors of 45°: the whole circle).
+    static let tolerance: Double = 22.5
 
     /// The direction's axis, in degrees from the horizontal, POSITIVE UPWARD (as `SynopticPlusGesture.angle`).
     var angle: Double {
         switch self {
         case .right:     return 0
-        case .downRight: return -30
+        case .downRight: return -45
         case .down:      return -90
-        case .downLeft:  return -150
+        case .downLeft:  return -135
         case .left:      return 180
-        case .upLeft:    return 150
+        case .upLeft:    return 135
         case .up:        return 90
-        case .upRight:   return 30
+        case .upRight:   return 45
         }
     }
 
@@ -64,15 +63,15 @@ enum PlusDirection: String, Codable, CaseIterable, Hashable {
         return d > 180 ? 360 - d : d
     }
 
-    /// The direction whose sector holds `theta` (degrees, positive upward), nil in the dead angle between two
-    /// sectors. The two HORIZONTAL sectors are OPEN at ±15° and the six others CLOSED: a boundary shared by
-    /// right and a diagonal (±15°), or by left and a diagonal (±165°), belongs to the diagonal — the very
-    /// boundaries the classifier had before the map (right `|θ| < 15`, the branch `−45 ≤ θ ≤ −15`, the send
-    /// `|θ| > 165`).
-    static func at(angle theta: Double) -> PlusDirection? {
-        for d in [PlusDirection.right, .left] where distance(theta, d.angle) < tolerance { return d }
-        for d in allCases where d != .right && d != .left && distance(theta, d.angle) <= tolerance { return d }
-        return nil
+    /// The direction whose sector holds `theta` (degrees, positive upward). Every angle has one: the sectors
+    /// tile the circle. A boundary belongs to the sector that STARTS there, turning counter-clockwise
+    /// (22.5° is up-right's, −22.5° right's): each sector is `[axis − 22.5°, axis + 22.5°)`.
+    static func at(angle theta: Double) -> PlusDirection {
+        // Counter-clockwise from the right, every 45°.
+        let ring: [PlusDirection] = [.right, .upRight, .up, .upLeft, .left, .downLeft, .down, .downRight]
+        var t = (theta + tolerance).truncatingRemainder(dividingBy: 360)
+        if t < 0 { t += 360 }
+        return ring[min(7, Int(t / 45))]
     }
 }
 
@@ -107,8 +106,8 @@ struct PlusPluginRef: Codable, Hashable {
     func hash(into h: inout Hasher) { h.combine(key) }
 }
 
-/// How far along its direction a drag went: NEAR (under `SynopticPlusGesture.panMuteThreshold`, 80 pt of
-/// travel along the direction's axis) or FAR (from there on). Every direction has the two levels — the right
+/// How far a drag went from the "+": NEAR (inside the circle of `SynopticPlusGesture.panMuteThreshold`, 80 pt)
+/// or FAR (from that circle on). Every direction has the two levels — the right
 /// direction's historical pair, gain then gain · pan · mute, generalised.
 enum PlusLevel: String, Codable, CaseIterable, Hashable {
     case near, far
@@ -143,28 +142,37 @@ enum PlusAction: Hashable, Codable {
     case send
     /// This plugin, inserted at the "+".
     case plugin(PlusPluginRef)
+    /// The plugin browser, opened on this colour category's tab (`PluginCategoryStore`'s colour index): the
+    /// plugin chosen there is inserted at the "+".
+    case category(Int)
 
-    /// The built-in actions, in the order a menu lists them (`.none` first).
-    static let builtIns: [PlusAction] = [.none, .gain, .gainPanMute, .branch, .send]
+    /// The built-in actions, in the order a palette lists them (`.none` left out: it is the ✕ of a zone).
+    static let builtIns: [PlusAction] = [.gain, .gainPanMute, .branch, .send]
 
     var pluginRef: PlusPluginRef? {
         if case .plugin(let r) = self { return r }
         return nil
     }
 
+    var categoryIndex: Int? {
+        if case .category(let i) = self { return i }
+        return nil
+    }
+
     // A tagged form, `{"kind": "plugin", "plugin": {…}}`, rather than the synthesised one: what a user's
     // preferences hold should read plainly, and an unknown kind (written by a later version) must decode to
     // `.none` instead of failing the whole map.
-    private enum CodingKeys: String, CodingKey { case kind, plugin }
+    private enum CodingKeys: String, CodingKey { case kind, plugin, category }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
-        self = Self.decoded(kind: kind, plugin: try? c.decode(PlusPluginRef.self, forKey: .plugin))
+        self = Self.decoded(kind: kind, plugin: try? c.decode(PlusPluginRef.self, forKey: .plugin),
+                            category: try? c.decode(Int.self, forKey: .category))
     }
 
-    /// `kind` read back; anything unknown (or a plugin with no identifier) is `.none`.
-    static func decoded(kind: String, plugin: PlusPluginRef?) -> PlusAction {
+    /// `kind` read back; anything unknown (a plugin with no identifier, a category with no index) is `.none`.
+    static func decoded(kind: String, plugin: PlusPluginRef?, category: Int? = nil) -> PlusAction {
         switch kind {
         case "gain":        return .gain
         case "gainPanMute": return .gainPanMute
@@ -172,6 +180,9 @@ enum PlusAction: Hashable, Codable {
         case "send":        return .send
         case "plugin":
             if let r = plugin, !r.identifier.isEmpty { return .plugin(r) }
+            return .none
+        case "category":
+            if let i = category, i >= 0 { return .category(i) }
             return .none
         default:            return .none
         }
@@ -188,6 +199,9 @@ enum PlusAction: Hashable, Codable {
         case .plugin(let r):
             try c.encode("plugin", forKey: .kind)
             try c.encode(r, forKey: .plugin)
+        case .category(let i):
+            try c.encode("category", forKey: .kind)
+            try c.encode(i, forKey: .category)
         }
     }
 }
@@ -195,10 +209,9 @@ enum PlusAction: Hashable, Codable {
 /// Which action each of the sixteen slots (eight directions × near / far) asks for. A pure value: the store
 /// persists it, the gesture reads it, the browser's "+" page edits it through `assign` / `swap` / `clear`.
 ///
-/// ONE slot per action: assigning an action that another slot already holds MOVES it there, the other slot
-/// taking the old action of this one in exchange (a SWAP). So reorganising never loses a built-in that was
-/// merely displaced, and a plugin is never bound twice. Assigning over a slot whose action nobody else holds
-/// simply replaces it (`reset` brings the defaults back).
+/// An action may sit on SEVERAL slots (user decision of 17 October 2026: the page's list is a palette).
+/// `assign` replaces what the slot held; `swap` (a zone dragged onto another) exchanges two slots;
+/// `reset` brings the defaults back.
 struct PlusShortcutMap: Equatable, Codable {
 
     /// The format version written with the map. 1 = one action per direction (a "gainStage" kind for the
@@ -237,7 +250,7 @@ struct PlusShortcutMap: Equatable, Codable {
         level == .far && action(direction, .far) != .none ? PlusSlot(direction, .far) : PlusSlot(direction, .near)
     }
 
-    /// The slot holding `action` (nil = none does; always nil for `.none`).
+    /// The FIRST slot holding `action`, in `PlusSlot.allCases` order (nil = none does; always nil for `.none`).
     func slot(of action: PlusAction) -> PlusSlot? {
         guard action != .none else { return nil }
         return PlusSlot.allCases.first { self.action($0) == action }
@@ -248,14 +261,9 @@ struct PlusShortcutMap: Equatable, Codable {
 
     var isDefault: Bool { self == .defaults }
 
-    /// Puts `action` on `slot`. If another slot already holds that action, it takes the action `slot` had
-    /// (a swap); `.none` simply clears `slot`.
-    mutating func assign(_ action: PlusAction, to slot: PlusSlot) {
-        let previous = self.action(slot)
-        guard previous != action else { return }
-        if let other = self.slot(of: action) { set(previous, other) }
-        set(action, slot)
-    }
+    /// Puts `action` on `slot`, replacing what it held (another slot holding the same action keeps it);
+    /// `.none` simply clears `slot`.
+    mutating func assign(_ action: PlusAction, to slot: PlusSlot) { set(action, slot) }
 
     /// Exchanges the actions of two slots.
     mutating func swap(_ a: PlusSlot, _ b: PlusSlot) {
@@ -279,12 +287,6 @@ struct PlusShortcutMap: Equatable, Codable {
         if action == .none { actions.removeValue(forKey: slot) } else { actions[slot] = action }
     }
 
-    /// Lays `action` on `slot` unless it is nothing or another slot already holds it (reading a stored map:
-    /// a hand-edited file could name one action twice — the first slot in order keeps it).
-    private mutating func adopt(_ action: PlusAction, _ slot: PlusSlot) {
-        guard action != .none, self.slot(of: action) == nil else { return }
-        set(action, slot)
-    }
 
     // MARK: Codable — v2: `{"version": 2, "slots": {"right": {"near": {"kind": "gain"}, "far": {…}}, …}}`
     //
@@ -306,16 +308,16 @@ struct PlusShortcutMap: Equatable, Codable {
         var map = PlusShortcutMap()
         if let slots = try c.decodeIfPresent([String: [String: PlusAction]].self, forKey: .slots) {
             for s in PlusSlot.allCases {
-                map.adopt(slots[s.direction.rawValue]?[s.level.rawValue] ?? .none, s)
+                map.set(slots[s.direction.rawValue]?[s.level.rawValue] ?? .none, s)
             }
         } else if let v1 = try c.decodeIfPresent([String: V1Action].self, forKey: .directions) {
             for d in PlusDirection.allCases {
                 guard let raw = v1[d.rawValue] else { continue }
                 if raw.kind == "gainStage" {
-                    map.adopt(.gain, PlusSlot(d, .near))
-                    map.adopt(.gainPanMute, PlusSlot(d, .far))
+                    map.set(.gain, PlusSlot(d, .near))
+                    map.set(.gainPanMute, PlusSlot(d, .far))
                 } else {
-                    map.adopt(PlusAction.decoded(kind: raw.kind ?? "", plugin: raw.plugin), PlusSlot(d, .near))
+                    map.set(PlusAction.decoded(kind: raw.kind ?? "", plugin: raw.plugin), PlusSlot(d, .near))
                 }
             }
         }

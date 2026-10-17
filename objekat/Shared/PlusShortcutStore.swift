@@ -62,9 +62,10 @@ final class PlusShortcutStore {
 
     // MARK: Writing (each one writes the storage only when the map actually changes)
 
-    /// Puts `action` on `slot` (a swap if another slot held it, @see PlusShortcutMap.assign).
+    /// Puts `action` on `slot`, replacing what it held (an action may sit on several slots).
     func assign(_ action: PlusAction, to slot: PlusSlot) { mutate { $0.assign(action, to: slot) } }
 
+    /// A zone dragged onto another: the two exchange what they hold.
     func swap(_ a: PlusSlot, _ b: PlusSlot) { mutate { $0.swap(a, b) } }
 
     func clear(_ slot: PlusSlot) { mutate { $0.clear(slot) } }
@@ -72,7 +73,7 @@ final class PlusShortcutStore {
     /// `plugin` asks for nothing any more, wherever it was bound.
     func unbind(_ plugin: PlusPluginRef) { mutate { $0.unbind(plugin) } }
 
-    /// The "+" as it was designed: right = gain (further: gain · pan · mute), down-right = parallel branch,
+    /// The defaults: right = gain (further: gain · pan · mute), down-right = parallel branch,
     /// left = send.
     func reset() { mutate { $0.reset() } }
 
