@@ -464,6 +464,12 @@
 // Niveau audio mesuré (0..1) à la sortie d'un plugin du rack (vu-mètre par carte synoptique).
 - (float)audioLevelForPluginKey:(NSString*)pluginKey forObjectID:(NSString*)uuid;
 
+// VU par plugin, sans nœud de graphe (patch moteur 0042) : le plugin mesure lui-même sa SORTIE (RMS).
+// `owner` = identifiant de la vue qui s'enregistre ; `keys` = TOUTES les clés qu'elle affiche (liste
+// vide = désenregistrement). Ce qui est mesuré = l'union des propriétaires. Une clé non enregistrée,
+// un plugin désactivé/bypassé, un transport arrêté ou un export en cours lisent 0.
+- (void)setMeteredPluginKeys:(NSArray<NSString*>*)keys forOwner:(NSString*)owner;
+
 // Gain dB d'une voie parallèle (ObjGain de fin de voie), ajusté à chaud (sans recompiler).
 - (void)setVoiceGain:(float)dB forBlockID:(NSString*)blockID voiceIndex:(int)vi objectID:(NSString*)uuid;
 

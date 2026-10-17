@@ -467,7 +467,19 @@ Checked as still biting: `develop` still had the linear `std::find`.
   (l.~1795), the clips' channel matching (l.~1252), the sidechain direct / key maps (l.~1637, ~1672 — the
   `0037` refusal of a bridge reader without a direct channel, written against this very defect, is left in
   place). Branch `objekat-gainstage-0041` (local, NOT published), commit on top of `objekat-sends-0040`.
-  File: `tracktion_ChannelRemappingNode.*`. The next number is `0042`.
+  File: `tracktion_ChannelRemappingNode.*`.
+
+- `0042` — **an optional OUTPUT meter on a plugin (per-plugin VU of the signal view).** `Plugin` gains a
+  `LevelMeasurer objOutputMeasurer` (RMS mode, set in the constructor) and an `std::atomic<bool>
+  objOutputMeteringEnabled`; at the end of `PluginNode::process`, only when the flag is set, the plugin is
+  enabled and the graph is not rendering, the plugin's own output buffer is fed to the measurer. No node is
+  added to the graph and nothing is measured for a plugin nobody registered (one relaxed atomic load). The
+  bridge (`OBJEngineCore.mm`) attaches a `LevelMeasurer::Client` per metered plugin; it must be removed from
+  the living measurer before it is destroyed. `tracktion_LevelMeasurer.h` is included before `Plugin.h` in
+  `tracktion_engine.h` (Plugin holds the measurer by value). Branch `objekat-plugin-meters-0042` (local, NOT
+  published), commit on top of `objekat-gainstage-0041`. Files: `tracktion_Plugin.*`,
+  `tracktion_PluginNode.cpp`, `tracktion_engine.h`. The next number is `0043`.
+
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
 branch `objekat-patches`) and the commit
@@ -509,7 +521,7 @@ does not go through the script. Patch `0031` settles it in the branch itself: ju
 HTTPS, same repository, same commit.
 
 Verification: `git -C tracktion_engine log --oneline 494e91d2ff5..HEAD | wc -l`
-must give as many as there are archives in the active series — today **39**. That number moves
+must give as many as there are archives in the active series — today **40**. That number moves
 with every patch added and with every one set aside; `ls engine-patches/3.5/0*.patch | wc -l`
 says it without getting it wrong.
 

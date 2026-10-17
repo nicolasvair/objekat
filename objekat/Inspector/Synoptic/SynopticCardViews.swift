@@ -236,7 +236,7 @@ struct SynopticCardView: View {
                 Spacer(minLength: 0)
 
                 // VU meter: a very thin horizontal line, right at the bottom
-                SynopticCardVULine(vu: plugin.vu)
+                SynopticCardVULine(pluginID: plugin.id, fallback: plugin.vu)
             }
             .padding(.horizontal, 8)
             .padding(.top, 5)
@@ -259,10 +259,17 @@ struct SynopticCardView: View {
 }
 
 /// A card's VU meter: a very thin horizontal line, right at the bottom (a plugin's level, 0...1).
+///
+/// It READS its level itself, from the store of the `SynopticBoundView` above it (environment), so a
+/// refresh invalidates this line and nothing else. With no store above (the demo sheet) it draws
+/// `fallback`, the plugin's made-up `vu`.
 struct SynopticCardVULine: View {
-    let vu: Double
+    let pluginID: UUID
+    var fallback: Double = 0
+    @Environment(\.synopticLevels) private var store
 
     var body: some View {
+        let vu = store.map { $0.levels[pluginID] ?? 0 } ?? fallback
         Capsule()
             .fill(Color.secondary.opacity(0.2))
             .frame(height: 2)
@@ -336,7 +343,7 @@ struct SynopticGainStageControls: View {
 
             Spacer(minLength: 0)
 
-            SynopticCardVULine(vu: plugin.vu)
+            SynopticCardVULine(pluginID: plugin.id, fallback: plugin.vu)
                 .padding(.horizontal, face == .gain ? 8 : 4)
                 .padding(.bottom, 4)
         }

@@ -1068,6 +1068,33 @@ struct OBJParkedPlugin {
     std::string       holdTag;      // onglet inactif qui le retient (sans échéance) ; vide sinon
 };
 
+// VU PAR PLUGIN (carte du synoptique) : un Client de mesure branché sur le `objOutputMeasurer` du
+// plugin lui-même (patch moteur 0042) — AUCUN nœud de plus dans le graphe, AUCUNE reconstruction :
+// le plugin mesure sa sortie en fin de PluginNode::process quand son drapeau est levé.
+//
+// Le plugin n'est tenu que par une référence FAIBLE : l'enregistrement ne doit jamais prolonger la
+// vie d'un plugin (un AU garde sa mémoire et son éditeur), ni jamais en lire un détruit. Détruire
+// l'enregistrement retire le Client de la mesure du plugin s'il vit encore (sinon le fil audio
+// garderait un pointeur sur un Client libéré) ; s'il est mort, sa mesure est partie avec lui.
+struct OBJPluginMeter {
+    te::SafeSelectable<te::Plugin>              plugin;
+    std::unique_ptr<te::LevelMeasurer::Client>  client;
+    double                                      lastReadMs = 0.0;   // cache de lecture (15 ms)
+    float                                       lastValue  = 0.0f;
+
+    OBJPluginMeter() = default;
+    OBJPluginMeter (OBJPluginMeter&&) = default;
+    OBJPluginMeter& operator= (OBJPluginMeter&&) = default;
+    ~OBJPluginMeter() { detach(); }
+
+    void detach() {
+        if (client)
+            if (auto* p = plugin.get())
+                p->objOutputMeasurer.removeClient (*client);
+        client.reset();
+    }
+};
+
 // Au-delà, l'instance est relâchée : un AU consigné garde sa mémoire et ses ressources, on ne
 // le garde donc que le temps d'un aller-retour, pas d'une session.
 static constexpr double kObjPluginParkingTtlMs   = 20000.0;
@@ -1271,6 +1298,7 @@ struct OBJRenderChain {
 - (void)forcePluginStatesForRenderClone:(te::Edit&)clone;
 // Consigne de plugins : garde vivant un plugin retiré, le temps d'un aller-retour. @see
 // OBJParkedPlugin pour le pourquoi et les limites.
+- (void)syncPluginMeters;   // VU par plugin : aligne les enregistrements sur l'union et sur _pluginMap
 - (void)parkPluginsForObjectID:(NSString*)uuid;
 - (void)parkPlugin:(te::Plugin&)plugin;
 - (te::Plugin::Ptr)takeParkedPluginMatching:(const juce::ValueTree&)wantedTree;
@@ -1522,6 +1550,12 @@ struct OBJRenderChain {
     // setMasterStemKey: n'a pas été appelé. Le rack master s'insère avant cet ObjGain d'ancre.
     std::string                                            _masterStemKey;
     te::Plugin::Ptr                                        _masterAnchorGain;  // ObjGain ancre sur le master
+    // VU par plugin (patch moteur 0042). pluginKey → enregistrement de mesure ; propriétaire (une vue
+    // synoptique) → clés qu'il affiche. L'UNION des clés est ce qui est mesuré : plusieurs synoptiques
+    // peuvent être ouverts à la fois (inspecteur + fenêtre, deux onglets de popover de stem…).
+    std::unordered_map<std::string, OBJPluginMeter>                              _pluginMeters;
+    std::unordered_map<std::string, std::unordered_set<std::string>>             _meterOwners;
+    std::unordered_set<std::string>                                              _meteredKeyUnion;
     // pluginKey (ObjectPlugin.id) → Plugin::Ptr
     std::unordered_map<std::string, te::Plugin::Ptr>          _pluginMap;
     // pluginKey → fenêtre éditeur ouverte (nullptr = fermée)
@@ -2261,6 +2295,7 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _stemBusMap.clear();
     _stemRouteToMain.clear();
     _stemGainMap.clear();
+    _pluginMeters.clear();   // détache les Clients des plugins encore vivants (propriétaires conservés : une vue reste ouverte)
     _stemMeterClients.clear();
     _masterMeterClient.reset();
     _masterStemKey.clear();
@@ -3039,6 +3074,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     [self parkPlugin:*inst];   // remplacer un instrument par le même = un aller-retour de plus
     inst->deleteFromParent();
     _instrumentMap.erase(it);
+    [self syncPluginMeters];   // VU par plugin
 }
 
 // Ferme les fenêtres d'éditeur natives ouvertes ET purge _pluginMap pour tous les
@@ -3198,7 +3234,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     }
 
     te::PluginList* pl = [self userPluginListForKey:key];
-    if (!pl) return;
+    if (!pl) { [self syncPluginMeters]; return; }
     for (auto* p : *pl) {
         for (auto it = _pluginMap.begin(); it != _pluginMap.end(); ) {
             if (it->second.get() == p) {
@@ -3211,6 +3247,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
             }
         }
     }
+    [self syncPluginMeters];   // VU par plugin : les clés qui viennent de partir
 }
 
 // Retire un objet du moteur : on retire son CLIP (le clip audio, ou le ContainerClip d'un
@@ -8804,13 +8841,97 @@ static void objDumpPluginList(te::PluginList& pl,
     objDumpPluginList(pl, role, 0);
 }
 
-// Vu-mètre par plugin : il vivait dans le rack (un LevelMeterPlugin câblé après chaque plugin).
-// En chaîne linéaire, l'ajouter reviendrait à doubler le nombre de plugins de la chaîne — soit
-// exactement ce que cette branche cherche à mesurer. Retourne 0 : les cartes du synoptique
-// affichent un vu-mètre au repos.
+// MARK: - VU par plugin (patch moteur 0042)
+
+// Vu-mètre par plugin. Le rack d'autrefois câblait un LevelMeterPlugin derrière chaque plugin ; en
+// chaîne linéaire cela doublait le nombre de plugins (et de nœuds) — d'où le bouchon d'un temps. La
+// mesure est maintenant faite PAR le plugin (te::Plugin::objOutputMeasurer, RMS, en fin de
+// PluginNode::process), seulement tant qu'un synoptique l'a demandée.
+//
+// `owner` = la vue qui s'enregistre ; elle donne l'ensemble COMPLET des clés qu'elle affiche (une liste
+// vide la désenregistre). Ce qui est mesuré est l'union des ensembles de tous les propriétaires.
+- (void)setMeteredPluginKeys:(NSArray<NSString*>*)keys forOwner:(NSString*)owner {
+    if (!owner) return;
+    const std::string o([owner UTF8String]);
+    std::unordered_set<std::string> set;
+    for (NSString* k in keys) if (k.length) set.insert(std::string([k UTF8String]));
+    if (set.empty()) _meterOwners.erase(o);
+    else             _meterOwners[o] = std::move(set);
+
+    _meteredKeyUnion.clear();
+    for (auto& [ow, ks] : _meterOwners) _meteredKeyUnion.insert(ks.begin(), ks.end());
+    [self syncPluginMeters];
+}
+
+// Aligne les enregistrements de mesure sur (union des clés) × (_pluginMap). Idempotent, peu cher
+// (quelques dizaines d'entrées). Un enregistrement est retiré quand sa clé n'est plus demandée, que
+// la clé ne désigne plus de plugin, ou qu'elle en désigne un AUTRE (plugin remplacé, repris de la
+// consigne sous une autre clé…) ; un enregistrement est créé pour toute clé demandée dont le plugin
+// existe. Le drapeau du plugin n'est baissé que si plus aucun enregistrement ne le vise.
+- (void)syncPluginMeters {
+    std::vector<te::Plugin*> released;
+    for (auto it = _pluginMeters.begin(); it != _pluginMeters.end(); ) {
+        auto pit = _pluginMap.find(it->first);
+        te::Plugin* cur = (pit != _pluginMap.end()) ? pit->second.get() : nullptr;
+        te::Plugin* old = it->second.plugin.get();   // nul si le plugin est mort
+        const bool keep = _meteredKeyUnion.count(it->first) && cur && old == cur;
+        if (keep) { ++it; continue; }
+        if (old) released.push_back(old);
+        it = _pluginMeters.erase(it);                // le destructeur retire le Client
+    }
+
+    for (auto& pk : _meteredKeyUnion) {
+        if (_pluginMeters.count(pk)) continue;
+        auto pit = _pluginMap.find(pk);
+        if (pit == _pluginMap.end() || !pit->second) continue;
+        te::Plugin* p = pit->second.get();
+        OBJPluginMeter rec;
+        rec.plugin = p;
+        rec.client = std::make_unique<te::LevelMeasurer::Client>();
+        p->objOutputMeasurer.addClient(*rec.client);
+        p->objOutputMeteringEnabled.store(true, std::memory_order_relaxed);
+        _pluginMeters.emplace(pk, std::move(rec));
+    }
+
+    for (auto* old : released) {
+        bool stillMetered = false;
+        for (auto& [k, rec] : _pluginMeters) if (rec.plugin.get() == old) { stillMetered = true; break; }
+        if (!stillMetered) old->objOutputMeteringEnabled.store(false, std::memory_order_relaxed);
+    }
+}
+
+// Niveau (0..1) à la SORTIE d'un plugin, même échelle que les stems (max(L,R) en dB, -60..0 → 0..1).
+// 0 quand : la clé n'est pas enregistrée, le plugin n'existe plus, appartient à la chaîne d'un autre
+// hôte (id dupliqué), est désactivé / bypassé (rien n'est mesuré), ou que le transport est arrêté.
+// La lecture VIDE le Client (getAndClear) : un cache de 15 ms par clé évite que deux vues qui
+// interrogent la même clé ne se volent les crêtes.
 - (float)audioLevelForPluginKey:(NSString*)pluginKey forObjectID:(NSString*)uuid {
-    (void)pluginKey; (void)uuid;
-    return 0.0f;
+    if (!_edit || !pluginKey) return 0.0f;
+    const std::string pk([pluginKey UTF8String]);
+    if (!_meteredKeyUnion.count(pk)) return 0.0f;
+    // Test SILENCIEUX : refuseForeignPluginKey: journalise et compte à chaque appel, soit 30 fois par
+    // seconde et par carte dans un projet à ids dupliqués.
+    if (uuid && [self pluginKey:pk isForeignTo:std::string([uuid UTF8String])]) return 0.0f;
+
+    auto pit = _pluginMap.find(pk);
+    auto rit = _pluginMeters.find(pk);
+    if (pit == _pluginMap.end() || !pit->second
+        || rit == _pluginMeters.end() || rit->second.plugin.get() != pit->second.get()) {
+        [self syncPluginMeters];     // plugin apparu ou remplacé depuis : attaché pour la prochaine lecture
+        return 0.0f;
+    }
+
+    OBJPluginMeter& rec = rit->second;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - rec.lastReadMs < 15.0) return rec.lastValue;
+
+    const float dB = std::max(rec.client->getAndClearAudioLevel(0).dB,
+                              rec.client->getAndClearAudioLevel(1).dB);
+    float v = std::max(0.0f, std::min(1.0f, (dB + 60.0f) / 60.0f));
+    if (!pit->second->isEnabled() || ![self isCurrentlyPlaying]) v = 0.0f;
+    rec.lastReadMs = now;
+    rec.lastValue  = v;
+    return v;
 }
 
 // Ajuste à chaud le gain dB d'une voie de bloc parallèle, sans recompiler (pas de glitch en
