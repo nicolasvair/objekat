@@ -223,7 +223,7 @@ enum ProjectFileUsageTest {
         check("classify: v1 is unused", ids(r.unused).contains("samples/consolidate/Kick_aaaaaaaa_v1.wav"))
         check("classify: the legacy wave nobody reads is unused", ids(r.unused).contains("samples/objects/Old_bbbbbbbb.wav"))
         check("classify: the buckets partition the universe",
-              r.used.count + r.protected.count + r.held.count + r.unused.count == uni.count)
+              r.used.count + r.protected.count + r.usedElsewhere.count + r.unused.count == uni.count)
         check("classify: unused bytes add up", r.unusedBytes == r.unused.reduce(0) { $0 + $1.size })
     }
 
@@ -252,14 +252,14 @@ enum ProjectFileUsageTest {
         let c1 = U.closure(items: [Ref(consolidateID: d1)], defs: defs1, readSidecar: { _ in Ref() })
         let other = U.OtherVersion(name: "V1.objekat", usage: U.usage(of: c1, defs: defs1, folder: folder))
         let r = U.classify(universe: uni, session: session, protected: U.Usage(), others: [other])
-        check("two versions: what another version reads is held, not unused",
-              r.held.contains { $0.candidate.id == "samples/consolidate/Kick_aaaaaaaa_v1.wav" && $0.versions == ["V1.objekat"] })
-        check("two versions: held is never in unused", !ids(r.unused).contains("samples/consolidate/Kick_aaaaaaaa_v1.wav"))
-        check("two versions: used by the session wins over held", ids(r.used).contains("samples/consolidate/Kick_aaaaaaaa_v2.wav"))
+        check("two versions: what another version reads is usedElsewhere, not unused",
+              r.usedElsewhere.contains { $0.candidate.id == "samples/consolidate/Kick_aaaaaaaa_v1.wav" && $0.usedBy == ["V1.objekat"] })
+        check("two versions: usedElsewhere is never in unused", !ids(r.unused).contains("samples/consolidate/Kick_aaaaaaaa_v1.wav"))
+        check("two versions: used by the session wins over usedElsewhere", ids(r.used).contains("samples/consolidate/Kick_aaaaaaaa_v2.wav"))
         let rFolderless = U.classify(universe: uni, session: session, protected: U.Usage(), others: [])
         check("session scope with no other version: the same wave is unused",
               ids(rFolderless.unused).contains("samples/consolidate/Kick_aaaaaaaa_v1.wav"))
-        check("held bytes are reported", r.heldBytes == 121)
+        check("usedElsewhere bytes are reported", r.usedElsewhereBytes == 121)
     }
 
     // Several versions hold the same file: all are named.
@@ -267,8 +267,49 @@ enum ProjectFileUsageTest {
         let holder = U.Usage(rel: ["samples/sources/cap.wav"], names: [])
         let r = U.classify(universe: uni, session: U.Usage(), protected: U.Usage(),
                            others: [U.OtherVersion(name: "A.objekat", usage: holder), U.OtherVersion(name: "B.json", usage: holder)])
-        check("held by two versions names both",
-              r.held.first { $0.candidate.id == "samples/sources/cap.wav" }?.versions == ["A.objekat", "B.json"])
+        check("used by two versions names both",
+              r.usedElsewhere.first { $0.candidate.id == "samples/sources/cap.wav" }?.usedBy == ["A.objekat", "B.json"])
+    }
+
+    // THE TWO SCOPES. V1 still reads Kick v1, the session (V2) has moved on to v2.
+    do {
+        let d = id(1)
+        let defs = [d: Def(id: d, wave: "Kick_aaaaaaaa_v2.wav")]
+        let c = U.closure(items: [Ref(consolidateID: d)], defs: defs, readSidecar: { _ in Ref() })
+        let session = U.usage(of: c, defs: defs, folder: folder)
+        let defs1 = [d: Def(id: d, wave: "Kick_aaaaaaaa_v1.wav")]
+        let c1 = U.closure(items: [Ref(consolidateID: d)], defs: defs1, readSidecar: { _ in Ref() })
+        let other = U.OtherVersion(name: "V1.objekat", usage: U.usage(of: c1, defs: defs1, folder: folder))
+        let r = U.classify(universe: uni, session: session, protected: U.Usage(), others: [other])
+        let v1 = "samples/consolidate/Kick_aaaaaaaa_v1.wav"
+        let sess = r.cleanable(in: .session, unreadableVersions: []) ?? []
+        let fold = r.cleanable(in: .folder, unreadableVersions: []) ?? []
+        check("scopes: Session offers V1's wave, named usedBy=[V1]",
+              ids(sess).contains(v1) && r.usedBy(v1) == ["V1.objekat"])
+        check("scopes: Folder does NOT offer it", !ids(fold).contains(v1))
+        check("scopes: Session is a superset of Folder", ids(fold).isSubset(of: ids(sess)))
+        check("scopes: they differ exactly by what another version reads",
+              ids(sess).subtracting(ids(fold)) == ids(r.usedElsewhere.map(\.candidate)) && !r.usedElsewhere.isEmpty)
+        check("scopes: the orphans come first in Session (the ones ticked by default)",
+              Array(sess.prefix(r.unused.count)) == r.unused)
+        check("scopes: a pure orphan has no usedBy", r.usedBy("samples/objects/Old_bbbbbbbb.wav").isEmpty)
+        check("scopes: what the session reads is in neither", !ids(sess).contains("samples/consolidate/Kick_aaaaaaaa_v2.wav"))
+        // An unreadable version: Session still answers (same list), Folder refuses.
+        check("scopes: an unreadable version does not stop Session",
+              r.cleanable(in: .session, unreadableVersions: ["broken.objekat"]).map(ids) == ids(sess))
+        check("scopes: an unreadable version makes Folder refuse (nil)",
+              r.cleanable(in: .folder, unreadableVersions: ["broken.objekat"]) == nil)
+        // Protected beats usedElsewhere: never offered, in either scope.
+        let prot = U.Usage(rel: [v1], names: [])
+        let rp = U.classify(universe: uni, session: session, protected: prot, others: [other])
+        check("scopes: protected is offered in NEITHER scope",
+              !ids(rp.cleanable(in: .session, unreadableVersions: []) ?? []).contains(v1)
+              && !ids(rp.cleanable(in: .folder, unreadableVersions: []) ?? []).contains(v1)
+              && ids(rp.protected).contains(v1))
+        // Nothing read elsewhere: the scopes coincide.
+        let r0 = U.classify(universe: uni, session: session, protected: U.Usage(), others: [])
+        check("scopes: with no other version the two coincide",
+              r0.cleanable(in: .session, unreadableVersions: []).map(ids) == r0.cleanable(in: .folder, unreadableVersions: []).map(ids))
     }
 
     // Protected roots (clipboard, other tabs, ongoing bake).

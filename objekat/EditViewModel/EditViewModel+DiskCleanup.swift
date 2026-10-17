@@ -53,8 +53,12 @@ struct DiskCleanOutcome {
     var refusal: DiskCleanRefusal?
     /// What was (or, in a dry run, would be) sent to the Trash.
     var units: [ProjectFileUsage.Candidate] = []
+    /// For each of `units` that ANOTHER version of the folder still reads (`session` scope only),
+    /// the versions that do: they will show the file missing.
+    var usedBy: [String: [String]] = [:]
     /// Asked for, but not on the list of what may be cleaned, with the bucket it is in
-    /// (`used`, `protected`, `held`, or `unknown`).
+    /// (`used`, `protected`, `used_elsewhere` — in `folder` scope, where those are kept — or
+    /// `unknown`).
     var rejected: [(id: String, reason: String)] = []
     var failed: [(id: String, message: String)] = []
 
@@ -71,7 +75,9 @@ extension EditViewModel {
     /// is not on the fresh list can be trashed whatever `selection` says, and a dry run (the API's
     /// default) goes through exactly the same checks and moves nothing.
     ///
-    /// - Parameter selection: the `id`s (primary file, folder-relative) to clean; nil = all.
+    /// - Parameter selection: the `id`s (primary file, folder-relative) to clean. nil = every file
+    ///   NOBODY reads (the orphans): the files another version reads (`session` scope) are cleaned
+    ///   only when NAMED here, as the popover leaves them unticked.
     @discardableResult
     func cleanUnusedFiles(selection: Set<String>?, scope: DiskCleanScope, dryRun: Bool) async -> DiskCleanOutcome {
         var outcome = DiskCleanOutcome(dryRun: dryRun, scope: scope)
@@ -94,7 +100,12 @@ extension EditViewModel {
             }
             outcome.units = cleanable.filter { selection.contains($0.id) }
         } else {
-            outcome.units = cleanable
+            let orphans = Set(result.report.unused.map(\.id))
+            outcome.units = cleanable.filter { orphans.contains($0.id) }
+        }
+        for unit in outcome.units {
+            let versions = result.report.usedBy(unit.id)
+            if !versions.isEmpty { outcome.usedBy[unit.id] = versions }
         }
         guard !dryRun else { return outcome }
 
@@ -129,7 +140,7 @@ extension EditViewModel {
     private static func bucket(of id: String, in report: ProjectFileUsage.Report) -> String {
         if report.used.contains(where: { $0.id == id }) { return "used" }
         if report.protected.contains(where: { $0.id == id }) { return "protected" }
-        if report.held.contains(where: { $0.id == id }) { return "held" }
+        if report.usedElsewhere.contains(where: { $0.id == id }) { return "used_elsewhere" }
         return "unknown"
     }
 

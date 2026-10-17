@@ -16,10 +16,12 @@ extension CommandRegistry {
                         + "caches). Recomputes by default; refused with invalid_state for a project "
                         + "never saved.",
                  params: [ParamSpec("scope", "string", required: false,
-                                    "`session` (default): what THIS session does not read, files "
-                                  + "another version of the folder reads being listed apart in "
-                                  + "`held`. `folder`: what NO version reads — answers "
-                                  + "`cleanable: null` while a version of the folder cannot be read."),
+                                    "`session` (default): EVERYTHING this session does not read, "
+                                  + "including the files another version of the folder still reads "
+                                  + "(`cleanable` units carrying `used_by`, listed in `used_elsewhere` "
+                                  + "too); an unreadable version does not stand in the way. `folder`: "
+                                  + "only what NO version reads — answers `cleanable: null` while a "
+                                  + "version of the folder cannot be read."),
                           ParamSpec("refresh", "bool", required: false,
                                     "false = answer with the figures already held, without a new scan.")],
                  undo: .none) { p in
@@ -43,7 +45,11 @@ extension CommandRegistry {
                  summary: "Sends the files nothing reads any more to the TRASH (never deletes). A dry run "
                         + "unless `dry_run` is false. Everything is recomputed right before; a path that "
                         + "is not on the fresh list of cleanable files is reported in `rejected` with "
-                        + "its bucket (`used`, `protected`, `held`, `unknown`) and never touched. "
+                        + "its bucket (`used`, `protected`, `used_elsewhere` in `folder` scope, "
+                        + "`unknown`) and never touched. In `session` scope a file another version "
+                        + "reads IS cleanable when named in `paths` (the units then carry `used_by`: "
+                        + "those versions will show it missing); without `paths` only the files "
+                        + "nobody reads are taken. "
                         + "Refused (invalid_state, nothing moved) for a project never saved, while a "
                         + "load, a bake or a consolidated edit is under way, and in `folder` scope "
                         + "while a version of the folder cannot be read. Undoing afterwards fetches a "
@@ -51,7 +57,8 @@ extension CommandRegistry {
                  params: [ParamSpec("scope", "string", required: false, "`session` (default) or `folder`."),
                           ParamSpec("paths", "array<string>", required: false,
                                     "The folder-relative `path`s to clean (as `project.disk_usage` lists them). "
-                                  + "Absent = every cleanable unit."),
+                                  + "Absent = every unit NOBODY reads (never the ones another version "
+                                  + "reads: those must be named)."),
                           ParamSpec("dry_run", "bool", required: false,
                                     "true by default: say what would move, move nothing.")],
                  undo: .none) { p in
@@ -84,6 +91,7 @@ extension CommandRegistry {
                     "size": .int(Int(unit.size)),
                     "files": .array(unit.files.map { .string($0) }),
                 ]
+                if let versions = outcome.usedBy[unit.id] { o["used_by"] = .array(versions.map { .string($0) }) }
                 if !dryRun, let trashed = vm.trashedFileUnits[unit.id] {
                     o["trash"] = .array(trashed.files.map { .string($0.trash.path) })
                 }
@@ -91,6 +99,7 @@ extension CommandRegistry {
             }
             return .object([
                 "dry_run": .bool(dryRun),
+                "used_by_other_versions": .int(outcome.usedBy.count),
                 "scope": .string(scope.rawValue),
                 (dryRun ? "would_trash" : "trashed"): .array(units),
                 "count": .int(units.count),
@@ -113,7 +122,7 @@ extension CommandRegistry {
         return scope
     }
 
-    private static func candidateJSON(_ c: ProjectFileUsage.Candidate, versions: [String]? = nil) -> JSONValue {
+    private static func candidateJSON(_ c: ProjectFileUsage.Candidate, usedBy: [String]? = nil) -> JSONValue {
         var o: [String: JSONValue] = [
             "path": .string(c.id),
             "name": .string(c.name),
@@ -122,7 +131,7 @@ extension CommandRegistry {
             "size": .int(Int(c.size)),
             "files": .array(c.files.map { .string($0) }),
         ]
-        if let versions { o["versions"] = .array(versions.map { .string($0) }) }
+        if let usedBy, !usedBy.isEmpty { o["used_by"] = .array(usedBy.map { .string($0) }) }
         return .object(o)
     }
 
@@ -135,10 +144,13 @@ extension CommandRegistry {
             "total_bytes": .int(Int(r.totalBytes)),
             "used_bytes": .int(Int(report.usedBytes)),
             "unused_bytes": .int(Int(cleanable == nil ? 0 : report.unusedBytes)),
-            "held_bytes": .int(Int(report.heldBytes)),
+            "cleanable_bytes": .int(Int((cleanable ?? []).reduce(Int64(0)) { $0 + $1.size })),
+            "used_elsewhere_bytes": .int(Int(report.usedElsewhereBytes)),
             "protected_bytes": .int(Int(report.protectedBytes)),
-            "cleanable": cleanable.map { list in .array(list.map { candidateJSON($0) }) } ?? .null,
-            "held": .array(report.held.map { candidateJSON($0.candidate, versions: $0.versions) }),
+            "cleanable": cleanable.map { list in
+                .array(list.map { candidateJSON($0, usedBy: report.usedBy($0.id)) })
+            } ?? .null,
+            "used_elsewhere": .array(report.usedElsewhere.map { candidateJSON($0.candidate, usedBy: $0.usedBy) }),
             "protected": .array(report.protected.map { candidateJSON($0) }),
             "versions": .array(r.versionNames.map { .string($0) }),
             "unreadable_versions": .array(r.unreadableVersions.map { .string($0) }),
