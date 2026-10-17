@@ -337,7 +337,8 @@ extension EditViewModel {
 
         for (defID, original) in objectSidecars {
             guard let def = consolidateDefinitions[defID],
-                  let data = try? encodedConsolidateSidecar(rewrite(original), projectFolder: destFolder)
+                  let data = try? encodedConsolidateSidecar(rewrite(original), rootIsContent: def.rootIsContent,
+                                                        projectFolder: destFolder)
             else { continue }
             sidecarWrites.append((consolidateSidecarURL(forWave: def.wave, in: consolidateDst), data))
         }
