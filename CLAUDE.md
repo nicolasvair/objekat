@@ -2728,6 +2728,12 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
   offers for free. It is the ONE visible sentence that does NOT go through `L()`: it is not a
   `.swift`, and a legal notice is not translated lightly. Leave it in English, and keep it in
   step with `NOTICE`.
+  The same panel shows `objekat/Resources/Credits.rtf` (third-party components, licences, links; English,
+  no hardcoded text colour so dark mode works) — keep it in step with `NOTICE` too, which ships in the
+  bundle along with `LICENSE`. `CFBundleVersion` is the commit count (`git rev-list --count HEAD`), written
+  into the PRODUCT's Info.plist by the "Build number" Run Script phase (`tools/scripts/set-build-number.sh`,
+  before the signature; user-script sandboxing is off for the target; falls back to
+  `CURRENT_PROJECT_VERSION` without git, never fails the build). `MARKETING_VERSION` stays manual.
 - **The engine comes down on its own since 3 September 2026** — `git clone --recurse-submodules`
   and nothing else. The submodule points at the fork `nicolasvair/tracktion_engine_for_objekat`,
   which carries `objekat-patches-3.5`; `modules/juce` stays on the official `37c894f83d3`. Before
