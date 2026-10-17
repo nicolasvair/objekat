@@ -155,7 +155,9 @@ nonisolated enum DiskUsageScanner {
     /// Every regular file under `folder`, relative to it. Symbolic links are skipped, so one can
     /// never be offered for deletion.
     static func listFolder(_ folder: URL) -> [ProjectFileUsage.Listed] {
-        let root = folder.resolvingSymlinksInPath()
+        // `realpath`, not `resolvingSymlinksInPath`: the latter turns `/private/tmp/x` into `/tmp/x`
+        // while the enumerator reports `/private/tmp/x/…`, and no file would match the prefix.
+        let root = URL(fileURLWithPath: realPath(folder.path))
         let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         let keys: [URLResourceKey] = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
@@ -178,6 +180,12 @@ nonisolated enum DiskUsageScanner {
         return urls.filter { SessionFile.hasSessionExtension($0) }
             .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
+    /// The canonical path of `path` (every symbolic link resolved, `/private` kept).
+    static func realPath(_ path: String) -> String {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        return realpath(path, &buffer) != nil ? String(cString: buffer) : path
     }
 
     static func sameFile(_ a: URL, _ b: URL) -> Bool {
