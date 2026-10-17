@@ -196,8 +196,10 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             if iconOnly {
                 icon.frame(width: 24, height: 22)
             } else if stacked {
+                // As wide as the name needs, never wider than the zone allows (a flexible frame would take
+                // the whole allowance even for a short name).
                 VStack(spacing: 1) { icon; text }
-                    .frame(maxWidth: width)
+                    .frame(width: width.map { min($0, Self.stackedNameWidth(name)) })
                     .padding(.horizontal, 3).padding(.vertical, 2)
             } else {
                 HStack(spacing: 5) { icon; text }
@@ -209,6 +211,12 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .fill(Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 5)
             .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: missing ? [3, 2] : [])))
+    }
+
+    /// The width a zone label's name takes at its 9 pt (the icon's width at least), rounded up.
+    private static func stackedNameWidth(_ name: String) -> CGFloat {
+        let w = (name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 9)]).width
+        return max(16, ceil(w) + 1)
     }
 
     /// Carries `action` (from the zone `from`, or from the palette) and lays it where the hand lets go: on a
