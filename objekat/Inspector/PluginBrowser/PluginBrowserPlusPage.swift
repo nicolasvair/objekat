@@ -161,7 +161,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
 
     /// The room a zone's label has: the arc's chord at its middle radius, a little less — and never more than
     /// a short name needs (a long one is cut with an ellipsis, its tooltip says it whole).
-    private static let maxLabelWidth: CGFloat = 84
+    private static var maxLabelWidth: CGFloat { 84 }
 
     private static func labelWidth(_ s: PlusSector, scale: CGFloat) -> CGFloat {
         let mid = (s.inner.distance(at: s.midAngle) + s.outer.distance(at: s.midAngle)) / 2 * scale
