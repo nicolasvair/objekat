@@ -63,4 +63,36 @@ enum AutomationHandTravel {
         if abs(applied) < wheelFineSteps { d = max(-1, min(1, d)) }
         return d
     }
+
+    // MARK: - The pencil's drag (live write)
+    //
+    // The pencil writes while the transport PLAYS, so the hand cannot stop to aim: the same travel
+    // must move the value by the same amount wherever the gesture is, whatever the row's height
+    // and whatever the parameter's range. `rowTravel` above does neither (fine near the anchor,
+    // then the row's own geometry — one pixel was ~7 dB on a default volume row), so the pencil
+    // reads ONE rate, the fine zone's, all the way. And a hand that overshoots a bound is not
+    // made to travel back through what it overshot: the anchor slides with it, so the first
+    // pixel back moves the value again.
+
+    /// Hand travel (px) per step of the parameter (`ParamRef.valueStep`, or a hundredth of the
+    /// range) under the pencil — the fine zone's rate, everywhere.
+    static let pencilPxPerStep: Double = pxPerStep
+
+    /// One pencil gesture's anchor. `value` maps the hand's TOTAL vertical travel since the press
+    /// (px, down positive) to the value to write.
+    struct PencilDrag {
+        private(set) var anchorDy: Double = 0
+        private(set) var anchorValue: Double
+
+        init(startValue: Double) { anchorValue = startValue }
+
+        mutating func value(handDy dy: Double, step: Double,
+                            range: ClosedRange<Double>) -> Double {
+            guard step > 0 else { return anchorValue }
+            let raw = anchorValue - (dy - anchorDy) / AutomationHandTravel.pencilPxPerStep * step
+            let v = min(max(raw, range.lowerBound), range.upperBound)
+            if v != raw { anchorDy = dy; anchorValue = v }
+            return v
+        }
+    }
 }
