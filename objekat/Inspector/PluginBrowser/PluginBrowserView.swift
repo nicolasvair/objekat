@@ -13,12 +13,15 @@ enum PluginBrowserLayout {
     /// ...but never taller than the window it hangs from, minus this margin.
     static let windowMargin: CGFloat = 60
     static let minimumHeight: CGFloat = 320
+    /// The "+" page wants the circle AND room for the palette below it: the sheet grows on that page only.
+    static let plusSheetHeight: CGFloat = 860
 
     /// `mainWindow`, never `keyWindow`: while the sheet is up it IS the key window, and a size read
     /// from it would shrink the sheet it is sizing.
-    static func sheetSize() -> CGSize {
+    static func sheetSize(plusPage: Bool = false) -> CGSize {
         let rect = NSApp.mainWindow?.contentLayoutRect
-        let height = rect.map { max(minimumHeight, min(sheetHeight, $0.height - windowMargin)) } ?? sheetHeight
+        let wanted = plusPage ? plusSheetHeight : sheetHeight
+        let height = rect.map { max(minimumHeight, min(wanted, $0.height - windowMargin)) } ?? wanted
         return CGSize(width: sheetWidth(windowWidth: rect?.width), height: height)
     }
 
@@ -182,7 +185,9 @@ struct PluginBrowserView: View {
             Divider()
             footer
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        // The sheet's height follows the page: taller on the "+" page, which lays its palette under the circle.
+        .frame(height: PluginBrowserLayout.sheetSize(plusPage: currentPage == .plusShortcuts).height)
         .onChange(of: searchText) { old, new in
             // A search STARTS: back to "All". Only then — a colour picked while searching stays.
             guard PluginBrowserQuery(new).asksForSomething, !PluginBrowserQuery(old).asksForSomething,

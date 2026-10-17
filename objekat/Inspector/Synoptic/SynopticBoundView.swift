@@ -590,7 +590,7 @@ struct SynopticBoundView: View {
             insertion: insertion,
             initialPage: category.map { .plugins(.category($0)) } ?? .plugins(.all)
         )
-        .frame(width: size.width, height: size.height)
+        .frame(width: size.width)   // the height is the browser's own: it depends on the page shown
     }
 
     // MARK: Gain stages (docs/plan_synoptic_rework.md §B.4)
