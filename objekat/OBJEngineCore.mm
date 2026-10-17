@@ -1276,6 +1276,16 @@ struct OBJRenderFileSpec {
     bool   strictRange = false;   // pas de endAllowance
 };
 
+// Mode « contenu consolidé » d'un rendu d'objet (@see renderConsolidateContentToFileAsync:). Absent
+// (`enabled` faux) = le comportement historique, bake ou « juste l'objet ». Présent : la cible n'est
+// rien coupée, son étendue n'est pas ouverte, et son fader est forcé sur ces valeurs du MODÈLE.
+struct OBJContentRender {
+    bool  enabled = false;
+    float gainDb  = 0.0f;
+    float pan     = 0.0f;
+    bool  muted   = false;
+};
+
 struct OBJRenderChain {
     // Liste blanche passée au renderer : la cible, TOUT son contenu, et ses containers ancêtres.
     std::vector<te::EditItemID> allowed;
@@ -1407,6 +1417,7 @@ struct OBJRenderChain {
                             end:(double)endSecs
                            desc:(NSString*)desc
                     keepOwnTail:(BOOL)keepOwnTail
+                        content:(OBJContentRender)content
                        fileSpec:(OBJRenderFileSpec)fileSpec
                      completion:(void(^)(BOOL ok))completion;
 // Chaîne des clips à laisser vivre pour qu'un objet sonne : lui-même, son contenu, puis chacun
@@ -4101,6 +4112,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                             end:(double)endSecs
                            desc:(NSString*)desc
                     keepOwnTail:(BOOL)keepOwnTail
+                        content:(OBJContentRender)content
                        fileSpec:(OBJRenderFileSpec)fileSpec
                      completion:(void(^)(BOOL ok))completion {
     std::string key([objectID UTF8String]);
@@ -4117,10 +4129,26 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     const te::EditItemID keepID = item ? item->itemID : te::EditItemID{};
     const auto chain = [self renderChainForKey:key];
 
+    // Mode contenu : le fader à forcer est repéré sur le graphe VIVANT (le repère explicite
+    // `_faderGainMap`, pas « le premier ObjGain de la liste »), puis retrouvé sur le clone par son
+    // identifiant — le clone naît d'une copie de l'arbre, les identifiants y sont conservés. Sans
+    // fader connu on refuse : un wave baké avec le mute / solo vivant dedans serait silencieux sans
+    // qu'aucune erreur ne le dise.
+    te::EditItemID faderID;
+    if (content.enabled) {
+        if (auto fit = _faderGainMap.find(key); fit != _faderGainMap.end() && fit->second)
+            faderID = fit->second->itemID;
+        if (!keepID.isValid() || !faderID.isValid()) {
+            NSLog(@"[OBJ] renderConsolidateContent: cible ou fader introuvable pour %@", objectID);
+            if (completion) completion(NO);
+            return;
+        }
+    }
+
     [self renderTrackToFileAsync:track->itemID
                         filePath:filePath start:startSecs end:endSecs
                   allowedClipIDs:chain.allowed
-                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail](te::Track* t) {
+                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail, content, faderID](te::Track* t) {
                              auto* ct = dynamic_cast<te::ClipTrack*>(t);
                              if (!ct) return;
                              auto bypassTail = [](te::PluginList* pl) {
@@ -4156,11 +4184,33 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                              // que ses clips directs.
                              if (keepID.isValid())
                                  if (auto* c = te::findClipForID(t->edit, keepID)) {
-                                     // `keepOwnTail` : rendu « juste l'objet » — fader (gain, pan)
-                                     // et fenêtre/fondus sont CUITS dans le fichier, le clip qui le
-                                     // remplace n'a rien à réappliquer.
-                                     if (!keepOwnTail) bypassTail(c->getPluginList());
-                                     openContainer(c);
+                                     if (content.enabled) {
+                                         // Mode CONTENU : rien n'est coupé (l'ObjWindowFade reste
+                                         // actif : fenêtre et fondus de la racine sont du contenu),
+                                         // l'étendue du container n'est pas ouverte, et le fader
+                                         // prend les valeurs du MODÈLE. Le fader vivant porte aussi
+                                         // le mute, le solo et le mute de stem (engineVolume) ; une
+                                         // courbe de gain, elle, est du contenu et reste — sauf
+                                         // sous un mute du modèle, où elle écraserait le −96.
+                                         bool forced = false;
+                                         if (auto* pl = c->getPluginList())
+                                             for (auto* p : *pl)
+                                                 if (p->itemID == faderID)
+                                                     if (auto* g = dynamic_cast<te::ObjGainPlugin*>(p)) {
+                                                         if (content.muted) g->gainParam->getCurve().clear(nullptr);
+                                                         g->setGainDb(content.muted ? -96.0f : content.gainDb);
+                                                         g->setPan(content.pan);
+                                                         forced = true;
+                                                     }
+                                         if (!forced)
+                                             NSLog(@"[OBJ] renderConsolidateContent: fader absent du clone");
+                                     } else {
+                                         // `keepOwnTail` : rendu « juste l'objet » — fader (gain, pan)
+                                         // et fenêtre/fondus sont CUITS dans le fichier, le clip qui le
+                                         // remplace n'a rien à réappliquer.
+                                         if (!keepOwnTail) bypassTail(c->getPluginList());
+                                         openContainer(c);
+                                     }
                                  }
 
                              // Un ANCÊTRE n'est là que pour porter la cible : sa fenêtre la
@@ -4191,7 +4241,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                            end:(double)endSecs
                     completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:groupID filePath:filePath start:startSecs end:endSecs
-                             desc:groupID keepOwnTail:NO fileSpec:OBJRenderFileSpec{} completion:completion];
+                             desc:groupID keepOwnTail:NO content:OBJContentRender{} fileSpec:OBJRenderFileSpec{} completion:completion];
 }
 
 - (void)renderClipToFileAsync:(NSString*)clipID
@@ -4200,7 +4250,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                           end:(double)endSecs
                    completion:(void(^)(BOOL ok))completion {
     [self renderObjectToFileAsync:clipID filePath:filePath start:startSecs end:endSecs
-                             desc:clipID keepOwnTail:NO fileSpec:OBJRenderFileSpec{} completion:completion];
+                             desc:clipID keepOwnTail:NO content:OBJContentRender{} fileSpec:OBJRenderFileSpec{} completion:completion];
 }
 
 // « Juste l'objet » : tout ce qui lui appartient (ses FX, son gain et son pan, ses fondus, sa
@@ -4221,7 +4271,32 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     spec.bitDepth    = (int)bitDepth;
     spec.strictRange = true;
     [self renderObjectToFileAsync:objectID filePath:filePath start:startSecs end:endSecs
-                             desc:objectID keepOwnTail:YES fileSpec:spec completion:completion];
+                             desc:objectID keepOwnTail:YES content:OBJContentRender{} fileSpec:spec
+                       completion:completion];
+}
+
+// Le CONTENU d'un objet consolidé : « juste l'objet » (keepOwnTail), plage stricte à la fréquence
+// de la carte et en 32 bits flottant (les réglages d'un bake), et le mode contenu de
+// `renderObjectToFileAsync:` — rien coupé sur la cible, étendue du container non ouverte, fader
+// forcé aux valeurs du modèle. @see la déclaration dans OBJEngineCore.h pour le contrat.
+- (void)renderConsolidateContentToFileAsync:(NSString*)objectID
+                                   filePath:(NSString*)filePath
+                                      start:(double)startSecs
+                                        end:(double)endSecs
+                                     gainDb:(float)gainDb
+                                        pan:(float)pan
+                                      muted:(BOOL)muted
+                                 completion:(void(^)(BOOL ok))completion {
+    OBJRenderFileSpec spec;               // sampleRate 0 = la carte, 32 bits flottant : ceux d'un bake
+    spec.strictRange = true;
+    OBJContentRender content;
+    content.enabled = true;
+    content.gainDb  = gainDb;
+    content.pan     = pan;
+    content.muted   = muted ? true : false;
+    [self renderObjectToFileAsync:objectID filePath:filePath start:startSecs end:endSecs
+                             desc:objectID keepOwnTail:YES content:content fileSpec:spec
+                       completion:completion];
 }
 
 // Avancement d'un bake (0…1), lu dans le handle du job exactement comme `exportProgress` — le
