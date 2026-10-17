@@ -672,6 +672,66 @@ extension CommandRegistry {
                             "value": .number(Double(value))])
         }
 
+        register("plugin.meter",
+                 summary: """
+                 Registers (or, with `plugins` omitted/empty, withdraws) the plugins a VIEW wants metered: what \
+                 the open synoptic does on its own. Nothing is measured for a plugin nobody registered (its \
+                 `plugin.level` reads 0). `owner` names the registrant (default "api"); the engine measures \
+                 the UNION of every owner's list. The plugins are measured at their OUTPUT (RMS), with no \
+                 node added to the graph.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Carrying object, stem, Main or send mini-chain."),
+                          ParamSpec("plugins", "array<uuid>", required: false,
+                                    "Plugin ids to meter; omitted or [] = withdraw this owner."),
+                          ParamSpec("owner", "string", required: false, "Registrant name (default \"api\").")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard vm.chainPlugins(host) != nil || vm.find(id: host) != nil else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let owner = (try p.optionalString("owner")) ?? "api"
+            var ids: [UUID] = []
+            if let raw = p.raw["plugins"]?.arrayValue {
+                for v in raw {
+                    guard let s = v.stringValue, let u = UUID(uuidString: s) else {
+                        throw CommandError(code: .bad_params, message: "plugins: an array of uuids expected")
+                    }
+                    ids.append(u)
+                }
+            }
+            vm.setMeteredPlugins(owner: owner, objectID: host, ids: ids)
+            return .object(["host": .string(host.uuidString), "owner": .string(owner),
+                            "plugins": .array(ids.map { .string($0.uuidString) })])
+        }
+
+        register("plugin.level",
+                 summary: """
+                 The instantaneous OUTPUT level of a plugin (RMS, the synoptic's VU), read only. `level` is the \
+                 0..1 value the card draws, mapped from -60..0 dBFS like `stem.level` (`db` is that value \
+                 turned back into dB; -60 means silence or floor). 0 when the plugin is not registered \
+                 (`plugin.meter`), is bypassed/disabled, or the transport is stopped; an export in progress \
+                 never feeds it. A read EMPTIES the engine's peak-hold: the answer is the maximum since the \
+                 previous read (two reads within 15 ms return the same value).
+                 """,
+                 params: [ParamSpec("host", "uuid", "Carrying object, stem, Main or send mini-chain."),
+                          ParamSpec("plugin", "uuid", "Target plugin (or the host's instrument).")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            guard let chain = vm.chainPlugins(host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let isInstrument = vm.find(id: host)?.instruments.contains { $0.id == pluginID } ?? false
+            guard isInstrument || EditViewModel.flattenLeaves(chain).contains(where: { $0.id == pluginID }) else {
+                throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)")
+            }
+            let level = vm.pluginAudioLevel(objectID: host, pluginID: pluginID)
+            return .object(["plugin": .string(pluginID.uuidString),
+                            "level": .number(level),
+                            "db": .number(level * 60.0 - 60.0)])
+        }
+
         register("plugin.get_state",
                  summary: """
                  The LIVE binary state (chunk, standard base64) of an external plugin instance, read off the \

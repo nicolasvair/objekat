@@ -957,6 +957,23 @@ it), in the engine's list, and in the chain's capacity (20 entries: fader + wind
 user's plugins and stages — 18 at most without a send; a plugin past that is refused, `engine_error`, and a
 send past it is `refused` / `chainFull`).
 
+### A plugin's output level (the synoptic's VU)
+
+The signal view draws a thin line under each card: the plugin's OUTPUT (RMS, engine patch `0042`). Nothing is
+measured unless a view registered the plugin; no node is added to the graph.
+
+- `plugin.meter {host, plugins?, owner?}` → `{host, owner, plugins}` — registers the plugins `owner` (default
+  `"api"`) wants measured on `host` (an object, a stem, the Main or a send's mini-chain); an omitted or empty
+  `plugins` withdraws that owner. The engine measures the UNION of every owner's list (two synoptics on one
+  object do not unregister each other). What the open synoptic does on its own, at 30 Hz, only while on screen
+  and playing.
+- `plugin.level {host, plugin}` → `{plugin, level, db}` — `level` is the 0..1 value the card draws, mapped from
+  -60..0 dBFS like `stem.level` (`db` = `level * 60 - 60`). 0 when the plugin is not registered, is
+  bypassed/disabled, or the transport is stopped; an export never feeds it. A read EMPTIES the engine's
+  peak-hold (the answer is the maximum since the previous read; two reads within 15 ms return the same value).
+  `not_found` for an unknown host or plugin. A gain stage and an instrument are plugins like the others.
+  Tested by `tools/scenario_plugin_meters.py` (a live audio device is required: not `--no-audio`).
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that

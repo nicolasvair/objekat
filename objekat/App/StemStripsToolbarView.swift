@@ -67,9 +67,9 @@ struct StemStripsToolbarView: View {
     /// The width of the fade laid over an edge hiding content.
     private static let overflowFadeWidth: CGFloat = 18
 
-    // The VU's release coefficient (applied on every 0.07 s tick). ~0.1 → a time constant of
-    // ≈ 0.7 s: a 'slow' fall of the order of a second, and an immediate rise. VU/PPM ballistics.
-    private let vuReleaseAlpha: Float = 0.1
+    // The VU's release coefficient (applied on every 0.07 s tick): the ballistics are shared with the
+    // synoptic's plugin cards (@see VUBallistics).
+    private let vuReleaseAlpha: Float = VUBallistics.releaseAlpha
 
     // The clip threshold: the engine's level is clamped to 1.0 (= 0 dBFS) → any value at the
     // ceiling means 0 dBFS was passed. We keep a margin under 1.0 for floating-point robustness.
@@ -90,7 +90,7 @@ struct StemStripsToolbarView: View {
             for stem in viewModel.stems {
                 let raw  = viewModel.stemLevel(stem.id)
                 let prev = levels[stem.id] ?? 0
-                levels[stem.id] = raw >= prev ? raw : prev + (raw - prev) * vuReleaseAlpha
+                levels[stem.id] = VUBallistics.smoothed(previous: prev, raw: raw, alpha: vuReleaseAlpha)
 
                 // Clip → latch an alert for any output that really reaches the D/A converter: the MAIN
                 // (general output) and DETACHED stems (routeToMain == false, their own physical output).

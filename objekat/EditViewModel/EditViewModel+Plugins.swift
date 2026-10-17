@@ -726,6 +726,18 @@ extension EditViewModel {
         Double(engine?.audioLevel(forPluginKey: pluginID.uuidString, forObjectID: engineHostKey(objectID).uuidString) ?? 0)
     }
 
+    /// Registers (or, with an empty list, withdraws) the plugins a view wants metered. `owner` names the
+    /// view (several synoptics can be open at once: the engine measures the UNION of their lists);
+    /// `ids` is the COMPLETE list that view shows, `objectID` the host it shows them for (a stem, the Main
+    /// or an object — the host check of the read, @see pluginAudioLevel). The engine puts nothing in the
+    /// graph for it: a flag on each plugin and a client on its own measurer.
+    func setMeteredPlugins(owner: String, objectID: UUID, ids: [UUID]) {
+        guard let engine else { return }
+        // A host that no longer exists has nothing to measure.
+        let live = ids.isEmpty || chainPlugins(objectID) != nil || find(id: objectID) != nil
+        engine.setMeteredPluginKeys(live ? ids.map(\.uuidString) : [], forOwner: owner)
+    }
+
     /// The transport playing (so as to poll the meter only during playback).
     var isTransportPlaying: Bool { engine?.isCurrentlyPlaying() ?? false }
 

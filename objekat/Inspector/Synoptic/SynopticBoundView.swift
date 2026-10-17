@@ -47,8 +47,14 @@ struct SynopticBoundView: View {
     // The live state of the external instances (loading/ready/error), refreshed by a timer.
     @State private var instanceStates: [UUID: Int] = [:]
     @State private var loadErrors: [UUID: String] = [:]
-    // VU meter levels per plugin (0..1), polled read-only.
-    @State private var levels: [UUID: Double] = [:]
+    // The plugin cards' VU levels (0..1). A STORE of its own, read only by `SynopticCardVULine`s (through
+    // the environment): this view never reads it in its `body`, so a refresh moves the 2-pt lines and
+    // does not rebuild the synoptic (SynopticMapping.build, the layout, every card).
+    @State private var levelStore = SynopticLevelStore()
+    // This view's name in the engine's meter registry (the union of every open synoptic is measured).
+    @State private var meterOwner = UUID()
+    // On screen: the VU poll runs only then, and the engine measures only what is registered.
+    @State private var isOnScreen = false
     // The ARA source of this object is still analysing (polled with the instance states).
     @State private var araAnalysing = false
     // An aux: the senders listed at the head (the sends it receives). A STICKY list — a row taken
@@ -56,7 +62,9 @@ struct SynopticBoundView: View {
     // (activeSenders filters silent sends out) and SwiftUI would re-associate the gesture with a neighbour.
     @State private var receivedIDs: [UUID] = []
     private let poll = Timer.publish(every: 0.6, on: .main, in: .common).autoconnect()
-    private let vuPoll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
+    /// The VU poll's period: 30 Hz (it was 0.07 s when the levels were a `@State` of this view).
+    private static let vuInterval: TimeInterval = 1.0 / 30.0
+    private let vuPoll = Timer.publish(every: SynopticBoundView.vuInterval, on: .main, in: .common).autoconnect()
 
     var body: some View {
         // Builds the graph plus the seriesID→location table from the real model. The closures below
@@ -65,10 +73,13 @@ struct SynopticBoundView: View {
         // a bus has neither a MIDI clip nor an instrument → isMIDI=false, midiInstrument=nil.
         let obj = viewModel.find(id: objectID)
         let model = viewModel.chainPlugins(objectID) ?? []
-        let (root, locations) = SynopticMapping.build(model, objectID: objectID, levels: levels,
+        let (root, locations) = SynopticMapping.build(model, objectID: objectID,
                                                        fxLinkInfo: { viewModel.synopticFXInfo($0) })
 
-        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0, vu: levels[$0.id] ?? 0) }
+        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0) }
+        // What this view asks the engine to measure: every card's plugin (gain stages included) and the
+        // instrument. Compared by value, so the registration follows the chain, not each render.
+        let meteredIDs = meteredPluginIDs()
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -500,8 +511,22 @@ struct SynopticBoundView: View {
                 if let id = fxLinkID(of: blockID) { viewModel.beginRenamingFXLink(id) }
             }
         ))
-        .onAppear { refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID) }
-        .onChange(of: objectID) { _, newID in receivedIDs = viewModel.activeSenders(toAux: newID) }
+        .environment(\.synopticLevels, levelStore)
+        .onAppear {
+            refreshStates(); receivedIDs = viewModel.activeSenders(toAux: objectID)
+            isOnScreen = true
+            registerMeters(meteredIDs)
+        }
+        .onDisappear {
+            isOnScreen = false
+            viewModel.setMeteredPlugins(owner: meterOwner.uuidString, objectID: objectID, ids: [])
+            if !levelStore.levels.isEmpty { levelStore.levels = [:] }
+        }
+        .onChange(of: objectID) { _, newID in
+            receivedIDs = viewModel.activeSenders(toAux: newID)
+            levelStore.levels = [:]
+        }
+        .onChange(of: meteredIDs) { _, ids in registerMeters(ids) }
         .onReceive(poll) { _ in refreshStates(); refreshReceived() }
         .onReceive(vuPoll) { _ in refreshLevels() }
         .sheet(item: $activeSheet) { kind in
@@ -751,17 +776,51 @@ struct SynopticBoundView: View {
         if merged != receivedIDs { receivedIDs = merged }
     }
 
-    /// Polls the VU meter levels (during playback only; otherwise it decays to 0 once).
+    /// The plugins whose output level this view shows: the cards of the chain and the instrument.
+    private func meteredPluginIDs() -> [UUID] {
+        viewModel.leafPlugins(objectID: objectID).map(\.id)
+            + (viewModel.find(id: objectID)?.instruments.map(\.id) ?? [])
+    }
+
+    /// Tells the engine which plugins to measure (an empty list = none). Only while on screen.
+    private func registerMeters(_ ids: [UUID]) {
+        guard isOnScreen else { return }
+        viewModel.setMeteredPlugins(owner: meterOwner.uuidString, objectID: objectID, ids: ids)
+    }
+
+    /// Polls the VU levels at 30 Hz — only while the synoptic is on screen AND the transport plays (when
+    /// it stops the lines fall to 0 once). A bypassed plugin reads 0 straight away: its bar is OFF, not
+    /// decaying, since it shows nothing of the signal that goes through it.
     private func refreshLevels() {
+        guard isOnScreen else { return }
         guard viewModel.isTransportPlaying else {
-            if !levels.isEmpty { levels = [:] }
+            if levelStore.lastTick != 0 {
+                // The first poll after the transport stopped: one read per plugin EMPTIES the engine's
+                // peak-hold (a client keeps its maximum until read). Without it the first poll of the
+                // NEXT playback would draw the previous one's last peak for a frame.
+                for p in viewModel.leafPlugins(objectID: objectID) + (viewModel.find(id: objectID)?.instruments ?? []) {
+                    _ = viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id)
+                }
+            }
+            if !levelStore.levels.isEmpty { levelStore.levels = [:] }
+            levelStore.lastTick = 0
             return
         }
-        var l: [UUID: Double] = [:]
-        for p in viewModel.leafPlugins(objectID: objectID) {
-            l[p.id] = viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id)
+        let now = ProcessInfo.processInfo.systemUptime
+        let dt = levelStore.lastTick > 0 ? min(now - levelStore.lastTick, 0.25) : Self.vuInterval
+        levelStore.lastTick = now
+        let alpha = VUBallistics.releaseAlpha(interval: dt)
+
+        let leaves = viewModel.leafPlugins(objectID: objectID)
+            + (viewModel.find(id: objectID)?.instruments ?? [])
+        var next: [UUID: Double] = [:]
+        for p in leaves where p.isEnabled {
+            let raw = Float(viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id))
+            let prev = Float(levelStore.levels[p.id] ?? 0)
+            let v = VUBallistics.smoothed(previous: prev, raw: raw, alpha: alpha)
+            if v > 0.002 { next[p.id] = Double(v) }     // a dead-quiet bar is simply absent
         }
-        levels = l
+        if next != levelStore.levels { levelStore.levels = next }
     }
 
     /// Polls the loading state of the external instances (built-ins ignored).
