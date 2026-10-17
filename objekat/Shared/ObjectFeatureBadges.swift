@@ -2,10 +2,11 @@ import Foundation
 
 // MARK: - The feature badges an object carries after its name
 //
-// Five small glyphs drawn at the RIGHT of an object's name — on the timeline's block (its four
+// Six small glyphs drawn at the RIGHT of an object's name — on the timeline's block (its four
 // drawings: `SoundBlockView`, `GroupBlockView`, `InfiniteBusBandView`, the batched `Canvas`) and on
 // the sound list's row — saying at a glance what the object DOES beyond playing: it carries
-// effects, it shares an FX link, it sends to an aux, it keys somebody's sidechain, it receives a key.
+// effects, it shares an FX link, it sends to an aux, it keys somebody's sidechain, it receives a key,
+// it carries an automation.
 // Volume and pan keep their own display (the meta summary); they are never a badge.
 //
 // This file is the RULE, and only the rule: no view, no view-model, no engine — so it can be compiled
@@ -31,8 +32,12 @@ import Foundation
 //   Computed ONCE per model change (`sidechainSources`) and read here as a set lookup.
 // - Sidechain reception: one of the object's plugins — trunk (racks and bins included), instrument
 //   or send plugin — has its sidechain key set, active or refused (`ObjectPlugin.sidechain`).
+// - Automation (added 17 October 2026, "il manque juste l'icône d'automation"): at least one of the
+//   object's OWN curves (`SoundObject.automation`) holds a point — whatever its parameter (volume,
+//   pan, a send's level, a plugin's). Never a child's: a group carries it only for its own curves.
+//   The glyph is `FeatureIcons.automated`, the one that already says "an automation drives this".
 //
-// The order is the enum's: FX, FX link, aux sends, sidechain send, sidechain reception.
+// The order is the enum's: FX, FX link, aux sends, sidechain send, sidechain reception, automation.
 
 /// One badge. `rawValue` is the drawing order.
 nonisolated enum FeatureBadge: Int, CaseIterable, Comparable, Hashable, Sendable {
@@ -41,6 +46,7 @@ nonisolated enum FeatureBadge: Int, CaseIterable, Comparable, Hashable, Sendable
     case auxSend
     case sidechainSend
     case sidechainReception
+    case automation
 
     static func < (a: FeatureBadge, b: FeatureBadge) -> Bool { a.rawValue < b.rawValue }
 
@@ -52,6 +58,7 @@ nonisolated enum FeatureBadge: Int, CaseIterable, Comparable, Hashable, Sendable
         case .auxSend:            return FeatureIcons.auxSend
         case .sidechainSend:      return FeatureIcons.sidechainSend
         case .sidechainReception: return FeatureIcons.sidechainReception
+        case .automation:         return FeatureIcons.automated
         }
     }
 
@@ -63,6 +70,7 @@ nonisolated enum FeatureBadge: Int, CaseIterable, Comparable, Hashable, Sendable
         case .auxSend:            return "featureBadge.auxSend"
         case .sidechainSend:      return "featureBadge.sidechainSend"
         case .sidechainReception: return "featureBadge.sidechainReception"
+        case .automation:         return "featureBadge.automation"
         }
     }
 
@@ -113,6 +121,7 @@ enum ObjectFeatureBadges {
         if !object.sends.isEmpty { out.append(.auxSend) }
         if sidechainSources.contains(object.id) { out.append(.sidechainSend) }
         if reception { out.append(.sidechainReception) }
+        if object.automation.contains(where: { !$0.points.isEmpty }) { out.append(.automation) }
         return out
     }
 

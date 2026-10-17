@@ -26,6 +26,7 @@ nonisolated enum FeatureIcons {
     /// The object has a plugin whose sidechain input is keyed (a key comes in).
     static let sidechainReception = "arrow.down.left.circle"
     /// A parameter an automation curve drives (its static control greyed out, no longer answering
-    /// the hand): the send knob under the Aux tool, the signal view's locked controls.
+    /// the hand): the send knob under the Aux tool, the signal view's locked controls — and the
+    /// feature badge of an object carrying at least one curve (@see `ObjectFeatureBadges`).
     static let automated = "chart.xyaxis.line"
 }
