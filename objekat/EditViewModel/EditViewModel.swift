@@ -1536,6 +1536,25 @@ final class EditViewModel {
     /// origin tab), in which case `paste()` does nothing more; `false`/`nil` lets `paste()` go on
     /// exactly as it always has (the ordinary, same-tab case, UNCHANGED).
     var crossProjectPasteHook: (() -> Bool)? = nil
+    /// Disk-usage gauge (@see `EditViewModel+DiskUsage.swift`). The latest scan of the project
+    /// folder (nil = none yet, or the project was never saved, so there is no folder to speak of).
+    var diskUsage: DiskUsageResult? = nil
+    /// True while a background scan runs.
+    var isComputingDiskUsage = false
+    /// What stopped the last scan from being computed (an i18n key), nil if it was. Read by the
+    /// popover so the figures on display are never mistaken for current ones.
+    var diskUsageBlockedKey: String? = nil
+    /// Set by `Workspace`: what the OTHER open projects (parked tabs) and the cross-project
+    /// clipboard still read from disk. `EditViewModel` knows nothing about tabs, hence a hook, like
+    /// `saveAsURLConflictCheck`. Pure values: the scan runs off the main thread.
+    var diskUsageExtraRootsHook: (() -> [DiskUsageRoots])? = nil
+    /// Drops the answer of a scan that a newer one has overtaken.
+    @ObservationIgnored var diskUsageGeneration = 0
+    /// What a clean-up sent to the Trash, by the folder-relative path of each unit's primary file,
+    /// so that an undo / redo (or a paste) that puts such a file back in play can fetch it back
+    /// BEFORE the engine loads it (@see `EditViewModel+DiskCleanup.swift`). Session-long, never
+    /// persisted: a Trash that was emptied simply leaves the usual missing-file path to act.
+    @ObservationIgnored var trashedFileUnits: [String: TrashedFileUnit] = [:]
     /// Cross-project paste (tabs INC2) fallback folders for a consolidated object's wave, keyed by
     /// the FRESH `consolidateID` a paste just minted — @see `ConsolidateFolders.resolve(extraDirs:)`
     /// and `consolidateFallbackDirs`. Transient, never persisted: media stays at its ORIGIN

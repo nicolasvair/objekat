@@ -73,7 +73,7 @@ extension EditViewModel {
     /// fallback (retained, cas E5): a Save As to a new folder leaves the instances' absolute
     /// `filePath` pointing at the OLD project's folder, which is where the wave (and its sidecar)
     /// actually still are. Empty if `defID` is nil or has no placement with a resolvable clip path.
-    private func consolidateFallbackDirs(forConsolidate defID: UUID?) -> [URL] {
+    func consolidateFallbackDirs(forConsolidate defID: UUID?) -> [URL] {
         guard let defID else { return [] }
         // Tabs INC2: a consolidated object just pasted from ANOTHER project's tab keeps its wave
         // at that project's OWN folder — never copied (@see CrossProjectImport, memory

@@ -13,7 +13,8 @@ import Foundation
 // no model and no disk by itself — `fileExists` is injected — so it compiles alone and is
 // asserted with no screen (@see tools/test_consolidate_folders.swift).
 
-enum ConsolidateFolders {
+/// `nonisolated` so the disk-usage scan (off the main thread) can ask where a wave may live.
+nonisolated enum ConsolidateFolders {
 
     /// The sub-folder name new writes go to, under `samples/`.
     static let folderName = "consolidate"

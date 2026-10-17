@@ -171,6 +171,12 @@ struct SoundObjectListView: View {
                 revealRow(new.id, in: scroller)
             }
             }
+
+            // The disk line: only for a project that has a folder (@see `DiskUsageFooterView`).
+            if viewModel.projectFolder != nil {
+                Divider()
+                DiskUsageFooterView(viewModel: viewModel)
+            }
         }
         .frame(minWidth: 240)
         .onDisappear { KeyboardClaim.shared.release(.soundList) }

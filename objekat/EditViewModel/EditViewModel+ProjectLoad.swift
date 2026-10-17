@@ -397,6 +397,9 @@ extension EditViewModel {
         fileChanges.known = carriedIdentities ?? [:]
         armFileChangeWatch()
         rescanChangedFiles(reason: carriedIdentities != nil ? .tabReturn : .open)
+        // The gauge of the folder just opened (a tab switch is a load too). Next turn of the run
+        // loop: `loadState` is still set while this runs.
+        DispatchQueue.main.async { [weak self] in self?.refreshDiskUsage() }
         let missing = missingPluginCapture ?? []
         missingPluginCapture = nil
         if !missing.isEmpty {

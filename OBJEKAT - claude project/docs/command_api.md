@@ -2451,6 +2451,41 @@ A few points of vocabulary that save mistakes:
 
 ---
 
+## Disk usage and clean-up of the project folder
+
+The sound list's footer line ("1,2 GB · 340 MB unused") and its popover are two commands. A project
+folder piles up files nothing reads any more — above all the old revisions of consolidated waves
+(`samples/consolidate/<name>_<def8>[_vN].wav` + `_objectstate.json`, every re-bake keeps the
+previous one), embedded sources (`samples/sources`) and orphan `waveforms/*.wfc` caches. **Only
+those folders are ever listed**; nothing else of the project folder can be offered, whatever a
+script asks for.
+
+| | |
+|---|---|
+| `project.disk_usage` | `scope?` (`session` default, `folder`), `refresh?` (default true: a fresh scan). Answers `total_bytes`, `used_bytes`, `unused_bytes`, `held_bytes`, `protected_bytes`, `cleanable` (units `path`, `name`, `kind`, `folder`, `size`, `files`; **`null`** in `folder` scope while a version of the folder cannot be read), `held` (with `versions`), `protected`, `versions`, `unreadable_versions`, `blocked`, `computed_at`. Refused (`invalid_state`) for a project never saved |
+| `project.clean_unused` | `scope?`, `paths?` (folder-relative, as listed; absent = every cleanable unit), **`dry_run` (true by default)**. Answers `would_trash` (dry run) or `trashed` (each unit with its `trash` paths), `count`, `bytes`, `rejected` (`path` + `reason`: `used`, `protected`, `held`, `unknown`), `failed`. Refused (`invalid_state`, `details.reason`: `unsaved`, `busy`, `unreadable_versions`, `scan_failed`) with nothing moved |
+
+- **Never a deletion.** Every file goes through `FileManager.trashItem`. A wave and its sidecar
+  (and its `.wfc`) travel as ONE unit, both ways.
+- **What "used" means.** The version in front is read from memory; while it has unsaved changes its
+  SAVED file is read too (and protected), so closing without saving never leaves a file pointing
+  at the Trash. Every other `*.objekat` / `*.json` of the folder is read from its file: what it
+  reads is `held` (listed apart, never offered, names the versions). The clipboards, the parked
+  tabs and a consolidated object being edited are `protected`.
+- **`session` vs `folder`.** The cleanable set is the same; `folder` additionally refuses to answer
+  while a version of the folder is unreadable (invalid JSON among the manifests) — its files could
+  not be told apart from the unused ones. A foreign valid JSON is ignored, not "unreadable".
+  Sessions saved OUTSIDE the folder are invisible and may still read these files.
+- **Everything is recomputed right before trashing**, and a clean-up is refused during a load, a
+  bake or a consolidated edit (`busy`), even as a dry run.
+- **Undo is not protected, it is repaired.** `edit.undo` / `edit.redo` / a paste that puts a cleaned
+  file back in play first fetches it from the Trash to its original place, silently, before the
+  engine loads it. If the Trash was emptied, nothing is invented: `project.rescan_missing` reports
+  the file the usual way.
+- Tested by `tools/scenario_disk_cleanup.py` and `tools/test_project_file_usage.swift`.
+
+---
+
 ## The clients provided
 
 | file | role |

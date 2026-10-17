@@ -304,6 +304,7 @@ extension EditViewModel {
         // declining) is UNCHANGED below.
         if crossProjectPasteHook?() == true { return }
         guard let cb = clipboard else { return }
+        restoreTrashedFiles(forItems: cb.clips)   // @see EditViewModel+DiskCleanup
         let snapshot = laneEntries
 
         // The time anchor and the lane shift according to the state of the selection
