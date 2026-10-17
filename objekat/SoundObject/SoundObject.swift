@@ -420,19 +420,6 @@ struct MidiNote: Identifiable, Codable, Equatable {
     }
 }
 
-// MARK: - A consolidated object's attribute links
-
-/// The mix attributes of a consolidated object instance (`consolidateID`) that have been switched to
-/// INDEPENDENT, that is, detached from the shared value the definition carries. Empty (the
-/// default) = all synced: changing the attribute on one instance propagates it to every other.
-/// Not applicable to an unlinked object. See EditViewModel+Consolidate (`propagateLinkedAttr`/`setAttrSynced`).
-struct ConsolidateAttrLinks: OptionSet, Codable {
-    let rawValue: Int
-    static let volume = ConsolidateAttrLinks(rawValue: 1 << 0)
-    static let pan    = ConsolidateAttrLinks(rawValue: 1 << 1)
-    static let mute   = ConsolidateAttrLinks(rawValue: 1 << 2)
-}
-
 // MARK: - SoundObject
 
 /// `Equatable` (synthesised, RECURSIVE over `kind.group(children:)`): undo uses it to leave
@@ -554,9 +541,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
     /// content is shared by every instance. See EditViewModel+Consolidate.
     var consolidateID: UUID? = nil
-    /// Mix attributes (volume/pan/mute) detached from the definition for THIS instance only.
-    /// Empty = all synced (the default). No effect if `consolidateID == nil`.
-    var independentAttrs: ConsolidateAttrLinks = []
     /// An AUX or GROUP marked 'infinite': no more start/end, it spans the WHOLE project and becomes
     /// a 'normal' processing bus (a reverb live from the start to the end, say). Not applicable to
     /// clips/MIDI (always false). One infinite per lane (see EditViewModel).
@@ -1133,7 +1117,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
          label: String? = nil, colorIndex: Int? = nil, colorHex: Int? = nil,
          sends: [AuxSend] = [], baseBPM: Double? = nil,
          consolidateID: UUID? = nil,
-         independentAttrs: ConsolidateAttrLinks = [],
          pianoRollOpen: Bool = false,
          automation: [AutomationLane] = [],
          automationTouchOrder: [ParamRef] = [],
@@ -1164,7 +1147,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
         self.sends      = sends
         self.baseBPM    = baseBPM
         self.consolidateID = consolidateID
-        self.independentAttrs = independentAttrs
         self.pianoRollOpen  = pianoRollOpen
         self.automation     = automation
         self.automationTouchOrder = automationTouchOrder
@@ -1247,7 +1229,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     label: label, colorIndex: colorIndex, colorHex: colorHex,
                     sends: derivedSends, baseBPM: baseBPM,
                     consolidateID: consolidateID,
-                    independentAttrs: independentAttrs,
                     automation: inherited.compactMap { lane in
                         guard let ref = Self.remapping(lane.param, with: remap) else { return nil }
                         return AutomationLane(param: ref, points: lane.points)
@@ -1298,7 +1279,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case id, startTime, duration, lane, volume, pan, fadeIn, fadeOut
         case fadeInCurve, fadeOutCurve
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
-        case chainInGainDb, chainOutGainDb, pianoRollOpen, independentAttrs
+        case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
         case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
@@ -1333,7 +1314,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if !sends.isEmpty { try c.encode(sends, forKey: .sends) }
         try c.encodeIfPresent(baseBPM, forKey: .baseBPM)
         try c.encodeIfPresent(consolidateID, forKey: .consolidateID)
-        if !independentAttrs.isEmpty { try c.encode(independentAttrs, forKey: .independentAttrs) }
         if pianoRollOpen { try c.encode(true, forKey: .pianoRollOpen) }
         // 'No point = no automation': empty rows are not written.
         let curves = automation.filter { !$0.points.isEmpty }
@@ -1385,7 +1365,6 @@ struct SoundObject: Identifiable, Codable, Equatable {
         sends      = try c.decodeIfPresent([AuxSend].self, forKey: .sends) ?? []
         baseBPM    = try c.decodeIfPresent(Double.self, forKey: .baseBPM)
         consolidateID = try c.decodeIfPresent(UUID.self, forKey: .consolidateID)
-        independentAttrs = try c.decodeIfPresent(ConsolidateAttrLinks.self, forKey: .independentAttrs) ?? []
         legacyChainInGainDb  = try c.decodeIfPresent(Float.self, forKey: .chainInGainDb)  ?? 0
         legacyChainOutGainDb = try c.decodeIfPresent(Float.self, forKey: .chainOutGainDb) ?? 0
         pianoRollOpen  = try c.decodeIfPresent(Bool.self, forKey: .pianoRollOpen) ?? false

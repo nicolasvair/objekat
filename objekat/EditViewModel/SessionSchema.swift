@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 25
+    static let formatVersion = 26
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -167,9 +167,22 @@ enum SessionSchema {
         "  instances. The key keeps its historical name (a data contract already on every session",
         "  on disk; the app calls the concept 'consolidated' everywhere else, code and screen alike).",
         "  An item whose definitionID points here is an instance: its content is the definition's,",
-        "  but its position, its fades and its gain are its own.",
+        "  but everything else is its own — position, fades, window, volume / pan / mute, plugins,",
+        "  sends, stem and automation. Each instance keeps ITS OWN mix: nothing is synchronised",
+        "  between instances any more (only the colour and the name follow the definition).",
+        "  An entry is { id, name, wave, revision, wasGroup, rootIsContent, dependsOn }. It holds",
+        "  NO volume / pan / mute (format 26): up to format 25 it carried a shared one, and an",
+        "  instance an `independentAttrs` mask saying which of the three had left it. A file from",
+        "  before simply has those keys read and dropped; no instance value is rewritten (the old",
+        "  synchronisation kept each instance's own value equal to the shared one, or deliberately",
+        "  apart for a detached attribute — both are exactly what the instance now plays).",
+        "  rootIsContent: true when the baked subtree's ROOT is entirely content — its fader, its",
+        "  window (trim), its fades and its loop are the content's own, baked into the wave — with",
+        "  no send (written true by every bake since format 26); absent = false = a definition baked",
+        "  by an older build, whose root still held the instance's mix and is neutralised when the",
+        "  content is read back.",
         "  revision is bumped on every re-bake; dependsOn is what detects stale definitions.",
-        "  Changing a definition updates every one of its instances.",
+        "  Changing a definition updates the content of every one of its instances.",
         "",
         "viewport — timeline zoom and framing. Purely visual, with no effect on the sound.",
         "snapEnabled — whether the snap was on when the project was saved. It belongs to the",

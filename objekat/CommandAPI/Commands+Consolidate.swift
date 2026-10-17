@@ -27,9 +27,6 @@ extension CommandRegistry {
                     "revision": .int(def.revision),
                     "was_group": .bool(def.wasGroup),
                     "wave": .string(def.wave),
-                    "volume_db": .number(Double(def.volume)),
-                    "pan": .number(Double(def.pan)),
-                    "muted": .bool(def.isMuted),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
                     "stale": .bool(vm.isConsolidateStale(def.id)),

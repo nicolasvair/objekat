@@ -88,7 +88,7 @@ enum ARAModelTest {
         let noKey = try JSONSerialization.data(withJSONObject: dict)
         check("format-19 style JSON decodes with araSource == nil",
               (try? JSONDecoder().decode(SoundObject.self, from: noKey))?.araSource == nil)
-        check("session format is 25", SessionSchema.formatVersion == 25)
+        check("session format is 26", SessionSchema.formatVersion == 26)
 
         // 3. derivedCopy: the source follows, with a NEW plugin id, never linked.
         var linked = src

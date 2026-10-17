@@ -167,7 +167,7 @@ enum SendChainTest {
             let cleaned = decode(AuxSend.self, handWritten)
             check("codable: a hand-written marker / block / bin in a send's plugins is dropped at decode",
                   cleaned.plugins.map(\.id) == [p.id], "\(cleaned.plugins.count)")
-            check("the session format is 25", SessionSchema.formatVersion == 25)
+            check("the session format is 26", SessionSchema.formatVersion == 26)
             check("the notice says where a send's plugins live", SessionSchema.note.contains { $0.contains("PLUGINS ON a send (format 23)") })
             check("equality: two sends differing by their plugins are different", bare != AuxSend(auxID: aux, levelDb: -6, plugins: [p]))
         }
