@@ -123,6 +123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// once). Turned off before any window exists.
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        MainMenuCleanup.install()
     }
 
     /// Shuts the command server down cleanly: the socket is a file, and leaving it behind would
@@ -335,6 +336,49 @@ struct objekatApp: App {
                     .keyboardShortcut("w", modifiers: [.command])
                     .disabled(busy)
             }
+            // EDIT: the same actions as the keys (@see EditViewModel+EditMenu). The timeline's key monitor
+            // consumes ⌘Z/⌘X/⌘C/⌘V/⌘A before the menu sees them; these key equivalents only fire while
+            // text is being typed, and then hand the standard selector to the field.
+            CommandGroup(replacing: .undoRedo) {
+                Button(L("menu.edit.undo")) {
+                    viewModel.performEditMenu(Selector(("undo:"))) { viewModel.performUndoShortcut(redo: false) }
+                }
+                    .keyboardShortcut("z", modifiers: [.command])
+                    .disabled(busy)
+                Button(L("menu.edit.redo")) {
+                    viewModel.performEditMenu(Selector(("redo:"))) { viewModel.performUndoShortcut(redo: true) }
+                }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(busy)
+            }
+            CommandGroup(replacing: .pasteboard) {
+                Button(L("menu.edit.cut")) {
+                    viewModel.performEditMenu(#selector(NSText.cut(_:))) { viewModel.performCutShortcut() }
+                }
+                    .keyboardShortcut("x", modifiers: [.command])
+                    .disabled(busy)
+                Button(L("menu.edit.copy")) {
+                    viewModel.performEditMenu(#selector(NSText.copy(_:))) { viewModel.performCopyShortcut() }
+                }
+                    .keyboardShortcut("c", modifiers: [.command])
+                    .disabled(busy)
+                Button(L("menu.edit.paste")) {
+                    viewModel.performEditMenu(#selector(NSText.paste(_:))) { viewModel.performPasteShortcut() }
+                }
+                    .keyboardShortcut("v", modifiers: [.command])
+                    .disabled(busy)
+                Divider()
+                Button(L("menu.edit.selectAll")) {
+                    viewModel.performEditMenu(#selector(NSText.selectAll(_:))) { viewModel.performSelectAllShortcut() }
+                }
+                    .keyboardShortcut("a", modifiers: [.command])
+                    .disabled(busy)
+            }
+            // No View menu, no Help menu: emptied here, their top-level items taken off by MainMenuCleanup
+            // (AppKit lays "Enter Full Screen" and the help search back on its own otherwise).
+            CommandGroup(replacing: .toolbar) {}
+            CommandGroup(replacing: .sidebar) {}
+            CommandGroup(replacing: .help) {}
             // Tabs (INC 1): grouped with the Window menu's own arrangement entries
             // (Minimise/Zoom/Bring All to Front), which is where a list of open "things" belongs.
             CommandGroup(after: .windowArrangement) {

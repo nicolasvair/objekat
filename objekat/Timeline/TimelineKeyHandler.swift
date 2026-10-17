@@ -794,28 +794,12 @@ extension TimelineView {
                 case "z":
                     if flags.contains(.command),
                        !(NSApp.keyWindow?.firstResponder is NSTextView) {
-                        DispatchQueue.main.async {
-                            // An open consolidated object: ⌘Z cancels the opening (a clean rollback of the
-                            // preview machinery plus popping the session), like Esc.
-                            // The generic ⌘Z would restore the items without undoing the session.
-                            if !flags.contains(.shift), vm.isEditingConsolidate {
-                                vm.cancelConsolidateEdit()
-                            } else if flags.contains(.shift) { vm.redo() }
-                            else { vm.undo() }
-                        }
+                        DispatchQueue.main.async { vm.performUndoShortcut(redo: flags.contains(.shift)) }
                         return nil
                     }
                 case "a":
                     if flags.contains(.command) {
-                        DispatchQueue.main.async {
-                            // The piano-roll context: ⌘A selects every note of the focused clip.
-                            if let cid = vm.focusedMidiClipID,
-                               let clip = vm.find(id: cid), clip.showsPianoRollInline {
-                                vm.selectedMidiNoteIDs = Set(clip.midiNotes.map(\.id))
-                            } else {
-                                vm.selectAll()
-                            }
-                        }
+                        DispatchQueue.main.async { vm.performSelectAllShortcut() }
                         return nil
                     }
                     // 'A' (without ⌘) = the Aux tool (formerly 'S'). ⇧ locks the tool.
@@ -871,34 +855,12 @@ extension TimelineView {
                     }
                 case "x":
                     if flags.contains(.command) {
-                        DispatchQueue.main.async {
-                            if vm.automationSurfaceHasKeyboard {
-                                vm.cutAutomationSelection()       // the automation band (internal undo push)
-                            } else if !vm.selectedMidiNoteIDs.isEmpty {
-                                vm.cutSelectedMidiNotes()         // the piano-roll context (internal undo push)
-                            } else if vm.timeSelection != nil {
-                                vm.edit { vm.cutTimeSelection() }
-                            } else if !vm.selectedIDs.isEmpty {
-                                vm.edit { vm.cutSelected() }
-                            }
-                        }
+                        DispatchQueue.main.async { vm.performCutShortcut() }
                         return nil
                     }
                 case "c":
                     if flags.contains(.command) {
-                        DispatchQueue.main.async {
-                            if vm.pluginSurfaceHasKeyboard {
-                                vm.copySelectedPluginsToClipboard()   // the signal view
-                            } else if vm.automationSurfaceHasKeyboard {
-                                vm.copyAutomationSelection()     // the automation band
-                            } else if !vm.selectedMidiNoteIDs.isEmpty {
-                                vm.copySelectedMidiNotes()       // the piano-roll context
-                            } else if vm.timeSelection != nil {
-                                vm.copyTimeSelection()
-                            } else if !vm.selectedIDs.isEmpty {
-                                vm.copySelected()
-                            }
-                        }
+                        DispatchQueue.main.async { vm.performCopyShortcut() }
                         return nil
                     }
                     guard !event.isARepeat else { return nil }
@@ -937,22 +899,7 @@ extension TimelineView {
                     }
                 case "v":
                     if flags.contains(.command) {
-                        // The signal view holds the keyboard ⇒ the chain fragment goes into ITS
-                        // chain, after the last selected card or at the end when none is chosen.
-                        if let host = vm.selectedPluginHostID, !vm.pluginClipboard.isEmpty {
-                            DispatchQueue.main.async { vm.pastePlugins(into: host) }  // internal undo push
-                        }
-                        // A passage of automation goes back into the band it was traced on — the
-                        // zone says which rows and at which instant (@see pasteAutomation).
-                        else if vm.automationSurfaceHasKeyboard, vm.canPasteAutomation {
-                            DispatchQueue.main.async { vm.pasteAutomation() }  // internal undo push
-                        }
-                        // The notes take priority if we are in the piano-roll context (notes selected).
-                        else if !vm.selectedMidiNoteIDs.isEmpty, vm.canPasteMidiNotes {
-                            DispatchQueue.main.async { vm.pasteMidiNotes() }   // internal undo push
-                        } else {
-                            DispatchQueue.main.async { vm.edit { vm.paste() } }
-                        }
+                        DispatchQueue.main.async { vm.performPasteShortcut() }   // @see EditViewModel+EditMenu
                         return nil
                     }
                     guard !event.isARepeat else { return nil }

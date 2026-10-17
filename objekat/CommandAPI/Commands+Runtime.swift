@@ -306,6 +306,25 @@ extension CommandRegistry {
         #if DEBUG
         // MARK: debug (spike, @see plan_titlebar_audio_device.md §4a)
 
+        register("debug.main_menu",
+                 summary: """
+                 DEBUG. The menu bar as AppKit holds it: each top-level menu with its entries \
+                 (title, action selector, submenu titles). Used to check MainMenuCleanup. Empty in \
+                 headless mode.
+                 """,
+                 undo: .none) { _ in
+            func entries(_ m: NSMenu) -> JSONValue {
+                .array(m.items.map { item in
+                    .object(["title": .string(item.isSeparatorItem ? "---" : item.title),
+                             "action": .stringOrNull(item.action.map { NSStringFromSelector($0) }),
+                             "submenu": item.submenu.map { entries($0) } ?? .null])
+                })
+            }
+            guard let main = NSApp.mainMenu else { return .array([]) }
+            return .array(main.items.map { .object(["title": .string($0.title),
+                                                    "items": $0.submenu.map { entries($0) } ?? .null]) })
+        }
+
         register("debug.titlebar",
                  summary: """
                  DEBUG. Every NSTextField found in the window's title-bar chrome, with its frame \
