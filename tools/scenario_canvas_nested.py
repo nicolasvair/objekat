@@ -30,8 +30,8 @@ the model states, and prints what differs; the eye (an agent opening the PNGs) d
 Each depth reads a DIFFERENT wav, so `perf.waveforms` can tell whether the deep files were loaded.
 
 `drag`: the critical real-mouse drags (`input.drag`), each from a fresh `project.open` of the scene:
-the state UNDER the held gesture (perf.census, a Canvas picture, the same with
-`debug.force_rich_previews`, and the MODEL must not have moved), then the release, the model
+the state UNDER the held gesture (perf.census, a Canvas picture, and the MODEL must not have
+moved), then the release, the model
 diff, ONE `edit.undo` that must give back the exact pre-drag `project.get_state` items.
 """
 
@@ -302,11 +302,6 @@ def open_scene(c, scene, pps=50, sx=0, sy=0):
     settle(c, 600)
 
 
-def set_rich(c, previews=None):
-    if previews is not None:
-        c.send("debug.force_rich_previews", {"enabled": previews})
-
-
 # ----------------------------------------------------------------------------- drag
 
 # Each case: (name, object grabbed, zone, how far in px (dx, dy) — dy in LANES —, what to check)
@@ -350,14 +345,9 @@ def run_drag(c, scene, out, only=None):
             settle(c, 300)
             res["census_held"] = (c.send("perf.census").get("regimes") or {}).get("rich_reasons")
             res["model_untouched_while_held"] = items_state(c) == before
-            a = os.path.join(out, name + "_held_canvas.png")
-            b = os.path.join(out, name + "_held_rich.png")
-            snapshot(c, a)
-            set_rich(c, previews=True)
-            settle(c, 400)
-            snapshot(c, b)
-            set_rich(c, previews=False)
-            res["held_diff"] = diff_png(a, b, os.path.join(out, name + "_held_diff.png"))
+            # The rich-preview fallback is gone (16 Oct 2026): the held picture is kept to be read
+            # by eye, there is no second regime left to compare it with.
+            snapshot(c, os.path.join(out, name + "_held_canvas.png"))
             c.send("input.release")
             settle(c, 600)
             after = items_state(c)
@@ -369,7 +359,6 @@ def run_drag(c, scene, out, only=None):
             settle(c, 500)
             res["undo_one_step_restores"] = items_state(c) == before
             print("   held model untouched:", res["model_untouched_while_held"],
-                  "| held diff px:", res["held_diff"].get("diff_px"),
                   "| changed:", sorted(res["changed"]), "| undo restores:", res["undo_one_step_restores"])
         except Exception as e:
             res["error"] = repr(e)

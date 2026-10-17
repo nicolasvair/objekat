@@ -36,12 +36,6 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     case toolSpan
     /// The Stem tool is armed and the pointer is on this block (its hover veil is a rich layer).
     case stemHover
-    /// A drag / trim / resize / fade preview is under way on this block. Only with the fallback
-    /// `RenderPreferences.richPreviews` on: by default the Canvas draws the previews itself.
-    case preview
-    /// The neighbour of a spilling fade (`spillPlan`): it moves with the drag without being in
-    /// any of its id sets. Only with `RenderPreferences.richPreviews` on, like `preview`.
-    case spill
     /// A MIDI clip (always rich).
     case midi
     /// An aux (always rich).
@@ -53,10 +47,6 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
     case rename
     /// A bake is running on it.
     case bake
-    /// A looping group whose IN / OUT bound is being dragged (at rest the Canvas repeats the
-    /// composite and draws the grips). Only with `RenderPreferences.richPreviews` on: by default
-    /// the Canvas draws the live bounds too.
-    case loop
     /// An infinite bus (`InfiniteBusBandView`).
     case infinite
     /// An open consolidated object being edited / previewed (its ✕ and its spinner).
@@ -70,14 +60,11 @@ nonisolated enum RichReason: Int, CaseIterable, Sendable {
         case .toolHover: return "tool_hover"
         case .toolSpan: return "tool_span"
         case .stemHover: return "stem_hover"
-        case .preview: return "preview"
-        case .spill: return "spill"
         case .midi: return "midi"
         case .aux: return "aux"
         case .consolidate: return "consolidate"
         case .rename: return "rename"
         case .bake: return "bake"
-        case .loop: return "loop"
         case .infinite: return "infinite"
         case .editing: return "editing"
         }

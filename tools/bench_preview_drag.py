@@ -4,16 +4,15 @@
 
 Before E7 a gesture's preview (move, trim, resize, fade, spill, loop bound) sent every block it
 touched onto a rich SwiftUI view: dragging 600 selected pieces created 600 views on the first
-frame. The batched Canvas draws those previews now (`BlockPreviewGeometry`), and the fallback
-`objekat.timeline.richPreviews` puts the old regime back with no rebuild, so the SAME build can be
-measured both ways:
+frame. The batched Canvas draws those previews now (`BlockPreviewGeometry`). The fallback that put
+the old regime back (`objekat.timeline.richPreviews`) was REMOVED on 16 October 2026: a "rich" run
+now needs a build from before that date (`bench_results/preview_drag_rich.json` is the reference).
 
     # 1. a RELEASE build, in UI MODE (never --headless; Debug is up to ×40 slower — refused here).
     #    The screen must be awake and unlocked (`caffeinate -u`), and the app in front: a synthetic
     #    press on a window that is not key is swallowed.
     A=objekat.app/Contents/MacOS/objekat
     $A --api --no-recent --socket=/tmp/cc501/new.sock                                       # Canvas
-    $A --api --no-recent --socket=/tmp/cc501/old.sock -objekat.timeline.richPreviews YES    # rich
 
     # 2. measure each, then compare
     ./bench_preview_drag.py /tmp/cc501/new.sock --label canvas --out bench_results/preview_drag_canvas.json

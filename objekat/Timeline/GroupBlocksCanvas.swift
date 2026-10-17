@@ -7,8 +7,7 @@ import SwiftUI
 // the drawing. The batched Canvas (`TimelineView.plainBlocksCanvas`) now draws every "simple"
 // group — one that is not renamed, baked, open for editing or under a tool overlay — and this
 // file is that drawing. A group a gesture is previewing (move, trim, resize, fade, spill, loop
-// bound) is drawn here too, from `BlockPreviewGeometry` (`CanvasGroup.preview`); the fallback
-// `RenderPreferences.richPreviews` puts those back on `GroupBlockView`.
+// bound) is drawn here too, from `BlockPreviewGeometry` (`CanvasGroup.preview`).
 //
 // It is `GroupBlockView`'s `body`, redrawn value for value (radius 20, tint 0.30 / 0.55, inset
 // 2 pt border at 0.5 / 0.9, the custom colour's name band on 20 % of the height, the composite of

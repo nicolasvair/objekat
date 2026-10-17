@@ -385,15 +385,11 @@ layer) and `canvas_draws` (draws of the batched Canvas), zeroed by `perf.census 
 answer that put the block there — the FIRST rule met, in the order `TimelineView.clipRichReason` /
 `groupRichReason` test them, so a block that is both renamed and under the Volume tool counts as
 `rename`. Every key is present, at 0 when unused: `tool_hover` (Volume / Pan / Aux armed and the block aimed at), `tool_span` (the same tools, a block a viewport edge cuts), `stem_hover`
-(Stem tool armed and the pointer on the block), `preview` (a drag / trim / resize / fade under
-way — 0 since E7: the Canvas draws the previews, the reason only exists with the fallback
-`objekat.timeline.richPreviews` on), `spill` (the neighbour of a spilling fade; same), `midi` (a MIDI clip whose piano roll is open),
+(Stem tool armed and the pointer on the block), `midi` (a MIDI clip whose piano roll is open),
 `aux` (never produced any more: an aux is drawn by the Canvas, an infinite one counts as `infinite`),
-`consolidate` (an instance whose definition is being re-baked), `rename`, `bake`, `loop` (a group
-whose IN / OUT bound is being dragged; only with the same fallback), `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object). `regimes.foreach_layers` / `foreach_total` give the element count of
+`consolidate` (an instance whose definition is being re-baked), `rename`, `bake`, `infinite` (an infinite bus, group or aux), `editing` (an open consolidated object). `regimes.foreach_layers` / `foreach_total` give the element count of
 each `ForEach` layer of the timeline's body that is evaluated on every pass (`rich_blocks`,
-`piano_rolls`, `automation_bands`, `automation_bezels`, `alt_ghosts` — the ⌥-copy's ghosts, 0 unless the
-E7 fallback `objekat.timeline.richPreviews` is on) and their sum — an element is the root of
+`piano_rolls`, `automation_bands`, `automation_bezels`) and their sum — an element is the root of
 one SwiftUI subtree, so this is the number a layer is paid in. The layers that used to be there and
 are now ONE Canvas each, culled to the viewport, no longer report (`lane_rows` and `range_masks` and
 `piano_roll_tints` since E1).
@@ -556,14 +552,6 @@ reopen, not the raw scroll pixel it was saved at.
 frame — the only door a script has onto `available_h` changing (a marker row shown/hidden moves
 it too, with no command needed: it is read live). There is no `window_h` on `view.set` — this
 already does exactly that, so the plan for this feature does not duplicate it.
-
-**`debug.force_rich_previews {enabled}`** (`#if DEBUG`) flips, volatilely, the fallback of E7
-(`Shared/RenderPreferences.swift`): `true` puts the gestures' previews (move, trim, resize, fade,
-spill, loop-bound drag) back on the rich views, census reasons `preview` / `spill` / `loop`; `false`
-(production) draws them in the batched Canvas from `BlockPreviewGeometry`. The persistent form is
-readable in a RELEASE build: the preference
-`objekat.timeline.richPreviews`, read at launch (`defaults write org.labelpeche.objekat
-objekat.timeline.richPreviews -bool YES`, or `-objekat.timeline.richPreviews YES` for one launch).
 
 ### The frame report
 

@@ -2766,8 +2766,7 @@ struct TimelineView: View {
         /// in the Canvas's renderer closure.
         var consolidated: [UUID: ConsolidateBadge] = [:]
         /// The geometry of the blocks (clips AND groups) the Canvas draws while a gesture previews
-        /// them — move, trim, resize, fade, spill, loop bound — by id. Empty at rest, and with the
-        /// fallback `RenderPreferences.richPreviews` on (those blocks are then rich views). Resolved
+        /// them — move, trim, resize, fade, spill, loop bound — by id. Empty at rest. Resolved
         /// here, in the body, like everything else the Canvas's renderer closure draws from.
         var previews: [UUID: BlockPreviewGeometry] = [:]
     }
@@ -2798,13 +2797,12 @@ struct TimelineView: View {
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
         var p = BlockPartition()
-        // The previews go to the Canvas unless the fallback puts them back on the rich views. The
-        // gesture test is made ONCE for the pass: at rest no block is asked for its geometry.
-        let richPreviews = RenderPreferences.shared.richPreviews
-        let previewing = !richPreviews && hasPreviewGesture
+        // The previews are drawn by the Canvas. The gesture test is made ONCE for the pass: at rest
+        // no block is asked for its geometry.
+        let previewing = hasPreviewGesture
         for entry in entries {
             if entry.item.isGroup {
-                if let why = groupRichReason(entry, tools: tools, richPreviews: richPreviews) {
+                if let why = groupRichReason(entry, tools: tools) {
                     p.rich.append(entry)
                     p.richGroups += 1
                     p.reasons[why.rawValue] += 1
@@ -2813,7 +2811,7 @@ struct TimelineView: View {
                     if let o = canvasToolOverlay(for: entry, tools: tools) { p.toolOverlays[entry.item.id] = o }
                     if previewing, let g = blockPreviewGeometry(for: entry.item) { p.previews[entry.item.id] = g }
                 }
-            } else if let why = clipRichReason(entry, tools: tools, richPreviews: richPreviews) {
+            } else if let why = clipRichReason(entry, tools: tools) {
                 p.rich.append(entry)
                 p.reasons[why.rawValue] += 1
             } else {
@@ -2984,10 +2982,8 @@ struct TimelineView: View {
     /// spinner), a volume / pan / aux tool, a drag / trim / resize / fade preview, a loop (the
     /// composite repeats and the grips are views) — the FIRST one met, in this order (it IS the
     /// rule: the order is what decides what is read, hence what a hover re-evaluates).
-    /// `richPreviews` is the fallback (`RenderPreferences`): the gestures' previews back
-    /// on the rich views — by default the Canvas draws them (@see `BlockPreviewGeometry`).
-    private func groupRichReason(_ entry: LaneEntry, tools: ToolPartitionContext,
-                                 richPreviews: Bool) -> RichReason? {
+    /// The gestures' previews are the Canvas's (@see `BlockPreviewGeometry`), never a reason.
+    private func groupRichReason(_ entry: LaneEntry, tools: ToolPartitionContext) -> RichReason? {
         // `entry.item` is a group: the partition only asks groups (it tests `isGroup` first).
         let item = entry.item
         if item.isInfiniteBus { return .infinite }
@@ -3000,17 +2996,6 @@ struct TimelineView: View {
         // `toolHoveredID` is read (and this layer re-evaluated on every hover) under the tools
         // that hover alone.
         if let why = toolRichReason(entry, tools: tools) { return why }
-        // The previews are the Canvas's (`CanvasGroup.preview`) unless the fallback is on.
-        if richPreviews {
-            if previewOffset(for: item) != nil { return .preview }
-            if previewResizeDX(for: item) != 0 { return .preview }
-            if previewTrimDX(for: item) != 0 { return .preview }
-            if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
-            if spillPlan(for: item.id) != nil { return .spill }
-            // A looping group at rest is drawn by the Canvas (the composite repeats, the IN / OUT
-            // grips are drawn) — and so is the DRAG of one of its bounds, unless the fallback is on.
-            if loopRangeDrag?.id == item.id { return .loop }
-        }
         return nil
     }
 
@@ -3053,19 +3038,17 @@ struct TimelineView: View {
 
     /// nil = this clip can be drawn in the shared Canvas (no SwiftUI need); otherwise the FIRST
     /// reason, in this order, it keeps a rich view (the order is the rule, @see `groupRichReason`).
-    /// `richPreviews` is the fallback (`RenderPreferences`): the gestures'
-    /// previews back on the rich views — by default the Canvas draws them.
-    private func clipRichReason(_ entry: LaneEntry, tools: ToolPartitionContext, richPreviews: Bool) -> RichReason? {
+    /// The gestures' previews are the Canvas's, never a reason.
+    private func clipRichReason(_ entry: LaneEntry, tools: ToolPartitionContext) -> RichReason? {
         let item = entry.item
         // A MIDI clip is drawn by the Canvas (its notes: `MidiNotesDrawing`) unless its piano roll
-        // is open (or, with the fallback on, its loop's IN / OUT is being dragged).
+        // is open.
         // An aux is drawn by the Canvas too (its glyph chequerboard: `GlyphTileDrawing`), except an
         // INFINITE one, which `InfiniteBusBandView` replaces (the same reason as an infinite group).
         switch item.kind {
         case .clip: break
         case .midiClip:
             if item.showsPianoRollInline { return .midi }
-            if richPreviews, loopRangeDrag?.id == item.id { return .preview }
         case .aux:
             if item.isInfiniteBus { return .infinite }
         case .group:
@@ -3090,16 +3073,7 @@ struct TimelineView: View {
         // The active tool's overlay (@see `toolRichReason`).
         if let why = toolRichReason(entry, tools: tools) { return why }
         // A drag/preview under way on this clip: the Canvas draws it (`BlockPreviewGeometry`, in
-        // `plainBlocksCanvas`) — unless the fallback is on, which puts the live SwiftUI view back.
-        if richPreviews {
-            if previewOffset(for: item) != nil { return .preview }
-            if previewResizeDX(for: item) != 0 { return .preview }
-            if previewTrimDX(for: item) != 0 { return .preview }
-            if previewFadeIn(for: item) != nil || previewFadeOut(for: item) != nil { return .preview }
-            // The NEIGHBOUR of a spilling fade moves too, and it is in none of the drag's id sets:
-            // without this it stayed in the batched Canvas, motionless, until the mouse came up.
-            if spillPlan(for: item.id) != nil { return .spill }
-        }
+        // `plainBlocksCanvas`).
         return nil
     }
 
@@ -3707,38 +3681,11 @@ struct TimelineView: View {
 
     @ViewBuilder
     private func altGhostsLayer(selectedIDs: Set<UUID>) -> some View {
-        // Alt+drag ghosts. By default ONE Canvas draws them all (the same
-        // `plainBlocksCanvas` the blocks use, each ghost previewed at its travel through
-        // `BlockPreviewGeometry`) and a second one the "+" badges; the fallback
-        // `RenderPreferences.richPreviews` puts back one rich view per ghost.
+        // Alt+drag ghosts: ONE Canvas draws them all (the same `plainBlocksCanvas` the blocks use,
+        // each ghost previewed at its travel through `BlockPreviewGeometry`) and a second one the
+        // "+" badges.
         let ghosts = altDragGhosts
-        let richGhosts = RenderPreferences.shared.richPreviews
-        // The ForEach of rich ghosts is a layer like the others (0 elements when the Canvas draws them).
-        let _ = TimelineRegimeMeter.recordLayer("alt_ghosts", elements: richGhosts ? ghosts.count : 0)
-        if richGhosts {
-            ForEach(ghosts, id: \.object.id) { ghost in
-                soundBlock(for: ghost.object)
-                    .offset(x: ghost.dx, y: ghost.dy)
-                    .opacity(0.6)
-                    .allowsHitTesting(false)
-                    .zIndex(2)
-
-                ZStack {
-                    Circle()
-                        .fill(Color.green)
-                        .frame(width: 18, height: 18)
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(.white)
-                }
-                .offset(
-                    x: ghost.object.startTime * pixelsPerSecond + ghost.dx + 6,
-                    y: rulerHeight + Double(ghost.object.lane) * laneStep + ghost.dy + 6
-                )
-                .allowsHitTesting(false)
-                .zIndex(2.1)
-            }
-        } else if !ghosts.isEmpty {
+        if !ghosts.isEmpty {
             // Only the ghosts the viewport can see (the rich ghosts were not culled at all).
             let ghostMargin = 80.0
             let ghostX0 = Double(cullScrollX) - ghostMargin
