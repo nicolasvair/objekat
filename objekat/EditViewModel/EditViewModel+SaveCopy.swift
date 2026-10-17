@@ -219,45 +219,30 @@ extension EditViewModel {
         let consolidateDst  = samplesDst.appendingPathComponent("consolidate", isDirectory: true)
         let waveformsDst = destFolder.appendingPathComponent("waveforms", isDirectory: true)
 
-        // 1) Discovery (transitive closure through the sidecars).
-        var sourceFiles: Set<String> = []          // absolute paths of the source `.clip`s
+        // 1) Discovery (transitive closure through the sidecars) — the closure itself is the pure
+        //    unit `ProjectFileUsage.closure`, shared with the disk-usage gauge; only the sidecar
+        //    READ (and keeping the original sub-trees, which the rewrite below needs) stays here.
         var objectSidecars: [UUID: SoundObject] = [:]    // defID → original sub-tree
-        var referencedDefIDs: Set<UUID> = []
         var missing: [String] = []
 
-        func discover(_ o: SoundObject) {
-            if let defID = o.consolidateID {
-                referencedDefIDs.insert(defID)
-                return   // an instance reads the baked wave; the recursion goes through the definition
-            }
-            switch o.kind {
-            case .clip(let fp, _, _, _, _):
-                sourceFiles.insert(fp)
-            case .group(let children, _):
-                children.forEach(discover)
-            case .aux, .midiClip:
-                break
-            }
+        let defInfos = consolidateDefinitions.mapValues {
+            ProjectFileUsage.DefInfo(id: $0.id, wave: $0.wave)
         }
-
-        items.forEach(discover)
-
-        // Closure over the definitions reached (a definition can hold others through its
-        // sidecar → we iterate until it stabilises).
-        var processedDefs: Set<UUID> = []
-        while let defID = referencedDefIDs.subtracting(processedDefs).first {
-            processedDefs.insert(defID)
-            guard let def = consolidateDefinitions[defID] else {
+        let closure = ProjectFileUsage.closure(items: items.map(\.fileUsageRef), defs: defInfos) { info in
+            guard let original = self.readConsolidateSidecar(info.wave, definition: info.id) else { return nil }
+            objectSidecars[info.id] = original
+            return original.fileUsageRef
+        }
+        for problem in closure.problems {
+            switch problem {
+            case .unknownDefinition(let defID):
                 missing.append(L("saveCopy.missingConsolidate", String(defID.uuidString.prefix(8))))
-                continue
-            }
-            if let original = readConsolidateSidecar(def.wave, definition: defID) {
-                objectSidecars[defID] = original
-                discover(original)
-            } else {
-                missing.append(consolidateSidecarName(def.wave))
+            case .sidecarUnavailable(let defID):
+                if let def = consolidateDefinitions[defID] { missing.append(consolidateSidecarName(def.wave)) }
             }
         }
+        let sourceFiles = closure.sourcePaths                     // absolute paths of the source `.clip`s
+        let processedDefs = Set(closure.visitedDefinitions)
 
         // 2) The source files' copy plan + a map from original path → new path.
         var pathMap: [String: String] = [:]     // key = standardised source path
@@ -446,7 +431,7 @@ extension EditViewModel {
     }
 
     private func consolidateSidecarName(_ wave: String) -> String {
-        "\((wave as NSString).deletingPathExtension)_objectstate.json"
+        ProjectFileUsage.sidecarName(forWave: wave)
     }
 
     // MARK: - Report
