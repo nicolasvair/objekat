@@ -8927,7 +8927,7 @@ static void objDumpPluginList(te::PluginList& pl,
 
     const float dB = std::max(rec.client->getAndClearAudioLevel(0).dB,
                               rec.client->getAndClearAudioLevel(1).dB);
-    float v = std::max(0.0f, std::min(1.0f, (dB + 60.0f) / 60.0f));
+    float v = std::max(0.0f, std::min(1.0f, (dB + 60.0f) / 66.0f));   // -60..+6 dBFS, @see VUScale.swift
     if (!pit->second->isEnabled() || ![self isCurrentlyPlaying]) v = 0.0f;
     rec.lastReadMs = now;
     rec.lastValue  = v;

@@ -275,8 +275,24 @@ struct SynopticCardVULine: View {
             .frame(height: 2)
             .overlay(alignment: .leading) {
                 GeometryReader { g in
-                    Capsule().fill(Color.green)
-                        .frame(width: max(0, g.size.width * vu))
+                    // Each ZONE of the lit part takes its own colour (green, then yellow past -18 dBFS,
+                    // orange past -6, red past 0): only the portion over a threshold changes, never the
+                    // whole bar.
+                    let w = g.size.width
+                    let lit = max(0, min(1, vu))
+                    ZStack(alignment: .leading) {
+                        ForEach(VUScale.zones.indices, id: \.self) { i in
+                            let z = VUScale.zones[i]
+                            let from = z.from, to = min(z.to, lit)
+                            if to > from {
+                                Rectangle().fill(z.color)
+                                    .frame(width: (to - from) * w)
+                                    .offset(x: from * w)
+                            }
+                        }
+                    }
+                    .frame(width: w, alignment: .leading)
+                    .clipShape(Capsule())
                 }
             }
     }
