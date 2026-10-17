@@ -43,6 +43,12 @@ nonisolated enum ClipSourceFormat {
         return i
     }
 
+    /// Drops what is remembered for `path` — a file rewritten in place may have another rate or
+    /// depth (@see EditViewModel+ChangedFiles).
+    nonisolated static func forget(atPath path: String) {
+        lock.lock(); known[path] = nil; lock.unlock()
+    }
+
     /// Pure: a stream description in, the three facts out.
     nonisolated static func describe(_ format: AVAudioFormat) -> Info {
         let asbd = format.streamDescription.pointee

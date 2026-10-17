@@ -60,4 +60,11 @@ enum ClipChannels {
 
     /// True iff the file at `path` has EXACTLY two channels.
     nonisolated static func isStereo(atPath path: String) -> Bool { count(atPath: path) == 2 }
+
+    /// Drops what is remembered for `path`. A relink changes the PATH so it never needed this; a
+    /// file rewritten in place (@see EditViewModel+ChangedFiles) keeps its path and may have
+    /// changed from mono to stereo, which the cache would go on denying.
+    nonisolated static func forget(atPath path: String) {
+        lock.lock(); known[path] = nil; lock.unlock()
+    }
 }

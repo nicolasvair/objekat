@@ -374,8 +374,27 @@ extension EditViewModel {
         return done
     }
 
-    /// ONE object laid again on another file: the model rewritten, then the engine object BORN —
-    /// see the head of this file for why nothing less will do.
+    /// ONE object laid again on another file. A repair: the path must really change.
+    @discardableResult
+    private func rebuildClip(id: UUID, onFile newPath: String,
+                             fileLength: Double?, size: Int64?) -> Bool {
+        guard let before = find(id: id),
+              case .clip(let oldPath, _, _, _, _) = before.kind,
+              oldPath != newPath else { return false }
+        return relaunchClip(id: id, onFile: newPath, fileLength: fileLength, size: size,
+                            capturingLiveState: false)
+    }
+
+    /// ONE object laid again on a file: the model rewritten, then the engine object BORN — see the
+    /// head of this file for why nothing less will do.
+    ///
+    /// Shared by the repair (`rebuildClip`, the path changes, the object is a ghost) and by the
+    /// silent reload of a file rewritten in place (`refreshClip`, @see EditViewModel+ChangedFiles,
+    /// the path is the same and the object is ALIVE). The one difference is the plugins: a ghost has
+    /// no live instance, so the model's `stateXML` is the truth; a live object has, and what the
+    /// hand last did to a knob lives only there — `capturingLiveState` reads it BEFORE the engine
+    /// object is destroyed and writes it into the model, or the rebuilt chain would come back at
+    /// the state of the last save.
     ///
     /// `fileLength` nil = the length could not be read (a format `AVAudioFile` will not open).
     /// The old length is then kept and nothing is clamped: it is the least destructive answer, and
@@ -383,22 +402,28 @@ extension EditViewModel {
     /// through whatever it is, nil included — a stale size describing the file that went would be
     /// worse than none, since the next sweep would settle homonyms with it.
     @discardableResult
-    private func rebuildClip(id: UUID, onFile newPath: String,
-                             fileLength: Double?, size: Int64?) -> Bool {
+    func relaunchClip(id: UUID, onFile newPath: String,
+                      fileLength: Double?, size: Int64?,
+                      capturingLiveState: Bool) -> Bool {
         guard let before = find(id: id),
-              case .clip(let oldPath, let sourceOffset, let oldLength, let speed, let reversed) = before.kind,
-              oldPath != newPath else { return false }
+              case .clip(_, let sourceOffset, let oldLength, let speed, let reversed) = before.kind else { return false }
 
         var length = oldLength
         if let fileLength, fileLength > 0 { length = fileLength }
         let fitted = Self.fittedWindow(sourceOffset: sourceOffset, duration: before.duration,
                                        speedRatio: speed, fileLength: length)
+        let live: SoundObject? = capturingLiveState ? withCapturedPluginStates(before) : nil
 
         removeFromEngine(before)
         update(id: id) { obj in
             obj.kind = .clip(filePath: newPath, sourceOffset: fitted.sourceOffset,
                              fileDuration: length, speedRatio: speed, isReversed: reversed)
             obj.fileSize = size
+            if let live {
+                obj.plugins = live.plugins
+                obj.instruments = live.instruments
+                obj.sends = live.sends
+            }
             // A channel choice belongs to a STEREO source: onto a file that is not, it has nothing
             // left to choose between (and the selector would be hidden with the old value still
             // set) — the clip goes back to the default.

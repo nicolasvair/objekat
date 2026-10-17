@@ -428,6 +428,33 @@ recomputed once.
 It answers even with no project open — the counters are process-wide statics — and `reset: true`
 zeroes them first, for a bench that wants to measure from a known zero.
 
+The file-change counters (`invalidations`, `file_change_scans`, `file_change_stats`,
+`file_change_reloads`, `file_change_stat_seconds`, `file_change_reload_seconds`,
+`file_change_deferred`) belong to `files.check_changes` below.
+
+### A source file rewritten on disk (`files.check_changes`)
+
+The app asks the disk, silently, whether a source file the project names has changed (size or
+modification time) at three moments: when a project is opened, when the application comes back to
+the foreground (2 s anti-bounce), and when a tab comes back to the front (that tab's paths only).
+It costs ONE `stat` per distinct path, off the main thread; no watching, no hashing. A path that
+changed is reloaded once, whatever the number of objects on it: the engine re-reads the file
+(Tracktion's derived files — the reversed render, the proxy of a compressed format — are purged,
+they are keyed by the path alone), every object is rebuilt with its window fitted to the new
+length (the relink rule: the window slides back, then is cropped; fades stay valid), `file_duration`
+follows, the waveform is redone. The reload is outside the undo history and does not dirty the
+project. Put off while the transport runs (applied at the stop) and while a tab switch would be
+refused (load, export, bake, consolidated object open). Left alone: ARA objects (the analysis is not
+relaunched, the retouches stay), instances of consolidated objects, and the project's own
+`samples/sources|consolidate|objects`.
+
+`files.check_changes` (`reason`: `api` default, or `foreground` to go through the anti-bounce) runs
+the same scan and answers `scanned`, `changed`, `reloaded_paths`, `reloaded_objects`, `ara_skipped`,
+`unreadable`, `deferred_by` (`transport`, `tab_switch`, `loading`, …, or `null`) and `skipped`
+(`anti_bounce`, `in_flight`, `no_files`, `document_changed`). The first scan of a document learns the
+identities (a path never seen is not "changed"); an opening is compared with the size recorded in the
+project. Contract tested by `tools/scenario_file_changed.py`.
+
 `waveform.preload` is the one door a script has onto the peaks: the timeline only ever computes
 a waveform when its block is drawn on a Canvas, so a headless run — or a UI run that has simply
 never scrolled a file into view — would otherwise measure an empty cache and conclude, wrongly,

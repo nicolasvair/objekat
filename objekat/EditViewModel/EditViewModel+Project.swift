@@ -346,6 +346,15 @@ extension EditViewModel {
         // A direct render reads the live Edit, which this is about to empty. The API's `project.new`
         // answers `invalid_state` BEFORE getting here; this is the net for every other caller.
         guard !exportPinsActiveDocument else { return }
+        // An empty document has no source files and goes through no load: whatever the previous
+        // one knew about its files is gone, and a tab parked just before (`newTab`) must not leave
+        // the detection waiting for a load that will never come.
+        // @see EditViewModel+ChangedFiles
+        fileChanges.epoch &+= 1
+        fileChanges.documentParked = false
+        fileChanges.rescanWanted = false
+        fileChanges.carried = nil
+        fileChanges.known = [:]
         engine?.stop()
         for stem in stems where stem.id != mainStemID {
             let memberIDs = allClips.filter { $0.stemID == stem.id }.map { $0.id.uuidString }

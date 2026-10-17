@@ -435,6 +435,27 @@ extension CommandRegistry {
                             "object_count": .int(vm.missingFileCount)])
         }
 
+        register("files.check_changes",
+                 summary: "Asks the disk whether any source file the project names has changed "
+                        + "(size or modification time) since it was last seen, and reloads those "
+                        + "that did — silently, once per path: the engine re-reads the file, every "
+                        + "object on it is rebuilt with its window fitted to the new length, the "
+                        + "waveform is redone. Outside the undo history, the project is not made "
+                        + "dirty. Answers what it did; when the moment is not good (playback, a "
+                        + "load, an export, a bake, a consolidated object open) it answers "
+                        + "`deferred_by` and redoes the scan when that clears. FOR TESTS: the app "
+                        + "runs this itself on opening, on returning to the foreground and on "
+                        + "returning to a tab; counters in perf.waveforms (`file_change_*`).",
+                 params: [ParamSpec("reason", "string", required: false,
+                                    "`api` (default) or `foreground` — the latter goes through the "
+                                  + "2 s anti-bounce like the real trigger.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let reason: FileChangeScanReason = try p.optionalString("reason") == "foreground" ? .foreground : .api
+            let report = await vm.checkChangedFiles(reason: reason)
+            return report.json
+        }
+
         register("project.schema",
                  summary: "The session format's notice: what each field of a project manifest "
                         + "file stands for.") { _ in

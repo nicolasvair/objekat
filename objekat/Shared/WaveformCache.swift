@@ -44,6 +44,12 @@ final class WaveformCache {
     // `PeakPair` moved to `WaveformPeaks.swift`: a plain value type with no model behind it,
     // compiled and asserted standalone (`tools/test_waveform_peaks.swift`).
 
+    /// A file's size and modification time — what a `.wfc` is valid for.
+    struct SourceStamp: Sendable, Equatable {
+        var size: UInt64
+        var mtime: Double
+    }
+
     struct Entry {
         /// One `PeakLanes` per level: `peaks[level][lane][block]`. Every level has the same number
         /// of lanes — one, or two for a stereo source (@see `WaveformPeaks.laneCount`).
@@ -51,6 +57,12 @@ final class WaveformCache {
         var densities: [Double]      // the effective peaks/second of each level (a snapshot at build time)
         var duration: Double
         var sampleRate: Double
+        /// The source's identity (size + mtime) AS IT WAS BEFORE the decode began — the one the
+        /// `.wfc` header is written with. Read at the start and not at the write: a file that
+        /// changes while it is being decoded then leaves a cache whose stamp is OLDER than the
+        /// file, which `loadFromDisk` rejects, instead of old peaks stamped with the new identity
+        /// (a lie no later check could catch). nil = unknown (the entry was never stamped).
+        var stamp: SourceStamp? = nil
 
         /// How many stacked waveforms this file is drawn in. `nonisolated`: read by the detached
         /// load and by the `.wfc` writer, both off the main actor by design.
@@ -103,7 +115,16 @@ final class WaveformCache {
             return (d0 / Double(ratio), base.map { WaveformPeaks.decimate($0, ratio: ratio) })
         }
     }
-    private var inFlight: Set<String> = []
+    /// path → the GENERATION the load in flight was started under (@see `generations`).
+    private var inFlight: [String: Int] = [:]
+
+    /// A per-path counter bumped by `invalidate(paths:)`. Every asynchronous result (a mipmap, a
+    /// disk read, a decoded region) carries the generation it was STARTED under and is thrown away
+    /// if the path has moved on — otherwise a decode of the old file, in flight when the file
+    /// changed, would land after the invalidation and put the old waveform back for good.
+    /// Ignored by the observation: it is bookkeeping, no view draws it.
+    @ObservationIgnored private var generations: [String: Int] = [:]
+    private func generation(of path: String) -> Int { generations[path, default: 0] }
 
     /// A decoded region's key. Keying on the PATH alone was enough while the samples mode only
     /// opened past 30 000 px/s: the viewport then held 0.05 s of timeline, so two windows of one
@@ -256,6 +277,7 @@ final class WaveformCache {
             if existingRegion(filePath, fileStart: fileStart, fileEnd: fileEnd) != nil { return }
             if inFlightCovers(filePath, fileStart: fileStart, fileEnd: fileEnd) { return }
             guard let sr = cache[filePath]?.sampleRate, sr > 0 else { return }
+            let gen = generation(of: filePath)
 
             // The target: the requested window widened (≥ regionMinSpan), bounded by the file.
             let requestKey = RegionKey(path: filePath, slot: Self.slot(for: fileStart))
@@ -271,6 +293,10 @@ final class WaveformCache {
                 Self.decodeRegion(path: filePath, startTime: lo, endTime: hi, sampleRate: sr)
             }.value
 
+            // The file changed (or was invalidated) while this was decoding: what came back is the
+            // OLD file's samples. Dropped, and the in-flight mark is not touched — it may already
+            // belong to a request made against the new file.
+            guard generation(of: filePath) == gen else { return }
             regionInFlight[requestKey] = nil
             guard let region else { return }
             let bytes = region.byteCount
@@ -374,8 +400,9 @@ final class WaveformCache {
     }
 
     func load(filePath: String) {
-        guard !inFlight.contains(filePath), cache[filePath] == nil else { return }
-        inFlight.insert(filePath)
+        let gen = generation(of: filePath)
+        guard inFlight[filePath] != gen, cache[filePath] == nil else { return }
+        inFlight[filePath] = gen
         let dir = waveformsDirectory
         WaveformCacheMeter.record { stats in
             stats.inFlight += 1
@@ -401,9 +428,7 @@ final class WaveformCache {
                     if cached.laneCount > 1 { stats.stereoMipmaps += 1 }
                 }
                 await MainActor.run {
-                    self.store(cached, for: filePath)
-                    self.inFlight.remove(filePath)
-                    WaveformCacheMeter.record { $0.inFlight -= 1 }
+                    self.finishLoad(cached, for: filePath, generation: gen)
                 }
                 return
             }
@@ -415,21 +440,85 @@ final class WaveformCache {
             // write, is what keeps a slow decode from landing in the folder it started in rather
             // than the one open when it finished.
             let computeStart = CFAbsoluteTimeGetCurrent()
-            let result = await Self.computeMipmap(path: filePath)
+            // The identity BEFORE the decode (@see `Entry.stamp`).
+            let stamp = Self.fileIdentity(path: filePath).map { SourceStamp(size: $0.size, mtime: $0.mtime) }
+            var computed = await Self.computeMipmap(path: filePath)
+            computed.stamp = stamp
+            let result = computed
             WaveformCacheMeter.record { stats in
                 stats.mipmapsComputed += 1
                 stats.mipmapComputeSeconds += CFAbsoluteTimeGetCurrent() - computeStart
                 stats.peakBytesInMemory += Self.peakByteSize(result)
                 if result.laneCount > 1 { stats.stereoMipmaps += 1 }
             }
-            let target = await MainActor.run { self.writeTarget(for: filePath) }
+            // No write for a result the path has already moved past: it describes the old file.
+            let target = await MainActor.run {
+                self.generation(of: filePath) == gen ? self.writeTarget(for: filePath) : nil
+            }
             if let target { Self.writeToDisk(result, path: filePath, dir: target) }
             await MainActor.run {
-                self.store(result, for: filePath)
-                self.inFlight.remove(filePath)
-                WaveformCacheMeter.record { $0.inFlight -= 1 }
+                self.finishLoad(result, for: filePath, generation: gen)
             }
         }
+    }
+
+    /// The end of a load, on the main actor: stores the entry unless the path was invalidated
+    /// since the load began (its result then describes the old file and is dropped), and frees the
+    /// in-flight slot only if it is still THIS load's — a newer generation may have taken it.
+    private func finishLoad(_ entry: Entry, for filePath: String, generation gen: Int) {
+        if generation(of: filePath) == gen { store(entry, for: filePath) }
+        if inFlight[filePath] == gen { inFlight[filePath] = nil }
+        WaveformCacheMeter.record { $0.inFlight -= 1 }
+    }
+
+    // MARK: - Invalidation (the file changed on disk)
+
+    /// Forgets everything held about these files and reads them again: the peaks, the derived
+    /// overview levels, the decoded sample regions and the `.wfc` on disk, then a fresh `load`.
+    ///
+    /// **The memory cache never noticed a file changing** — `load` returns at once for a path it
+    /// already holds, and nothing ever emptied `cache` — so a take re-saved by an editor kept its
+    /// OLD waveform until the application quit. (The `.wfc` was never the hole: its header carries
+    /// the source's size and mtime, and `loadFromDisk` rejects a mismatch.)
+    ///
+    /// The regions go out WITH their byte count (`regionBytesTotal`): a region dropped without the
+    /// subtraction is the "phantom counter" that once made `evictRegionsIfNeeded` throw away every
+    /// region it was handed (@see `requestRegion`, the replaced-region note). The generation is
+    /// bumped first, so anything already decoding on the old file is discarded when it lands.
+    ///
+    /// A path this cache never held (an object whose block was never drawn) is not loaded: there is
+    /// nothing on screen to refresh, and its first `load` will read the new file anyway. Its stale
+    /// `.wfc` is still removed.
+    func invalidate(paths: [String]) {
+        var toReload: [String] = []
+        for path in Set(paths).sorted() {
+            let wasKnown = cache[path] != nil || inFlight[path] != nil
+            generations[path, default: 0] += 1
+            if inFlight[path] != nil {
+                // The old load will be discarded by its generation; its meter slot is released
+                // there too (`finishLoad`), so the gauge stays whole.
+                inFlight[path] = nil
+            }
+            cache[path] = nil
+            overviewLevels[path] = nil
+            for key in sampleRegions.keys where key.path == path {
+                if let region = sampleRegions[key] {
+                    let bytes = region.byteCount
+                    regionBytesTotal -= bytes
+                    WaveformCacheMeter.record { $0.regionBytesInMemory -= bytes }
+                }
+                sampleRegions[key] = nil
+            }
+            regionRecency.removeAll { $0.path == path }
+            for key in regionInFlight.keys where key.path == path { regionInFlight[key] = nil }
+            if let dir = waveformsDirectory {
+                try? FileManager.default.removeItem(
+                    at: dir.appendingPathComponent(Self.cacheFileName(path: path)))
+            }
+            WaveformCacheMeter.record { $0.invalidations += 1 }
+            if wasKnown { toReload.append(path) }
+        }
+        for path in toReload { load(filePath: path) }
     }
 
     /// The memory footprint of one entry's peaks — a gauge for `perf.waveforms`, never on the
@@ -633,7 +722,12 @@ final class WaveformCache {
         // (the source's identity does match) and the clip would stay without a waveform for ever
         // — while playback, which goes through the engine and not through AVFoundation, keeps
         // working. So a failure stays in memory only, and the next session tries again.
-        guard isUsable(entry), lanesAreConsistent(entry), let id = fileIdentity(path: path) else { return }
+        // The stamp taken before the decode wins over the file as it is NOW (@see `Entry.stamp`).
+        let id: (size: UInt64, mtime: Double)
+        if let stamp = entry.stamp { id = (stamp.size, stamp.mtime) }
+        else if let now = fileIdentity(path: path) { id = now }
+        else { return }
+        guard isUsable(entry), lanesAreConsistent(entry) else { return }
         var data = Data()
         func appendU32(_ v: UInt32) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
         func appendU64(_ v: UInt64) { var x = v.littleEndian; withUnsafeBytes(of: &x) { data.append(contentsOf: $0) } }
@@ -742,7 +836,7 @@ final class WaveformCache {
             peaks.append(level)
         }
         let entry = Entry(peaks: peaks, densities: densities, duration: duration,
-                          sampleRate: sampleRate)
+                          sampleRate: sampleRate, stamp: SourceStamp(size: id.size, mtime: id.mtime))
         // A net for the failure caches written by earlier versions: we ignore them,
         // which restarts a clean computation and rewrites them correctly.
         return isUsable(entry) ? entry : nil

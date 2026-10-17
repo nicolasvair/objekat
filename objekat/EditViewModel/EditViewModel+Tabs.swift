@@ -29,6 +29,10 @@ struct ParkedProject {
     var loopModeEnabled: Bool
     var loopRegion: ClosedRange<Double>?
     var viewport: ViewportState
+    /// What the file-change detection knew of this tab's source files when it left
+    /// (@see EditViewModel+ChangedFiles) — so a file rewritten while the tab was parked is caught
+    /// against what the tab last saw, not against nothing.
+    var fileIdentities: [String: SourceFileIdentity] = [:]
 }
 
 extension EditViewModel {
@@ -121,6 +125,10 @@ extension EditViewModel {
         // `projectDocument` captures the bus chains' states itself.
         let doc = projectDocument(items: itemsWithCapturedPluginStates(),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
+        // The document is leaving: a file-change scan in flight answers about it, and nothing may
+        // be applied until the next load has finished (`performFinalize` lifts this).
+        fileChanges.epoch &+= 1
+        fileChanges.documentParked = true
         return ParkedProject(doc: doc,
                              projectURL: projectURL,
                              projectName: projectName,
@@ -133,7 +141,8 @@ extension EditViewModel {
                              timeSelection: timeSelection,
                              loopModeEnabled: loopModeEnabled,
                              loopRegion: loopRegion,
-                             viewport: currentViewport)
+                             viewport: currentViewport,
+                             fileIdentities: fileChanges.known)
     }
 
     /// Brings a parked tab back to the front: loads its document through the SAME door a project
@@ -146,6 +155,9 @@ extension EditViewModel {
     /// restored LAST (some of what the load touches on its way, through `didSet`s meant for a
     /// freshly opened file, can leave its own opinion on `isDirty` — the parked value must win).
     func restoreParkedProject(_ parked: ParkedProject) async {
+        // Consumed by `performFinalize` at the end of the load below, which then runs the
+        // tab-return scan against these instead of the open scan.
+        fileChanges.carried = parked.fileIdentities
         _ = await applyProjectDocumentAsync(parked.doc, displayName: parked.projectName,
                                             cancellable: false, preservingClipboard: true)
 

@@ -2739,6 +2739,39 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
           insideContainer ? " (dans un groupe)" : "");
 }
 
+// MARK: - Source file changed on disk
+
+// Tracktion keys everything it derives from a file by the HASH OF ITS PATH, never by its content or
+// its mtime: the reversed copy of a clip (`RenderManager::getAudioFileForHash(... clip->getHash())`,
+// `getHash()` being path ^ reversed), and the cached proxy of a compressed source
+// (`getProxyFileToCreate(false)`). Both live in the Edit's temp folder and are reused by name — so a
+// clip re-created on a file that has changed would find the OLD render and play it, silently.
+// Deleting them first is what makes the new clip render again. `AudioFile::deleteFile` also
+// releases the cached readers on the file. Then `forceFileUpdate` re-parses the source's info: the
+// length `addSoundObject` reads comes from that cache, not from the disk.
+//
+// ARA clips are left alone: their audio source is analysed once and the user's retouches live in
+// the plugin; relaunching the analysis would throw them away (the caller does not touch them
+// either).
+- (void)refreshSourceFileAtPath:(NSString*)path {
+    if (!_edit || !_engine || path.length == 0) return;
+    juce::File source(juce::String::fromUTF8([path UTF8String]));
+    const juce::File tempDir = _edit->getTempDirectory(false);
+    int purged = 0;
+    for (auto& entry : _clipMap) {
+        te::WaveAudioClip::Ptr clip = entry.second;
+        if (!clip || clip->getOriginalFile() != source || clip->isUsingARA()) continue;
+        if (tempDir != juce::File()) {
+            te::AudioFile reversed = te::RenderManager::getAudioFileForHash(*_engine, tempDir, clip->getHash());
+            if (reversed.getFile().existsAsFile()) { reversed.deleteFile(); ++purged; }
+        }
+        te::AudioFile proxy = clip->getProxyFileToCreate(false);
+        if (proxy.getFile().existsAsFile()) { proxy.deleteFile(); ++purged; }
+    }
+    _engine->getAudioFileManager().forceFileUpdate(te::AudioFile(*_engine, source));
+    NSLog(@"[OBJ] refreshSourceFile: %@ (%d render(s) dropped)", path, purged);
+}
+
 // MARK: - MIDI (clip MIDI + instrument virtuel)
 //
 // Un objet MIDI = UN ContainerClip dont l'unique enfant est un te::MidiClip, l'instrument

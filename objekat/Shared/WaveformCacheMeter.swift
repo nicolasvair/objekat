@@ -34,6 +34,23 @@ nonisolated struct WaveformCacheStats: Sendable {
     var regionBytesInMemory = 0
     var inFlight = 0
     var peakConcurrency = 0
+    /// How many paths `WaveformCache.invalidate(paths:)` emptied (a file changed on disk).
+    var invalidations = 0
+    // The file-change detection (@see `EditViewModel+ChangedFiles`). Kept beside the waveform
+    // counters because a changed file is, first of all, a waveform that must be redone — and
+    // because one `perf.waveforms {reset}` then zeroes the whole story of a run.
+    /// Scans started (one per trigger that got past the anti-bounce).
+    var fileChangeScans = 0
+    /// `stat` calls made, one per DISTINCT path per scan.
+    var fileChangeStats = 0
+    /// Paths found changed and reloaded (waveform + engine), once per path however many objects share it.
+    var fileChangeReloads = 0
+    /// Wall time of the stats themselves (off the main thread), summed.
+    var fileChangeStatSeconds = 0.0
+    /// Main-thread time spent APPLYING reloads (the engine rebuild), summed.
+    var fileChangeReloadSeconds = 0.0
+    /// Reloads that had to wait for the transport / a load / an export (counted when deferred).
+    var fileChangeDeferred = 0
 }
 
 // `nonisolated`, like `WaveformCache.finenessMultiplier` right beside the callers of this type:
