@@ -1276,14 +1276,28 @@ struct OBJRenderFileSpec {
     bool   strictRange = false;   // pas de endAllowance
 };
 
+// Un fader du CONTENU à forcer sur le clone d'un rendu « contenu consolidé » : ses valeurs sont
+// celles du MODÈLE (volume, pan, mute propre de l'objet, courbe de gain), jamais l'état d'écoute
+// du graphe vivant — mute de stem, solo ailleurs, ni la courbe de gain que le solo écarte
+// (`engineCurvePoints`). Repéré sur le graphe vivant (clip porteur + identifiant du fader), retrouvé
+// sur le clone par ces identifiants, que la copie de l'arbre conserve.
+struct OBJForcedFader {
+    struct Point { double t; float v; float c; };
+    te::EditItemID     clipID;
+    te::EditItemID     faderID;
+    float              gainDb = 0.0f;
+    float              pan    = 0.0f;
+    bool               muted  = false;
+    std::vector<Point> gainCurve;   // temps EDIT, tri croissant ; ignorée si `muted`
+};
+
 // Mode « contenu consolidé » d'un rendu d'objet (@see renderConsolidateContentToFileAsync:). Absent
 // (`enabled` faux) = le comportement historique, bake ou « juste l'objet ». Présent : la cible n'est
-// rien coupée, son étendue n'est pas ouverte, et son fader est forcé sur ces valeurs du MODÈLE.
+// rien coupée, son étendue n'est pas ouverte, et les faders de la cible ET de tout son contenu
+// sont forcés sur les valeurs du MODÈLE (`faders`).
 struct OBJContentRender {
     bool  enabled = false;
-    float gainDb  = 0.0f;
-    float pan     = 0.0f;
-    bool  muted   = false;
+    std::vector<OBJForcedFader> faders;
 };
 
 struct OBJRenderChain {
@@ -4129,16 +4143,15 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     const te::EditItemID keepID = item ? item->itemID : te::EditItemID{};
     const auto chain = [self renderChainForKey:key];
 
-    // Mode contenu : le fader à forcer est repéré sur le graphe VIVANT (le repère explicite
-    // `_faderGainMap`, pas « le premier ObjGain de la liste »), puis retrouvé sur le clone par son
-    // identifiant — le clone naît d'une copie de l'arbre, les identifiants y sont conservés. Sans
-    // fader connu on refuse : un wave baké avec le mute / solo vivant dedans serait silencieux sans
-    // qu'aucune erreur ne le dise.
-    te::EditItemID faderID;
+    // Mode contenu : les faders à forcer ont été repérés par l'appelant sur le graphe VIVANT (le
+    // repère explicite `_faderGainMap`, pas « le premier ObjGain de la liste »). Celui de la cible
+    // est exigé : sans lui on refuse — un wave baké avec le mute / solo vivant dedans serait
+    // silencieux sans qu'aucune erreur ne le dise.
     if (content.enabled) {
-        if (auto fit = _faderGainMap.find(key); fit != _faderGainMap.end() && fit->second)
-            faderID = fit->second->itemID;
-        if (!keepID.isValid() || !faderID.isValid()) {
+        bool targetForced = false;
+        for (const auto& f : content.faders)
+            if (f.clipID == keepID && f.faderID.isValid()) targetForced = true;
+        if (!keepID.isValid() || !targetForced) {
             NSLog(@"[OBJ] renderConsolidateContent: cible ou fader introuvable pour %@", objectID);
             if (completion) completion(NO);
             return;
@@ -4148,7 +4161,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     [self renderTrackToFileAsync:track->itemID
                         filePath:filePath start:startSecs end:endSecs
                   allowedClipIDs:chain.allowed
-                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail, content, faderID](te::Track* t) {
+                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail, content](te::Track* t) {
                              auto* ct = dynamic_cast<te::ClipTrack*>(t);
                              if (!ct) return;
                              auto bypassTail = [](te::PluginList* pl) {
@@ -4186,24 +4199,9 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                  if (auto* c = te::findClipForID(t->edit, keepID)) {
                                      if (content.enabled) {
                                          // Mode CONTENU : rien n'est coupé (l'ObjWindowFade reste
-                                         // actif : fenêtre et fondus de la racine sont du contenu),
-                                         // l'étendue du container n'est pas ouverte, et le fader
-                                         // prend les valeurs du MODÈLE. Le fader vivant porte aussi
-                                         // le mute, le solo et le mute de stem (engineVolume) ; une
-                                         // courbe de gain, elle, est du contenu et reste — sauf
-                                         // sous un mute du modèle, où elle écraserait le −96.
-                                         bool forced = false;
-                                         if (auto* pl = c->getPluginList())
-                                             for (auto* p : *pl)
-                                                 if (p->itemID == faderID)
-                                                     if (auto* g = dynamic_cast<te::ObjGainPlugin*>(p)) {
-                                                         if (content.muted) g->gainParam->getCurve().clear(nullptr);
-                                                         g->setGainDb(content.muted ? -96.0f : content.gainDb);
-                                                         g->setPan(content.pan);
-                                                         forced = true;
-                                                     }
-                                         if (!forced)
-                                             NSLog(@"[OBJ] renderConsolidateContent: fader absent du clone");
+                                         // actif : fenêtre et fondus de la racine sont du contenu) et
+                                         // l'étendue du container n'est pas ouverte. Les faders,
+                                         // eux, sont forcés plus bas, pour toute la cible.
                                      } else {
                                          // `keepOwnTail` : rendu « juste l'objet » — fader (gain, pan)
                                          // et fenêtre/fondus sont CUITS dans le fichier, le clip qui le
@@ -4211,6 +4209,38 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                          if (!keepOwnTail) bypassTail(c->getPluginList());
                                          openContainer(c);
                                      }
+                                 }
+
+                             // Mode CONTENU : le fader de la cible ET celui de chaque objet de son
+                             // contenu prennent les valeurs du MODÈLE. Le fader vivant porte aussi
+                             // le mute de stem, le solo ailleurs et le mute qu'ils composent
+                             // (engineVolume) — qui ne doivent jamais entrer dans le wave, sans
+                             // quoi tout objet que le solo filtre est cuit en silence. La courbe
+                             // de gain est du contenu : le solo l'écarte du graphe vivant, on la
+                             // remet depuis le modèle — sauf sous un mute du modèle, où elle
+                             // écraserait le −96. La courbe de pan, elle, n'est jamais écartée.
+                             if (content.enabled)
+                                 for (const auto& f : content.faders) {
+                                     auto* c = te::findClipForID(t->edit, f.clipID);
+                                     auto* pl = c ? c->getPluginList() : nullptr;
+                                     bool forced = false;
+                                     if (pl)
+                                         for (auto* p : *pl)
+                                             if (p->itemID == f.faderID)
+                                                 if (auto* g = dynamic_cast<te::ObjGainPlugin*>(p)) {
+                                                     auto& curve = g->gainParam->getCurve();
+                                                     curve.clear(nullptr);
+                                                     if (!f.muted)
+                                                         for (const auto& pt : f.gainCurve)
+                                                             curve.addPoint(te::TimePosition::fromSeconds(pt.t),
+                                                                            pt.v, pt.c, nullptr);
+                                                     g->setGainDb(f.muted ? -96.0f : f.gainDb);
+                                                     g->setPan(f.pan);
+                                                     g->gainParam->updateStream();   // l'itérateur de courbe, tout de suite
+                                                     forced = true;
+                                                 }
+                                     if (!forced)
+                                         NSLog(@"[OBJ] renderConsolidateContent: fader absent du clone");
                                  }
 
                              // Un ANCÊTRE n'est là que pour porter la cible : sa fenêtre la
@@ -4283,17 +4313,41 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                    filePath:(NSString*)filePath
                                       start:(double)startSecs
                                         end:(double)endSecs
-                                     gainDb:(float)gainDb
-                                        pan:(float)pan
-                                      muted:(BOOL)muted
+                                     faders:(NSArray<NSDictionary*>*)faders
                                  completion:(void(^)(BOOL ok))completion {
     OBJRenderFileSpec spec;               // sampleRate 0 = la carte, 32 bits flottant : ceux d'un bake
     spec.strictRange = true;
     OBJContentRender content;
     content.enabled = true;
-    content.gainDb  = gainDb;
-    content.pan     = pan;
-    content.muted   = muted ? true : false;
+    // Repérage sur le graphe VIVANT, ici, sur le thread principal : clip porteur et identifiant du
+    // fader de chaque objet du contenu. Un objet inconnu du moteur est ignoré (un contenu peut
+    // porter un objet pas encore posé) ; l'absence de la cible, elle, fait refuser le rendu.
+    for (NSDictionary* d in faders) {
+        if (![d isKindOfClass:[NSDictionary class]]) continue;
+        NSString* oid = d[@"id"];
+        if (![oid isKindOfClass:[NSString class]]) continue;
+        const std::string k([oid UTF8String]);
+        te::Clip* clip = nullptr;
+        if (auto cit = _containerClipMap.find(k); cit != _containerClipMap.end()) clip = cit->second;
+        else if (auto it = _clipMap.find(k); it != _clipMap.end())                clip = it->second.get();
+        auto fit = _faderGainMap.find(k);
+        if (!clip || fit == _faderGainMap.end() || !fit->second) {
+            NSLog(@"[OBJ] renderConsolidateContent: %@ sans clip ou sans fader — ignoré", oid);
+            continue;
+        }
+        OBJForcedFader f;
+        f.clipID  = clip->itemID;
+        f.faderID = fit->second->itemID;
+        f.gainDb  = [d[@"gainDb"] floatValue];
+        f.pan     = [d[@"pan"] floatValue];
+        f.muted   = [d[@"muted"] boolValue];
+        for (NSDictionary* p in (NSArray*)d[@"gainCurve"])
+            if ([p isKindOfClass:[NSDictionary class]])
+                f.gainCurve.push_back({ juce::jmax(0.0, [p[@"t"] doubleValue]),
+                                        [p[@"v"] floatValue],
+                                        juce::jlimit(-1.0f, 1.0f, [p[@"c"] floatValue]) });
+        content.faders.push_back(std::move(f));
+    }
     [self renderObjectToFileAsync:objectID filePath:filePath start:startSecs end:endSecs
                              desc:objectID keepOwnTail:YES content:content fileSpec:spec
                        completion:completion];

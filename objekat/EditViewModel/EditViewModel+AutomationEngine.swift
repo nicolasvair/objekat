@@ -74,6 +74,13 @@ extension EditViewModel {
         // A composed silence (mute, stem mute, a solo elsewhere): the volume curve is set
         // aside, not transposed. An offset would "almost" silence it — here silence is what is wanted.
         if ref == .volume, isSilenced(object) { return [] }
+        return modelCurvePoints(ref, on: object)
+    }
+
+    /// The same conversion WITHOUT the composition with listening: the curve as the model holds it,
+    /// whatever mute or solo says. What a bake needs — a solo elsewhere must not take the gain curve
+    /// out of a wave (@see EditViewModel.contentRenderFaders).
+    func modelCurvePoints(_ ref: ParamRef, on object: SoundObject) -> [[String: Any]] {
         guard let lane = object.automation.first(where: { $0.param == ref }),
               !lane.points.isEmpty else { return [] }
         let origin = object.startTime
