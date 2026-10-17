@@ -356,7 +356,6 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = objekat/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (C) 2026 Nicolas Vair. Free software under the GNU AGPL v3 or later; no warranty, to the extent permitted by law. Source and licence: github.com/nicolasvair/objekat";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -450,7 +449,6 @@
 				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = objekat/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright (C) 2026 Nicolas Vair. Free software under the GNU AGPL v3 or later; no warranty, to the extent permitted by law. Source and licence: github.com/nicolasvair/objekat";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
