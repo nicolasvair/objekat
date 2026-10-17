@@ -6,9 +6,16 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		DA0B5E1D2FC5B00000C4E5B3 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = DA0B5E1B2FC5B00000C4E5B1 /* LICENSE */; };
+		DA0B5E1E2FC5B00000C4E5B4 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = DA0B5E1C2FC5B00000C4E5B2 /* NOTICE */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		DA51C0F12FBA52C1004F3E72 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		DA7F47832FBA52C1004F3E72 /* objekat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = objekat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DA0B5E1B2FC5B00000C4E5B1 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		DA0B5E1C2FC5B00000C4E5B2 /* NOTICE */ = {isa = PBXFileReference; lastKnownFileType = text; path = NOTICE; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -53,6 +60,8 @@
 			children = (
 				DA7F47A42FBA543B004F3E72 /* objekat */,
 				DA51C0F12FBA52C1004F3E72 /* Signing.xcconfig */,
+				DA0B5E1B2FC5B00000C4E5B1 /* LICENSE */,
+				DA0B5E1C2FC5B00000C4E5B2 /* NOTICE */,
 				DA7F47842FBA52C1004F3E72 /* Products */,
 				DAA3BB1B2FBA6A8A009014E3 /* OBJEKAT - claude project */,
 			);
@@ -76,6 +85,7 @@
 				DA7F477F2FBA52C1004F3E72 /* Sources */,
 				DA7F47802FBA52C1004F3E72 /* Frameworks */,
 				DA7F47812FBA52C1004F3E72 /* Resources */,
+				DA0B5E1F2FC5B00000C4E5B5 /* Build number */,
 			);
 			buildRules = (
 			);
@@ -133,10 +143,36 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA0B5E1D2FC5B00000C4E5B3 /* LICENSE in Resources */,
+				DA0B5E1E2FC5B00000C4E5B4 /* NOTICE in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		DA0B5E1F2FC5B00000C4E5B5 /* Build number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+			);
+			name = "Build number";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/tools/scripts/set-build-number.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		DA7F477F2FBA52C1004F3E72 /* Sources */ = {
@@ -298,6 +334,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
@@ -391,6 +428,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
