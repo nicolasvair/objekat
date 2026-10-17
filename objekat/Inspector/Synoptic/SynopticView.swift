@@ -460,7 +460,6 @@ struct SynopticView: View {
                                midi: isMIDI, audioFile: audioFile != nil,
                                audioStereo: audioFile?.channelMode != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
-                               mixWide: mix?.attrLinks != nil,
                                stems: stems != nil || groupRouting != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                infiniteOption: infinite != nil,

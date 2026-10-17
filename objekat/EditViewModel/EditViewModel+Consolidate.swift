@@ -148,72 +148,6 @@ extension EditViewModel {
         }
     }
 
-    // MARK: - Linked attributes (volume / pan / mute)
-
-    /// True if `attr` (volume/pan/mute) of `obj` follows the common value of its definition:
-    /// `obj` is a linked instance AND has not detached that attribute.
-    func isAttrSynced(_ obj: SoundObject, _ attr: ConsolidateAttrLinks) -> Bool {
-        obj.isConsolidateInstance && !obj.independentAttrs.contains(attr)
-    }
-
-    /// Propagates `attr` (volume/pan/mute) from the instance `objectID` to its definition and
-    /// to every other instance still synchronised for that attribute. To be called AFTER writing
-    /// the new value onto `objectID` (the volume/pan/mute setters already do so).
-    /// A no-op if `objectID` is not a linked instance synchronised for `attr`.
-    func propagateLinkedAttr(_ attr: ConsolidateAttrLinks, from objectID: UUID) {
-        guard let src = find(id: objectID), isAttrSynced(src, attr),
-              let defID = src.consolidateID, var def = consolidateDefinitions[defID] else { return }
-
-        switch attr {
-        case .volume: def.volume  = src.volume
-        case .pan:    def.pan     = src.pan
-        case .mute:   def.isMuted = src.isMuted
-        default: break
-        }
-        consolidateDefinitions[defID] = def
-
-        for tid in placementIDs(forConsolidate: defID, excluding: objectID) {
-            guard let other = find(id: tid), isAttrSynced(other, attr) else { continue }
-            update(id: tid) { o in
-                switch attr {
-                case .volume: o.volume  = def.volume
-                case .pan:    o.pan     = def.pan
-                case .mute:   o.isMuted = def.isMuted
-                default: break
-                }
-            }
-            pushMix(tid)
-        }
-    }
-
-    /// Toggles the synced/independent state of `attr` for the instance `id`.
-    /// - `synced == false`: detaches the attribute (it keeps its current value, frozen in place).
-    /// - `synced == true` : reattaches the attribute → realigns the instance's value on the
-    ///   definition's and pushes it to the engine.
-    func setAttrSynced(_ attr: ConsolidateAttrLinks, _ synced: Bool, forPlacement id: UUID) {
-        guard let obj = find(id: id), obj.isConsolidateInstance else { return }
-        guard obj.independentAttrs.contains(attr) == synced else { return }   // already in the state wanted
-        pushUndo()
-        if synced {
-            let def = obj.consolidateID.flatMap { consolidateDefinitions[$0] }
-            update(id: id) { o in
-                o.independentAttrs.remove(attr)
-                if let def {
-                    switch attr {
-                    case .volume: o.volume  = def.volume
-                    case .pan:    o.pan     = def.pan
-                    case .mute:   o.isMuted = def.isMuted
-                    default: break
-                    }
-                }
-            }
-            pushMix(id)
-        } else {
-            update(id: id) { $0.independentAttrs.insert(attr) }
-        }
-        isDirty = true
-    }
-
     // MARK: - Staleness
 
     /// Walks `subtree` and its descendants and returns the set of definitions this bake
@@ -451,8 +385,6 @@ extension EditViewModel {
             self.consolidateDefinitions[defID] = ConsolidateDefinition(
                 id: defID, name: prev?.name ?? restored.displayName, wave: wav.lastPathComponent,
                 revision: nextRevision, wasGroup: prev?.wasGroup ?? restored.isGroup,
-                volume: prev?.volume ?? restored.volume, pan: prev?.pan ?? restored.pan,
-                isMuted: prev?.isMuted ?? restored.isMuted,
                 dependsOn: self.collectConsolidateDependencies(restored))
             // Propagates the new wave to ALL the placements of this definition (model + engine).
             self.propagateConsolidateUpdate(defID: defID, exceptPlacementID: UUID())
@@ -727,7 +659,6 @@ extension EditViewModel {
         consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
             revision: 0, wasGroup: live.isGroup,
-            volume: live.volume, pan: live.pan, isMuted: live.isMuted,
             dependsOn: collectConsolidateDependencies(original))
 
         // Automation: what the render has BAKED IN goes with the content (the children's curves
@@ -1055,34 +986,28 @@ extension EditViewModel {
 
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
-        // Editing the CONTENT does not touch the common mix: the volume/pan/mute of the
-        // previous definition are carried over (falling back on the placement if it has gone).
-        let prev = consolidateDefinitions[defID]
+        // The definition carries no mix: volume/pan/mute belong to each instance.
         consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
             revision: nextRevision, wasGroup: live.isGroup,
-            volume: prev?.volume ?? live.volume, pan: prev?.pan ?? live.pan,
-            isMuted: prev?.isMuted ?? live.isMuted,
             dependsOn: collectConsolidateDependencies(original))
 
         let liveSends = sendsWithLiveStates(of: live)   // read before the object leaves the engine
         removeFromEngine(live)
-        // The mix (volume/pan/mute), the state of the attribute links AND the plugins belonging to the
-        // placement belong to the PLACEMENT, not to the content being edited: they are restored from
-        // the snapshot taken when the edit was opened (otherwise the sub-tree's internal volume would be
-        // adopted, out of step with the definition — and the placement's plugins were lost,
-        // though propagateConsolidateUpdate does keep them on the OTHER
-        // placements).
+        // The mix (volume/pan/mute) is the instance's own and no definition holds it any more: it is
+        // read from the live object (the placement's fader, handed to the session at opening). The
+        // plugins belonging to the placement are restored from the snapshot taken when the edit was
+        // opened (otherwise they were lost, though propagateConsolidateUpdate does keep them on the
+        // OTHER placements).
         let snap = editingOriginalPlacement
         var placement = SoundObject(
             id: live.id, startTime: live.startTime, duration: live.duration,
-            lane: live.lane, volume: snap?.volume ?? live.volume, pan: snap?.pan ?? live.pan,
-            fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: snap?.isMuted ?? live.isMuted,
+            lane: live.lane, volume: live.volume, pan: live.pan,
+            fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: live.isMuted,
             stemID: live.stemID, plugins: snap?.plugins ?? [],
             label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
             sends: liveSends, baseBPM: nil,
             consolidateID: defID,
-            independentAttrs: snap?.independentAttrs ?? [],
             automationTouchOrder: live.automationTouchOrder,
             kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
                         speedRatio: 1.0, isReversed: false))

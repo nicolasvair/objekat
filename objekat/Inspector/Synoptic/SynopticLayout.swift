@@ -819,7 +819,6 @@ enum SynopticLayout {
     /// between the frame's foot and the card's top (room for the "ARA" tag hanging above the card's corner).
     static let araCardGap: CGFloat = 30
     static let clipZoneW: CGFloat = 224          // the 'clip' zone (pan / volume / mute on one line)
-    static let clipZoneWWide: CGFloat = 328      // the same plus the attribute link icons (a linked consolidated object)
     static let clipZoneH: CGFloat = 36
     /// The object frame's corner radius: the head's and the mixer's (`SynopticZoneBox`), whose outer corners
     /// ARE the frame's.
@@ -925,7 +924,7 @@ enum SynopticLayout {
     static func diagram(for root: SynopticNode,
                         midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
-                        mixWide: Bool = false, stems: Bool = false,
+                        stems: Bool = false,
                         sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
                         infiniteOption: Bool = false,
                         objectFrame: Bool = false, clipOptionsExpanded: Bool = true) -> Diagram {
@@ -937,7 +936,7 @@ enum SynopticLayout {
         let audioH = clipOptionsExpanded ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) : audioZoneFoldedH
         let leadW = midi ? midiZoneW : (audioFile ? audioZoneW : (busHead ? sendsZoneW : sourceW))
         let leadH = midi ? midiZoneH : (audioFile ? audioH : (busHead ? busHeadH : pillH))
-        let clipW = mixWide ? clipZoneWWide : clipZoneW
+        let clipW = clipZoneW
 
         // Everything is centred on a single vertical column, right of the gutters.
         //

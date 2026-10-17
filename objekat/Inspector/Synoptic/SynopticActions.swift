@@ -113,8 +113,6 @@ struct SynopticActions {
     var onToggleMute: (() -> Void)? = nil
     var onToggleSolo: (() -> Void)? = nil
     var onBeginMixEdit: (() -> Void)? = nil
-    /// A double click on the link icon of a mix attribute (a consolidated object): toggles synced/independent.
-    var onToggleAttrSync: ((SynopticMixAttr) -> Void)? = nil
 
     // The 'stems' zone (output): assigning the stem.
     var onAssignStem: ((UUID) -> Void)? = nil
@@ -306,17 +304,6 @@ extension SynopticAudioFile {
     }
 }
 
-/// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
-enum SynopticMixAttr { case volume, pan, mute }
-
-/// The synced/independent state of a consolidated object instance's mix attributes (`true` = synced
-/// with the other instances). nil on `SynopticMix.attrLinks` = an unlinked object (no icons).
-struct SynopticMixLinks: Equatable {
-    var volumeSynced: Bool
-    var panSynced: Bool
-    var muteSynced: Bool
-}
-
 /// What makes an object audible on its own, in ONE state — the two solo layers add up, but a
 /// button has only one look: held wins, since that is the one that will outlive the gesture.
 enum SynopticSoloState: Equatable {
@@ -337,8 +324,6 @@ struct SynopticMix: Equatable {
     /// Volume / pan driven by an automation CURVE (their static setting is neutralised).
     var volumeAutomated: Bool = false
     var panAutomated: Bool = false
-    /// Non-nil ⇒ a consolidated object instance: it shows the per-attribute link icons.
-    var attrLinks: SynopticMixLinks? = nil
 }
 
 /// A stem badge ('stems' zone) carried over into the signal view.

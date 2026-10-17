@@ -95,11 +95,6 @@ struct SynopticBoundView: View {
         let mix: SynopticMix? = obj.map { o in
             let title = L(o.isGroup ? "synoptic.mix.kind.group"
                         : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip"))
-            let links: SynopticMixLinks? = o.isConsolidateInstance
-                ? SynopticMixLinks(volumeSynced: viewModel.isAttrSynced(o, .volume),
-                                   panSynced:    viewModel.isAttrSynced(o, .pan),
-                                   muteSynced:   viewModel.isAttrSynced(o, .mute))
-                : nil
             // Volume / pan AUTOMATED: we show what the curve plays at the playback
             // position, not the static setting it has replaced (@see liveAutomationValue).
             // The control stays neutralised — it shows, it no longer sets.
@@ -110,8 +105,7 @@ struct SynopticBoundView: View {
             return SynopticMix(title: title, volumeDb: vol, pan: pan, isMuted: o.isMuted,
                                solo: solo,
                                volumeAutomated: viewModel.isAutomated(.volume, on: o),
-                               panAutomated:    viewModel.isAutomated(.pan, on: o),
-                               attrLinks: links)
+                               panAutomated:    viewModel.isAutomated(.pan, on: o))
         }
 
         // Output zone: a group's CHILD is routed to its group (read only, the stem being
@@ -345,16 +339,6 @@ struct SynopticBoundView: View {
             // would replay auditions instead of undoing edits.
             onToggleSolo: { viewModel.toggleSoloHold(objectID: objectID) },
             onBeginMixEdit: { viewModel.pushUndo() },
-            onToggleAttrSync: { attr in
-                guard let o = viewModel.find(id: objectID) else { return }
-                let mask: ConsolidateAttrLinks
-                switch attr {
-                case .volume: mask = .volume
-                case .pan:    mask = .pan
-                case .mute:   mask = .mute
-                }
-                viewModel.setAttrSynced(mask, !viewModel.isAttrSynced(o, mask), forPlacement: objectID)
-            },
             onAssignStem: { stemID in viewModel.edit { viewModel.assignStem(objectID: objectID, stemID: stemID) } },
             // An aux lists the sends it RECEIVES: the row carries the SENDER's id, and so it is the
             // sender we set (sender → this aux). Otherwise we set this object → the target aux.

@@ -147,9 +147,8 @@ struct EditSnapshot {
     // INC 2: a bus's FX chain lives on Stem.plugins → included in the undo. Optional = the
     // snapshots from before this field (none in practice, in-memory) restore the current stems.
     var stems: [Stem]? = nil
-    // The consolidated registry: without it, undoing the creation of a consolidated object, a
-    // closing (with the revision bumped) or a volume/pan/mute propagation left the registry
-    // out of step with the restored instances.
+    // The consolidated registry: without it, undoing the creation of a consolidated object or a
+    // closing (with the revision bumped) left the registry out of step with the restored instances.
     var consolidateDefinitions: [UUID: ConsolidateDefinition]? = nil
     // Tempo / time signature: without them, undoing a tempo change in BPM mode restored the
     // positions from BEFORE the remap while leaving the new tempo — model and grid out of tune.

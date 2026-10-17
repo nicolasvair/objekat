@@ -52,11 +52,11 @@ struct Main {
         // MARK: the frame
         func object(_ root: SynopticNode, midi: Bool = false, audio: Bool = true, ara: Bool = false,
                     sends: [SynopticSend] = [], expanded: Bool = true, frame: Bool = true,
-                    mix: Bool = true, mixWide: Bool = false, infinite: Bool = false,
+                    mix: Bool = true, infinite: Bool = false,
                     received: Int = 0) -> SynopticLayout.Diagram {
             SynopticLayout.diagram(for: root, midi: midi, audioFile: audio && !midi, audioStereo: true,
                                    araCardWidth: ara ? SynopticLayout.araCardWidth(name: "Melodyne") : nil,
-                                   mix: mix, mixWide: mixWide, stems: true, sends: sends, sendsEnabled: true,
+                                   mix: mix, stems: true, sends: sends, sendsEnabled: true,
                                    receivedRows: received, infiniteOption: infinite,
                                    objectFrame: frame, clipOptionsExpanded: expanded)
         }
@@ -72,7 +72,6 @@ struct Main {
             ("sends", object(trunk, sends: oneSend)),
             ("empty", object(.series([]))), ("empty group", object(.series([]), audio: false)),
             ("wide chain", object(wide)), ("wide chain group", object(wide, audio: false)),
-            ("wide mixer", object(trunk, mixWide: true)), ("wide mixer group", object(trunk, audio: false, mixWide: true)),
         ]
         /// Equal to the pixel: the same value once rounded to a whole point AND to the half point (retina).
         func samePixel(_ x: CGFloat, _ y: CGFloat) -> Bool { abs(x - y) < 1e-9 }
@@ -127,8 +126,6 @@ struct Main {
         // the frame's width follows the widest of its contents
         check(near(object(trunk, audio: false).objectFrame!.width, SynopticLayout.clipZoneW),
               "a narrow group: the frame is the mixer's width (the Source pill widens to it)")
-        check(near(object(trunk, mixWide: true).objectFrame!.width, SynopticLayout.clipZoneWWide),
-              "a wide mixer widens the frame (and the head with it)")
         check(near(object(trunk).objectFrame!.width, SynopticLayout.audioZoneW), "an audio clip: the audio zone's width")
         let dw = object(wide)
         check(near(dw.objectFrame!.width, SynopticLayout.measure(wide).width + 2 * SynopticLayout.fxPad),
