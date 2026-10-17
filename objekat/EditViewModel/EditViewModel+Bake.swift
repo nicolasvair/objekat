@@ -16,15 +16,7 @@ extension EditViewModel {
     /// (children, sub-groups, auxes), the group's bounds included. Used to render ALL the content
     /// (not just the window) → the baked clip can reveal the tail/the pre-window by trimming.
     func bakeRenderRange(_ group: SoundObject) -> (start: Double, end: Double) {
-        var minS = group.startTime
-        var maxE = group.startTime + group.duration
-        func walk(_ obj: SoundObject) {
-            minS = min(minS, obj.startTime)
-            maxE = max(maxE, obj.startTime + obj.duration)
-            if case .group(let ch, _) = obj.kind { for c in ch { walk(c) } }
-        }
-        if case .group(let ch, _) = group.kind { for c in ch { walk(c) } }
-        return (minS, maxE)
+        group.bakeSpan   // pure model code, @see SoundObject.bakeSpan (ConsolidateContentRoot.swift)
     }
 
     /// The real duration (in seconds) of an audio file, or nil if it cannot be read.
