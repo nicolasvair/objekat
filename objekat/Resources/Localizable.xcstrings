@@ -2761,6 +2761,52 @@
         }
       }
     },
+    "diskUsage.confirm.elsewhere.one": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d ticked file is used by other versions of the folder (%@). Those versions will show a missing file."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d archivo marcado lo usan otras versiones de la carpeta (%@). Esas versiones mostrarán un archivo que falta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d fichier coché est utilisé par d'autres versions du dossier (%@). Ces versions afficheront un fichier manquant."
+          }
+        }
+      }
+    },
+    "diskUsage.confirm.elsewhere.other": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d ticked files are used by other versions of the folder (%@). Those versions will show missing files."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d archivos marcados los usan otras versiones de la carpeta (%@). Esas versiones mostrarán archivos que faltan."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d fichiers cochés sont utilisés par d'autres versions du dossier (%@). Ces versions afficheront des fichiers manquants."
+          }
+        }
+      }
+    },
     "diskUsage.confirm.info": {
       "extractionState": "manual",
       "localizations": {
@@ -2830,6 +2876,29 @@
         }
       }
     },
+    "diskUsage.confirm.unreadable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unreadable version (%@): there is no telling whether it uses these files too."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versión ilegible (%@): no se puede saber si también usa estos archivos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version illisible (%@) : on ne peut pas dire si elle utilise aussi ces fichiers."
+          }
+        }
+      }
+    },
     "diskUsage.confirm.yes": {
       "extractionState": "manual",
       "localizations": {
@@ -2895,6 +2964,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d fichiers · %@"
+          }
+        }
+      }
+    },
+    "diskUsage.elsewhere.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used by other versions of the folder, unticked by default: cleaning them will make those versions miss these files."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usados por otras versiones de la carpeta, sin marcar por defecto: limpiarlos hará que esas versiones echen en falta estos archivos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilisés par d'autres versions du dossier, décochés par défaut : les nettoyer fera manquer ces fichiers à ces versions."
           }
         }
       }
@@ -3089,19 +3181,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Read by another version of the folder (kept)"
+            "value": "Read by another version of the folder (kept in this mode)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Leídos por otra versión de la carpeta (conservados)"
+            "value": "Leídos por otra versión de la carpeta (conservados en este modo)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Lus par une autre version du dossier (conservés)"
+            "value": "Lus par une autre version du dossier (conservés dans ce mode)"
           }
         }
       }

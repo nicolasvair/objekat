@@ -14,8 +14,11 @@ Sections:
      the project whole (no missing file, the render works).
   B  ⌘Z back to before the re-bakes: the files come back from the Trash and replay; redo; the
      Trash emptied behind the app's back is the usual missing-file path, not a crash.
-  C  a second version in the same folder: its files are HELD, never offered, whatever is asked;
-     the session's own orphan goes; the other version still opens whole.
+  C  a second version in the same folder. Session scope offers EVERYTHING this session does not
+     read, the file the other version still reads included (listed in `used_elsewhere`, named
+     `used_by`); folder scope offers only what nobody reads and rejects it when asked. Without
+     `paths` the clean-up takes the orphans only; named explicitly, the other version's wave goes
+     to the Trash and that version, reopened, signals it missing (and finds it again once put back).
   D  what else protects: the clipboard, a project parked in another tab, a consolidated object
      being edited (the clean-up is refused), an unreadable version (folder scope refuses).
   E  files outside the universe are never listed; a project never saved has no figures.
@@ -142,14 +145,15 @@ def main(cmd):
     check("A3 saved: the two old revisions are the orphans",
           paths(r["cleanable"]) == sorted([wave_rel(W0), wave_rel(W1)]), paths(r["cleanable"]))
     check("A3 the current revision is not offered anywhere",
-          wave_rel(W2) not in paths(r["cleanable"]) + paths(r["held"]) + paths(r["protected"]))
+          wave_rel(W2) not in paths(r["cleanable"]) + paths(r["used_elsewhere"]) + paths(r["protected"]))
     unit0 = next(u for u in r["cleanable"] if u["path"] == wave_rel(W0))
     check("A3 a unit is the wave AND its sidecar", sidecar_rel(W0) in unit0["files"], unit0)
     on_disk = sum(os.path.getsize(os.path.join(P, f)) for u in r["cleanable"] for f in u["files"]
                   if exists(os.path.join(P, f)))
     check("A3 unused_bytes is what those files weigh", r["unused_bytes"] == on_disk, (r["unused_bytes"], on_disk))
     check("A3 total_bytes covers the folder", r["total_bytes"] >= on_disk + os.path.getsize(man), r["total_bytes"])
-    check("A3 session scope: no version is held", r["held"] == [] and r["unreadable_versions"] == [])
+    check("A3 session scope: no file is used by another version",
+          r["used_elsewhere"] == [] and r["unreadable_versions"] == [])
 
     before = sorted(os.listdir(os.path.join(P, "samples", "consolidate")))
     dry = cmd("project.clean_unused")
@@ -232,12 +236,27 @@ def main(cmd):
     V2wave = dict(next(iter(defs().values())))
     cmd("project.save")                        # V2 reads rev 1
     r = du()
-    check("C1 rev 0 is HELD by V1, named", [h["path"] for h in r["held"]] == [wave_rel(V1wave)]
-          and r["held"][0]["versions"] == ["q V1.objekat"], r["held"])
-    check("C1 nothing is offered: V1's wave stays intact", r["cleanable"] == [])
-    r = clean(dry_run=False, paths=[wave_rel(V1wave)])
-    check("C2 asking for it anyway is rejected as held, nothing moves",
-          r["count"] == 0 and r["rejected"] == [{"path": wave_rel(V1wave), "reason": "held"}]
+    check("C1 session: rev 0 is used by V1 only, named",
+          [h["path"] for h in r["used_elsewhere"]] == [wave_rel(V1wave)]
+          and r["used_elsewhere"][0]["used_by"] == ["q V1.objekat"], r["used_elsewhere"])
+    check("C1 session: the file V1 reads IS offered (cleanable), carrying used_by",
+          paths(r["cleanable"]) == [wave_rel(V1wave)] and r["cleanable"][0]["used_by"] == ["q V1.objekat"], r["cleanable"])
+    check("C1 session: it is not counted among the files nobody reads",
+          r["unused_bytes"] == 0 and r["cleanable_bytes"] > 0 and r["used_elsewhere_bytes"] == r["cleanable_bytes"], r)
+    rf = du("folder")
+    check("C1 folder: nothing is offered (V1 reads it) but it is still listed apart",
+          rf["cleanable"] == [] and [h["path"] for h in rf["used_elsewhere"]] == [wave_rel(V1wave)], rf)
+    check("C1 session is a superset of folder", set(paths(rf["cleanable"])) <= set(paths(r["cleanable"])))
+    dry = cmd("project.clean_unused", paths=[wave_rel(V1wave)])
+    check("C1 a dry run naming it says what would go AND which version will miss it",
+          dry["dry_run"] is True and paths(dry["would_trash"]) == [wave_rel(V1wave)]
+          and dry["would_trash"][0]["used_by"] == ["q V1.objekat"] and dry["used_by_other_versions"] == 1, dry)
+    r = clean(dry_run=False)
+    check("C1 without paths only the files nobody reads are taken: here, nothing moves",
+          r["count"] == 0 and exists(os.path.join(Q, wave_rel(V1wave))), r)
+    r = clean(dry_run=False, scope="folder", paths=[wave_rel(V1wave)])
+    check("C2 folder scope: asking for it anyway is rejected as used_elsewhere, nothing moves",
+          r["count"] == 0 and r["rejected"] == [{"path": wave_rel(V1wave), "reason": "used_elsewhere"}]
           and exists(os.path.join(Q, wave_rel(V1wave))), r)
     r = clean(dry_run=False, paths=[wave_rel(V2wave)])
     check("C2 the version's own current wave is rejected as used",
@@ -249,15 +268,41 @@ def main(cmd):
     V2b = dict(next(iter(defs().values())))
     cmd("project.save")                        # V2 reads rev 2
     r = du()
-    check("C3 now rev 1 is the session's orphan (offered), rev 0 still held",
-          paths(r["cleanable"]) == [wave_rel(V2wave)] and [h["path"] for h in r["held"]] == [wave_rel(V1wave)], r)
+    check("C3 now rev 1 is the session's orphan, rev 0 is used elsewhere: session offers both",
+          sorted(paths(r["cleanable"])) == sorted([wave_rel(V2wave), wave_rel(V1wave)])
+          and [h["path"] for h in r["used_elsewhere"]] == [wave_rel(V1wave)], r)
+    rf = du("folder")
+    check("C3 folder offers rev 1 only (nobody reads it)",
+          paths(rf["cleanable"]) == [wave_rel(V2wave)], rf["cleanable"])
     r = clean(dry_run=False, scope="session")
-    check("C3 the session clean-up takes rev 1 only", r["count"] == 1 and r["trashed"][0]["path"] == wave_rel(V2wave), r)
+    check("C3 the default clean-up takes rev 1 only", r["count"] == 1 and r["trashed"][0]["path"] == wave_rel(V2wave)
+          and "used_by" not in r["trashed"][0], r)
     check("C3 V1's wave is intact", exists(os.path.join(Q, wave_rel(V1wave)))
           and exists(os.path.join(Q, sidecar_rel(V1wave))))
     cmd("project.open", path=v1); idle()
     check("C4 V1 still opens whole", cmd("project.rescan_missing")["path_count"] == 0)
-    check("C4 V1 sees V2's wave as held", wave_rel(V2b) in paths(du()["held"]), du()["held"])
+    check("C4 V1 sees V2's wave as used elsewhere (and offers it)",
+          wave_rel(V2b) in paths(du()["used_elsewhere"]) and wave_rel(V2b) in paths(du()["cleanable"]),
+          du()["used_elsewhere"])
+    check("C4 folder scope from V1 does not offer it",
+          wave_rel(V2b) not in paths(du("folder")["cleanable"]))
+
+    # C5: from V2, the user CHOOSES to clean the wave V1 still reads.
+    cmd("project.open", path=v2); idle()
+    r = clean(dry_run=False, paths=[wave_rel(V1wave)])
+    check("C5 session, named explicitly: V1's wave goes to the Trash, with the version that will miss it",
+          r["count"] == 1 and r["trashed"][0]["path"] == wave_rel(V1wave)
+          and r["trashed"][0]["used_by"] == ["q V1.objekat"] and r["rejected"] == [], r)
+    check("C5 the files left the folder",
+          not exists(os.path.join(Q, wave_rel(V1wave))) and not exists(os.path.join(Q, sidecar_rel(V1wave))))
+    check("C5 V2 itself is whole", cmd("project.rescan_missing")["path_count"] == 0)
+    cmd("project.open", path=v1); idle()
+    check("C5 V1, reopened, signals the wave missing (the usual missing-file alert)",
+          cmd("project.rescan_missing")["path_count"] >= 1)
+    for t in r["trashed"][0]["trash"]:       # put them back by hand (moved, never deleted)
+        rel = wave_rel(V1wave) if t.endswith(".wav") else sidecar_rel(V1wave)
+        shutil.move(t, os.path.join(Q, rel))
+    check("C5 put back: V1 is whole again", cmd("project.rescan_missing")["path_count"] == 0)
 
     # ═════════════════════════════════════════════════════════════════════════════════════════
     section("D — what else protects")
@@ -270,7 +315,7 @@ def main(cmd):
     cmd("selection.set", ids=[inst]); cmd("clipboard.copy")
     r = du()
     check("D1 (precondition) rev 2 is an orphan of the session",
-          wave_rel(V2b) in paths(r["cleanable"]) + paths(r["protected"]) + paths(r["held"]), r)
+          wave_rel(V2b) in paths(r["cleanable"]) + paths(r["protected"]) + paths(r["used_elsewhere"]), r)
     # the clipboard reads the CURRENT instance (rev 3), so protect check: remove it and save
     cmd("object.remove", ids=[inst]); cmd("project.save")
     r = du()
@@ -295,6 +340,11 @@ def main(cmd):
             needle="unreadable_versions")
     check("D3 session scope still answers, and names the unreadable file",
           du("session")["cleanable"] is not None and du("session")["unreadable_versions"] == ["broken.objekat"])
+    try:
+        cmd("project.clean_unused", scope="session")
+        check("D3 the session clean-up is not blocked by an unreadable version (dry run)", True)
+    except ObjekatError as e:
+        check("D3 the session clean-up is not blocked by an unreadable version (dry run)", False, e.message)
     os.remove(broken)
     other = os.path.join(Q, "notes.json")
     with open(other, "w") as f:
@@ -325,7 +375,7 @@ def main(cmd):
         with open(full, "wb") as f:
             f.write(b"x" * 10)
     r = du()
-    listed = set(paths(r["cleanable"]) + paths(r["held"]) + paths(r["protected"]))
+    listed = set(paths(r["cleanable"]) + paths(r["used_elsewhere"]) + paths(r["protected"]))
     check("E1 files outside samples/{consolidate,objects,sources} and waveforms/*.wfc are never listed",
           not any(x in listed for x in ("samples/other/alien.wav", "samples/root.wav", "notes.txt",
                                           "samples/consolidate/deep/x.wav")), listed)

@@ -75,15 +75,27 @@ enum DiskUsageFormat {
 struct DiskUsagePopoverView: View {
     @Bindable var viewModel: EditViewModel
     @State private var scope: DiskCleanScope = .session
-    /// What the user UNTICKED: every cleanable unit is ticked until said otherwise, so a list that
-    /// is recomputed under the pointer never loses or invents a choice.
+    /// What the user UNTICKED among the orphans (nobody reads them): they are ticked until said
+    /// otherwise, so a list that is recomputed under the pointer never loses or invents a choice.
     @State private var unticked: Set<String> = []
+    /// What the user TICKED among the files another version still reads: the opposite default,
+    /// they stay unticked until the user opts in.
+    @State private var optedIn: Set<String> = []
     @State private var isCleaning = false
 
     private var result: DiskUsageResult? { viewModel.diskUsage }
     private var cleanable: [ProjectFileUsage.Candidate]? { result?.cleanable(in: scope) }
-    private var ticked: [ProjectFileUsage.Candidate] { (cleanable ?? []).filter { !unticked.contains($0.id) } }
+    /// The files another version reads, which `scope` lets the user tick (`session`) or only shows.
+    private var elsewhereIDs: Set<String> { Set((result?.report.usedElsewhere ?? []).map(\.id)) }
+    private func isTicked(_ unit: ProjectFileUsage.Candidate) -> Bool {
+        elsewhereIDs.contains(unit.id) ? optedIn.contains(unit.id) : !unticked.contains(unit.id)
+    }
+    private var ticked: [ProjectFileUsage.Candidate] { (cleanable ?? []).filter(isTicked) }
     private var tickedBytes: Int64 { ticked.reduce(0) { $0 + $1.size } }
+    /// The ticked files another version reads, and the versions that read them.
+    private var tickedElsewhere: [ProjectFileUsage.UsedElsewhere] {
+        (result?.report.usedElsewhere ?? []).filter { scope == .session && optedIn.contains($0.id) }
+    }
     private var blockedKey: String? { viewModel.diskUsageBlockedKey }
 
     var body: some View {
@@ -125,20 +137,23 @@ struct DiskUsagePopoverView: View {
 
     @ViewBuilder
     private func content(_ result: DiskUsageResult) -> some View {
+        let orphans = result.report.unused
+        let elsewhere = result.report.usedElsewhere
         if let list = cleanable {
             if list.isEmpty {
                 Text(L("diskUsage.empty")).font(.system(size: 11)).foregroundStyle(.secondary)
-            } else {
+            }
+            if !orphans.isEmpty {
                 HStack {
-                    Toggle(isOn: allTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
+                    Toggle(isOn: allOrphansTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
                         .toggleStyle(.checkbox)
                     Spacer()
-                    Text(Ln("diskUsage.count", list.count, list.count, DiskUsageFormat.bytes(result.report.unusedBytes)))
+                    Text(Ln("diskUsage.count", orphans.count, orphans.count, DiskUsageFormat.bytes(result.report.unusedBytes)))
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(list) { unit in
+                        ForEach(orphans) { unit in
                             Toggle(isOn: tickBinding(unit.id)) { row(unit.name, unit.folder, unit.size, nil) }
                                 .toggleStyle(.checkbox)
                         }
@@ -152,19 +167,44 @@ struct DiskUsagePopoverView: View {
                  systemImage: "exclamationmark.triangle")
         }
 
-        if !result.report.held.isEmpty {
-            Text(L("diskUsage.held.title")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(result.report.held) { held in
-                        row(held.candidate.name, held.candidate.folder, held.candidate.size,
-                            L("diskUsage.held.by", held.versions.joined(separator: ", ")))
-                            .opacity(0.55)
-                    }
+        if !elsewhere.isEmpty {
+            if scope == .session {
+                // OFFERED, but unticked: cleaning them makes the OTHER versions miss their files.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                    Text(L("diskUsage.elsewhere.title")).font(.system(size: 10, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(.orange)
+                Toggle(isOn: allElsewhereTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
+                    .toggleStyle(.checkbox)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(elsewhere) { unit in
+                            Toggle(isOn: tickBinding(unit.id)) {
+                                row(unit.candidate.name, unit.candidate.folder, unit.candidate.size,
+                                    L("diskUsage.held.by", unit.usedBy.joined(separator: ", ")), warn: true)
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 110)
+            } else {
+                Text(L("diskUsage.held.title")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(elsewhere) { unit in
+                            row(unit.candidate.name, unit.candidate.folder, unit.candidate.size,
+                                L("diskUsage.held.by", unit.usedBy.joined(separator: ", ")))
+                                .opacity(0.55)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 80)
             }
-            .frame(maxHeight: 80)
         }
         if result.report.protectedBytes > 0 {
             note(L("diskUsage.protected", DiskUsageFormat.bytes(result.report.protectedBytes)), systemImage: "lock")
@@ -176,12 +216,14 @@ struct DiskUsagePopoverView: View {
         note(L("diskUsage.outside"), systemImage: "info.circle")
     }
 
-    private func row(_ name: String, _ folder: String, _ size: Int64, _ detail: String?) -> some View {
+    private func row(_ name: String, _ folder: String, _ size: Int64, _ detail: String?,
+                     warn: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(verbatim: name).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
                 Text(verbatim: detail.map { "\(folder) · \($0)" } ?? folder)
-                    .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    .font(.system(size: 9)).foregroundStyle(warn ? Color.orange : .secondary)
+                    .lineLimit(1).truncationMode(.middle)
             }
             Spacer(minLength: 4)
             Text(verbatim: DiskUsageFormat.bytes(size)).font(.system(size: 10)).foregroundStyle(.secondary)
@@ -199,13 +241,22 @@ struct DiskUsagePopoverView: View {
     // MARK: State
 
     private func tickBinding(_ id: String) -> Binding<Bool> {
-        Binding(get: { !unticked.contains(id) },
-                set: { on in if on { unticked.remove(id) } else { unticked.insert(id) } })
+        if elsewhereIDs.contains(id) {
+            return Binding(get: { optedIn.contains(id) },
+                           set: { on in if on { optedIn.insert(id) } else { optedIn.remove(id) } })
+        }
+        return Binding(get: { !unticked.contains(id) },
+                       set: { on in if on { unticked.remove(id) } else { unticked.insert(id) } })
     }
 
-    private var allTicked: Binding<Bool> {
-        Binding(get: { unticked.isEmpty || (cleanable ?? []).allSatisfy { !unticked.contains($0.id) } },
-                set: { on in unticked = on ? [] : Set((cleanable ?? []).map(\.id)) })
+    private var allOrphansTicked: Binding<Bool> {
+        Binding(get: { (result?.report.unused ?? []).allSatisfy { !unticked.contains($0.id) } },
+                set: { on in unticked = on ? [] : Set((result?.report.unused ?? []).map(\.id)) })
+    }
+
+    private var allElsewhereTicked: Binding<Bool> {
+        Binding(get: { !elsewhereIDs.isEmpty && elsewhereIDs.isSubset(of: optedIn) },
+                set: { on in optedIn = on ? elsewhereIDs : [] })
     }
 
     private var trashTitle: String {
@@ -228,8 +279,21 @@ struct DiskUsagePopoverView: View {
     private func moveToTrash() {
         let chosen = Set(ticked.map(\.id))
         guard !chosen.isEmpty else { return }
-        let ok = viewModel.confirm(Ln("diskUsage.confirm.title", chosen.count, chosen.count),
-                                   L("diskUsage.confirm.info", DiskUsageFormat.bytes(tickedBytes)),
+        var info = L("diskUsage.confirm.info", DiskUsageFormat.bytes(tickedBytes))
+        let elsewhere = tickedElsewhere
+        if !elsewhere.isEmpty {
+            // Said first and plainly: this one hurts OTHER versions of the folder.
+            let versions = Array(Set(elsewhere.flatMap(\.usedBy))).sorted()
+            var warning = Ln("diskUsage.confirm.elsewhere", elsewhere.count, elsewhere.count,
+                             versions.joined(separator: ", "))
+            if let unreadable = result?.unreadableVersions, !unreadable.isEmpty {
+                warning += "\n" + L("diskUsage.confirm.unreadable", unreadable.joined(separator: ", "))
+            }
+            info = warning + "\n\n" + info
+        } else if scope == .session, let unreadable = result?.unreadableVersions, !unreadable.isEmpty {
+            info += "\n\n" + L("diskUsage.confirm.unreadable", unreadable.joined(separator: ", "))
+        }
+        let ok = viewModel.confirm(Ln("diskUsage.confirm.title", chosen.count, chosen.count), info,
                                    yes: L("diskUsage.confirm.yes"), no: L("common.cancel"))
         guard ok else { return }
         isCleaning = true

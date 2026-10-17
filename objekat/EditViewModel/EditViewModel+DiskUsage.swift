@@ -19,7 +19,8 @@ import Foundation
 // save will write) — and, while it is modified, from its SAVED file as well, which is protected:
 // closing without saving must not leave the file on disk pointing at something already in the
 // Trash. Every OTHER version of the folder is read from its file. A file read by another version
-// is HELD (shown apart, never offered). What the clipboards and the other tabs hold is PROTECTED.
+// is USED ELSEWHERE: the `folder` scope keeps it, the `session` scope offers it (unticked, with the
+// versions that read it named). What the clipboards and the other tabs hold is PROTECTED.
 
 // MARK: - Values handed to the scan (nothing here touches the model or the disk)
 
@@ -54,29 +55,23 @@ nonisolated struct DiskUsageInput: Sendable {
     var protectedRoots: [DiskUsageRoots]
 }
 
-nonisolated enum DiskCleanScope: String, Sendable {
-    /// What THIS session does not read (files another version reads are listed apart, greyed).
-    case session
-    /// What NO version of the folder reads — which needs every other version to be readable.
-    case folder
-}
-
 nonisolated struct DiskUsageResult: Sendable, Equatable {
     var folder: URL
     var report: ProjectFileUsage.Report
     /// Everything the folder weighs, files only (the manifests, the media, the caches).
     var totalBytes: Int64
     /// Versions of the folder that look like sessions and could not be decoded. Their files are
-    /// NOT protected, which is why the folder scope refuses to answer while there are any.
+    /// NOT protected, which is why the folder scope refuses to answer while there are any (the
+    /// session scope answers, and just cannot say whether they read a file).
     var unreadableVersions: [String]
     /// The other versions that were read.
     var versionNames: [String]
     var computedAt: Date
 
-    /// The candidates the user may tick in `scope`, or nil when the scope cannot be answered.
+    /// The candidates the user may tick in `scope`, or nil when the scope cannot be answered
+    /// (@see `ProjectFileUsage.Report.cleanable`).
     func cleanable(in scope: DiskCleanScope) -> [ProjectFileUsage.Candidate]? {
-        if scope == .folder && !unreadableVersions.isEmpty { return nil }
-        return report.unused
+        report.cleanable(in: scope, unreadableVersions: unreadableVersions)
     }
 }
 

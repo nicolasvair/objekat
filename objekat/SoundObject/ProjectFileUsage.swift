@@ -26,6 +26,15 @@ import Foundation
 // sub-tree that was baked — clips (sources) and other instances (nested consolidated objects),
 // which the closure goes on through. @see `closure`.
 
+/// Which files a clean-up may offer (@see `ProjectFileUsage.Report.cleanable`).
+nonisolated enum DiskCleanScope: String, Sendable {
+    /// EVERYTHING this session does not read — even what another version of the folder still
+    /// reads (those are listed with the versions that read them, and never ticked by default).
+    case session
+    /// Only what NO version of the folder reads — which needs every other version to be readable.
+    case folder
+}
+
 nonisolated enum ProjectFileUsage {
 
     // MARK: - What the model is reduced to
@@ -364,10 +373,12 @@ nonisolated enum ProjectFileUsage {
         }
     }
 
-    struct Held: Equatable, Sendable, Identifiable {
+    /// A unit the session does not read but another version of the folder does.
+    struct UsedElsewhere: Equatable, Sendable, Identifiable {
         var candidate: Candidate
-        /// The versions that still read it, by name.
-        var versions: [String]
+        /// The readable versions that read it, by name. (A version that could not be read is not
+        /// in here: it is reported apart, and nobody can tell what it reads.)
+        var usedBy: [String]
         var id: String { candidate.id }
     }
 
@@ -375,18 +386,38 @@ nonisolated enum ProjectFileUsage {
         /// Read by the session itself.
         var used: [Candidate] = []
         /// Read by something the session cannot see in its items (the clipboard, an open or parked
-        /// tab, an edit or a bake under way): never offered, in any scope.
+        /// tab, an edit or a bake under way, the saved copy of a modified version): never
+        /// offered, in any scope.
         var protected: [Candidate] = []
-        /// Not read by the session, but by another version of the folder: shown apart, never
-        /// offered.
-        var held: [Held] = []
-        /// Read by nobody: the only ones that may be trashed.
+        /// Not read by the session, but by another version of the folder: offered by the
+        /// `session` scope (never ticked by default), kept by the `folder` scope.
+        var usedElsewhere: [UsedElsewhere] = []
+        /// Read by nobody: offered by both scopes, ticked by default.
         var unused: [Candidate] = []
 
         var usedBytes: Int64 { used.reduce(0) { $0 + $1.size } }
         var protectedBytes: Int64 { protected.reduce(0) { $0 + $1.size } }
-        var heldBytes: Int64 { held.reduce(0) { $0 + $1.candidate.size } }
+        var usedElsewhereBytes: Int64 { usedElsewhere.reduce(0) { $0 + $1.candidate.size } }
         var unusedBytes: Int64 { unused.reduce(0) { $0 + $1.size } }
+
+        /// The versions that read `id` (empty when nothing but the session's own past does).
+        func usedBy(_ id: String) -> [String] {
+            usedElsewhere.first { $0.candidate.id == id }?.usedBy ?? []
+        }
+
+        /// What may be cleaned in `scope`, or nil when the scope cannot answer.
+        ///   • `session`: everything THIS session does not read — the pure orphans first, then the
+        ///     files another version still reads. An unreadable version does not stand in the way
+        ///     (it only means "who reads this" is not fully known).
+        ///   • `folder`: only what NO version reads, and nothing at all (nil) while a version of
+        ///     the folder cannot be read, since it might read anything.
+        /// So `session` is always a superset of `folder`.
+        func cleanable(in scope: DiskCleanScope, unreadableVersions: [String]) -> [Candidate]? {
+            switch scope {
+            case .session: return unused + usedElsewhere.map(\.candidate)
+            case .folder: return unreadableVersions.isEmpty ? unused : nil
+            }
+        }
     }
 
     /// Whether `usage` reads this unit. A wave, a source or a sidecar is read when its place is
@@ -411,7 +442,7 @@ nonisolated enum ProjectFileUsage {
             if reads(protected, candidate) { report.protected.append(candidate); continue }
             let holders = others.filter { reads($0.usage, candidate) }.map(\.name)
             if !holders.isEmpty {
-                report.held.append(Held(candidate: candidate, versions: holders))
+                report.usedElsewhere.append(UsedElsewhere(candidate: candidate, usedBy: holders))
             } else {
                 report.unused.append(candidate)
             }
