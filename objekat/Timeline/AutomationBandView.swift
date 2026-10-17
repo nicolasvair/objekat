@@ -157,7 +157,7 @@ struct AutomationBandView: View {
     @State private var hoverAt: CGPoint? = nil
     /// The pencil press under way: its row, and whether the live write actually started (a press
     /// while the transport is stopped is swallowed and writes nothing).
-    @State private var pencilPress: (row: Int, writing: Bool)? = nil
+    @State private var pencilPress: (row: Int, writing: Bool, drag: AutomationHandTravel.PencilDrag?)? = nil
 
     /// One row under a transform — the model's own `AutomationMovedRow`, shared with the wheel
     /// (@see EditViewModel+AutomationLine).
@@ -302,7 +302,8 @@ struct AutomationBandView: View {
 
     /// A row's pencil: press and move vertically to write while the transport plays (@see
     /// EditViewModel+AutomationWrite). Lit in the object's colour while it writes; dimmed, and
-    /// inert, while the transport is stopped.
+    /// inert, while the transport is stopped. Only the ICON answers — hover, cursor, wheel, drag —
+    /// never the row behind it (@see AutomationWritePencil.rect): a write is never an accident.
     private func pencil(row i: Int, ref: ParamRef, rect r: CGRect) -> some View {
         let writing = viewModel.automationWriteTarget
             == AutomationWriteTarget(objectID: object.id, param: ref)
@@ -325,30 +326,36 @@ struct AutomationBandView: View {
             }
         }
         .gesture(
-            DragGesture(minimumDistance: 0)
+            // GLOBAL space: the pencil is pinned to the visible span and may move under the hand;
+            // a translation read in its own space would then drift.
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onChanged { v in pencilChanged(row: i, ref: ref, rect: r, value: v) }
                 .onEnded { _ in pencilEnded() }
         )
     }
 
     /// The pencil's drag. The value starts at the curve's value UNDER THE PLAYHEAD (no jump) and
-    /// follows the hand's vertical travel only, through the row's own mapping — the same one a
-    /// point's drag reads (@see AutomationBandGeometry.rowTravel). No detent: a live write is a
-    /// gesture, not a setting.
+    /// follows the hand's vertical travel only, at ONE constant rate — one parameter step (the
+    /// wheel's, @see automationWheelStepValue) per `pencilPxPerStep` — wherever the curve is and
+    /// whatever the row's height; re-anchored at the bounds (@see AutomationHandTravel.PencilDrag).
+    /// No detent: a live write is a gesture, not a setting.
     private func pencilChanged(row: Int, ref: ParamRef, rect r: CGRect, value: DragGesture.Value) {
         if pencilPress == nil {
             let ok = isPlaying
                 && viewModel.beginAutomationWrite(objectID: object.id, param: ref,
                                                   origin: bandStartTime, maxT: geo.maxT,
                                                   source: .drag)
-            pencilPress = (row, ok)
+            let start = ok ? viewModel.automationWrite.map { Double($0.startValue) } : nil
+            pencilPress = (row, ok, start.map { AutomationHandTravel.PencilDrag(startValue: $0) })
             clearHover()
         }
-        guard let p = pencilPress, p.writing, let s = viewModel.automationWrite else { return }
-        let g = geo
-        let dy = Double(value.translation.height)
-        let v = (s.startValue + g.valueDelta(dy: g.rowTravel(handDy: dy, ref: ref), ref: ref))
-            .clamped(to: ref.valueRange)
+        guard var p = pencilPress, p.writing, var d = p.drag else { return }
+        let range = ref.valueRange
+        let v = Float(d.value(handDy: Double(value.translation.height),
+                              step: Double(EditViewModel.automationWheelStepValue(ref)),
+                              range: Double(range.lowerBound)...Double(range.upperBound)))
+        p.drag = d
+        pencilPress = p
         viewModel.setAutomationWriteValue(v)
         setReadout(row: p.row, x: Double(r.minX) - 70, ref: ref, value: v)
     }
