@@ -708,7 +708,7 @@ extension CommandRegistry {
         register("plugin.level",
                  summary: """
                  The instantaneous OUTPUT level of a plugin (RMS, the synoptic's VU), read only. `level` is the \
-                 0..1 value the card draws, mapped from -60..0 dBFS like `stem.level` (`db` is that value \
+                 0..1 value the card draws, mapped from -60..+6 dBFS (`VUScale`; 0 dBFS is not the end of the bar) (`db` is that value \
                  turned back into dB; -60 means silence or floor). 0 when the plugin is not registered \
                  (`plugin.meter`), is bypassed/disabled, or the transport is stopped; an export in progress \
                  never feeds it. A read EMPTIES the engine's peak-hold: the answer is the maximum since the \
@@ -729,7 +729,7 @@ extension CommandRegistry {
             let level = vm.pluginAudioLevel(objectID: host, pluginID: pluginID)
             return .object(["plugin": .string(pluginID.uuidString),
                             "level": .number(level),
-                            "db": .number(level * 60.0 - 60.0)])
+                            "db": .number(VUScale.dB(level))])
         }
 
         register("plugin.get_state",

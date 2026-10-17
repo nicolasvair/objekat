@@ -127,7 +127,7 @@ def main():
             nz = sorted(v for v in levels if v > 0)
             if not nz:
                 return None
-            return nz[len(nz) // 2] * 60.0 - 60.0
+            return nz[len(nz) // 2] * 66.0 - 60.0
 
         def reads_zero(levels):
             return len(levels) > 0 and all(v == 0 for v in levels)

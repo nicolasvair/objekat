@@ -995,7 +995,7 @@ measured unless a view registered the plugin; no node is added to the graph.
   object do not unregister each other). What the open synoptic does on its own, at 30 Hz, only while on screen
   and playing.
 - `plugin.level {host, plugin}` → `{plugin, level, db}` — `level` is the 0..1 value the card draws, mapped from
-  -60..0 dBFS like `stem.level` (`db` = `level * 60 - 60`). 0 when the plugin is not registered, is
+  -60..+6 dBFS (`VUScale`, NOT `stem.level`'s -60..0: the headroom shows the red zone; `db` = `level * 66 - 60`). 0 when the plugin is not registered, is
   bypassed/disabled, or the transport is stopped; an export never feeds it. A read EMPTIES the engine's
   peak-hold (the answer is the maximum since the previous read; two reads within 15 ms return the same value).
   `not_found` for an unknown host or plugin. A gain stage and an instrument are plugins like the others.
