@@ -34,6 +34,8 @@ struct SynopticPlusAvailability: Equatable {
     var insertPlugin = false
     /// `onSendPlusInsertPlugin`: the same, in a send's mini-chain.
     var sendInsertPlugin = false
+    /// `onOpenBrowserInCategory`: a direction bound to a colour category opens the browser on its tab.
+    var category = false
     /// The plugins of the map that are NOT installed (absent from the catalogue): their direction is drawn
     /// greyed, its ghost says so, and letting go there does nothing.
     var missingPlugins: Set<PlusPluginRef> = []
@@ -41,7 +43,7 @@ struct SynopticPlusAvailability: Equatable {
     /// Everything wired (the bound view; the tests).
     static let all = SynopticPlusAvailability(gainStage: true, sendGainStage: true, branch: true,
                                               send: true, sendPluginAdd: true,
-                                              insertPlugin: true, sendInsertPlugin: true)
+                                              insertPlugin: true, sendInsertPlugin: true, category: true)
 }
 
 /// What the hand sees beside the pointer while it drags out of a "+".
@@ -56,6 +58,8 @@ enum SynopticPlusGhost: Equatable {
     case plugin(String)
     /// A plugin a direction is bound to that is no longer installed (letting go does nothing).
     case pluginMissing(String)
+    /// The browser, opened on this colour category's tab.
+    case category(Int)
     /// The drag asks for something this "+" does not offer (or nobody is wired to do it).
     case notHere
 }
@@ -143,6 +147,16 @@ enum SynopticPlusPresentation {
             case .sendChain: return a.sendInsertPlugin ? command : .none
             case .postFader: return .none                          // no chain there
             }
+        case .openBrowserInCategory(let key, _):
+            return offersCategories(key: key, a) ? command : .none
+        }
+    }
+
+    /// Whether the "+" `key` can carry out a direction bound to a colour category (the browser on its tab).
+    static func offersCategories(key: SynopticPlusKey, _ a: SynopticPlusAvailability) -> Bool {
+        switch key {
+        case .series, .sendChain: return a.category
+        case .postFader:          return false
         }
     }
 
@@ -171,6 +185,7 @@ enum SynopticPlusPresentation {
             case .branch:             return a.branch
             case .send:               return a.send
             case .plugin:             return offersPlugins(key: key, a)
+            case .category:           return offersCategories(key: key, a)
             }
         }
     }
@@ -185,6 +200,7 @@ enum SynopticPlusPresentation {
         case .branch:       return "arrow.triangle.branch"
         case .send:         return FeatureIcons.auxSend
         case .plugin:       return "puzzlepiece.extension"
+        case .category:     return "circle.fill"
         }
     }
 
@@ -195,8 +211,17 @@ enum SynopticPlusPresentation {
     static func sectors(allowed: Set<PlusGestureResult>, key: SynopticPlusKey, _ a: SynopticPlusAvailability,
                         translation: CGSize, map: PlusShortcutMap = .defaults)
         -> (sectors: [PlusSector], highlighted: Int?) {
+        // A category rides on `pluginAllowed` in the classifier; here it answers to its own closure.
         var zones = SynopticPlusGesture.sectors(allowed: offered(allowed, key: key, a),
-                                                pluginAllowed: offersPlugins(key: key, a), map: map)
+                                                pluginAllowed: offersPlugins(key: key, a)
+                                                    || offersCategories(key: key, a), map: map)
+            .filter { z in
+                switch z.result {
+                case .plugin:   return offersPlugins(key: key, a)
+                case .category: return offersCategories(key: key, a)
+                default:        return true
+                }
+            }
         for i in zones.indices {
             if case .plugin(let ref) = zones[i].result, a.missingPlugins.contains(ref) { zones[i].isAvailable = false }
         }
@@ -215,6 +240,7 @@ enum SynopticPlusPresentation {
         case .branch:                              return .branch
         case .send:                                return .send
         case .insertPlugin(_, let ref):            return .plugin(ref.name)
+        case .openBrowserInCategory(_, let i):     return .category(i)
         }
     }
 
@@ -242,8 +268,9 @@ enum SynopticPlusPresentation {
             let action = map.action(s)
             switch action.gestureResult {
             case .none:   return nil
-            case .plugin: return plugins ? (s, action) : nil
-            case let r:   return built.contains(r) ? (s, action) : nil
+            case .plugin:   return plugins ? (s, action) : nil
+            case .category: return offersCategories(key: key, a) ? (s, action) : nil
+            case let r:     return built.contains(r) ? (s, action) : nil
             }
         }
     }

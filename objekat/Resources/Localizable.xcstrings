@@ -10765,94 +10765,25 @@
         }
       }
     },
-    "pluginBrowser.plus.description": {
+    "pluginBrowser.plus.clear": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Dragging a + of the signal view in a direction gives what that direction shows: the left box near, the right box further (beyond 80 pt). An empty far box does what the near one does. Giving a box the action another one had swaps the two."
+            "value": "Empty this zone"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar un + de la vista sinóptica en una dirección da lo que esta muestra: la casilla izquierda cerca, la derecha más lejos (más allá de 80 pt). Una casilla lejana vacía hace lo mismo que la cercana. Dar a una casilla la acción de otra intercambia ambas."
+            "value": "Vaciar esta zona"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser un + de la vue synoptique dans une direction donne ce qu'elle affiche : la case de gauche tout près, celle de droite plus loin (au-delà de 80 pt). Une case lointaine vide fait comme la proche. Donner à une case l'action d'une autre échange les deux."
-          }
-        }
-      }
-    },
-    "pluginBrowser.plus.noCatalog": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No plugin scanned yet"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ningún plugin escaneado todavía"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun plugin scanné pour l'instant"
-          }
-        }
-      }
-    },
-    "pluginBrowser.plus.pickHint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Click a plugin below to put it on the selected box."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hacer clic en un plugin de abajo lo coloca en la casilla elegida."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cliquer un plugin ci-dessous le place sur la case choisie."
-          }
-        }
-      }
-    },
-    "pluginBrowser.plus.pluginMenu": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insert a plugin"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insertar un plugin"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Insérer un plugin"
+            "value": "Vider cette zone"
           }
         }
       }
@@ -10876,29 +10807,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Réinitialiser"
-          }
-        }
-      }
-    },
-    "pluginBrowser.plus.sameAsNear": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Same as near"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Igual que cerca"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Comme près"
           }
         }
       }
@@ -11777,6 +11685,29 @@
         }
       }
     },
+    "plusAction.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Category"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Categoría"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Catégorie"
+          }
+        }
+      }
+    },
     "plusAction.help.branch": {
       "extractionState": "manual",
       "localizations": {
@@ -11796,6 +11727,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "une branche parallèle"
+          }
+        }
+      }
+    },
+    "plusAction.help.category": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "open the browser on this colour, the plugin chosen inserted here"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "abrir el navegador en este color, el plugin elegido se inserta aquí"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ouvrir le navigateur sur cette couleur, le plugin choisi inséré ici"
           }
         }
       }

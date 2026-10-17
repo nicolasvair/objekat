@@ -21,15 +21,16 @@ extension PluginCategory {
 // MARK: - The core wired to the engine (step 1) — reused inline AND in a window
 
 enum SynopticSheetKind: Identifiable {
-    case insert(location: SeriesLocation, index: Int)   // a series '+' inside a target series
+    // `category`: the colour tab the browser opens on (a '+' direction bound to a category); nil = "All".
+    case insert(location: SeriesLocation, index: Int, category: Int? = nil)   // a series '+' inside a target series
     case instrument                                      // the '+' of the instruments zone (a MIDI clip)
-    case insertSend(aux: UUID, index: Int?)              // a '+' of a send's mini-chain (INC 3); nil = its end
+    case insertSend(aux: UUID, index: Int?, category: Int? = nil)   // a '+' of a send's mini-chain (INC 3); nil = its end
 
     var id: String {
         switch self {
-        case .insert(let loc, let i): return "insert-\(loc.key)-\(i)"
+        case .insert(let loc, let i, _): return "insert-\(loc.key)-\(i)"
         case .instrument:             return "instrument"
-        case .insertSend(let aux, let i): return "insertSend-\(aux.uuidString)-\(i.map(String.init) ?? "end")"
+        case .insertSend(let aux, let i, _): return "insertSend-\(aux.uuidString)-\(i.map(String.init) ?? "end")"
         }
     }
 }
@@ -488,6 +489,19 @@ struct SynopticBoundView: View {
                 }
                 viewModel.synopticInsert(objectID: objectID, available: available, into: loc, at: index)
             },
+            // A direction bound to a colour category: the browser its click opens, on that colour's tab.
+            onOpenBrowserInCategory: { key, category in
+                switch key {
+                case .series(let seriesID, let index):
+                    if let loc = locations[seriesID] {
+                        activeSheet = .insert(location: loc, index: index, category: category)
+                    }
+                case .sendChain(let aux, let index):
+                    activeSheet = .insertSend(aux: aux, index: index, category: category)
+                case .postFader:
+                    break
+                }
+            },
             onSendPlusInsertPlugin: { aux, index, ref in
                 guard let available = viewModel.availablePlugin(for: ref) else {
                     NSSound.beep()
@@ -531,21 +545,22 @@ struct SynopticBoundView: View {
         .onReceive(vuPoll) { _ in refreshLevels() }
         .sheet(item: $activeSheet) { kind in
             switch kind {
-            case .insert(let location, let index):
-                pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index)) { available in
+            case .insert(let location, let index, let category):
+                pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index),
+                            category: category) { available in
                     viewModel.synopticInsert(objectID: objectID, available: available, into: location, at: index)
                 }
             case .instrument:
                 pickerSheet(instrumentsOnly: true) { available in
                     viewModel.setInstrument(objectID: objectID, available: available)
                 }
-            case .insertSend(let aux, let index):
+            case .insertSend(let aux, let index, let category):
                 // The send's own chain host: the plugin lands at the '+' clicked (the END from the line's
                 // menu). No ARA source there (a source is an object's), and instruments are left out like in
                 // any FX chain.
                 let host = sendHost(aux)
                 pickerSheet(title: L("synoptic.sheet.addPluginOnSend", viewModel.find(id: aux)?.displayName ?? ""),
-                            showsARASource: false) { available in
+                            showsARASource: false, category: category) { available in
                     let count = viewModel.chainPlugins(host)?.count ?? 0
                     viewModel.synopticInsert(objectID: host, available: available, into: .root,
                                              at: min(max(0, index ?? count), count))
@@ -560,7 +575,7 @@ struct SynopticBoundView: View {
     /// provides, and through its dedicated MIDI zone), so it belongs in NO FX chain.
     @ViewBuilder
     private func pickerSheet(instrumentsOnly: Bool = false, title: String? = nil, showsARASource: Bool = true,
-                             insertion: PluginBrowserInsertion? = nil,
+                             insertion: PluginBrowserInsertion? = nil, category: Int? = nil,
                              onSelect: @escaping (AvailablePlugin) -> Void) -> some View {
         let size = PluginBrowserLayout.sheetSize()
         PluginBrowserView(
@@ -572,7 +587,8 @@ struct SynopticBoundView: View {
             onSelect: { available in onSelect(available); activeSheet = nil },
             kind: instrumentsOnly ? .instrumentsOnly : .effectsOnly,
             showsARASource: showsARASource && !instrumentsOnly,
-            insertion: insertion
+            insertion: insertion,
+            initialPage: category.map { .plugins(.category($0)) } ?? .plugins(.all)
         )
         .frame(width: size.width, height: size.height)
     }

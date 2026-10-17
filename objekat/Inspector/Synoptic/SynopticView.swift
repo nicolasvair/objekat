@@ -320,7 +320,7 @@ struct SynopticView: View {
                !SynopticPlusGesture.isClick(drag.translation) {
                 let zones = SynopticPlusPresentation.sectors(allowed: d.allowedGestures(for: key), key: key,
                                                             availability, translation: drag.translation, map: plusMap)
-                SynopticPlusSectorsView(center: from, sectors: zones.sectors, highlighted: zones.highlighted)
+                PlusSectorsView(center: from, sectors: zones.sectors, highlighted: zones.highlighted)
                     .frame(width: d.canvasSize.width, height: d.canvasSize.height)
                     .allowsHitTesting(false)
             }
@@ -371,6 +371,7 @@ struct SynopticView: View {
                                         sendPluginAdd: actions.onSendPluginAdd != nil,
                                         insertPlugin: actions.onPlusInsertPlugin != nil,
                                         sendInsertPlugin: actions.onSendPlusInsertPlugin != nil,
+                                        category: actions.onOpenBrowserInCategory != nil,
                                         missingPlugins: Set(plusMap.pluginRefs.filter { !(installed?($0) ?? true) }))
     }
 
@@ -448,6 +449,8 @@ struct SynopticView: View {
             case .sendChain(let aux, let i): actions.onSendPlusInsertPlugin?(aux, i, ref)
             case .postFader:                 break
             }
+        case .openBrowserInCategory(let key, let category):
+            actions.onOpenBrowserInCategory?(key, category)
         }
     }
 
@@ -886,6 +889,7 @@ private struct SynopticPlusGhostView: View {
         HStack(spacing: 5) {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(iconColor ?? (valid ? Color.primary : Color.secondary))
             Text(text)
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
@@ -906,8 +910,15 @@ private struct SynopticPlusGhostView: View {
         case .branch:                  return SynopticPlusPresentation.symbol(for: .branch)
         case .send:                    return SynopticPlusPresentation.symbol(for: .send)
         case .plugin:                  return PlusShortcutText.pluginSymbol
+        case .category:                return SynopticPlusPresentation.symbol(for: .category(0))
         case .pluginMissing, .notHere: return "nosign"
         }
+    }
+
+    /// A category's dot takes its colour.
+    private var iconColor: Color? {
+        if case .category(let i) = ghost { return ObjekatPalette.pluginCategory(i) }
+        return nil
     }
 
     private var text: String {
@@ -917,45 +928,10 @@ private struct SynopticPlusGhostView: View {
         case .branch:                  return L("synoptic.plus.ghost.branch")
         case .send:                    return L("synoptic.plus.ghost.send")
         case .plugin(let name):        return name
+        case .category:                return L("plusAction.category")
         case .pluginMissing(let name): return L("synoptic.plus.ghost.pluginMissing", name)
         case .notHere:                 return L("synoptic.plus.ghost.notHere")
         }
-    }
-}
-
-/// The zones round a '+' while a drag leaves it (@see SynopticPlusGesture.sectors): each a faint wedge with
-/// its icon, the one the hand is in lit up softly. A direction the '+' does not offer has no zone; a
-/// direction bound to a plugin no longer installed keeps its zone, grey and dashed, with the "no" sign
-/// (letting go there does nothing). Pure display, laid under the ghost.
-private struct SynopticPlusSectorsView: View {
-    let center: CGPoint
-    let sectors: [PlusSector]
-    /// The index of the zone the hand is in (nil = none).
-    let highlighted: Int?
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(sectors.indices, id: \.self) { i in
-                let s = sectors[i]
-                let on = i == highlighted
-                let tint = s.isAvailable ? Color.accentColor : Color.secondary
-                let shape = Path { p in
-                    let pts = s.outline().map { CGPoint(x: center.x + $0.width, y: center.y + $0.height) }
-                    guard let first = pts.first else { return }
-                    p.move(to: first)
-                    for q in pts.dropFirst() { p.addLine(to: q) }
-                    p.closeSubpath()
-                }
-                shape.fill(tint.opacity(on ? 0.14 : 0.04))
-                shape.stroke(tint.opacity(on ? 0.45 : 0.15),
-                             style: StrokeStyle(lineWidth: 1, lineJoin: .round, dash: s.isAvailable ? [] : [3, 3]))
-                Image(systemName: s.isAvailable ? SynopticPlusPresentation.symbol(for: s.result) : "nosign")
-                    .font(.system(size: 10, weight: on ? .semibold : .regular))
-                    .foregroundStyle(on ? tint : Color.secondary.opacity(0.7))
-                    .position(x: center.x + s.iconOffset.width, y: center.y + s.iconOffset.height)
-            }
-        }
-        .animation(.easeOut(duration: 0.12), value: highlighted)
     }
 }
 

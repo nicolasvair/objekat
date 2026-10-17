@@ -1,212 +1,282 @@
 import SwiftUI
 
-// MARK: - The plugin browser's "+" page: what each direction of the signal view's "+" asks for
+// MARK: - The plugin browser's "+" page: what each zone of the signal view's "+" asks for
 
-/// The eight directions of a "+" laid out as a compass round it, each with its TWO slots side by side — near,
-/// then further (beyond 80 pt of travel along the direction, @see PlusLevel). A click on a slot selects it; the
-/// strip below edits the selected slot (a built-in action, a plugin of the catalogue by maker — effects only,
-/// an instrument has no place in an FX chain — or nothing), and a click on a plugin of the list under the page
-/// puts that plugin on the selected slot (@see PluginBrowserView, the list's rows in this page). Putting an
-/// action on a slot that another slot held moves that other slot's action to where this one was (@see
-/// PlusShortcutMap.assign — a SWAP, so nothing is lost by a slip of the hand). An empty far slot does what
-/// the near one does. "Reset to defaults" brings the "+" back as it was designed.
+/// The circle a "+" of the signal view draws while it is dragged (@see PlusSectorsView — the same drawing,
+/// scaled up), with its sixteen zones: eight directions of 45°, each NEAR (inside the 80 pt circle) and FAR
+/// (beyond it). Under it a PALETTE — the built-in actions, the colour categories the plugins carry, then the
+/// effects of the catalogue (an instrument has no place in an FX chain) — whose items are DRAGGED onto a zone:
 ///
-/// The map is the APP's memory (`PlusShortcutStore`, UserDefaults), not the project's; this page is the one
-/// door that edits it.
-struct PluginBrowserPlusPage: View {
-    /// The catalogue the plugin menus list (the one the browser shows).
+///  - dropped on a zone, an item replaces what the zone held (an item may sit on several zones);
+///  - a zone's item dragged onto another zone MOVES there, the two exchanging what they held;
+///  - the ✕ of a zone (on hover) empties it;
+///  - "Reset to defaults" brings the "+" back as it was designed.
+///
+/// An empty far zone does what its near zone does (shown faintly); an empty near zone does nothing short of
+/// the far circle (@see PlusShortcutMap.effective). The map is the APP's memory (`PlusShortcutStore`,
+/// UserDefaults), not the project's; this page is the one door that edits it.
+struct PluginBrowserPlusPage<SearchRow: View>: View {
     var viewModel: EditViewModel
-    /// The slot the strip edits and a click in the list binds.
-    @Binding var selected: PlusSlot
+    /// The effects the palette lists (the browser's search and formats already applied).
+    let plugins: [AvailablePlugin]
+    /// The colour categories that hold a plugin, in the order of their tabs.
+    let categories: [Int]
+    /// The browser's search pill, laid above the palette's plugins.
+    @ViewBuilder var searchRow: () -> SearchRow
 
     private var store: PlusShortcutStore { .shared }
 
-    /// The compass, row by row; nil = the "+" itself in the middle.
-    private static let grid: [[PlusDirection?]] = [
-        [.upLeft, .up, .upRight],
-        [.left, nil, .right],
-        [.downLeft, .down, .downRight],
-    ]
+    /// What the hand carries: an item of the palette (`from` nil) or a zone's (`from` = that zone).
+    private struct Carried {
+        var action: PlusAction
+        var from: PlusSlot?
+        var location: CGPoint
+    }
 
-    static let cellWidth: CGFloat = 164
+    @State private var carried: Carried? = nil
+    @State private var hoveredSlot: PlusSlot? = nil
+    /// Where the circle's centre sits in the page (the "plusPage" space).
+    @State private var circleFrame: CGRect = .zero
+
+    private static var space: String { "plusPage" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(L("pluginBrowser.plus.description"))
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Grid(horizontalSpacing: 8, verticalSpacing: 6) {
-                ForEach(Self.grid.indices, id: \.self) { row in
-                    GridRow {
-                        ForEach(Self.grid[row].indices, id: \.self) { col in
-                            if let d = Self.grid[row][col] {
-                                cell(d)
-                            } else {
-                                plusDisc
-                            }
-                        }
+        GeometryReader { geo in
+            let scale = Self.scale(forHeight: geo.size.height)
+            VStack(spacing: 0) {
+                circle(scale: scale)
+                    .frame(height: Self.circleHeight(scale))
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .topTrailing) {
+                        Button(L("pluginBrowser.plus.reset")) { store.reset() }
+                            .controlSize(.small)
+                            .disabled(store.map.isDefault)
+                            .padding(8)
                     }
-                }
+                Divider()
+                palette
             }
-            .frame(maxWidth: .infinity)
-
-            selectedStrip
+            .overlay(alignment: .topLeading) { carriedGhost }
+            .coordinateSpace(name: Self.space)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
     }
 
-    /// The "+" the directions leave from.
-    private var plusDisc: some View {
-        Image(systemName: "plus.circle.fill")
-            .font(.system(size: 20))
-            .foregroundStyle(Color.accentColor)
-            .frame(width: Self.cellWidth, height: 38)
+    // MARK: Geometry
+
+    /// The drawing's size: the circle takes about half the page, never smaller than the signal view's.
+    private static func scale(forHeight h: CGFloat) -> CGFloat {
+        let outer = SynopticPlusGesture.sectorOuterRadius
+        return min(1.5, max(1, (h * 0.52 - 16) / (2 * outer)))
     }
 
-    /// One direction: its arrow and name, then its near and far slots.
-    private func cell(_ d: PlusDirection) -> some View {
-        VStack(spacing: 3) {
-            Text(PlusShortcutText.directionLabel(d))
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            HStack(spacing: 4) {
-                chip(PlusSlot(d, .near))
-                chip(PlusSlot(d, .far))
-            }
-        }
-        .frame(width: Self.cellWidth, height: 38)
+    private static func circleHeight(_ scale: CGFloat) -> CGFloat {
+        2 * SynopticPlusGesture.sectorOuterRadius * scale + 16
     }
+
+    /// The zone under `point` (in the page's space), whatever it holds; nil off the circle (or on the "+").
+    private func slot(at point: CGPoint, scale: CGFloat) -> PlusSlot? {
+        let c = CGPoint(x: circleFrame.midX, y: circleFrame.midY)
+        let t = CGSize(width: (point.x - c.x) / scale, height: (point.y - c.y) / scale)
+        let r = hypot(t.width, t.height)
+        guard r >= SynopticPlusGesture.sectorInnerRadius, r <= SynopticPlusGesture.sectorOuterRadius else { return nil }
+        return SynopticPlusGesture.rawSlot(t)
+    }
+
+    // MARK: The circle
 
     private func isMissing(_ action: PlusAction) -> Bool {
         action.pluginRef.map { viewModel.availablePlugin(for: $0) == nil } ?? false
     }
 
-    /// What a slot's chip reads: the action, or for an empty FAR slot what it falls back on.
-    private func chipText(_ slot: PlusSlot) -> (text: String, dimmed: Bool) {
-        let action = store.map.action(slot)
-        if slot.level == .far && action == .none {
-            // Empty far = the near action at any distance; "—" when there is no near action either.
-            return store.map.action(slot.direction, .near) == .none ? ("—", true)
-                                                                    : (L("pluginBrowser.plus.sameAsNear"), true)
+    private func circle(scale: CGFloat) -> some View {
+        let map = store.map
+        var sectors = SynopticPlusGesture.slotSectors(map: map)
+        for i in sectors.indices where isMissing(map.action(PlusSlot(sectors[i].direction, sectors[i].level))) {
+            sectors[i].isAvailable = false
         }
-        return (PlusShortcutText.actionName(action, missing: isMissing(action)), action == .none || isMissing(action))
-    }
-
-    /// One slot: a click selects it (the strip below then edits it, a click in the list binds a plugin there).
-    private func chip(_ slot: PlusSlot) -> some View {
-        let action = store.map.action(slot)
-        let (text, dimmed) = chipText(slot)
-        let isSelected = selected == slot
-        let missing = isMissing(action)
-        return Text(verbatim: text)
-            .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
-            .foregroundStyle(dimmed ? Color.secondary : Color.primary)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 5)
-            .frame(maxWidth: .infinity)
-            .frame(height: 20)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.07))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 5)
-                    .strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(missing ? 0.6 : 0),
-                                  style: StrokeStyle(lineWidth: 1, dash: missing && !isSelected ? [3, 2] : []))
-            )
-            .contentShape(Rectangle())
-            .onTapGesture { selected = slot }
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .help(PlusShortcutText.levelName(slot.level) + " — " + PlusShortcutText.helpDescription(action, missing: missing))
-    }
-
-    // MARK: The selected slot
-
-    /// The selected slot named, its action as a menu, the hint for the list, and Reset.
-    private var selectedStrip: some View {
-        let action = store.map.action(selected)
-        let missing = isMissing(action)
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 8) {
-                Text(verbatim: PlusShortcutText.directionLabel(selected.direction) + " · "
-                               + PlusShortcutText.levelName(selected.level))
-                    .font(.system(size: 11, weight: .semibold))
-                    .lineLimit(1)
-                Menu {
-                    actionMenu(for: selected, current: action)
-                } label: {
-                    Text(verbatim: chipText(selected).text)
+        let target = carried.flatMap { slot(at: $0.location, scale: scale) }
+        let lit = target.flatMap { t in sectors.firstIndex { $0.direction == t.direction && $0.level == t.level } }
+        return GeometryReader { g in
+            let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
+            ZStack(alignment: .topLeading) {
+                PlusSectorsView(center: c, sectors: sectors, highlighted: lit, showsIcons: false,
+                                emphasis: 2.2, scale: scale)
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color.accentColor)
+                    .position(c)
+                ForEach(sectors.indices, id: \.self) { i in
+                    zoneItem(sectors[i], center: c, scale: scale)
                 }
-                .menuStyle(.button)
-                .controlSize(.small)
-                .fixedSize()
-                .help(PlusShortcutText.helpDescription(action, missing: missing))
-                Spacer(minLength: 4)
-                Button(L("pluginBrowser.plus.reset")) { store.reset() }
-                    .controlSize(.small)
-                    .disabled(store.map.isDefault)
             }
-            Text(L("pluginBrowser.plus.pickHint"))
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            .background(GeometryReader { inner in
+                Color.clear
+                    .onAppear { circleFrame = inner.frame(in: .named(Self.space)) }
+                    .onChange(of: inner.frame(in: .named(Self.space))) { _, f in circleFrame = f }
+            })
         }
     }
 
-    /// The built-ins (for a far slot, "Nothing" reads "Same as near": that is what an empty far slot does),
-    /// the plugin bound there if any (even when no longer installed, so the menu says what is there), and
-    /// the catalogue's effects by maker.
+    /// What a zone shows at its centre: its item (draggable, ✕ on hover), or for an empty far zone the near
+    /// zone's item, faint — that is what a drag reaching it does.
     @ViewBuilder
-    private func actionMenu(for slot: PlusSlot, current: PlusAction) -> some View {
-        ForEach(PlusAction.builtIns, id: \.self) { a in
-            let name = (slot.level == .far && a == .none) ? L("pluginBrowser.plus.sameAsNear")
-                                                          : PlusShortcutText.actionName(a)
-            Toggle(name, isOn: Binding(get: { current == a }, set: { _ in store.assign(a, to: slot) }))
-        }
-        Divider()
-        if let ref = current.pluginRef {
-            Toggle(PlusShortcutText.actionName(current, missing: viewModel.availablePlugin(for: ref) == nil),
-                   isOn: .constant(true))
-        }
-        Menu(L("pluginBrowser.plus.pluginMenu")) {
-            let groups = pluginsByMaker
-            if groups.isEmpty {
-                Text(L("pluginBrowser.plus.noCatalog"))
-            } else {
-                ForEach(groups, id: \.maker) { group in
-                    Menu(group.maker) {
-                        ForEach(group.plugins, id: \.id) { p in
-                            let ref = PlusPluginRef(p)
-                            Toggle(p.name + "  " + p.formatLabel,
-                                   isOn: Binding(get: { current.pluginRef == ref },
-                                                 set: { _ in store.assign(.plugin(ref), to: slot) }))
+    private func zoneItem(_ s: PlusSector, center c: CGPoint, scale: CGFloat) -> some View {
+        let slot = PlusSlot(s.direction, s.level)
+        let action = store.map.action(slot)
+        let at = CGPoint(x: c.x + s.iconOffset.width * scale, y: c.y + s.iconOffset.height * scale)
+        let width = Self.labelWidth(s, scale: scale)
+        if action != .none {
+            let missing = isMissing(action)
+            itemFace(action, missing: missing, width: width, stacked: true)
+                .opacity(carried?.from == slot ? 0.3 : 1)
+                .overlay(alignment: .topTrailing) {
+                    if hoveredSlot == slot && carried == nil {
+                        Button { store.clear(slot) } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .background(Circle().fill(Color(nsColor: .windowBackgroundColor)))
                         }
+                        .buttonStyle(.plain)
+                        .offset(x: 6, y: -6)
+                        .help(L("pluginBrowser.plus.clear"))
                     }
                 }
+                .contentShape(Rectangle())
+                .onHover { inside in
+                    if inside { hoveredSlot = slot } else if hoveredSlot == slot { hoveredSlot = nil }
+                }
+                .gesture(carryGesture(action, from: slot, scale: scale))
+                .help(PlusShortcutText.directionLabel(slot.direction) + " · " + PlusShortcutText.levelName(slot.level)
+                      + " — " + PlusShortcutText.helpDescription(action, missing: missing))
+                .position(at)
+        } else if slot.level == .far, store.map.action(slot.direction, .near) != .none {
+            itemFace(store.map.action(slot.direction, .near), missing: false, width: width, stacked: true)
+                .opacity(0.3)
+                .allowsHitTesting(false)
+                .position(at)
+        }
+    }
+
+    /// The room a zone's label has: the arc's chord at its middle radius, a little less.
+    private static func labelWidth(_ s: PlusSector, scale: CGFloat) -> CGFloat {
+        let mid = (s.inner.distance(at: s.midAngle) + s.outer.distance(at: s.midAngle)) / 2 * scale
+        let chord = 2 * mid * CGFloat(sin((s.toAngle - s.fromAngle) / 2 * .pi / 180))
+        return max(28, chord - 8)
+    }
+
+    // MARK: Items (the palette's and the zones')
+
+    private func symbol(_ action: PlusAction, missing: Bool) -> String {
+        missing ? "nosign" : SynopticPlusPresentation.symbol(for: action.gestureResult)
+    }
+
+    private func iconColor(_ action: PlusAction) -> Color? {
+        action.categoryIndex.map { ObjekatPalette.pluginCategory($0) }
+    }
+
+    /// An action's face: its icon and its name — side by side in the palette, stacked in a zone.
+    private func itemFace(_ action: PlusAction, missing: Bool, width: CGFloat? = nil, stacked: Bool) -> some View {
+        let name = PlusShortcutText.actionName(action, missing: missing)
+        let icon = Image(systemName: symbol(action, missing: missing))
+            .font(.system(size: stacked ? 11 : 10, weight: .semibold))
+            .foregroundStyle(iconColor(action) ?? (missing ? Color.secondary : Color.accentColor))
+        let text = Text(verbatim: name)
+            .font(.system(size: stacked ? 9 : 10))
+            .foregroundStyle(missing ? Color.secondary : Color.primary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        return Group {
+            if stacked {
+                VStack(spacing: 1) { icon; text }
+                    .frame(maxWidth: width)
+                    .padding(.horizontal, 3).padding(.vertical, 2)
+            } else {
+                HStack(spacing: 5) { icon; text }
+                    .padding(.horizontal, 7)
+                    .frame(height: 22)
             }
         }
+        .background(RoundedRectangle(cornerRadius: 5)
+            .fill(Color(nsColor: .controlBackgroundColor).opacity(stacked ? 0.85 : 1)))
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .strokeBorder(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: missing ? [3, 2] : [])))
     }
 
-    /// The catalogue's effects, by maker then name (as the browser sorts them).
-    private var pluginsByMaker: [(maker: String, plugins: [AvailablePlugin])] {
-        let effects = viewModel.availablePlugins.filter(\.canBindToPlusDirection)
-        let byMaker = Dictionary(grouping: effects) { $0.manufacturer.isEmpty ? "—" : $0.manufacturer }
-        return byMaker.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }.map { maker in
-            (maker, byMaker[maker]!.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+    /// Carries `action` (from the zone `from`, or from the palette) and lays it where the hand lets go: on a
+    /// zone, the palette's item REPLACES what it held, a zone's item SWAPS with it. Anywhere else: nothing.
+    private func carryGesture(_ action: PlusAction, from: PlusSlot?, scale: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .named(Self.space))
+            .onChanged { v in carried = Carried(action: action, from: from, location: v.location) }
+            .onEnded { v in
+                carried = nil
+                guard let target = slot(at: v.location, scale: scale) else { return }
+                if let from { store.swap(from, target) } else { store.assign(action, to: target) }
+            }
+    }
+
+    /// The item under the hand while it is carried.
+    @ViewBuilder
+    private var carriedGhost: some View {
+        if let c = carried {
+            itemFace(c.action, missing: isMissing(c.action), stacked: false)
+                .fixedSize()
+                .shadow(radius: 3)
+                .offset(x: c.location.x + 8, y: c.location.y - 11)
+                .allowsHitTesting(false)
         }
     }
 
-    /// The slots `plugin` is bound to, as glyphs a row of the list shows (an arrow; doubled for a far slot).
-    static func boundGlyphs(_ plugin: AvailablePlugin, map: PlusShortcutMap) -> String {
-        let ref = PlusPluginRef(plugin)
-        return PlusSlot.allCases.filter { map.action($0).pluginRef == ref }
-            .map { $0.level == .far ? $0.direction.arrow + $0.direction.arrow : $0.direction.arrow }
-            .joined(separator: " ")
+    // MARK: The palette
+
+    private var palette: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                ForEach(PlusAction.builtIns, id: \.self) { paletteItem($0) }
+                if !categories.isEmpty {
+                    Divider().frame(height: 18).padding(.horizontal, 2)
+                    ForEach(categories, id: \.self) { i in categoryItem(i) }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            searchRow()
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) {
+                    ForEach(plugins) { p in paletteItem(.plugin(PlusPluginRef(p)), help: p.manufacturer) }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func paletteItem(_ action: PlusAction, help: String? = nil) -> some View {
+        itemFace(action, missing: false, stacked: false)
+            .frame(maxWidth: action.pluginRef == nil ? nil : .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .gesture(carryGesture(action, from: nil, scale: currentScale))
+            .help(help.map { PlusShortcutText.actionName(action) + " — " + $0 }
+                  ?? PlusShortcutText.helpDescription(action))
+    }
+
+    /// A colour category: its dot alone (a category has no name, its tab is a colour).
+    private func categoryItem(_ i: Int) -> some View {
+        Circle()
+            .fill(ObjekatPalette.pluginCategory(i))
+            .frame(width: 14, height: 14)
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+            .gesture(carryGesture(.category(i), from: nil, scale: currentScale))
+            .help(PlusShortcutText.helpDescription(.category(i)))
+    }
+
+    /// The circle's scale as drawn (read back from its frame: the palette has no GeometryReader of its own).
+    private var currentScale: CGFloat {
+        circleFrame.height > 0
+            ? (circleFrame.height - 16) / (2 * SynopticPlusGesture.sectorOuterRadius)
+            : 1
     }
 }

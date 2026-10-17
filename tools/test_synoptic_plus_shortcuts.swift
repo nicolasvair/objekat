@@ -1,12 +1,13 @@
 import Foundation
 
 // Standalone test of the user-customisable directions of the signal view's "+" (PlusShortcutMap and what the
-// gesture, the layout and the presentation do with a NON-default map): the eight fixed directions and their
-// boundaries, the two LEVELS of each (near, far from 80 pt along the direction), the defaults (which must
-// classify exactly as the historical "+" did), the swap rule per slot, an empty far slot doing what the near
-// one does, the stored form (v2 round trip, unknown kinds, duplicates, and the MIGRATION of a v1 map), the
-// plugin identity, and a few maps moved around — a plugin on up-right, a send moved up, gain and gain · pan ·
-// mute down, a plugin on a far slot alone, a plugin no longer installed.
+// gesture, the layout and the presentation do with a NON-default map): the eight EQUAL directions (45°, no
+// dead angle) and their boundaries, the two LEVELS of each (near, far beyond the 80 pt circle), the defaults,
+// an action free to sit on several slots (assign replaces, swap exchanges), an empty far slot doing what the
+// near one does, the stored form (v2 round trip, unknown kinds, duplicates kept, categories, and the
+// MIGRATION of a v1 map), the plugin identity, and a few maps moved around — a plugin on up-right, a send
+// moved up, gain and gain · pan · mute down, a plugin on a far slot alone, a plugin no longer installed, a
+// colour category.
 //
 //     swiftc -parse-as-library -o /tmp/t_plus_sc \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
@@ -37,16 +38,17 @@ typealias P = SynopticPlusPresentation
 
 func S(_ d: PlusDirection, _ l: PlusLevel = .near) -> PlusSlot { PlusSlot(d, l) }
 
-/// The "+" as it was before any map existed, written out by hand (the reference the default map must match
-/// to the bit): right (|θ| < 15°, open) = a gain stage, gain · pan · mute from 80 pt of HORIZONTAL travel;
-/// down-right (−45°…−15°, closed) = a branch; left (|θ| > 165°, open) = a send; anything else nothing.
+/// The default "+" written out by hand (the reference the default map must match to the bit): right
+/// (−22.5° ≤ θ < 22.5°) = a gain stage, gain · pan · mute from 80 pt of DISTANCE; down-right
+/// (−67.5° ≤ θ < −22.5°) = a branch; left (θ ≥ 157.5° or θ < −157.5°) = a send; anything else nothing.
 func legacy(_ t: CGSize, allowed: Set<PlusGestureResult>) -> PlusGestureResult {
-    guard hypot(t.width, t.height) >= G.clickThreshold else { return .none }
+    let dist = hypot(t.width, t.height)
+    guard dist >= G.clickThreshold else { return .none }
     let deg = atan2(Double(-t.height), Double(t.width)) * 180 / .pi
     let r: PlusGestureResult
-    if abs(deg) < 15 { r = t.width < 80 ? .gain : .gainPanMute }
-    else if deg >= -45 && deg <= -15 { r = .branch }
-    else if abs(deg) > 165 { r = .send }
+    if deg >= -22.5 && deg < 22.5 { r = dist < 80 ? .gain : .gainPanMute }
+    else if deg >= -67.5 && deg < -22.5 { r = .branch }
+    else if deg >= 157.5 || deg < -157.5 { r = .send }
     else { r = .none }
     return allowed.contains(r) ? r : .none
 }
@@ -62,21 +64,19 @@ struct Main {
         // MARK: The directions
         for d in PlusDirection.allCases {
             check(PlusDirection.at(angle: d.angle) == d, "\(d) at its own axis")
-            check(PlusDirection.at(angle: d.angle + 14.9) == d && PlusDirection.at(angle: d.angle - 14.9) == d,
-                  "\(d): ±14.9° inside")
+            check(PlusDirection.at(angle: d.angle + 22.4) == d && PlusDirection.at(angle: d.angle - 22.5) == d,
+                  "\(d): [−22.5°, +22.5°) round its axis")
+            check(PlusDirection.at(angle: d.angle + 22.5) != d, "\(d): +22.5° is the next sector's")
         }
         check(PlusDirection.allCases.count == 8, "eight directions")
         check(Set(PlusDirection.allCases.map(\.arrow)).count == 8, "eight distinct arrows")
-        check(PlusDirection.at(angle: 15) == .upRight && PlusDirection.at(angle: -15) == .downRight,
-              "±15° belongs to the diagonal, not to the right")
-        check(PlusDirection.at(angle: 165) == .upLeft && PlusDirection.at(angle: -165) == .downLeft,
-              "±165° belongs to the diagonal, not to the left")
-        check(PlusDirection.at(angle: -45) == .downRight && PlusDirection.at(angle: -45.01) == nil,
-              "the branch's far edge at −45°, closed")
-        check(PlusDirection.at(angle: -180) == .left && PlusDirection.at(angle: 179.9) == .left, "left either side of 180°")
-        check(PlusDirection.at(angle: 75) == .up && PlusDirection.at(angle: 105) == .up, "up closed at 75° and 105°")
-        for dead in [50.0, 60, 70, 110, 120, 130, -50, -60, -70, -110, -120, -130] {
-            check(PlusDirection.at(angle: dead) == nil, "\(dead)°: dead angle")
+        check(Set(PlusDirection.allCases.map(\.angle)) == [0, 45, 90, 135, 180, -45, -90, -135], "axes every 45°")
+        check(PlusDirection.at(angle: 22.5) == .upRight && PlusDirection.at(angle: -22.5) == .right, "the right sector's two edges")
+        check(PlusDirection.at(angle: -180) == .left && PlusDirection.at(angle: 179.9) == .left
+              && PlusDirection.at(angle: 540) == .left && PlusDirection.at(angle: -157.5) == .downLeft && PlusDirection.at(angle: -157.6) == .left, "left either side of 180°")
+        for deg in stride(from: -720.0, through: 720, by: 0.25) {
+            let d = PlusDirection.at(angle: deg)
+            check(PlusDirection.distance(deg, d.angle) <= 22.5, "\(deg)° lies in its sector (no dead angle)")
         }
         check(G.direction(CGSize(width: 3, height: 0)) == nil, "a click has no direction")
 
@@ -84,15 +84,15 @@ struct Main {
         check(PlusSlot.allCases.count == 16, "sixteen slots")
         check(Array(PlusSlot.allCases.prefix(4)) == [S(.right), S(.right, .far), S(.downRight), S(.downRight, .far)],
               "slots in the directions' order, near before far")
-        check(G.level(CGSize(width: 79.9, height: 0), along: .right) == .near
-              && G.level(CGSize(width: 80, height: 0), along: .right) == .far, "the right direction's cut at 80 pt, exactly")
-        check(G.level(CGSize(width: 79.9, height: -40), along: .right) == .near,
-              "the right cut is the HORIZONTAL travel (the historical vertical line)")
-        check(G.level(polar(85, -80), along: .down) == .far && G.level(polar(79, -80), along: .down) == .near,
-              "the cut is the travel ALONG the direction (85·cos 10° ≈ 83.7 > 80; 79 < 80)")
+        check(G.level(CGSize(width: 79.9, height: 0)) == .near
+              && G.level(CGSize(width: 80, height: 0)) == .far, "the cut at 80 pt, exactly")
+        check(G.level(CGSize(width: 79.9, height: -40)) == .far,
+              "the cut is the DISTANCE (a circle): 79.9 across and 40 up is beyond it")
         for d in PlusDirection.allCases {
-            check(G.level(polar(79.9, d.angle), along: d) == .near && G.level(polar(80.1, d.angle), along: d) == .far,
-                  "\(d): near under 80 pt along its axis, far from there")
+            for off in [-20.0, 0, 20] {
+                check(G.level(polar(79.9, d.angle + off)) == .near && G.level(polar(80.1, d.angle + off)) == .far,
+                      "\(d) \(off)°: near inside the 80 pt circle, far beyond")
+            }
         }
 
         // MARK: The defaults
@@ -120,8 +120,8 @@ struct Main {
                 }
             }
             // Exactly on the cut and on the boundaries.
-            for t in [CGSize(width: 80, height: 0), CGSize(width: 80, height: -21.4), CGSize(width: 79.999, height: 21),
-                      polar(100, 15), polar(100, -15), polar(100, -45), polar(100, 165), polar(100, -165)] {
+            for t in [CGSize(width: 80, height: 0), CGSize(width: 70, height: -40), CGSize(width: 79.999, height: 0),
+                      polar(100, 22.5), polar(100, -22.5), polar(100, -67.5), polar(100, 157.5), polar(100, -157.5)] {
                 check(G.classify(t, allowed: allowed, map: def) == legacy(t, allowed: allowed), "edge \(t), \(allowed)")
             }
         }
@@ -133,28 +133,31 @@ struct Main {
         check(G.classify(polar(150, -30), allowed: every, map: def) == .branch
               && G.classify(polar(150, 180), allowed: every, map: def) == .send, "a branch or a send at any distance")
 
-        // MARK: assign = a swap, per slot
+        // MARK: assign replaces (duplicates allowed), swap exchanges
         var m = def
         m.assign(.gainPanMute, to: S(.right))
-        check(m.action(S(.right)) == .gainPanMute && m.action(S(.right, .far)) == .gain, "near ↔ far of one direction swapped")
+        check(m.action(S(.right)) == .gainPanMute && m.action(S(.right, .far)) == .gainPanMute,
+              "assign replaces: the same action on two slots")
         m.assign(.send, to: S(.up, .far))
-        check(m.action(S(.up, .far)) == .send && m.action(S(.left)) == .none, "the send moved to up-far; left took its nothing")
-        m.assign(.branch, to: S(.right, .far))
-        check(m.action(S(.right, .far)) == .branch && m.action(S(.downRight)) == .gain, "branch ↔ gain, across directions and levels")
+        check(m.action(S(.up, .far)) == .send && m.action(S(.left)) == .send, "the send on up-far AND still on left")
         m.assign(.plugin(eq), to: S(.upRight))
-        check(m.action(S(.upRight)) == .plugin(eq) && m.pluginRefs == [eq], "a plugin on up-right")
         m.assign(.plugin(eq), to: S(.down, .far))
-        check(m.action(S(.down, .far)) == .plugin(eq) && m.action(S(.upRight)) == .none, "a plugin is bound ONCE: it moved down-far")
+        check(m.action(S(.upRight)) == .plugin(eq) && m.action(S(.down, .far)) == .plugin(eq) && m.pluginRefs == [eq, eq],
+              "a plugin on two slots")
+        m.assign(.category(2), to: S(.downLeft))
+        check(m.action(S(.downLeft)) == .category(2) && m.action(S(.downLeft)).categoryIndex == 2, "a category on a slot")
         m.assign(.plugin(verb), to: S(.down, .far))
-        check(m.action(S(.down, .far)) == .plugin(verb) && m.slot(of: .plugin(eq)) == nil,
-              "a plugin put over another one replaces it (nobody else held the new one)")
-        check(m.slot(of: .plugin(verb)) == S(.down, .far) && m.slot(of: PlusAction.none) == nil, "slot(of:)")
+        check(m.action(S(.down, .far)) == .plugin(verb) && m.slot(of: .plugin(eq)) == S(.upRight),
+              "a plugin put over another one replaces it there only")
+        check(m.slot(of: .send) == S(.left) && m.slot(of: PlusAction.none) == nil, "slot(of:) = the first slot in order")
         m.clear(S(.up, .far))
-        check(m.action(S(.up, .far)) == .none && m.action(S(.right, .far)) == .branch, "clear empties one slot, nothing else")
-        m.swap(S(.right), S(.left, .far))
-        check(m.action(S(.left, .far)) == .gainPanMute && m.action(S(.right)) == .none, "swap of two slots")
+        check(m.action(S(.up, .far)) == .none && m.action(S(.left)) == .send, "clear empties one slot, nothing else")
+        m.swap(S(.right), S(.up))
+        check(m.action(S(.up)) == .gainPanMute && m.action(S(.right)) == .none, "swap: a zone moved onto an empty one")
+        m.swap(S(.up), S(.left))
+        check(m.action(S(.up)) == .send && m.action(S(.left)) == .gainPanMute, "swap: two zones exchange")
         m.unbind(verb)
-        check(m.pluginRefs.isEmpty, "unbind")
+        check(m.pluginRefs == [eq], "unbind")
         m.reset()
         check(m == def, "reset brings the defaults back")
 
@@ -182,8 +185,13 @@ struct Main {
               && unknown?.action(S(.left)) == PlusAction.none && unknown?.slot(of: .branch) == nil,
               "v2: an unknown kind → nothing; an unknown level or direction is ignored; the rest is read")
         let dup = decode(#"{"version":2,"slots":{"left":{"far":{"kind":"send"}},"right":{"near":{"kind":"send"}}}}"#)
-        check(dup?.action(S(.right)) == .send && dup?.action(S(.left, .far)) == PlusAction.none,
-              "v2: a duplicated action — the first slot in order keeps it")
+        check(dup?.action(S(.right)) == .send && dup?.action(S(.left, .far)) == .send,
+              "v2: a duplicated action is kept on both slots")
+        let cat = decode(#"{"version":2,"slots":{"down":{"near":{"kind":"category","category":4}},"up":{"near":{"kind":"category"}}}}"#)
+        check(cat?.action(S(.down)) == .category(4) && cat?.action(S(.up)) == PlusAction.none,
+              "v2: a category read back; one with no index → nothing")
+        var cs = def; cs.assign(.category(7), to: S(.upLeft, .far))
+        check(try! JSONDecoder().decode(PlusShortcutMap.self, from: JSONEncoder().encode(cs)) == cs, "a category round-trips")
         let badPlugin = decode(#"{"version":2,"slots":{"up":{"near":{"kind":"plugin","plugin":{"format":"VST3","identifier":"","name":"x","manufacturer":""}}}}}"#)
         check(badPlugin?.action(S(.up)) == PlusAction.none, "a plugin with no identifier → nothing")
         check(decode(#"{"version":2}"#) == PlusShortcutMap(), "no slots: everything asks for nothing")
@@ -202,12 +210,11 @@ struct Main {
               "v1 other actions → the near slot, far empty (the same action at any distance, as v1 did)")
         check(v1User?.action(S(.right)) == PlusAction.none && v1User?.action(S(.right, .far)) == PlusAction.none,
               "v1 nothing on the right → both right slots empty")
-        // Order matters only for a collision: down-right (before down) asked for gain · pan · mute, which the
-        // gain stage on down ALSO yields after migration; the first slot in order keeps it.
+        // Duplicates are allowed: down-right's gain · pan · mute and the stage's far partner on down both stay.
         let v1Collide = decode(#"{"version":1,"directions":{"downRight":{"kind":"gainPanMute"},"down":{"kind":"gainStage"}}}"#)
         check(v1Collide?.action(S(.downRight)) == .gainPanMute && v1Collide?.action(S(.down)) == .gain
-              && v1Collide?.action(S(.down, .far)) == PlusAction.none,
-              "v1 collision: gain · pan · mute stays on the first direction in order, the stage keeps its gain")
+              && v1Collide?.action(S(.down, .far)) == .gainPanMute,
+              "v1: an action met twice is kept twice")
         let v1Unknown = decode(#"{"directions":{"right":{"kind":"warp"},"left":{"kind":"send"},"sideways":{"kind":"branch"}}}"#)
         check(v1Unknown?.action(S(.right)) == PlusAction.none && v1Unknown?.action(S(.left)) == .send
               && v1Unknown?.slot(of: .branch) == nil, "v1: unknown kind → nothing, unknown direction ignored")
@@ -220,9 +227,9 @@ struct Main {
         // MARK: The gesture under a moved map
         var u = def
         u.assign(.plugin(eq), to: S(.upRight))           // a plugin on up-right
-        u.assign(.send, to: S(.up))                       // the send moved up (left near takes up's nothing)
-        u.assign(.gain, to: S(.down))                     // gain moved down (right near takes down's nothing)
-        u.assign(.gainPanMute, to: S(.down, .far))        // and its far partner (right far takes nothing)
+        u.swap(S(.left), S(.up))                          // the send moved up (left near takes up's nothing)
+        u.swap(S(.right), S(.down))                       // gain moved down (right near takes down's nothing)
+        u.swap(S(.right, .far), S(.down, .far))           // and its far partner (right far takes nothing)
         u.assign(.plugin(verb), to: S(.left, .far))       // a plugin on a far slot ALONE
         check(G.classify(polar(60, 30), allowed: every, pluginAllowed: true, map: u) == .plugin(eq), "up-right: the plugin")
         check(G.classify(polar(150, 30), allowed: every, pluginAllowed: true, map: u) == .plugin(eq), "…at any distance")
@@ -232,7 +239,7 @@ struct Main {
         check(G.classify(polar(60, -90), allowed: every, map: u) == .gain
               && G.classify(polar(100, -90), allowed: every, map: u) == .gainPanMute, "down: near gain, far gain · pan · mute")
         check(G.classify(polar(85, -80), allowed: every, map: u) == .gainPanMute
-              && G.classify(polar(79, -80), allowed: every, map: u) == .gain, "the cut ALONG the vertical")
+              && G.classify(polar(79, -80), allowed: every, map: u) == .gain, "the cut is the 80 pt circle")
         check(G.classify(polar(60, 0), allowed: every, map: u) == .none
               && G.classify(polar(120, 0), allowed: every, map: u) == .none, "right gave both slots away: nothing")
         check(G.classify(polar(60, 180), allowed: every, pluginAllowed: true, map: u) == .none
@@ -258,9 +265,9 @@ struct Main {
         }
         check(zones[0].inner == .radius(G.sectorInnerRadius) && zones[0].outer == .radius(G.sectorOuterRadius),
               "an empty far slot: ONE zone, disc to end")
-        check(zones[1].outer == .across(G.panMuteThreshold, axis: -90) && zones[2].inner == .across(G.panMuteThreshold, axis: -90),
-              "two zones split by the line across the direction at 80 pt")
-        check(zones[3].inner == .across(G.panMuteThreshold, axis: 180), "a far slot alone: its zone starts at the cut")
+        check(zones[1].outer == .radius(G.panMuteThreshold) && zones[2].inner == .radius(G.panMuteThreshold),
+              "two zones split by the 80 pt circle")
+        check(zones[3].inner == .radius(G.panMuteThreshold), "a far slot alone: its zone starts at the circle")
         check(abs(zones[1].iconOffset.width) < 1e-6 && zones[1].iconOffset.height > 0, "the down zone's icon sits below the '+'")
         check(G.highlightedIndex(polar(60, 30), in: zones, map: u) == 5, "the hand up-right lights the plugin's zone")
         check(G.highlightedIndex(polar(60, -90), in: zones, map: u) == 1, "near down lights gain")
@@ -271,8 +278,8 @@ struct Main {
         check(G.highlightedIndex(polar(150, -30), in: zones, map: u) == 0, "far down-right lights the one branch zone")
         // the default map's zones: as the "+" always drew them
         let dz = G.sectors(allowed: every, map: def)
-        check(dz.map(\.result) == [.gain, .gainPanMute, .branch, .send] && dz[0].outer == .across(G.panMuteThreshold, axis: 0),
-              "default zones: gain | gain · pan · mute split at the vertical 80 pt line, branch, send")
+        check(dz.map(\.result) == [.gain, .gainPanMute, .branch, .send] && dz[0].outer == .radius(G.panMuteThreshold),
+              "default zones: gain | gain · pan · mute split at the 80 pt circle, branch, send")
         // a far zone not offered here: the near zone stays, nothing beyond
         let sz = G.sectors(allowed: every, pluginAllowed: false, map: u)
         check(!sz.contains { $0.direction == .left }, "a plugin-only far slot on a '+' that inserts none: no zone")
@@ -339,6 +346,30 @@ struct Main {
         var noSendInsert = SynopticPlusAvailability.all; noSendInsert.sendInsertPlugin = false
         let rawSend = sendZone.command(for: polar(60, 30), map: u)
         check(P.available(rawSend, noSendInsert) == SynopticPlusCommand.none, "a send's chain needs its own closure")
+
+        // MARK: A colour category: the browser on its tab
+        var cm = def
+        cm.assign(.category(5), to: S(.down))
+        check(trunk.command(for: polar(60, -90), map: cm) == .openBrowserInCategory(.series(series, 2), 5),
+              "trunk '+': a category opens the browser on its tab, at the '+'")
+        check(sendZone.command(for: polar(60, -90), map: cm) == .openBrowserInCategory(.sendChain(aux: aux, index: 0), 5),
+              "a send's chain '+': the same, in the send")
+        check(post.command(for: polar(60, -90), map: cm) == .none, "the post-fader '+': no category")
+        let rawCat = trunk.command(for: polar(60, -90), map: cm)
+        check(P.available(rawCat, .all) == rawCat && P.ghost(raw: rawCat, .all, translation: polar(60, -90)) == .category(5),
+              "wired: carried out, its ghost names the category")
+        var noCat = SynopticPlusAvailability.all; noCat.category = false
+        check(P.available(rawCat, noCat) == SynopticPlusCommand.none, "nobody wired: nothing")
+        check(P.sectors(allowed: trunk.allowedGestures, key: key, .all, translation: polar(60, -90), map: cm).sectors
+                .contains { $0.result == .category(5) }, "its zone is drawn")
+        check(!P.sectors(allowed: trunk.allowedGestures, key: key, noCat, translation: .zero, map: cm).sectors
+                .contains { $0.result == .category(5) }, "not wired: no zone")
+        var catOnly = SynopticPlusAvailability.all; catOnly.insertPlugin = false
+        let catZones = P.sectors(allowed: trunk.allowedGestures, key: key, catOnly, translation: .zero, map: u).sectors
+        check(!catZones.contains { if case .plugin = $0.result { return true } else { return false } },
+              "categories wired, plugins not: still no plugin zone")
+        check(P.helpEntries(allowed: trunk.allowedGestures, key: key, .all, map: cm).contains { $0.action == .category(5) },
+              "the tooltip lists the category")
 
         // MARK: The tooltip's lines follow the map, one per slot
         let help = P.helpEntries(allowed: trunk.allowedGestures, key: key, .all, map: u)

@@ -4,17 +4,18 @@ import Foundation
 //
 // A "+" of the signal view is taken in the hand (docs/plan_synoptic_rework.md §B.2):
 //   - let go under `clickThreshold` = a CLICK (the plugin browser, as before);
-//   - dragged in one of the eight DIRECTIONS (@see PlusDirection: ±15° each), at one of two LEVELS — NEAR,
-//     or FAR from `panMuteThreshold` of travel along the direction's axis (@see PlusLevel) — = the action
-//     the user put on that slot (@see PlusShortcutMap, an app preference kept by PlusShortcutStore). An
-//     empty far slot does what the near one does. The DEFAULT map is the "+" as it was designed:
-//       - RIGHT (0°)          → a gain stage; FAR → gain + pan + mute;
-//       - right and DOWN (−30°) → a parallel branch of the element under the "+" (at any distance);
-//       - LEFT (180°)          → a send taken at that "+" (the send wires leave the trunk by the left, user
-//                                decision of 13 October 2026; at any distance);
+//   - dragged in one of the eight DIRECTIONS (@see PlusDirection: eight equal sectors of 45°, no dead
+//     angle), at one of two LEVELS — NEAR, or FAR beyond the circle of `panMuteThreshold` round the "+"
+//     (@see PlusLevel) — = the action the user put on that slot (@see PlusShortcutMap, an app preference
+//     kept by PlusShortcutStore). An empty far slot does what the near one does; an empty near slot does
+//     nothing short of the far circle. The DEFAULT map:
+//       - RIGHT (0°)            → a gain stage; FAR → gain + pan + mute;
+//       - right and DOWN (−45°) → a parallel branch of the element under the "+" (at any distance);
+//       - LEFT (180°)           → a send taken at that "+" (the send wires leave the trunk by the left, user
+//                                 decision of 13 October 2026; at any distance);
 //     and the five other directions ask for nothing.
-// The near / far cut is the travel ALONG the direction's axis (for the right one: the horizontal travel, a
-// vertical line at 80 pt — exactly the historical cut).
+// The near / far cut is the DISTANCE from the "+" (a circle, user decision of 17 October 2026 — it was a
+// straight line across each direction until then).
 //
 // The angle is measured from the horizontal, POSITIVE UPWARD — the screen's y grows downwards, so
 // the translation's height is negated. Which results a given "+" offers is the caller's (`allowed`, and
@@ -42,6 +43,8 @@ enum PlusGestureResult: Equatable, Hashable {
     case send
     /// This plugin, inserted at this "+" (a slot the user bound to it).
     case plugin(PlusPluginRef)
+    /// The plugin browser on this colour category's tab, the plugin chosen there inserted at this "+".
+    case category(Int)
 }
 
 extension PlusAction {
@@ -54,6 +57,7 @@ extension PlusAction {
         case .branch:        return .branch
         case .send:          return .send
         case .plugin(let r): return .plugin(r)
+        case .category(let i): return .category(i)
         }
     }
 }
@@ -62,14 +66,10 @@ enum SynopticPlusGesture {
 
     /// Under this distance (pt) the gesture is a CLICK.
     static let clickThreshold: CGFloat = 6
-    /// From this travel (pt) along its direction, a drag is at the FAR level (@see PlusLevel) — the right
-    /// direction's historical gain → gain + pan + mute cut.
+    /// From this distance (pt) from the "+", a drag is at the FAR level (@see PlusLevel): the radius of the
+    /// circle between the near and the far zones.
     static let panMuteThreshold: CGFloat = 80
-    /// The direction of the branch in the DEFAULT map (down-right, −`diagonalAngle`), in degrees.
-    static let diagonalAngle: Double = 30
-    /// The direction of the send in the DEFAULT map: straight LEFT, in degrees from the horizontal.
-    static let sendAngle: Double = 180
-    /// The tolerance round each direction, in degrees (@see PlusDirection.tolerance).
+    /// Half the angular width of each direction, in degrees (@see PlusDirection.tolerance).
     static let angleTolerance: Double = PlusDirection.tolerance
 
     /// Every built-in result a "+" can offer (the trunk's).
@@ -85,29 +85,29 @@ enum SynopticPlusGesture {
         atan2(Double(-translation.height), Double(translation.width)) * 180 / .pi
     }
 
-    /// The direction the drag is in (nil = a click, or a dead angle between two sectors).
+    /// The direction the drag is in (nil = a click).
     static func direction(_ translation: CGSize) -> PlusDirection? {
         guard !isClick(translation) else { return nil }
         return PlusDirection.at(angle: angle(translation))
     }
 
-    /// How far the hand travelled ALONG `direction`'s axis (the projection of the drag on it).
-    static func travel(_ translation: CGSize, along direction: PlusDirection) -> CGFloat {
-        if direction == .right { return translation.width }      // the historical cut, to the bit
-        let a = direction.angle * .pi / 180
-        return translation.width * CGFloat(cos(a)) - translation.height * CGFloat(sin(a))
+    /// The level the drag reached: far from the circle of `panMuteThreshold` on.
+    static func level(_ translation: CGSize) -> PlusLevel {
+        hypot(translation.width, translation.height) < panMuteThreshold ? .near : .far
     }
 
-    /// The level the drag reached along `direction`.
-    static func level(_ translation: CGSize, along direction: PlusDirection) -> PlusLevel {
-        travel(translation, along: direction) < panMuteThreshold ? .near : .far
+    /// The slot the point `translation` lies in, whatever the map holds (nil = a click). What a drop on the
+    /// browser's "+" page aims at — the gesture itself reads `slot(_:map:)`.
+    static func rawSlot(_ translation: CGSize) -> PlusSlot? {
+        guard let d = direction(translation) else { return nil }
+        return PlusSlot(d, level(translation))
     }
 
-    /// The slot whose action the drag carries out under `map` (nil = a click or a dead angle): its
-    /// direction, at the level it reached — the near slot when the far one is empty.
+    /// The slot whose action the drag carries out under `map` (nil = a click): its direction, at the level
+    /// it reached — the near slot when the far one is empty.
     static func slot(_ translation: CGSize, map: PlusShortcutMap = .defaults) -> PlusSlot? {
         guard let d = direction(translation) else { return nil }
-        return map.effective(d, level(translation, along: d))
+        return map.effective(d, level(translation))
     }
 
     /// What the drag asks for under `map`, whatever the "+" offers.
@@ -118,8 +118,10 @@ enum SynopticPlusGesture {
 
     /// Whether a "+" that offers `allowed` (and plugins when `pluginAllowed`) offers `result`.
     static func offers(_ result: PlusGestureResult, allowed: Set<PlusGestureResult>, pluginAllowed: Bool) -> Bool {
-        if case .plugin = result { return pluginAllowed }
-        return allowed.contains(result)
+        switch result {
+        case .plugin, .category: return pluginAllowed
+        default:                 return allowed.contains(result)
+        }
     }
 
     /// What the drag does on a "+" that offers `allowed` (and plugins when `pluginAllowed`): its intent, or
@@ -135,13 +137,12 @@ enum SynopticPlusGesture {
     // As soon as a drag leaves a "+", the slots it offers are drawn round it, faintly, each with its icon;
     // the one the hand is in lights up. The zones are THIS classifier drawn: every point inside a zone
     // classifies to that zone's result (asserted by tools/test_synoptic_plus_gesture.swift), so what is
-    // drawn can never disagree with what letting go does. The near / far cut is the classifier's own: a line
-    // ACROSS the direction at `panMuteThreshold` of travel along it (for the right direction, the vertical
-    // line at 80 pt), not an arc. A direction whose far slot is empty is ONE zone, from the disc to the end.
+    // drawn can never disagree with what letting go does. The near / far cut is the classifier's own: the
+    // circle of `panMuteThreshold`. A direction whose far slot is empty is ONE zone, from the disc to the end.
 
     /// Where a zone starts: just outside the "+" disc (its radius is 10 pt).
     static let sectorInnerRadius: CGFloat = 14
-    /// Where a zone ends (a far zone runs from the 80 pt line to here).
+    /// Where a zone ends (a far zone runs from the 80 pt circle to here).
     static let sectorOuterRadius: CGFloat = 120
 
     /// The zones a "+" that offers `allowed` (and plugins when `pluginAllowed`) draws under `map` — one per
@@ -153,21 +154,34 @@ enum SynopticPlusGesture {
         var out: [PlusSector] = []
         for d in PlusDirection.allCases {
             let from = d.angle - tol, to = d.angle + tol
-            func zone(_ level: PlusLevel, _ inner: PlusSector.Bound, _ outer: PlusSector.Bound) {
+            func zone(_ level: PlusLevel, _ inner: CGFloat, _ outer: CGFloat) {
                 let r = map.action(d, level).gestureResult
                 guard r != .none, offers(r, allowed: allowed, pluginAllowed: pluginAllowed) else { return }
                 out.append(PlusSector(result: r, direction: d, level: level, fromAngle: from, toAngle: to,
-                                      inner: inner, outer: outer))
+                                      inner: .radius(inner), outer: .radius(outer)))
             }
             if map.action(d, .far) == .none {
-                zone(.near, .radius(r0), .radius(r1))
+                zone(.near, r0, r1)
             } else {
-                let cut = PlusSector.Bound.across(panMuteThreshold, axis: d.angle)
-                zone(.near, .radius(r0), cut)
-                zone(.far, cut, .radius(r1))
+                zone(.near, r0, panMuteThreshold)
+                zone(.far, panMuteThreshold, r1)
             }
         }
         return out
+    }
+
+    /// The sixteen zones of the browser's "+" page: EVERY slot, whatever it holds (`result` is its action's,
+    /// `.none` for an empty slot), near (disc → 80 pt circle) then far (circle → end), directions in
+    /// `PlusDirection.allCases` order. Each zone holds exactly the points `rawSlot` names it for.
+    static func slotSectors(map: PlusShortcutMap) -> [PlusSector] {
+        let tol = angleTolerance
+        return PlusSlot.allCases.map { s in
+            let (inner, outer) = s.level == .near ? (sectorInnerRadius, panMuteThreshold)
+                                                  : (panMuteThreshold, sectorOuterRadius)
+            return PlusSector(result: map.action(s).gestureResult, direction: s.direction, level: s.level,
+                              fromAngle: s.direction.angle - tol, toAngle: s.direction.angle + tol,
+                              inner: .radius(inner), outer: .radius(outer))
+        }
     }
 
     /// The zone a drag of `translation` is in, among `sectors`: the one of its classified result (nil = none —
@@ -187,21 +201,16 @@ enum SynopticPlusGesture {
 }
 
 /// One zone drawn round a "+" (@see SynopticPlusGesture.sectors): an angular range (degrees from the
-/// horizontal, POSITIVE UPWARD, as `SynopticPlusGesture.angle`) between an inner and an outer boundary,
-/// each a circle round the "+" or a straight line across the zone's direction.
+/// horizontal, POSITIVE UPWARD, as `SynopticPlusGesture.angle`) between two circles round the "+".
 struct PlusSector: Equatable {
     enum Bound: Equatable {
         /// A circle of this radius round the "+".
         case radius(CGFloat)
-        /// The straight line ACROSS the direction `axis` (degrees), at this travel along it from the "+" (for
-        /// the axis 0°, the vertical line at that horizontal travel, right of the "+").
-        case across(CGFloat, axis: Double)
 
         /// The distance from the "+" to this boundary in the direction `degrees`.
         func distance(at degrees: Double) -> CGFloat {
             switch self {
-            case .radius(let r):           return r
-            case .across(let x, let axis): return x / CGFloat(cos((degrees - axis) * .pi / 180))
+            case .radius(let r): return r
             }
         }
     }
@@ -211,7 +220,7 @@ struct PlusSector: Equatable {
     var direction: PlusDirection = .right
     /// The level: near (or the whole direction when its far slot is empty), or far.
     var level: PlusLevel = .near
-    /// The angular range, `fromAngle` < `toAngle` (the left one runs 165…195: past 180 is the same as −180…).
+    /// The angular range, `fromAngle` < `toAngle` (the left one runs 157.5…202.5: past 180 is −180…).
     let fromAngle: Double
     let toAngle: Double
     let inner: Bound
