@@ -63,10 +63,11 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
 
     // MARK: Geometry
 
-    /// The drawing's size: the circle takes about two thirds of the page, never smaller than the signal view's.
+    /// The drawing's size: the circle takes about half the page (the palette the other half), never smaller
+    /// than the signal view's.
     private static func scale(forHeight h: CGFloat) -> CGFloat {
         let outer = SynopticPlusGesture.sectorOuterRadius
-        return min(2, max(1, (h * 0.64 - 16) / (2 * outer)))
+        return min(1.8, max(1, (h * 0.48 - 16) / (2 * outer)))
     }
 
     private static func circleHeight(_ scale: CGFloat) -> CGFloat {
@@ -158,11 +159,14 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
         }
     }
 
-    /// The room a zone's label has: the arc's chord at its middle radius, a little less.
+    /// The room a zone's label has: the arc's chord at its middle radius, a little less — and never more than
+    /// a short name needs (a long one is cut with an ellipsis, its tooltip says it whole).
+    private static let maxLabelWidth: CGFloat = 84
+
     private static func labelWidth(_ s: PlusSector, scale: CGFloat) -> CGFloat {
         let mid = (s.inner.distance(at: s.midAngle) + s.outer.distance(at: s.midAngle)) / 2 * scale
         let chord = 2 * mid * CGFloat(sin((s.toAngle - s.fromAngle) / 2 * .pi / 180))
-        return max(28, chord - 8)
+        return min(maxLabelWidth, max(28, chord - 8))
     }
 
     // MARK: Items (the palette's and the zones')
