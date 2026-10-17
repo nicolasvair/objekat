@@ -1,0 +1,103 @@
+From bb93639de3c3cd5844d54a2cf68526e673dd7635 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 07:31:58 +0200
+Subject: [PATCH] feat(plugins): an optional output meter on a plugin, measured
+ at the end of PluginNode::process
+
+Plugin gains a LevelMeasurer (RMS) and an atomic flag. PluginNode feeds the measurer with the plugin's
+output only when the flag is set, the plugin is enabled and the graph is not rendering: no node is
+added to the graph and nothing is measured for a plugin nobody asked for. tracktion_LevelMeasurer.h
+is included before Plugin.h, which now holds one by value.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../playback/graph/tracktion_PluginNode.cpp          | 12 ++++++++++++
+ .../tracktion_engine/plugins/tracktion_Plugin.cpp    |  2 ++
+ modules/tracktion_engine/plugins/tracktion_Plugin.h  | 11 +++++++++++
+ modules/tracktion_engine/tracktion_engine.h          |  5 +++--
+ 4 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+index 4b1ec22f7d4..7c18de3cba1 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+@@ -299,6 +299,18 @@ void PluginNode::process (ProcessContext& pc)
+     // Some plugins flake and add NaNs so zero these out to avoid killing all the audio downstream
+     sanitise (outputAudioView);
+    #endif
++
++    // Objekat — RMS of the plugin's output for the synoptic's level lines. Only when somebody
++    // asked (atomic flag), the plugin is really processing (enabled, track audible) and this is
++    // not an offline render (an export must not feed the live meters). No node, no buffer.
++    if (plugin->objOutputMeteringEnabled.load (std::memory_order_relaxed)
++         && ! isRendering
++         && shouldProcessPlugin
++         && plugin->isEnabled())
++    {
++        auto meterBuffer = toAudioBuffer (outputAudioView);
++        plugin->objOutputMeasurer.processBuffer (meterBuffer, 0, meterBuffer.getNumSamples());
++    }
+ }
+ 
+ //==============================================================================
+diff --git a/modules/tracktion_engine/plugins/tracktion_Plugin.cpp b/modules/tracktion_engine/plugins/tracktion_Plugin.cpp
+index e12d3c18af6..40672a2b753 100644
+--- a/modules/tracktion_engine/plugins/tracktion_Plugin.cpp
++++ b/modules/tracktion_engine/plugins/tracktion_Plugin.cpp
+@@ -109,6 +109,8 @@ Plugin::Plugin (PluginCreationInfo info)
+ 
+     state.addListener (this);
+ 
++    objOutputMeasurer.setMode (LevelMeasurer::RMSMode);   // Objekat: output meter (RMS)
++
+    #if TRACKTION_ENABLE_AUTOMAP && TRACKTION_ENABLE_CONTROL_SURFACES
+     if (! edit.isLoading())
+     {
+diff --git a/modules/tracktion_engine/plugins/tracktion_Plugin.h b/modules/tracktion_engine/plugins/tracktion_Plugin.h
+index 3712e3e6e85..c319f470413 100644
+--- a/modules/tracktion_engine/plugins/tracktion_Plugin.h
++++ b/modules/tracktion_engine/plugins/tracktion_Plugin.h
+@@ -213,6 +213,17 @@ public:
+     void setProcessingEnabled (bool p)                      { processing = p; }
+     bool isProcessingEnabled() const noexcept               { return processing; }
+ 
++    //==============================================================================
++    // Objekat — output metering, WITHOUT an extra graph node.
++
++    /** Measures the plugin's OUTPUT (RMS), at the end of PluginNode::process, when
++        objOutputMeteringEnabled is true. The app attaches a LevelMeasurer::Client to it.
++        Nothing is measured while the plugin is disabled/bypassed, muted by its track or
++        during an offline render: the clients then read silence. Adds no node to the graph
++        and triggers no rebuild — an atomic flag is the only thing that changes. */
++    LevelMeasurer objOutputMeasurer;
++    std::atomic<bool> objOutputMeteringEnabled { false };
++
+     //==============================================================================
+     /** Gives the plugin a chance to set itself up before being played.
+         This won't be called concurrently with the process thread.
+diff --git a/modules/tracktion_engine/tracktion_engine.h b/modules/tracktion_engine/tracktion_engine.h
+index dcced26d8e4..bfc104c2f2b 100644
+--- a/modules/tracktion_engine/tracktion_engine.h
++++ b/modules/tracktion_engine/tracktion_engine.h
+@@ -513,6 +513,9 @@ namespace tracktion::inline engine
+ #include "midi/tracktion_MidiChannel.h"
+ #include "midi/tracktion_MidiList.h"
+ 
++// Objekat: before Plugin.h, which holds a LevelMeasurer by value (objOutputMeasurer).
++#include "playback/tracktion_LevelMeasurer.h"
++
+ #include "plugins/tracktion_PluginWindowState.h"
+ #include "plugins/tracktion_Plugin.h"
+ #include "plugins/tracktion_PluginList.h"
+@@ -531,8 +534,6 @@ namespace tracktion::inline engine
+ #include "utilities/tracktion_UIBehaviour.h"
+ #include "utilities/tracktion_Engine.h"
+ 
+-#include "playback/tracktion_LevelMeasurer.h"
+-
+ #include "plugins/external/tracktion_VSTXML.h"
+ #include "plugins/external/tracktion_ExternalPlugin.h"
+ 
+-- 
+2.50.1 (Apple Git-155)
+
