@@ -197,6 +197,12 @@ extension EditViewModel {
     /// cause: a bake is about to write a file the registry does not name yet, and a consolidated
     /// object being edited has its content in `items` in place of the wave it will come back to.
     var diskUsageBusyKey: String? {
+        // A conversion to FLAC writes files the registry does not name yet (@see EditViewModel+FlacArchive).
+        isArchivingToFlac ? "flacArchive.busy.running" : diskUsageBaseBusyKey
+    }
+
+    /// `diskUsageBusyKey` without the conversion to FLAC's own flag.
+    var diskUsageBaseBusyKey: String? {
         if isLoadingProject { return "diskUsage.busy.loading" }
         if !bakingIDs.isEmpty || !recomputingConsolidateIDs.isEmpty || isCascadingRebake {
             return "diskUsage.busy.render"

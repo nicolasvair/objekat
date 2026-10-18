@@ -81,7 +81,7 @@ def ls(folder):
 
 
 def waves(folder):
-    # `.flac` since the FLAC renders (new bakes); `.wav` for the waves a project older than that wrote.
+    # New bakes are `.wav` (32-bit float); a `.flac` wave is an archived project's (FLAC conversion).
     return [f for f in ls(folder) if f.endswith((".wav", ".flac"))]
 
 
@@ -389,7 +389,7 @@ try:
         check("B4: wait_idle comes back idle", idle["idle"], idle)
         defs = defs_by_id(cmd)
         A, B, C = defs[ids["a"]], defs[ids["b"]], defs[ids["c"]]
-        check("B4: A is at revision 1, wave _v1", A["revision"] == 1 and A["wave"].endswith("_v1.flac"), A)
+        check("B4: A is at revision 1, wave _v1", A["revision"] == 1 and A["wave"].endswith("_v1.wav"), A)
         check("B4: A's new wave + sidecar are in samples/consolidate/",
               os.path.isfile(os.path.join(CONS, A["wave"]))
               and os.path.isfile(os.path.join(CONS, sidecar_of(A["wave"]))), ls(CONS))

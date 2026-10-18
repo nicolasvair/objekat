@@ -70,27 +70,13 @@ extension EditViewModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
-    /// Where a NEW consolidate render writes its wave: `<folder>/<base>.flac`. The engine chooses the
-    /// file format from the extension. Old waves (`.wav`) are never rewritten; they are found by the
-    /// name their definition records.
+    /// Where a NEW consolidate render writes its wave: `<folder>/<base>.wav` — a 32-bit FLOATING-POINT
+    /// wave, which keeps whatever goes past 0 dBFS (a loud group sums above it quite normally, and
+    /// the instance's fader can bring it back down), so a consolidation never clips. An older wave
+    /// may be a `.flac` (the FLAC renders of 18 October 2026, or a project archived by "convert to
+    /// FLAC"): the definition records its wave by NAME and the engine reads either.
     func consolidateRenderURL(base: String, in folder: URL) -> URL {
         folder.appendingPathComponent("\(base).\(ConsolidateFolders.renderExtension)")
-    }
-
-    /// FLAC is integer: the 32-bit float WAV the renders used to be kept whatever went past 0 dBFS
-    /// (a loud group sums above it quite normally, and the instance's fader can bring it back down),
-    /// the FLAC writer clips it. The engine measures the peak it handed the writer; when it went
-    /// past full scale, say so — a clipped wave must never pass for a clean one. Called once the
-    /// render has succeeded, before the wave is adopted. Does NOT undo anything: the wave is valid,
-    /// only flattened at the peaks (the model keeps the original in the sidecar, so a re-bake after
-    /// lowering the level is the remedy).
-    func warnIfConsolidateRenderClipped(_ wave: URL, objectName: String) {
-        guard let peak = engine?.takeRenderPeak(forFilePath: wave.path)?.doubleValue,
-              peak > 1.0 + 1e-6 else { return }
-        let db = 20 * log10(peak)
-        NSLog("[OBJECT] consolidate render « \(objectName) » clipped: peak \(String(format: "%+.1f", db)) dBFS, written to FLAC (integer) → flattened at 0 dBFS")
-        notify(L("consolidate.warning.clipped.title"),
-               L("consolidate.warning.clipped.info", objectName, String(format: "%+.1f", db)))
     }
 
     /// The path of the sidecar (the original editable sub-tree) associated with a definition's current wave.
@@ -407,7 +393,6 @@ extension EditViewModel {
                 NSLog("[OBJECT] headless rebake \(defID): render failed")
                 completion(false); return
             }
-            self.warnIfConsolidateRenderClipped(wav, objectName: restored.displayName)
             // The new sidecar (child refs up to date; the original ids/plugins preserved), written
             // with the rule of the content: the root is entirely content.
             let newSidecar = self.consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
@@ -686,8 +671,6 @@ extension EditViewModel {
             try? FileManager.default.removeItem(at: wav)
             return
         }
-
-        warnIfConsolidateRenderClipped(wav, objectName: live.displayName)
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
@@ -1073,8 +1056,6 @@ extension EditViewModel {
             return
         }
 
-        warnIfConsolidateRenderClipped(wav, objectName: stage.displayName)
-
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
             // A definition written now follows the format-26 rule: the root is entirely content.
@@ -1287,6 +1268,18 @@ extension EditViewModel {
         let waveLen = audioFileDuration(wav) ?? 0
         applyConsolidateWave(defID: defID, waveURL: wav, waveLen: waveLen,
                              excluding: exceptPlacementID, delta: delta)
+    }
+
+    /// The archive conversion (@see `EditViewModel+FlacArchive`): the definition's wave is now the
+    /// file at `url` — the SAME sound under another file name (a FLAC of the WAV it read) — so the
+    /// registry names it and EVERY placement is re-aimed onto it, with no delta (the content did not
+    /// move) and no audio recomputation. false, with nothing changed, if the new file cannot be read.
+    @discardableResult
+    func rebindConsolidateWave(defID: UUID, to url: URL) -> Bool {
+        guard consolidateDefinitions[defID] != nil, let waveLen = audioFileDuration(url) else { return false }
+        consolidateDefinitions[defID]?.wave = url.lastPathComponent
+        applyConsolidateWave(defID: defID, waveURL: url, waveLen: waveLen, excluding: nil)
+        return true
     }
 
     /// The lane of the TRACK carrying an object: that of its group if it is nested (its own lane is

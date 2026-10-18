@@ -114,6 +114,78 @@ extension CommandRegistry {
         }
     }
 
+    /// `project.convert_to_flac` — the archive conversion of the clean-up popover, for a script.
+    func registerFlacArchiveCommands() {
+        register("project.convert_to_flac",
+                 summary: "Converts to FLAC, WITHOUT LOSS, the WAV files of the project folder that the "
+                        + "project reads (consolidated objects' rendered waves and embedded sources) and "
+                        + "re-aims the project onto them; the project becomes modified (no undo point). "
+                        + "A dry run unless `dry_run` is false. Integer 16/24-bit WAV -> FLAC of the same "
+                        + "depth (bit-exact); floating-point WAV -> FLAC 24 only if its peak is <= 0 dBFS; "
+                        + "anything else (a peak above 0 dBFS, more than 8 channels, another depth, an "
+                        + "unreadable file, a source a consolidated object's content reads, an ARA source) "
+                        + "stays a WAV and is listed in `kept` with its `reason`. A FLAC is read back and "
+                        + "compared with its WAV before anything points at it. The original WAVs are NOT "
+                        + "deleted: after a save they are read by nobody and `project.clean_unused` offers "
+                        + "them. Files outside the project folder are never touched (`outside_count`). "
+                        + "Refused (invalid_state, nothing changed) for a project never saved and while a "
+                        + "load, a render, an export or a consolidated edit is under way.",
+                 params: [ParamSpec("dry_run", "bool", required: false,
+                                    "true by default: say what would be converted, write nothing.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let dryRun = try p.bool("dry_run", or: true)
+            let outcome = await vm.convertAudioToFlac(dryRun: dryRun)
+            if let refusal = outcome.refusal {
+                var details: [String: JSONValue] = ["reason": .string(refusal.apiCode)]
+                if case .busy(let key) = refusal { details["busy"] = .string(key) }
+                throw CommandError(code: .invalid_state, message: "nothing changed: \(refusal.apiCode)",
+                                   details: .object(details))
+            }
+            let converted: [JSONValue] = outcome.converted.map { e in
+                var o: [String: JSONValue] = [
+                    "path": .string(e.candidate.rel),
+                    "role": .string(e.candidate.defIDs.isEmpty ? "source" : "consolidated_wave"),
+                ]
+                if case .convert(let bits, let before, let after) = e.verdict {
+                    o["bits"] = .int(bits)
+                    o["bytes_before"] = .int(Int(before))
+                    if let after { o["bytes_after"] = .int(Int(after)); o["flac"] = .string(e.candidate.destination.lastPathComponent) }
+                }
+                return .object(o)
+            }
+            let kept: [JSONValue] = outcome.kept.compactMap { e in
+                guard case .keep(let reason) = e.verdict else { return nil }
+                var o: [String: JSONValue] = ["path": .string(e.candidate.rel)]
+                switch reason {
+                case .readByConsolidatedContent: o["reason"] = .string("read_by_consolidated_content")
+                case .araSource: o["reason"] = .string("ara_source")
+                case .converter(let r):
+                    switch r {
+                    case .floatOverFullScale(let db):
+                        o["reason"] = .string("float_over_full_scale"); o["peak_db"] = .number(db)
+                    case .tooManyChannels(let n): o["reason"] = .string("too_many_channels"); o["channels"] = .int(n)
+                    case .unsupportedDepth(let d): o["reason"] = .string("unsupported_depth"); o["detail"] = .string(d)
+                    case .unreadable(let d): o["reason"] = .string("unreadable"); o["detail"] = .string(d)
+                    case .empty: o["reason"] = .string("empty")
+                    case .encodeFailed(let d): o["reason"] = .string("encode_failed"); o["detail"] = .string(d)
+                    }
+                }
+                return .object(o)
+            }
+            return .object([
+                "dry_run": .bool(dryRun),
+                "converted": .array(converted),
+                "kept": .array(kept),
+                "count": .int(converted.count),
+                "bytes_before": .int(Int(outcome.bytesBefore)),
+                "bytes_after": .int(Int(outcome.bytesAfter)),
+                "outside_count": .int(outcome.outside),
+                "rebound": .int(outcome.rebound),
+            ])
+        }
+    }
+
     private static func diskScope(_ p: CommandParams) throws -> DiskCleanScope {
         let name = try p.string("scope", or: DiskCleanScope.session.rawValue)
         guard let scope = DiskCleanScope(rawValue: name) else {

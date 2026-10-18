@@ -2087,10 +2087,10 @@ it offers WAV 48/24. The window serves to deliver, the API to check quickly.
 
 `export.run`'s `format` is `mp3` (default), `wav` or `flac`. FLAC is lossless but **integer** (16 or 24 bits,
 `bit_depth` as for WAV, dithering likewise): unlike the 32-bit float WAV bakes it has no headroom, so anything
-the mix does above 0 dBFS is clipped in the file. During a FLAC render the file in progress is NOT a readable
-file (no total length before it is closed), so `export.preview`'s `audible_seconds` stays 0 during the
-render and the listening only becomes possible once it has ended (the waveform still grows); WAV and
-MP3 are unchanged. `export.regions`' `format` accepts the same three.
+the mix does above 0 dBFS is clipped in the file. The engine renders a FLAC export as a WAV of that depth (the
+file in progress is a growing WAV, so `export.preview`'s `audible_seconds` grows as for a WAV export and the
+listening works during the render); the WAV is then converted to FLAC, read back and compared sample for
+sample, and deleted — the same road as the MP3. `export.regions`' `format` accepts the same three.
 
 **`object.render_isolated {id, path, start?, end?, sample_rate?, bit_depth?}`** renders ONE object — just the
 object — into a wav — or a flac when `path` ends in `.flac` (integer, 16 or 24 bits; the `job.wait` result then also carries
@@ -2505,7 +2505,7 @@ A few points of vocabulary that save mistakes:
 
 The sound list's footer line ("1,2 GB · 340 MB unused") and its popover are two commands. A project
 folder piles up files nothing reads any more — above all the old revisions of consolidated waves
-(`samples/consolidate/<name>_<def8>[_vN].flac` — `.wav` for a project older than the FLAC renders — + `_objectstate.json`, every re-bake keeps the
+(`samples/consolidate/<name>_<def8>[_vN].wav`, 32-bit float — `.flac` once the project has been converted by `project.convert_to_flac`, or written by the short-lived FLAC renders of 18 October 2026 — + `_objectstate.json`, every re-bake keeps the
 previous one), embedded sources (`samples/sources`) and orphan `waveforms/*.wfc` caches. **Only
 those folders are ever listed**; nothing else of the project folder can be offered, whatever a
 script asks for.
@@ -2514,6 +2514,7 @@ script asks for.
 |---|---|
 | `project.disk_usage` | `scope?` (`session` default, `folder`), `refresh?` (default true: a fresh scan). Answers `total_bytes`, `used_bytes`, `unused_bytes` (nobody reads them), `cleanable_bytes`, `used_elsewhere_bytes`, `protected_bytes`, `cleanable` (units `path`, `name`, `kind`, `folder`, `size`, `files`, and `used_by` when another version reads the unit), `used_elsewhere` (the units another version of the folder reads, with `used_by`), `protected`, `versions`, `unreadable_versions`, `blocked`, `computed_at`. **`session` scope = EVERYTHING this session (and what protects it: clipboard, open/parked tabs, consolidated edit, bake, the saved copy while modified) does not read — `cleanable` then includes the `used_elsewhere` units, which the UI leaves unticked; an unreadable version does not stand in the way (it is only named in `unreadable_versions`). `folder` scope = only what NO version reads: `cleanable` is `null` while a version cannot be read.** So `session` ⊇ `folder`. Refused (`invalid_state`) for a project never saved |
 | `project.clean_unused` | `scope?`, `paths?` (folder-relative, as listed; **absent = every unit nobody reads — never the units another version reads: those must be named in `paths`**), **`dry_run` (true by default)**. Answers `would_trash` (dry run) or `trashed` (each unit with its `trash` paths, and `used_by` when other versions read it: they will show it missing), `used_by_other_versions` (count), `count`, `bytes`, `rejected` (`path` + `reason`: `used`, `protected`, `used_elsewhere` — only in `folder` scope —, `unknown`), `failed`. Refused (`invalid_state`, `details.reason`: `unsaved`, `busy`, `unreadable_versions` — `folder` scope only —, `scan_failed`) with nothing moved |
+| `project.convert_to_flac` | **`dry_run` (true by default)**. Converts to FLAC, without loss, the WAVs of the project folder the project reads (consolidated waves and embedded sources) and re-aims the project onto them (the project becomes modified, no undo point). Integer 16/24-bit → FLAC of the same depth (bit-exact); float → FLAC 24 only if its peak is ≤ 0 dBFS; anything else stays a WAV and is listed in `kept` with its `reason` (`float_over_full_scale` + `peak_db`, `too_many_channels`, `unsupported_depth`, `unreadable`, `empty`, `encode_failed`, `read_by_consolidated_content`, `ara_source`). Every FLAC is read back and compared before anything points at it. The original WAVs are NOT deleted (after a save, `project.clean_unused` offers them). Answers `converted` (`path`, `role`: `source`/`consolidated_wave`, `bits`, `bytes_before`, `bytes_after`, `flac`), `kept`, `count`, `bytes_before`, `bytes_after`, `outside_count` (WAVs read from outside the folder: never touched), `rebound`. Refused (`invalid_state`, `details.reason`: `unsaved`, `busy`, `project_changed`) with nothing changed |
 
 - **Never a deletion.** Every file goes through `FileManager.trashItem`. A wave and its sidecar
   (and its `.wfc`) travel as ONE unit, both ways.

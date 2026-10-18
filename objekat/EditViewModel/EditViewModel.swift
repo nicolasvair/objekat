@@ -1552,6 +1552,9 @@ final class EditViewModel {
     var diskUsage: DiskUsageResult? = nil
     /// True while a background scan runs.
     var isComputingDiskUsage = false
+    /// True while the WAVs of the project folder are being converted to FLAC
+    /// (@see `EditViewModel+FlacArchive`): the clean-up refuses to run meanwhile.
+    var isArchivingToFlac = false
     /// What stopped the last scan from being computed (an i18n key), nil if it was. Read by the
     /// popover so the figures on display are never mistaken for current ones.
     var diskUsageBlockedKey: String? = nil

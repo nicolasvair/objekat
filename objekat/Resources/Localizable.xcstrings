@@ -2485,52 +2485,6 @@
         }
       }
     },
-    "consolidate.warning.clipped.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "« %1$@ » peaks at %2$@ dBFS. Consolidated waves are stored as 24-bit FLAC (integer), which cannot hold anything above 0 dBFS: the peaks have been flattened in the wave. To avoid it, lower the level of the content (or of its loudest objects) and consolidate again."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "« %1$@ » alcanza %2$@ dBFS. Los waves consolidados se guardan en FLAC de 24 bits (entero), que no puede contener nada por encima de 0 dBFS: los picos se han aplanado en el wave. Para evitarlo, baja el nivel del contenido (o de sus objetos más fuertes) y vuelve a consolidar."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "« %1$@ » atteint %2$@ dBFS. Les waves consolidés sont enregistrés en FLAC 24 bits (entier), qui ne peut rien contenir au-dessus de 0 dBFS : les crêtes ont été aplaties dans le wave. Pour l’éviter, baisse le niveau du contenu (ou de ses objets les plus forts) puis consolide à nouveau."
-          }
-        }
-      }
-    },
-    "consolidate.warning.clipped.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Level above 0 dBFS: wave clipped"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nivel por encima de 0 dBFS: wave recortado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Niveau au-dessus de 0 dBFS : wave écrêté"
-          }
-        }
-      }
-    },
     "dialog.dirty.discard": {
       "extractionState": "manual",
       "localizations": {
@@ -4003,6 +3957,29 @@
         }
       }
     },
+    "export.error.flacFailed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not write the FLAC: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo escribir el FLAC: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Écriture du FLAC impossible : %@"
+          }
+        }
+      }
+    },
     "export.error.folder.info": {
       "extractionState": "manual",
       "localizations": {
@@ -4607,19 +4584,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "MP3 encoding"
+            "value": "Encoding"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Codificación MP3"
+            "value": "Codificación"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Encodage MP3"
+            "value": "Encodage"
           }
         }
       }
@@ -5655,6 +5632,535 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clé de sidechain d'un plugin"
+          }
+        }
+      }
+    },
+    "flacArchive.busy.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A conversion to FLAC is under way: try again when it is done."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay una conversión a FLAC en curso: inténtelo de nuevo cuando termine."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une conversion en FLAC est en cours : réessayez quand elle sera terminée."
+          }
+        }
+      }
+    },
+    "flacArchive.button": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert audio files to FLAC…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertir los archivos de audio a FLAC…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertir les fichiers audio en FLAC…"
+          }
+        }
+      }
+    },
+    "flacArchive.changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project changed during the conversion: the FLAC files written were not applied. Run the conversion again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proyecto cambió durante la conversión: los archivos FLAC escritos no se aplicaron. Vuelva a lanzar la conversión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le projet a changé pendant la conversion : les fichiers FLAC écrits n'ont pas été appliqués. Relancez la conversion."
+          }
+        }
+      }
+    },
+    "flacArchive.confirm.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld WAV file(s) of the project folder (%@) will be converted with no loss, then the project will point at the FLACs and be marked as modified. The original WAVs stay where they are: after saving, the clean-up of unused files can move them to the Trash. Files outside the project folder are not touched."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld archivo(s) WAV de la carpeta del proyecto (%@) se convertirán sin pérdida; después el proyecto apuntará a los FLAC y se marcará como modificado. Los WAV originales se quedan donde están: tras guardar, la limpieza de archivos sin usar puede enviarlos a la papelera. Los archivos fuera de la carpeta del proyecto no se tocan."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld fichier(s) WAV du dossier du projet (%@) seront convertis sans perte, puis le projet pointera vers les FLAC et sera marqué comme modifié. Les WAV d'origine restent en place : après l'enregistrement, le nettoyage des fichiers inutilisés peut les mettre à la corbeille. Les fichiers hors du dossier du projet ne sont pas touchés."
+          }
+        }
+      }
+    },
+    "flacArchive.confirm.kept": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld other file(s) will stay WAV, because a conversion would alter them or is not possible; the details are given at the end."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld archivo(s) más se quedarán en WAV, porque una conversión los alteraría o no es posible; el detalle se da al final."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld autre(s) fichier(s) resteront en WAV, car une conversion les altérerait ou n'est pas possible ; le détail sera donné à la fin."
+          }
+        }
+      }
+    },
+    "flacArchive.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert the project's audio files to FLAC?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Convertir los archivos de audio del proyecto a FLAC?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertir les fichiers audio du projet en FLAC ?"
+          }
+        }
+      }
+    },
+    "flacArchive.confirm.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convert"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertir"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convertir"
+          }
+        }
+      }
+    },
+    "flacArchive.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "To file or send the project: the WAVs of the project folder become FLACs, with no loss."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Para archivar o enviar el proyecto: los WAV de la carpeta del proyecto pasan a FLAC, sin pérdida."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pour archiver ou envoyer le projet : les WAV du dossier du projet deviennent des FLAC, sans perte."
+          }
+        }
+      }
+    },
+    "flacArchive.kept": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld file(s) left as WAV:"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld archivo(s) dejado(s) en WAV:"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld fichier(s) laissé(s) en WAV :"
+          }
+        }
+      }
+    },
+    "flacArchive.more": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… and %lld more."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… y %lld más."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "… et %lld autre(s)."
+          }
+        }
+      }
+    },
+    "flacArchive.next": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project is modified: save it, then clean up the unused files to free the space of the original WAVs."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proyecto está modificado: guárdelo y limpie después los archivos sin usar para liberar el espacio de los WAV originales."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le projet est modifié : enregistrez-le, puis nettoyez les fichiers inutilisés pour libérer la place des WAV d'origine."
+          }
+        }
+      }
+    },
+    "flacArchive.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No WAV file to convert in the project folder."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No hay ningún archivo WAV que convertir en la carpeta del proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun fichier WAV à convertir dans le dossier du projet."
+          }
+        }
+      }
+    },
+    "flacArchive.outside": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld WAV file(s) outside the project folder were not touched."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld archivo(s) WAV fuera de la carpeta del proyecto no se han tocado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld fichier(s) WAV hors du dossier du projet n'ont pas été touchés."
+          }
+        }
+      }
+    },
+    "flacArchive.reason.ara": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: ARA source (Melodyne)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: fuente ARA (Melodyne)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : source ARA (Melodyne)"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.channels": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %lld channels (FLAC holds 8 at most)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %lld canales (FLAC admite 8 como máximo)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : %lld canaux (8 au maximum en FLAC)"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.content": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: also read by the content of a consolidated object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: lo lee también el contenido de un objeto consolidado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : lu aussi par le contenu d'un objet consolidé"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.depth": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: unsupported format (%@)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: formato no admitido (%@)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : format non pris en charge (%@)"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: empty file"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: archivo vacío"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : fichier vide"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: conversion not verified (%@)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: conversión no verificada (%@)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : conversion non vérifiée (%@)"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.overFullScale": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: goes past 0 dBFS (%@ dB), a FLAC would clip it"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: supera 0 dBFS (%@ dB), un FLAC lo recortaría"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : dépasse 0 dBFS (%@ dB), un FLAC l'écrêterait"
+          }
+        }
+      }
+    },
+    "flacArchive.reason.unreadable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: unreadable (%@)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: ilegible (%@)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ : illisible (%@)"
+          }
+        }
+      }
+    },
+    "flacArchive.summary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld file(s) converted to FLAC, with no loss: %@ → %@."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld archivo(s) convertido(s) a FLAC, sin pérdida: %@ → %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld fichier(s) converti(s) en FLAC, sans perte : %@ → %@."
+          }
+        }
+      }
+    },
+    "flacArchive.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversion to FLAC"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversión a FLAC"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversion en FLAC"
           }
         }
       }

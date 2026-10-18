@@ -19,12 +19,15 @@ import UniformTypeIdentifiers
 // The strip is the fallback and not a second display: it shows whenever a job exists with no
 // window to show it in — so closing the window by hand during a direct render hands it over too.
 //
-// Two output paths:
+// Three output paths — the engine ALWAYS renders a WAV (a WAV in progress is a valid file, rewritten
+// every six seconds, so it can be listened to while it grows; a FLAC in progress has no length):
 //   • WAV  — the engine writes directly at the depth asked for (16/24 bits, dithering below 32);
+//   • FLAC — the engine writes a WAV at the depth asked for (16/24 bits, dithering), which is then
+//            converted to a FLAC of the same depth and READ BACK against it (@see FlacConverter);
 //   • MP3  — the engine writes a temporary floating-point wave at the final rate, which libmp3lame
 //            then converts (@see Mp3Encoder: macOS cannot encode MP3).
 //
-// In both cases the render goes to a TEMPORARY file laid in the destination folder, and
+// In every case the render goes to a TEMPORARY file laid in the destination folder, and
 // it is only put in place once the render has succeeded: a cancelled or failed export cannot
 // leave a truncated file in place of the one it was overwriting.
 
@@ -253,10 +256,9 @@ extension EditViewModel {
         // Working files in the destination folder: the same volume, so the final
         // putting in place is a simple (atomic) rename, with no copying.
         let stem = ".objekat-export-\(UUID().uuidString.prefix(8))"
-        // The extension picks the engine's file format: `.flac` is written as FLAC, anything else as a
-        // WAV (the MP3 goes through a WAV intermediate). @see OBJEngineCore.h, « FORMAT DU FICHIER ».
-        let renderTarget = settings.folder.appendingPathComponent(
-            stem + (settings.format == .flac ? ".flac" : ".wav"))
+        // Always a WAV (the MP3 and the FLAC are made from it afterwards): it can be listened to while
+        // it is written. @see OBJEngineCore.h, « FORMAT DU FICHIER ».
+        let renderTarget = settings.folder.appendingPathComponent(stem + ".wav")
 
         if persistingPreferences { persistExportPreferences(settings) }
         // The panel stays open for a DIRECT render, and that is the whole point of the setting's
@@ -330,8 +332,12 @@ extension EditViewModel {
                     return
                 }
                 switch settings.format {
-                case .wav, .flac:
+                case .wav:
                     self.placeExportResult(from: renderTarget, to: destination)
+                case .flac:
+                    self.encodeExportToFlac(renderedWave: renderTarget,
+                                            destination: destination,
+                                            settings: settings)
                 case .mp3:
                     self.encodeExportToMp3(renderedWave: renderTarget,
                                            destination: destination,
@@ -394,8 +400,55 @@ extension EditViewModel {
         }
     }
 
-    /// The share of the progress bar taken by the render when an MP3 encoding follows.
-    private static let renderShareOfMp3Export = 0.8
+    // MARK: - The FLAC phase
+
+    /// WAV → FLAC at the end of the render, the same road as the MP3: the rendered wave is an
+    /// integer WAV of the depth asked for (16 or 24 bits), so the FLAC of the same depth is EXACT, and
+    /// it is verified so (`FlacConverter.verify`, tolerance 0) before the intermediate is thrown away.
+    private func encodeExportToFlac(renderedWave: URL, destination: URL, settings: ExportSettings) {
+        exportJob?.phase = .encoding
+        exportJob?.progress = Self.renderShareOfEncodedExport
+        let flacTarget = renderedWave.deletingPathExtension().appendingPathExtension("flac")
+        let flag = exportCancelFlag ?? ExportCancelFlag()
+        let bits = settings.bitDepth == 16 ? 16 : 24
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var failure: String? = nil
+            do {
+                try FlacConverter.convert(source: renderedWave, destination: flacTarget, bits: bits,
+                                          progress: { p in
+                                              DispatchQueue.main.async { [weak self] in
+                                                  guard let self, self.exportJob?.phase == .encoding else { return }
+                                                  self.exportJob?.progress = Self.renderShareOfEncodedExport
+                                                      + p * 0.9 * (1 - Self.renderShareOfEncodedExport)
+                                              }
+                                          },
+                                          isCancelled: { flag.isCancelled })
+                try FlacConverter.verify(source: renderedWave, flac: flacTarget, tolerance: 0,
+                                         isCancelled: { flag.isCancelled })
+            } catch FlacConverter.Failure.cancelled {
+                failure = L("export.error.cancelled")
+            } catch {
+                failure = L("export.error.flacFailed", "\(error)")
+            }
+            let fm = FileManager.default
+            try? fm.removeItem(at: renderedWave)   // the intermediate never survives the conversion
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let failure {
+                    try? fm.removeItem(at: flacTarget)
+                    self.finishExportWithFailure(failure)
+                } else {
+                    self.placeExportResult(from: flacTarget, to: destination)
+                }
+            }
+        }
+    }
+
+    /// The share of the progress bar taken by the render when an MP3 or FLAC conversion follows.
+    private static let renderShareOfEncodedExport = 0.8
+    private static let renderShareOfMp3Export = renderShareOfEncodedExport
 
     // MARK: - The end
 
@@ -496,7 +549,7 @@ extension EditViewModel {
             DispatchQueue.main.async {
                 guard let self, let engine = self.engine, self.exportJob?.phase == .rendering else { return }
                 let p = Double(engine.exportProgress())
-                let share = self.exportJob?.settings.format == .mp3 ? Self.renderShareOfMp3Export : 1
+                let share = (self.exportJob?.settings.format ?? .wav) != .wav ? Self.renderShareOfEncodedExport : 1
                 self.exportJob?.progress = min(1, max(0, p)) * share
                 self.readExportPeaks()
                 self.readExportLoudness()

@@ -723,6 +723,18 @@ What has landed since mid-August, in order:
   its header every six seconds), so `export.preview`'s `audible_seconds` stays 0 during a FLAC export and
   `ExportAudition` simply finds nothing to play until the end — graceful, not a fault.
   `tools/scenario_flac_renders.py` asserts all of it (decoding through `afconvert`).
+  **TAKEN BACK the same day (branch `feat/flac-archive`)**: internal renders (consolidations, bakes,
+  re-bakes) are 32-bit FLOAT WAVs again (`ConsolidateFolders.renderExtension = "wav"`), the « clipped »
+  dialogue is gone, and the `.flac` waves already written keep loading (a definition names its wave).
+  FLAC lives at two doors only, both through `Shared/FlacConverter.swift` (CoreAudio, read back and compared
+  before anything points at it): the EXPORT (the engine renders a WAV of the depth asked for — listenable
+  while it grows — then converts it, like the MP3) and the ARCHIVE of the clean-up popover
+  (« Convert audio files to FLAC », `project.convert_to_flac`, `EditViewModel+FlacArchive`): the WAVs of
+  the project folder the project reads → FLAC (integer 16/24 → same depth, exact; float → 24 only if its
+  peak is ≤ 0 dBFS; otherwise stays a WAV, reported), paths re-aimed, project modified; the original WAVs
+  are left for the clean-up after a save. **Known trap, measured**: the engine PLAYS a FLAC 2 samples later
+  than the same WAV (any writer, CoreAudio or JUCE) — the archive therefore shifts what it converts by 2
+  samples (`scenario_flac_archive.py` C3/C5). `tools/test_flac_converter.swift` is the pure test.
 
 - **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had
   been used) — each one a place where the answer given that morning was right about the problem and
