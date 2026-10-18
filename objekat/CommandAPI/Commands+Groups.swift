@@ -60,6 +60,30 @@ extension CommandRegistry {
             return .object(["released": .int(childCount)])
         }
 
+        register("group.heal",
+                 summary: "Joins the pieces of a cut group into ONE group. `ids`: groups, same parent "
+                        + "and lane, JOINTIVE (the end of one is the start of the next, 10 µs); chains "
+                        + "of more than two pieces are joined whole. The result keeps the LEFT piece's "
+                        + "id, name, settings, plugins and sends; its window is the union; the fade-in "
+                        + "is the left's, the fade-out the right-most's, none at a junction. The "
+                        + "children of both pieces are cropped to their piece at the junction, then "
+                        + "what touches is joined: sub-groups (recursively), audio clips (same file, "
+                        + "continuous source offset taking the speed into account, same mix, "
+                        + "equivalent plugins), MIDI clips (same instrument, notes concatenated) and "
+                        + "auxes; the rest stays side by side. After a window-only cut the original "
+                        + "is restored exactly. Refused with `invalid_state` for fewer than two "
+                        + "groups, different parents, a gap or an overlap, a looping group, an "
+                        + "infinite bus, a consolidated object or a render under way. ONE undo "
+                        + "point. Answers `merged` (the surviving ids), `absorbed` (the pieces gone), "
+                        + "`removed_children` (children that vanished: glued or cropped away) and "
+                        + "`glued` (how many pairs became one).",
+                 params: [ParamSpec("ids", "array<uuid>", "The groups to join.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ids = try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm)
+            return try CommandRegistry.healResult(vm.healGroups(ids: ids))
+        }
+
         register("group.expand",
                  summary: "Opens or closes a group (showing its content inline).",
                  params: [ParamSpec("id", "uuid", "Target group."),
@@ -227,5 +251,21 @@ extension CommandRegistry {
             return .object(out)
         }
         #endif
+    }
+}
+
+extension CommandRegistry {
+    /// The answer of `group.heal` / `timesel.heal`, or the refusal as an `invalid_state`.
+    static func healResult(_ result: Result<GroupHealReport, GroupHealRefusal>) throws -> JSONValue {
+        switch result {
+        case .failure(let why):
+            throw CommandError(code: .invalid_state, message: why.message)
+        case .success(let r):
+            func ids(_ a: [UUID]) -> JSONValue { .array(a.map { .string($0.uuidString) }) }
+            return .object(["merged": ids(r.mergedIDs),
+                            "absorbed": ids(r.absorbedPieceIDs),
+                            "removed_children": ids(r.goneChildIDs),
+                            "glued": .int(r.gluedCount)])
+        }
     }
 }

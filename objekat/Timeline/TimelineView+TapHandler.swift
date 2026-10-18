@@ -294,7 +294,7 @@ extension TimelineView {
     /// `cutTargets`.
     func handleCutTap(at point: CGPoint) {
         guard let hit = cutTargets(at: point), !hit.ids.isEmpty else { return }
-        viewModel.cut(ids: hit.ids, atTime: hit.time, keeping: nil)
+        viewModel.cut(ids: hit.ids, atTime: hit.time, keeping: nil, windowOnly: true)
     }
 
     // MARK: - Volume tap (mute / +1dB / -1dB)

@@ -83,9 +83,17 @@ extension EditViewModel {
     /// so a cut can only produce a second infinite bus laid over the first — a superposition.
     /// Doing it at this door, rather than at each caller, is what keeps the next caller from
     /// forgetting it (@see `cuttableIDs`).
+    ///
+    /// `windowOnly`: the CUT TOOL's rule for a group — only the group's WINDOW is cut, its children
+    /// stay WHOLE in each half (@see `_splitInternal` case 3). So an id whose ancestor is cut too
+    /// is dropped: cutting the group already settled what happens to its content, and cutting the
+    /// child as well would undo the very point of the rule. Zone deletion (`carveTimeRange`) and
+    /// the other internal callers stay deep (`windowOnly` false).
     @discardableResult
-    func cut(ids requestedIDs: [UUID], atTime splitTime: Double, keeping: CutKeepSide?) -> Set<UUID> {
-        let ids = cuttableIDs(requestedIDs)
+    func cut(ids requestedIDs: [UUID], atTime splitTime: Double, keeping: CutKeepSide?,
+             windowOnly: Bool = false) -> Set<UUID> {
+        var ids = cuttableIDs(requestedIDs)
+        if windowOnly { ids = droppingDescendants(ids) }
         guard !ids.isEmpty else { return [] }
         // While playing, the cut is HEARD: the left half would go quiet at once while the right
         // one — its plugins still to instantiate, then the 120 ms damper on graph rebuilds —
@@ -125,7 +133,8 @@ extension EditViewModel {
                 oldDuration: before.duration, oldFadeOut: before.fadeOut,
                 newDuration: splitTime - before.startTime)
             let keptFadeOutCurve = before.fadeOutCurve
-            guard let newID = _splitInternal(id: id, atTime: splitTime) else { continue }
+            guard let newID = _splitInternal(id: id, atTime: splitTime,
+                                             windowOnly: windowOnly) else { continue }
             pairs = pairs.map {
                 $0.left == id ? CrossfadePair(left: newID, right: $0.right) : $0
             }
@@ -171,6 +180,21 @@ extension EditViewModel {
         return result
     }
 
+    /// `ids` without those that have an ANCESTOR in `ids` too (a window-only cut of the ancestor
+    /// leaves its content whole: the descendant is not to be cut on top of it).
+    func droppingDescendants(_ ids: [UUID]) -> [UUID] {
+        guard ids.count > 1 else { return ids }
+        let set = Set(ids)
+        return ids.filter { id in
+            var cursor = parentGroup(for: id)
+            while let p = cursor {
+                if set.contains(p.id) { return false }
+                cursor = parentGroup(for: p.id)
+            }
+            return true
+        }
+    }
+
     /// `ids` without the infinite buses (and without ids that name nothing): the objects a timeline
     /// cut can actually split. An infinite bus is skipped whether it is selected or under the cut
     /// line — it has no edge to cut at.
@@ -214,7 +238,7 @@ extension EditViewModel {
             targets = []
         }
         guard !targets.isEmpty else { return }
-        cut(ids: targets.map(\.item.id), atTime: t, keeping: nil)
+        cut(ids: targets.map(\.item.id), atTime: t, keeping: nil, windowOnly: true)
     }
 
     /// Cuts at BOTH bounds of the time selection: entry AND exit. What is inside the selection
@@ -235,8 +259,10 @@ extension EditViewModel {
                 .filter { sel.lanes.contains($0.displayLane) && !$0.item.isInfiniteBus }
                 .filter { $0.absStart < t - 0.001 && $0.absStart + $0.item.duration > t + 0.001 }
                 .map(\.item.id)
-            for id in targets where find(id: id) != nil {
-                if _splitInternal(id: id, atTime: t) != nil { didSplit = true }
+            // Window only for a group (the cut tool's rule): its content is left whole, so a child
+            // of a group cut at the same instant is not cut on top of it.
+            for id in droppingDescendants(targets) where find(id: id) != nil {
+                if _splitInternal(id: id, atTime: t, windowOnly: true) != nil { didSplit = true }
             }
         }
         guard didSplit else { _ = undoStack.popLast(); return }
@@ -471,8 +497,12 @@ extension EditViewModel {
         return (copies, newInAbs - splitTime, newInAbs - splitTime + period)
     }
 
+    /// `windowOnly` only concerns a GROUP (case 3): the window is cut in two and the children are
+    /// not — each half keeps ALL of them whole (the left the originals, the right independent
+    /// copies with fresh ids, as the looped path already does), a child overflowing the window
+    /// being muted outside it. Every other caller keeps the deep cut (false).
     @discardableResult
-    func _splitInternal(id: UUID, atTime splitTime: Double) -> UUID? {
+    func _splitInternal(id: UUID, atTime splitTime: Double, windowOnly: Bool = false) -> UUID? {
         // An instance of a consolidated object IS a clip: the split is allowed. Both halves
         // stay linked to the same definition. NB: detaching one half restores the WHOLE
         // original sub-tree (the sidecar stands for the whole), positioned at the start of the half — so it
@@ -832,6 +862,15 @@ extension EditViewModel {
             if let looped {
                 leftChildren  = splitChildren
                 rightChildren = looped.children
+            } else if windowOnly {
+                // The cut tool: only the WINDOW is cut. The children stay whole on both sides —
+                // the originals on the left, independent copies (fresh ids, plugins cloned from
+                // the captured state, no link between the two) on the right. `Réunir` gives the
+                // original back (@see EditViewModel+GroupHeal).
+                leftChildren  = splitChildren
+                rightChildren = splitChildren.map {
+                    makeCopy($0, startTime: $0.startTime, lane: $0.lane, idMap: &rightIDMap)
+                }
             } else {
                 for child in splitChildren {
                     let (l, r) = splitSubtree(child, at: splitTime, rightIDMap: &rightIDMap)

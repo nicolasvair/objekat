@@ -27,6 +27,9 @@ extension EditViewModel {
         case .groupSelection:
             createGroupFromTimeSelection(sel)
             return
+        case .healGroups:
+            _ = healGroups(inZone: sel)   // no isolation: it is the junction the range covers that counts
+            return
         case .createAux:
             createAuxFromTimeSelection(sel)
             return
@@ -91,7 +94,7 @@ extension EditViewModel {
         case .runScript(let pluginID, let entryIndex):
             let pieces = isolateTimeSelectionAsOneStep(sel)
             runObjectScript(pluginID: pluginID, entryIndex: entryIndex, objectIDs: pieces)
-        case .baking, .consolidateLinked, .groupSelection, .createAux, .createMidiClip:
+        case .baking, .consolidateLinked, .groupSelection, .healGroups, .createAux, .createMidiClip:
             break   // handled above
         }
     }

@@ -1805,7 +1805,8 @@ extension TimelineView {
                 viewModel.rippleCut(ids: state.ids, grabbedID: state.grabbedID,
                                     atTime: state.cutTime, keeping: keep)
             } else {
-                viewModel.cut(ids: state.ids, atTime: state.cutTime, keeping: state.keep)
+                viewModel.cut(ids: state.ids, atTime: state.cutTime, keeping: state.keep,
+                              windowOnly: true)
             }
             cutDrag = nil
         } else {

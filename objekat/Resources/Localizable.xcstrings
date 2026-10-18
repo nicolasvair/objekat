@@ -9339,6 +9339,121 @@
         }
       }
     },
+    "menu.context.healGroups": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Join groups"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unir los grupos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réunir les groupes"
+          }
+        }
+      }
+    },
+    "menu.context.healGroups.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Joins the pieces of a cut group back into a single group."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une las partes de un grupo cortado en un solo grupo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réunit les morceaux d'un groupe coupé en un seul groupe."
+          }
+        }
+      }
+    },
+    "menu.context.healGroups.refused.notJointive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The groups do not touch (same lane, the end of one = the start of the next)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los grupos no se tocan (mismo carril, el final de uno = el inicio del siguiente)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les groupes ne se touchent pas (même lane, la fin de l'un = le début du suivant)."
+          }
+        }
+      }
+    },
+    "menu.context.healGroups.refused.parents": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The groups do not share the same parent."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los grupos no tienen el mismo padre."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les groupes n'ont pas le même parent."
+          }
+        }
+      }
+    },
+    "menu.context.healGroups.refused.special": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not possible with a looping group, an infinite bus, a consolidated object or a render under way."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imposible con un grupo en bucle, un bus infinito, un objeto consolidado o un renderizado en curso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible avec un groupe en boucle, un bus infini, un objet consolidé ou un rendu en cours."
+          }
+        }
+      }
+    },
     "menu.context.marker.create": {
       "extractionState": "manual",
       "localizations": {

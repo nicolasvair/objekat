@@ -1310,6 +1310,30 @@ Its answer keeps `ids` naming the PIECES the cut produced, as it always has (not
 which the cut may or may not have touched), and gains a `selection` field — the selection as it
 stands right after, for a caller that wants to check the rule above without a screen.
 
+`object.split_at` also takes `window_only` (default `false`). The **Cut tool** (a click or a drag,
+the caret cut, the cut at the time selection's bounds) cuts a GROUP's *window* only: the children
+stay whole in both halves and the right half carries independent copies of them (new ids, no link).
+The command keeps the deep cut (the children distributed, as for a zone deletion) unless
+`window_only` is true — it is the way a script reproduces the tool.
+
+### Joining a cut group (`group.heal`, `timesel.heal`, menu entry `heal_groups`)
+
+The way back from a cut. `group.heal {ids}` joins groups that are **jointive** (same parent, same
+lane, the end of one = the start of the next to 10 µs; a chain of more than two is joined whole)
+into ONE group: the left piece's id, name, settings, plugins and sends; the window is the union;
+the fade-in is the left's and the fade-out the right-most's (none at a junction). The children of
+both pieces are first cropped to their own piece at the junction (the outer overflow is kept), then
+what touches is joined: sub-groups recursively, audio clips and auxes (same file, source offset
+continuous *taking the speed into account*, same mix and equivalent plugins), MIDI clips (same
+instrument, notes concatenated); what cannot be joined stays side by side. After a window-only cut
+the original comes back exactly (same child ids, nothing left to glue). `timesel.heal` takes the
+groups the time selection crosses and joins only the junctions the range *covers*. Refused with
+`invalid_state` (and no undo point left): fewer than two groups, different parents, a gap or an
+overlap, a looping group, an infinite bus, a consolidated object, an open session's stage, a
+render under way. ONE undo point. Answer: `merged`, `absorbed`, `removed_children`, `glued`.
+`selection.context_action heal_groups` is the menu entry (greyed, with its reason, when refused).
+`tools/scenario_group_heal.py` drives all of it.
+
 ### The channel choice of a stereo clip (`object.set_channel_mode`)
 
 A stereo audio clip — a file of **exactly two channels** — can be heard through one of its channels

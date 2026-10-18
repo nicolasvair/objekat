@@ -806,7 +806,12 @@ extension CommandRegistry {
                                     "Objects to cut; default = current selection."),
                           ParamSpec("keep", "string", required: false,
                                     "The side KEPT: 'left' or 'right'. Absent = a plain "
-                                  + "division, both halves stay.")],
+                                  + "division, both halves stay."),
+                          ParamSpec("window_only", "bool", required: false,
+                                    "true = the Cut TOOL's rule for a group: only its window is "
+                                  + "cut, its children stay whole in each half (the right half "
+                                  + "gets independent copies). Default false = the deep cut that "
+                                  + "distributes the children, as before.")],
                  // `cut` already pushes its undo (and removes it if it cut nothing).
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -834,7 +839,8 @@ extension CommandRegistry {
             // not the selection, which the cut may or may not have touched (@see
             // EditViewModel+Cut, "a cut does not re-aim the selection"). `selection` is the new
             // field, for a caller that wants to verify the rule itself with no screen.
-            let pieces = vm.cut(ids: ids, atTime: t, keeping: keeping)
+            let windowOnly = try p.bool("window_only", or: false)
+            let pieces = vm.cut(ids: ids, atTime: t, keeping: keeping, windowOnly: windowOnly)
             return .object(["ids": .array(pieces.map { .string($0.uuidString) }),
                             "count": .int(pieces.count),
                             "selection": .array(vm.selectedIDs.map { .string($0.uuidString) })])
