@@ -754,6 +754,137 @@ def main():
     check("cancelled while playing: the application answers, I1 closed again",
           clip_of(find(i1)) is not None)
 
+    # ── 11 — a lone clip is its own content ──
+    section("11 — a lone clip: content = the clip, no wrapper group")
+    PROJ11 = os.path.join(ROOT, "s11"); os.makedirs(PROJ11, exist_ok=True)
+    globals()["PROJ"] = PROJ11
+    cmd("project.new")
+    c = cmd("object.add", path=BIP, lane=0, start=0.0)["id"]
+    cmd("plugin.add_gain_stage", host=c, face="gain", gain_db=-3.0)     # a CLIP FX: content, baked
+    cmd("object.set_gain", ids=[c], db=-4.0)                            # the fader: the instance's
+    cmd("object.set_pan", ids=[c], pan=0.25)
+    cmd("object.set_fade", id=c, **{"in": 0.05, "out": 0.05}); settle()
+    cmd("project.save_as", path=os.path.join(PROJ11, "p.objekat"))
+    pre11 = render_instance(c, "l_pre")
+    n_items = len(list(walk(state_items())))
+    r = cmd("consolidate.make", id=c)
+    cmd("job.wait", id=r["job_id"], timeout_ms=60000)
+    settle()
+    inst = find(c)
+    dd = next(iter(defs().values()))
+    check("the clip keeps its id and becomes a linked CLOSED instance (still a clip)",
+          inst is not None and clip_of(inst) is not None and inst.get("definitionID") == dd["id"])
+    check("no wrapper group: the project holds the same number of objects, wasGroup false",
+          len(list(walk(state_items()))) == n_items and dd.get("was_group") is False,
+          "%s vs %s %s" % (len(list(walk(state_items()))), n_items, dd.get("was_group")))
+    check("the instance carries the fader, pan and fades of the clip; its FX went into the wave",
+          abs(inst["volume"] + 4.0) < 1e-6 and near(inst["pan"], 0.25) and near(inst["fadeIn"], 0.05)
+          and near(inst["fadeOut"], 0.05) and len(inst.get("plugins", [])) == 0,
+          str((inst.get("volume"), inst.get("pan"), inst.get("fadeIn"), len(inst.get("plugins", [])))))
+    check("the instance reads the wave from 0, over the clip's own place and length",
+          near(so_of(inst), 0.0) and near(inst["startTime"], 0.0) and near(inst["duration"], 0.4),
+          str((so_of(inst), inst["startTime"], inst["duration"])))
+    post11 = render_instance(c, "l_post")
+    check("same sound after the transformation (fader, FX and fades not doubled, not lost)",
+          near(peak(post11, 0.12, 0.28), peak(pre11, 0.12, 0.28), 0.02)
+          and near(peak(post11, 0.0, 0.01), peak(pre11, 0.0, 0.01), 0.02),
+          "%s %s" % (peak(post11, 0.12, 0.28), peak(pre11, 0.12, 0.28)))
+    w11 = newest_wave(dd["id"])
+    check("the wave is neutral: the clip's FX (-3 dB) baked, the fader (-4) and fades not baked",
+          near(peak(w11, 0.12, 0.28), 0.549 * lin(-3), 0.02)
+          and near(peak(w11, 0.0, 0.003), peak(read_wav(BIP), 0.0, 0.003) * lin(-3), 0.01),
+          "%s %s" % (peak(w11, 0.12, 0.28), peak(w11, 0.0, 0.003)))
+    cmd("consolidate.edit_begin", placement=c); settle()
+    st = find(c)
+    kids = children(st)
+    check("opened: a stage holding ONE child, a CLIP (the content root), neutral fader, no fade",
+          kind(st).get("type") == "group" and len(kids) == 1 and clip_of(kids[0]) is not None
+          and abs(kids[0].get("volume", 0)) < 1e-6 and near(kids[0].get("fadeIn", 0), 0)
+          and near(kids[0].get("fadeOut", 0), 0), str([kind(k).get("type") for k in kids]))
+    check("...the stage keeps the instance's fader and fades; the clip keeps its FX (content)",
+          abs(st["volume"] + 4.0) < 1e-6 and near(st["fadeIn"], 0.05) and len(kids[0].get("plugins", [])) == 1,
+          str((st.get("volume"), st.get("fadeIn"), len(kids[0].get("plugins", [])))))
+    check("consolidate.state exposes the content root (the clip)",
+          cmd("consolidate.state").get("content_root_id") == kids[0]["id"])
+    cmd("consolidate.edit_cancel"); settle()
+    check("cancelled: the closed instance again", clip_of(find(c)) is not None)
+
+    # ── 12 — N objects replaced by N linked instances ──
+    section("12 — replace by N linked: mixes and fades differ, accepted and kept")
+    PROJ12 = os.path.join(ROOT, "s12"); os.makedirs(PROJ12, exist_ok=True)
+    globals()["PROJ"] = PROJ12
+    cmd("project.new")
+    x1 = cmd("object.add", path=BIP, lane=0, start=0.0)["id"]
+    x2 = cmd("object.add", path=BIP, lane=1, start=2.0)["id"]
+    x3 = cmd("object.add", path=BIP, lane=2, start=4.0)["id"]
+    cmd("object.rename", id=x1, name="Source"); settle()
+    cmd("object.set_gain", ids=[x1], db=-2.0)
+    cmd("object.set_gain", ids=[x2], db=-6.0)
+    cmd("object.set_gain", ids=[x3], db=0.0)
+    cmd("object.set_fade", id=x2, **{"in": 0.1, "out": 0.0})
+    cmd("object.set_mute", ids=[x3], muted=True)
+    cmd("project.save_as", path=os.path.join(PROJ12, "p.objekat"))
+    settle()
+    r = cmd("consolidate.make", id=x1, also_link=[x2, x3])
+    cmd("job.wait", id=r["job_id"], timeout_ms=60000)
+    settle()
+    dd = next(iter(defs().values()))
+    check("ONE definition with the three instances", len(defs()) == 1 and set(dd["placements"]) == {x1, x2, x3},
+          str(dd["placements"]))
+    o1, o2, o3 = find(x1), find(x2), find(x3)
+    check("each keeps its own fader, fades and mute",
+          abs(o1["volume"] + 2.0) < 1e-6 and abs(o2["volume"] + 6.0) < 1e-6 and abs(o3["volume"]) < 1e-6
+          and near(o2["fadeIn"], 0.1) and near(o1["fadeIn"], 0.0) and o3["isMuted"] and not o1["isMuted"],
+          str([(o["volume"], o["fadeIn"], o["isMuted"]) for o in (o1, o2, o3)]))
+    check("they take the source's name and colour",
+          o2.get("label") == o1.get("label") == o3.get("label")
+          and o2.get("colorIndex") == o1.get("colorIndex") and o3.get("colorIndex") == o1.get("colorIndex"),
+          str([(o.get("label"), o.get("colorIndex")) for o in (o1, o2, o3)]))
+    check("...and keep their places", near(o2["startTime"], 2.0) and near(o3["startTime"], 4.0))
+    q1 = peak(render_instance(x1, "n_1"), 0.12, 0.28)
+    q2 = peak(render_instance(x2, "n_2"), 0.12, 0.28)
+    check("the sound follows each mix: -2 dB over -6 dB (4 dB apart)",
+          near(q1 / q2, lin(4.0), 0.1), "%s %s" % (q1, q2))
+
+    # ── 4h — creation from a looping group ──
+    section("4h — creation from a looping group: the loop is content, the offset 0")
+    PROJ4 = os.path.join(ROOT, "s4h"); os.makedirs(PROJ4, exist_ok=True)
+    globals()["PROJ"] = PROJ4
+    cmd("project.new")
+    l1 = cmd("object.add", path=BIP, lane=0, start=0.0)["id"]
+    l2 = cmd("object.add", path=BIP, lane=2, start=0.8)["id"]
+    lg = cmd("group.create", ids=[l1, l2])["id"]
+    cmd("object.set_loop", id=lg, enabled=True); settle()
+    cmd("object.set_duration", id=lg, duration=2.4); settle()
+    cmd("project.save_as", path=os.path.join(PROJ4, "p.objekat"))
+    g0 = find(lg)
+    pre4 = render_instance(lg, "lp_pre")
+    r = cmd("consolidate.make", id=lg)
+    cmd("job.wait", id=r["job_id"], timeout_ms=60000)
+    settle()
+    li = find(lg)
+    dd = next(iter(defs().values()))
+    check("the looping group became a linked closed instance over its own window, offset 0",
+          clip_of(li) is not None and li.get("definitionID") == dd["id"] and near(so_of(li), 0.0)
+          and near(li["startTime"], g0["startTime"]) and near(li["duration"], g0["duration"]),
+          str((kind(li).get("type"), so_of(li), li["duration"], g0["duration"])))
+    post4 = render_instance(lg, "lp_post")
+    check("the looped material is heard (second pass of the pattern) and as before",
+          peak(post4, 1.3, 1.5) > 0.2 and near(peak(post4, 1.3, 1.5), peak(pre4, 1.3, 1.5), 0.03)
+          and near(duration_of(post4), duration_of(pre4), 0.05),
+          "%s %s %s %s" % (peak(post4, 1.3, 1.5), peak(pre4, 1.3, 1.5), duration_of(post4), duration_of(pre4)))
+    cmd("consolidate.edit_begin", placement=lg); settle()
+    ka = children(find(lg))
+    check("opened: the content root A is the looping group (loop kept)",
+          len(ka) == 1 and kind(ka[0]).get("type") == "group" and ka[0].get("loopEnabled") is True,
+          str((len(ka), ka[0].get("loopEnabled") if ka else None)))
+    commit()
+    li = find(lg)
+    check("committed with no change: no re-alignment (offset 0, same window)",
+          clip_of(li) is not None and near(so_of(li), 0.0) and near(li["duration"], g0["duration"])
+          and near(li["startTime"], g0["startTime"]),
+          str((so_of(li), li["startTime"], li["duration"])))
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0

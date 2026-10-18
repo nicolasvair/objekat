@@ -446,8 +446,14 @@ extension EditViewModel {
         guard resolveMidChainSends(for: [groupID] + alsoLinkIDs, choice: midChainSends) else { return }
 
         // Re-read: settling the sends may have rewritten the object.
-        let original = withCapturedPluginStates(find(id: groupID) ?? group)
         let defID = UUID()
+        // The CONTENT ROOT the sidecar will hold: the group with a neutral fader, no fade, its full extent
+        // as window, no send, and without the curves that stay on the instance (@see
+        // SoundObject.contentRoot — the render below bypasses exactly these, so the wave is the one this
+        // root renders). The group's own fader / window / fades / sends / curves go to the instance.
+        let original = SoundObject.contentRoot(
+            fromSidecar: withCapturedPluginStates(find(id: groupID) ?? group),
+            def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
         let base  = "\(bakeSafeName(group.displayName))_\(defID.uuidString.prefix(8))"
         let wav   = folder.appendingPathComponent("\(base).wav")
 
@@ -469,63 +475,67 @@ extension EditViewModel {
         }
     }
 
-    /// "Create a consolidated object" on a LONE CLIP/MIDI: a design decision — a consolidated object is
-    /// ALWAYS a group. So the clip is first wrapped in a group of one (the existing grouping
-    /// primitive, which preserves the nesting: a sub-group if the clip is already inside
-    /// a group, a top-level group otherwise), and then that group is turned into a consolidated object.
-    func consolidateWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = [],
-                                 midChainSends: SendBakePolicy.Choice? = nil) {
-        guard let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
+    /// "Create a consolidated object" on a LONE CLIP/MIDI (QB-1 of the plan): the CONTENT is the clip
+    /// itself — no wrapper group. Opened for editing, the instance gives a stage holding that clip.
+    ///
+    /// The clip's own FX, window and source are content and are baked; its fader, pan, mute, fades and
+    /// sends are the instance's and stay on it (they are bypassed by the render, which forces the
+    /// target's fader to neutral and clears its fades, @see renderConsolidateContent). The wave lasts
+    /// as long as the clip's window and its position 0 is the clip's start: the instance reads it from
+    /// 0 over the clip's own place and length.
+    func consolidateClip(clipID: UUID, alsoLinkIDs: [UUID] = [],
+                         midChainSends: SendBakePolicy.Choice? = nil) {
+        guard let engine, let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
               !firstRead.isConsolidateInstance, !isBaking(clipID) else { return }
         if refusedBySession(.consolidate, ids: [clipID]) { return }
-        guard consolidateFolder != nil else {
+        guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
             return
         }
-        // Q-U6: BEFORE the sends are carried onto the wrapper and the chain is baked. A marker would
-        // be left behind on the baked clip otherwise (its send moves, its marker does not).
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            bakeAlert(L("consolidate.error.failed.title"),
+                        L("consolidate.error.folderFailed.info", error.localizedDescription))
+            return
+        }
+        // Q-U6: BEFORE the chain is baked (a marker would be left behind on the baked clip otherwise).
         guard resolveMidChainSends(for: [clipID] + alsoLinkIDs, choice: midChainSends) else { return }
         guard let clip = find(id: clipID) else { return }
-        // A LONE object: its fade must live ON the consolidated object (group level, live/editable) and
-        // not stay baked into the wav from the clip. Rendering the group bypasses the group's
-        // window/fade (→ not baked, it stays live on the placement) but bakes the fade of a CHILD clip.
-        // So the fade is moved clip → wrapper group BEFORE the render. (In a multiple selection, the
-        // creation goes through consolidate(groupID:) and the clips' fades stay
-        // inside — unchanged behaviour.)
-        let fadeIn  = clip.fadeIn
-        let fadeOut = clip.fadeOut
-        // Sends: the SAME logic as the fades. The send lives on the CLIP; left there, it
-        // is lost in the transformation — the child clip is baked into the wav and its routing to
-        // the aux destroyed (rendering the submix does not capture the aux send). So it is moved onto the
-        // wrapper group BEFORE the render: the placement will inherit a LIVE send from it (rewired by
-        // syncSends in finishConsolidate). The wrapper's window matches the clip's →
-        // the aux stays overlapped, and the send keeps its meaning.
-        let sends = sendsWithLiveStates(of: clip)   // the plugins a send carries go with it, states live
 
-        // Wrapping in a group of one (an internal pushUndo, rebuilds the engine).
-        createGroupFromSelection([clipID])
-        // The clip is now a child of the freshly created group: it is found again to be shared.
-        guard let wrapper = parentGroup(for: clipID), wrapper.isGroup else { return }
+        // The content, as the sidecar will hold it: the clip with its states captured, a neutral
+        // fader, no fade, no send — and the curves of the fader / sends removed (they are the instance's).
+        let defID = UUID()
+        let content = SoundObject.contentRoot(
+            fromSidecar: withCapturedPluginStates(clip),
+            def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
+        let base = "\(bakeSafeName(clip.displayName))_\(defID.uuidString.prefix(8))"
+        let wav  = folder.appendingPathComponent("\(base).wav")
+        let renderStart = clip.startTime
+        let renderEnd   = clip.startTime + clip.duration
+        guard renderEnd > renderStart else { return }
 
-        if fadeIn > 0 || fadeOut > 0 {
-            // Removes the child clip's fade (→ a "clean" rendered submix, the fade not baked)…
-            updateFadeIn(id: clipID, fadeIn: 0)
-            updateFadeOut(id: clipID, fadeOut: 0)
-            // …and carries it over onto the wrapper group: the placement will inherit a live fade from it.
-            updateFadeIn(id: wrapper.id, fadeIn: fadeIn)
-            updateFadeOut(id: wrapper.id, fadeOut: fadeOut)
+        // The render clones the Edit with the clip's fades as they are in the engine: they are the
+        // instance's, so they are taken off the live clip for the length of the render and put back
+        // after it (the model never changes — the placement takes them from it).
+        let fadeIn = clip.fadeIn, fadeOut = clip.fadeOut
+        let hasFades = fadeIn > 0 || fadeOut > 0
+        if hasFades { engine.updateFade(in: 0, fadeOut: 0, forID: clipID.uuidString) }
+        bakingIDs.insert(clipID)
+        let completion: (Bool) -> Void = { [weak self] ok in
+            guard let self else { return }
+            self.bakingIDs.remove(clipID)
+            if hasFades { self.engine?.updateFade(in: fadeIn, fadeOut: fadeOut, forID: clipID.uuidString) }
+            self.finishConsolidate(objectID: clipID, ok: ok, wav: wav, folder: folder,
+                                   defID: defID, original: content, sourceOffset: 0,
+                                   renderStart: renderStart, renderEnd: renderEnd,
+                                   alsoLinkIDs: alsoLinkIDs)
         }
-
-        if !sends.isEmpty {
-            // Removes the child clip's sends (the model emptied; the bridge sync below takes the engine's away)…
-            update(id: clipID) { $0.sends.removeAll() }
-            // …and carries them over onto the wrapper group (model + engine wiring of the active sends).
-            update(id: wrapper.id) { $0.sends = sends }
-            if let w = find(id: wrapper.id) { syncSends(w) }
-        }
-
-        consolidate(groupID: wrapper.id, alsoLinkIDs: alsoLinkIDs)
+        engine.renderConsolidateContent(toFileAsync: clipID.uuidString, filePath: wav.path,
+                                        start: renderStart, end: renderEnd,
+                                        faders: contentRenderFaders(of: content),
+                                        completion: completion)
     }
 
     // MARK: - Creating N consolidated objects from a multiple selection
@@ -569,7 +579,7 @@ extension EditViewModel {
             if o.isGroup {
                 consolidate(groupID: id)
             } else if o.isClip || o.isMIDI {
-                consolidateWrappingClip(clipID: id)
+                consolidateClip(clipID: id)
             } else {
                 continue
             }
@@ -588,9 +598,9 @@ extension EditViewModel {
 
     // MARK: - Replacing an identical multiple selection with N consolidated objects
 
-    /// The case of a plain wav copy-and-paste: returns N if the selection (≥ 2) is a batch of strictly
-    /// identical AUDIO clips (the same file, the same trim/speed/direction, the same volume / pan /
-    /// mute / fades / stem / colour / sends, with no plugin). The position (startTime / lane) may
+    /// The case of a plain wav copy-and-paste: returns N if the selection (≥ 2) is a batch of AUDIO clips
+    /// with the same CONTENT (the same file, the same trim/speed/direction and length, with no plugin —
+    /// @see identicalClipContent; their volume / pan / mute / fades / stem / sends may differ). The position (startTime / lane) may
     /// differ — that is precisely what marks them out as copies. nil otherwise → the option is hidden.
     func uniformClipSelectionForConsolidate() -> Int? {
         guard consolidateFolder != nil else { return nil }
@@ -606,16 +616,18 @@ extension EditViewModel {
         return objs.count
     }
 
-    /// True if two clips have EXACTLY the same content and the same settings (position aside).
+    /// True if two clips have EXACTLY the same CONTENT (Q9A): the same file, the same source range,
+    /// speed and direction, the same length and channel choice, no ARA source. The instance level —
+    /// volume, pan, mute, fades, sends, stem — is each instance's own and plays no part: copies that
+    /// differ only by it are still the same sound, and become instances that keep their own mix. The
+    /// position (startTime / lane) may differ — that is precisely what marks them out as copies.
     private func identicalClipContent(_ a: SoundObject, _ b: SoundObject) -> Bool {
         guard case .clip(let fpA, let soA, let fdA, let srA, let revA) = a.kind,
               case .clip(let fpB, let soB, let fdB, let srB, let revB) = b.kind else { return false }
         return fpA == fpB && soA == soB && fdA == fdB && srA == srB && revA == revB
             && a.duration == b.duration
-            && a.volume == b.volume && a.pan == b.pan && a.isMuted == b.isMuted
-            && a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut
-            && a.stemID == b.stemID && a.colorIndex == b.colorIndex && a.colorHex == b.colorHex
-            && a.sends == b.sends
+            && a.channelMode == b.channelMode
+            && a.araSource == nil && b.araSource == nil
     }
 
     /// "Replace with N consolidated objects": bakes ONE of the clips into a definition, and turns
@@ -631,7 +643,7 @@ extension EditViewModel {
         // Q-U6 for the WHOLE batch (the others become instances of the same definition and are
         // folded or cleared the same way), then the existing path.
         guard resolveMidChainSends(for: ordered.map(\.id)) else { return }
-        consolidateWrappingClip(clipID: source.id, alsoLinkIDs: Array(others))
+        consolidateClip(clipID: source.id, alsoLinkIDs: Array(others))
     }
 
     /// The common completion (group or clip), on the main thread: sidecar + recording the
@@ -653,7 +665,7 @@ extension EditViewModel {
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
-            try encodedConsolidateSidecar(original, projectFolder: projectFolder)
+            try encodedConsolidateSidecar(original, rootIsContent: true, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
             bakeAlert(L("consolidate.error.failed2.title"),
@@ -671,7 +683,7 @@ extension EditViewModel {
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
         consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
-            revision: 0, wasGroup: live.isGroup,
+            revision: 0, wasGroup: live.isGroup, rootIsContent: true,
             dependsOn: collectConsolidateDependencies(original))
 
         // Automation: what the render has BAKED IN goes with the content (the children's curves
@@ -718,7 +730,7 @@ extension EditViewModel {
                 lane: other.lane, volume: other.volume, pan: other.pan,
                 fadeIn: other.fadeIn, fadeOut: other.fadeOut, isMuted: other.isMuted,
                 stemID: other.stemID, plugins: [],
-                label: other.label ?? other.displayName, colorIndex: other.colorIndex, colorHex: other.colorHex,
+                label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
                 sends: otherSends, baseBPM: nil,
                 consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,

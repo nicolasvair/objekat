@@ -109,9 +109,9 @@ extension CommandRegistry {
             if object.isGroup {
                 vm.consolidate(groupID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             } else {
-                // A lone clip is first wrapped in a one-item group: that wrapper is what carries
-                // fades and live sends on the instance.
-                vm.consolidateWrappingClip(clipID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
+                // A lone clip is its own content: no wrapper group. Its fader, fades and sends
+                // become the instance's (the wave holds the clip's source, window and FX).
+                vm.consolidateClip(clipID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             }
             CommandAdapters.followBake(jobID, in: vm) {
                 .object(["definitions": .int(vm.consolidateDefinitions.count)])
