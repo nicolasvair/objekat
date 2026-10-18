@@ -21,10 +21,9 @@ FLAC lives at two doors only, both lossless by construction:
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --language=en --socket=/tmp/f.sock
     ./scenario_flac_archive.py /tmp/f.sock
 
-KNOWN FAILURE (18 October 2026), C3/C5: the FLACs read back EQUAL to their WAVs (CoreAudio, and the converter's
-own verification), yet the engine PLAYS a FLAC 2 samples later than the same WAV — measured on a FLAC written
-by CoreAudio AND on one written by JUCE (`render_isolated` into `.flac`), so it is the reading side, not the
-converter. The archive therefore shifts the converted objects by 2 samples; C3/C5 say so, with the measured lag.
+C3/C5 failed until engine patch 0043 (18 October 2026): the engine played a FLAC (any compressed or reversed
+clip) 2 samples later than the same WAV, through the legacy WaveNode. If C3 fails again, the info line below
+prints the measured lag.
 
 Decoding goes through `afconvert` (CoreAudio).
 Exit: 0 if every assertion passes, 1 otherwise.
@@ -369,7 +368,7 @@ def main(c):
     d = maxdiff(read_wav(before_mix), read_wav(after_mix))
     check("C3 the project replays the same mix (max diff %.2e <= 3e-7)" % d, j["state"] == "done" and d <= 3e-7, d)
     if d > 3e-7:
-        # @see the head: Tracktion plays a FLAC 2 samples LATER than the same WAV (whoever wrote it).
+        # @see the head: a lag here is the 2-sample bug of the legacy WaveNode coming back.
         bm, am = read_wav(before_mix), read_wav(after_mix)
         print("info  C3 shift after conversion: source (48 kHz, resampled) %s, consolidated wave (44.1 kHz) %s"
               % (best_lag(bm, am, 0.05, 0.45), best_lag(bm, am, 1.25, 1.55)))

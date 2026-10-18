@@ -1,0 +1,191 @@
+From faf50d8821b84acc9c3593f7b2645f11ea582cf2 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 21:56:27 +0200
+Subject: [PATCH] =?UTF-8?q?fix(graph):=20proxy=20clips=20play=20through=20?=
+ =?UTF-8?q?WaveNodeRealTime=20=E2=80=94=20no=20more=202-sample=20lag?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A clip whose canUseProxy() is true (every compressed source — FLAC, MP3, OGG — and every
+reversed clip) was built by createNodeForAudioClip as the legacy WaveNode / SpeedRampWaveNode.
+Its processSection feeds a juce::LagrangeInterpolator from the file start without compensating
+the interpolator's base latency, so the file sounded 2 SOURCE samples late at every rate pair,
+and always in Lagrange whatever the clip's ResamplingQuality. The proxy branch now builds a
+WaveNodeRealTime on the proxy file, like every other clip (speed-fade description kept, time
+stretch disabled: the proxy is already rendered).
+
+The other users of the legacy nodes move too, so none is left outside the engine's own tests:
+the frozen-track and group-freeze nodes (EditNodeBuilder), createWaveNodeForFile and the
+tape start/stop effect (ClipEffects), and the comp render (CompManager).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../model/clips/tracktion_ClipEffects.cpp     | 16 ++--
+ .../model/clips/tracktion_CompManager.cpp     |  3 +-
+ .../graph/tracktion_EditNodeBuilder.cpp       | 87 +++++++------------
+ 3 files changed, 43 insertions(+), 63 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_ClipEffects.cpp b/modules/tracktion_engine/model/clips/tracktion_ClipEffects.cpp
+index 2023fb5c799..fe13c9746b4 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_ClipEffects.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_ClipEffects.cpp
+@@ -442,7 +442,8 @@ struct AudioNodeRenderJob  : public ClipEffect::ClipEffectRenderJob
+     std::unique_ptr<tracktion::graph::Node> createWaveNodeForFile (const AudioFile& file, TimeRange timeRange)
+     {
+         auto channelConfig = ChannelConfiguration::discreteChannels (std::max (file.getInfo().numChannels, 1));
+-        return tracktion::graph::makeNode<WaveNode> (file, timeRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
++        // Patch local Objekat — 0043 : WaveNodeRealTime, plus l'ancien WaveNode.
++        return tracktion::graph::makeNode<WaveNodeRealTime> (file, timeRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
+                                                      channelConfig, channelConfig,
+                                                      processState,
+                                                      EditItemID(), true);
+@@ -880,11 +881,14 @@ juce::ReferenceCountedObjectPtr<ClipEffect::ClipEffectRenderJob> FadeInOutEffect
+             if (fadeIn.get() > TimeDuration() || fadeOut.get() > TimeDuration())
+             {
+                 auto channelConfig = ChannelConfiguration::discreteChannels (std::max (sourceFile.getInfo().numChannels, 1));
+-                n = tracktion::graph::makeNode<SpeedRampWaveNode> (sourceFile, timeRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
+-                                                                   channelConfig, channelConfig,
+-                                                                   job->processState,
+-                                                                   EditItemID(), true,
+-                                                                   SpeedFadeDescription { fadeInRange, fadeOutRange, fadeInType, fadeOutType });
++                // Patch local Objekat — 0043 : WaveNodeRealTime (SpeedFadeEditReader), plus SpeedRampWaveNode.
++                n = tracktion::graph::makeNode<WaveNodeRealTime> (sourceFile, timeRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
++                                                                  channelConfig, channelConfig,
++                                                                  job->processState,
++                                                                  EditItemID(), true,
++                                                                  ResamplingQuality::lagrange,
++                                                                  SpeedFadeDescription { fadeInRange, fadeOutRange, fadeInType, fadeOutType },
++                                                                  createPosition (edit.tempoSequence));
+             }
+ 
+             break;
+diff --git a/modules/tracktion_engine/model/clips/tracktion_CompManager.cpp b/modules/tracktion_engine/model/clips/tracktion_CompManager.cpp
+index 045d30b7ce1..e7bd582757b 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_CompManager.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_CompManager.cpp
+@@ -1112,7 +1112,8 @@ bool WaveCompManager::renderTake (CompRenderContext& context, Edit& edit, AudioF
+ 
+             auto takeFile = AudioFile (context.engine, context.engine.getProjectManager().findSourceFile (takeRef));
+ 
+-            auto node = tracktion::graph::makeNode<WaveNode> (takeFile, totalRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
++            // Patch local Objekat — 0043 : WaveNodeRealTime, plus l'ancien WaveNode.
++            auto node = tracktion::graph::makeNode<WaveNodeRealTime> (takeFile, totalRange, TimeDuration(), TimeRange(), LiveClipLevel(), 1.0,
+                                                               ChannelConfiguration::discreteChannels (takeFile.getInfo().numChannels),
+                                                               ChannelConfiguration::stereo(),
+                                                               processState,
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index 1b448d111cc..a3413c35034 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -530,60 +530,33 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioClip (AudioClipBase& c
+ 
+             const auto channelConfig = clip.getOutputChannelConfiguration();
+ 
+-            if ((clip.getFadeInBehaviour() == AudioClipBase::speedRamp && clip.getFadeIn() != 0_td)
+-                || (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp && clip.getFadeOut() != 0_td))
+-            {
+-                SpeedFadeDescription desc;
+-                const auto clipPos = clip.getPosition();
+-
+-                if (clip.getFadeInBehaviour() == AudioClipBase::speedRamp)
+-                {
+-                    desc.inTimeRange = TimeRange (clipPos.getStart(), clip.getFadeIn());
+-                    desc.fadeInType = clip.getFadeInType();
+-                }
+-                else
+-                {
+-                    desc.inTimeRange = TimeRange (clipPos.getStart(), TimeDuration());
+-                }
+-
+-                if (clip.getFadeOutBehaviour() == AudioClipBase::speedRamp)
+-                {
+-                    desc.outTimeRange = TimeRange (clipPos.getEnd() - clip.getFadeOut(), clip.getFadeOut());
+-                    desc.fadeOutType = clip.getFadeOutType();
+-                }
+-                else
+-                {
+-                    desc.outTimeRange = TimeRange (clipPos.getEnd(), TimeDuration());
+-                }
+-
+-                node = tracktion::graph::makeNode<SpeedRampWaveNode> (playFile,
+-                                                                      toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                                                      nodeOffset,
+-                                                                      loopRange,
+-                                                                      clip.getLiveClipLevel(),
+-                                                                      speed,
+-                                                                      channelConfig,
+-                                                                      ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
+-                                                                      params.processState,
+-                                                                      idToUse,
+-                                                                      params.forRendering,
+-                                                                      desc);
+-            }
+-            else
+-            {
+-                node = tracktion::graph::makeNode<WaveNode> (playFile,
+-                                                             toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
+-                                                             nodeOffset,
+-                                                             loopRange,
+-                                                             clip.getLiveClipLevel(),
+-                                                             speed,
+-                                                             channelConfig,
+-                                                             ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
+-                                                             params.processState,
+-                                                             idToUse,
+-                                                             params.forRendering,
+-                                                             params.forRendering ? nullptr : clip.getPlayhead());
+-            }
++            // Patch local Objekat — 0043 : un clip à proxy (source compressée, clip inversé, rendu
++            // time-stretché) passait par l'ancien WaveNode / SpeedRampWaveNode, dont le
++            // LagrangeInterpolator n'est jamais compensé de sa latence de base : le fichier sonnait
++            // 2 échantillons SOURCE trop tard, et en Lagrange quelle que soit la ResamplingQuality.
++            // Même lecteur que les autres clips désormais : WaveNodeRealTime sur le fichier proxy.
++            const auto speedFadeDesc = getSpeedFadeDescription (clip);
++            std::optional<tempo::Sequence::Position> editTempoPosition (speedFadeDesc.isEmpty() ? std::optional<tempo::Sequence::Position>()
++                                                                                                : createPosition (clip.edit.tempoSequence));
++
++            node = makeNode<WaveNodeRealTime> (playFile,
++                                               toTime (clipTimeRangeToUse, clip.edit.tempoSequence),
++                                               nodeOffset,
++                                               loopRange,
++                                               clip.getLiveClipLevel(),
++                                               speed,
++                                               channelConfig,
++                                               ChannelConfiguration::discreteChannels (channelConfig.getNumChannels()),
++                                               params.processState,
++                                               idToUse,
++                                               params.forRendering,
++                                               clip.getResamplingQuality(),
++                                               speedFadeDesc, std::move (editTempoPosition),
++                                               TimeStretcher::Mode::disabled, TimeStretcher::ElastiqueProOptions(),
++                                               0.0f,
++                                               params.readAheadTimeStretchNodes ? WaveNodeRealTime::ReadAhead::yes
++                                                                                : WaveNodeRealTime::ReadAhead::no,
++                                               params.forRendering ? nullptr : clip.getPlayhead());
+         }
+         else
+         {
+@@ -1451,7 +1424,8 @@ std::unique_ptr<tracktion::graph::Node> createNodeForFrozenAudioTrack (AudioTrac
+ 
+     const bool processMidiWhenMuted = track.state.getProperty (IDs::processMidiWhenMuted, false);
+     auto trackMuteState = std::make_unique<TrackMuteState> (track, false, processMidiWhenMuted);
+-    auto node = tracktion::graph::makeNode<WaveNode> (AudioFile (track.edit.engine, TemporaryFileManager::getFreezeFileForTrack (track)),
++    // Patch local Objekat — 0043 : WaveNodeRealTime (latence du Lagrange compensée), plus l'ancien WaveNode.
++    auto node = tracktion::graph::makeNode<WaveNodeRealTime> (AudioFile (track.edit.engine, TemporaryFileManager::getFreezeFileForTrack (track)),
+                                                      TimeRange (TimePosition(), track.getLengthIncludingInputTracks()),
+                                                      TimeDuration(), TimeRange(), LiveClipLevel(),
+                                                      1.0, track.getChannelConfiguration(), track.getChannelConfiguration(),
+@@ -2444,7 +2418,8 @@ std::unique_ptr<tracktion::graph::Node> createGroupFreezeNodeForDevice (Edit& ed
+             if (length <= 0.0s)
+                 return {};
+ 
+-            auto node = tracktion::graph::makeNode<WaveNode> (af, TimeRange (0.0s, length),
++            // Patch local Objekat — 0043 : WaveNodeRealTime, plus l'ancien WaveNode.
++            auto node = tracktion::graph::makeNode<WaveNodeRealTime> (af, TimeRange (0.0s, length),
+                                                              0.0s, TimeRange(), LiveClipLevel(),
+                                                              1.0,
+                                                              ChannelConfiguration::canonical (af.getInfo().numChannels),
+-- 
+2.50.1 (Apple Git-155)
+

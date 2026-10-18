@@ -732,9 +732,17 @@ What has landed since mid-August, in order:
   (« Convert audio files to FLAC », `project.convert_to_flac`, `EditViewModel+FlacArchive`): the WAVs of
   the project folder the project reads → FLAC (integer 16/24 → same depth, exact; float → 24 only if its
   peak is ≤ 0 dBFS; otherwise stays a WAV, reported), paths re-aimed, project modified; the original WAVs
-  are left for the clean-up after a save. **Known trap, measured**: the engine PLAYS a FLAC 2 samples later
-  than the same WAV (any writer, CoreAudio or JUCE) — the archive therefore shifts what it converts by 2
-  samples (`scenario_flac_archive.py` C3/C5). `tools/test_flac_converter.swift` is the pure test.
+  are left for the clean-up after a save. **The 2-sample lag of a FLAC is FIXED (engine patch `0043`, 18 October
+  2026)**: it was not the decoder (JUCE's FlacReader and the proxy WAV are exact) but the node. A clip with
+  `canUseProxy()` — every compressed source (FLAC, MP3, OGG) and every REVERSED clip, @see `updateProxyUse` —
+  was built as the LEGACY `WaveNode`, whose `LagrangeInterpolator` is never compensated for its 2-sample base
+  latency, and which ignored `ResamplingQuality` (those clips were still Lagrange). They play through
+  `WaveNodeRealTime` now, like every other clip; no legacy wave node is built outside the engine's tests.
+  Measured with an impulse at 4800: exact at every rate pair, WAV and FLAC alike; `scenario_flac_archive.py`
+  C3/C5 pass (they were the known failure). **Trap of the measurement**: a render to an EXISTING path APPENDS
+  a second RIFF instead of replacing the file, and a reader stops at the first (the OLD render) — delete the
+  destination before rendering in a test. Seen and NOT fixed: in a render (`render_isolated`, export on a
+  copy) a reversed clip reads the ORIGINAL file and plays forward (pre-existing, unrelated to `0043`).
 
 - **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had
   been used) — each one a place where the answer given that morning was right about the problem and

@@ -478,7 +478,16 @@ Checked as still biting: `develop` still had the linear `std::find`.
   the living measurer before it is destroyed. `tracktion_LevelMeasurer.h` is included before `Plugin.h` in
   `tracktion_engine.h` (Plugin holds the measurer by value). Branch `objekat-plugin-meters-0042` (local, NOT
   published), commit on top of `objekat-gainstage-0041`. Files: `tracktion_Plugin.*`,
-  `tracktion_PluginNode.cpp`, `tracktion_engine.h`. The next number is `0043`.
+  `tracktion_PluginNode.cpp`, `tracktion_engine.h`.
+- `0043` — **proxy clips play through `WaveNodeRealTime` (the 2-sample FLAC lag).** A clip with
+  `canUseProxy()` (compressed sources, reversed clips) was built as the legacy `WaveNode` /
+  `SpeedRampWaveNode`, whose `LagrangeInterpolator` is never compensated for its base latency: +2 SOURCE
+  samples at every rate pair, and Lagrange whatever the `ResamplingQuality`. The proxy branch of
+  `createNodeForAudioClip` now builds a `WaveNodeRealTime` on the proxy file; the frozen-track and
+  group-freeze nodes, `createWaveNodeForFile`, the tape start/stop effect and the comp render move too, so
+  no legacy wave node is built outside the engine's own tests. Branch `objekat-proxy-wavenode-0043` (local,
+  NOT published), commit on top of `objekat-plugin-meters-0042`. Files: `tracktion_EditNodeBuilder.cpp`,
+  `tracktion_ClipEffects.cpp`, `tracktion_CompManager.cpp`. The next number is `0044`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
