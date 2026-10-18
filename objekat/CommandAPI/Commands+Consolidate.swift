@@ -38,7 +38,9 @@ extension CommandRegistry {
         }
 
         register("consolidate.make",
-                 summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id.",
+                 summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id. "
+                        + "A group or a lone clip is the CONTENT (its FX, window and children are baked into the wave); "
+                        + "its fader, pan, mute, fades and sends stay on the placement, which becomes an instance.",
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
                                     "Other objects to replace with a linked instance."),
@@ -154,8 +156,9 @@ extension CommandRegistry {
         }
 
         register("consolidate.edit_begin",
-                 summary: "Opens an instance for editing: its original content is restored in "
-                        + "place, and the other instances become its live mirror.",
+                 summary: "Opens an instance for editing: the instance becomes a STAGE (a group holding its "
+                        + "own FX, mix, window and sends) with ONE child, the content root, and the other "
+                        + "instances become its live mirror (see consolidate.state content_root_id).",
                  params: [ParamSpec("placement", "uuid", "Instance to open.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()

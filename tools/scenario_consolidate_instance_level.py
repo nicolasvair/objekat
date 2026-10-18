@@ -885,6 +885,123 @@ def main():
           and near(li["startTime"], g0["startTime"]),
           str((so_of(li), li["startTime"], li["duration"])))
 
+    # ── 13 — nesting: B inside A ──
+    section("13 — nesting: an instance of B inside A, opened, edited, closed")
+    PROJ13 = os.path.join(ROOT, "s13"); os.makedirs(PROJ13, exist_ok=True)
+    globals()["PROJ"] = PROJ13
+    cmd("project.new")
+    cmd("project.save_as", path=os.path.join(PROJ13, "p.objekat"))
+    bclip = cmd("object.add", path=BIP, lane=6, start=1.0)["id"]
+    r = cmd("consolidate.make", id=bclip); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    b_def = next(iter(defs()))
+    n1 = cmd("object.add", path=BIP, lane=0, start=0.0)["id"]
+    ga = cmd("group.create", ids=[n1, bclip])["id"]
+    r = cmd("consolidate.make", id=ga); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    a_def = next(d for d in defs() if d != b_def)
+    wave_a0 = newest_wave(a_def)
+    check("A's first wave holds both sounds at full level (0.549 at 0 s and at 1 s)",
+          near(peak(wave_a0, 0.1, 0.3), 0.549, 0.02) and near(peak(wave_a0, 1.1, 1.3), 0.549, 0.02),
+          "%s %s" % (peak(wave_a0, 0.1, 0.3), peak(wave_a0, 1.1, 1.3)))
+    cmd("consolidate.edit_begin", placement=ga); settle()
+    stage = find(ga)
+    a_root = children(stage)[0]
+    inner = [o for o in children(a_root) if o.get("definitionID") == b_def]
+    check("opened: the stage holds A, and A holds an instance of B", len(inner) == 1, str(len(inner)))
+    bi = inner[0]["id"]
+    cmd("object.set_gain", ids=[ga], db=-10.0)       # the OUTER instance's fader: never baked anywhere
+    cmd("object.set_gain", ids=[bi], db=-3.0)        # B's instance mix inside A: A's content
+    settle()
+    cmd("consolidate.edit_begin", placement=bi); settle()
+    check("B opened inside A: a stack of depth 2", cmd("consolidate.state").get("depth") == 2)
+    b_root = children(find(bi))[0]["id"]
+    cmd("object.set_gain", ids=[b_root], db=-6.0); settle()
+    commit()
+    wave_b = newest_wave(b_def)
+    check("B's wave: its own content change (-6 dB) only; neither the stage -10 dB nor the -3 dB of its placement",
+          near(peak(wave_b, 0.1, 0.3), 0.549 * lin(-6), 0.02), str(peak(wave_b, 0.1, 0.3)))
+    check("back to depth 1 with A's session still open", cmd("consolidate.state").get("depth") == 1
+          and cmd("consolidate.state").get("editing") is True)
+    commit()
+    wave_a = newest_wave(a_def)
+    check("A's wave holds B's placement mix and new content (-6 -3 dB), not the outer stage (-10 dB)",
+          near(peak(wave_a, 1.1, 1.3), 0.549 * lin(-9), 0.02) and near(peak(wave_a, 0.1, 0.3), 0.549, 0.02),
+          "%s %s" % (peak(wave_a, 1.1, 1.3), peak(wave_a, 0.1, 0.3)))
+    check("the outer instance kept its -10 dB fader",
+          clip_of(find(ga)) is not None and abs(find(ga)["volume"] + 10.0) < 1e-6)
+
+    # ── 14 — cascade C inside B inside A, an OLD sidecar ──
+    section("14 — cascade with an old sidecar (root fader held the instance's mix): no doubled fader")
+    PROJ14 = os.path.join(ROOT, "s14"); os.makedirs(PROJ14, exist_ok=True)
+    globals()["PROJ"] = PROJ14
+    cmd("project.new")
+    cp = os.path.join(PROJ14, "p.objekat")
+    cmd("project.save_as", path=cp)
+    xc = cmd("object.add", path=BIP, lane=8, start=0.0)["id"]
+    r = cmd("consolidate.make", id=xc); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    x_def = next(iter(defs()))
+    x2 = cmd("object.duplicate", ids=[xc])["ids"][0]
+    yc = cmd("object.add", path=BIP, lane=9, start=1.0)["id"]
+    gb = cmd("group.create", ids=[x2, yc])["id"]
+    r = cmd("consolidate.make", id=gb); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    b_def = next(d for d in defs() if d != x_def)
+    cmd("object.set_gain", ids=[gb], db=-2.0); settle()
+    cmd("project.save"); settle()
+    # Forge an old definition: the sidecar's root carries a -6 dB fader, the manifest says it is not content.
+    sidecar = [f for f in os.listdir(os.path.join(PROJ14, "samples", "consolidate"))
+               if f.startswith(defs()[b_def]["wave"][:-4]) and f.endswith("_objectstate.json")][0]
+    sp_ = os.path.join(PROJ14, "samples", "consolidate", sidecar)
+    sj = json.load(open(sp_)); sj["volume"] = -6.0; json.dump(sj, open(sp_, "w"))
+    doc = json.load(open(cp))
+    for e in doc["objectDefinitions"]:
+        if e["id"] == b_def:
+            e.pop("rootIsContent", None)
+    json.dump(doc, open(cp, "w"))
+    cmd("project.open", path=cp); settle()
+    rev0 = defs()[b_def]["revision"]
+    check("reopened: B is an OLD definition (sidecar root fader -6), its instance keeps -2 dB",
+          abs(find(gb)["volume"] + 2.0) < 1e-6 and defs()[b_def]["placements"] == [gb])
+    cmd("consolidate.edit_begin", placement=xc); settle()
+    x_root = children(find(xc))[0]["id"]
+    cmd("object.set_gain", ids=[x_root], db=-6.0); settle()
+    commit()
+    for _ in range(120):
+        if defs()[b_def]["revision"] > rev0 and not defs()[b_def]["stale"] and not cmd("consolidate.state")["renders"]:
+            break
+        time.sleep(0.5)
+    check("B was re-baked in the background (revision up, no longer stale)",
+          defs()[b_def]["revision"] > rev0 and not defs()[b_def]["stale"],
+          str((rev0, defs()[b_def]["revision"], defs()[b_def]["stale"])))
+    wave_b2 = newest_wave(b_def)
+    yrel = 1.0 - find(gb)["startTime"]          # the plain clip, relative to the wave's position 0
+    check("B's new wave: C's change (-6 dB) once - the old root fader (-6) is not applied twice",
+          near(peak(wave_b2, 0.1, 0.3), 0.549 * lin(-6), 0.03)
+          and near(peak(wave_b2, yrel + 0.1, yrel + 0.3), 0.549, 0.03),
+          "%s %s" % (peak(wave_b2, 0.1, 0.3), peak(wave_b2, yrel + 0.1, yrel + 0.3)))
+    check("B's instance mix is kept (-2 dB)", abs(find(gb)["volume"] + 2.0) < 1e-6)
+
+    # ── 16 — a sidechain key on an instance FX ──
+    section("16 — sidechain on an instance FX: closed, then in session, then after the commit")
+    def_id, i1, i2, i3 = build("s16")
+    key = cmd("object.add", path=BIP, lane=12, start=0.0)["id"]
+    probe = pid(cmd("debug.add_test_plugin", host=i1, type="objKeyProbe")); settle()
+    src = cmd("plugin.sidechain_sources", host=i1, plugin=probe)
+    check("closed instance: the plugin has a sidechain input and the key object is offered",
+          src.get("can_sidechain") is True and any(x["id"] == key for x in src.get("sources", [])), str(src)[:300])
+    r = cmd("plugin.set_sidechain", host=i1, plugin=probe, source=key)
+    check("keyed on a CLOSED instance", r.get("ok") is True, str(r))
+    check("the key is on the plugin", cmd("plugin.sidechain_sources", host=i1, plugin=probe).get("current") == key)
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    src = cmd("plugin.sidechain_sources", host=i1, plugin=probe)
+    check("in session: the stage keeps the plugin and its key",
+          src.get("current") == key and src.get("can_sidechain") is True, str(src)[:300])
+    r = cmd("plugin.set_sidechain", host=i1, plugin=probe, source=None)
+    check("...and the key can be changed from the stage (cleared)", r.get("ok") is True
+          and cmd("plugin.sidechain_sources", host=i1, plugin=probe).get("current") is None)
+    cmd("plugin.set_sidechain", host=i1, plugin=probe, source=key)
+    commit()
+    check("after the commit the closed instance still carries the key",
+          cmd("plugin.sidechain_sources", host=i1, plugin=probe).get("current") == key)
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0
