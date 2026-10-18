@@ -7398,6 +7398,16 @@ static void objStripBridgeState(juce::ValueTree& tree) {
     for (auto it = _pluginParking.begin(); it != _pluginParking.end(); ++it) {
         if (it->typeKey != typeKey) continue;
         if (it->state != wanted) { ++sameTypeOtherState; continue; }
+        // The channel width is part of what is asked for, and it is NOT in the chunk: a parked
+        // instance laid out otherwise (mono vs stereo, @see setChannelLayoutVariant:) would come back
+        // in ITS width, and nothing downstream re-applies the layout of a taken instance. When the
+        // wanted tree says a layout, the parked one must carry the same (an instance whose tree says
+        // none is not taken either: a full load reads the layout from the tree, the safe way).
+        if (wantedTree.hasProperty(te::IDs::layout)
+            && it->plugin->state.getProperty(te::IDs::layout) != wantedTree.getProperty(te::IDs::layout)) {
+            ++sameTypeOtherState;
+            continue;
+        }
         te::Plugin::Ptr p = it->plugin;
         _pluginParking.erase(it);   // un exemplaire consigné ne sert qu'UNE fois
         return p;
@@ -8281,6 +8291,209 @@ static NSArray* objBusList(juce::AudioProcessor& proc, bool isInput) {
     }
     return info;
 }
+
+// MARK: Largeur de canaux d'un plugin (mono / mono→stéréo / stéréo) — lecture + changement
+//
+// Trois variantes, toutes sur le BUS PRINCIPAL (un éventuel bus de sidechain n'est jamais touché) :
+//   "mono"        1 entrée → 1 sortie
+//   "mono_stereo" 1 entrée → 2 sorties
+//   "stereo"      2 entrées → 2 sorties
+// La largeur que le graphe lit est celle du bus principal (`getBusses().inputs.front()` pour l'entrée,
+// `getNumOutputChannelsGivenInputs` = max(1, sorties du bus principal) pour la sortie) : c'est elle
+// qu'on rapporte, rien d'autre.
+
+static const char* objWidthVariantID(int nin, int nout) {
+    if (nin == 1 && nout == 1) return "mono";
+    if (nin == 1 && nout == 2) return "mono_stereo";
+    if (nin == 2 && nout == 2) return "stereo";
+    return nullptr;
+}
+
+static bool objWidthVariantCounts(NSString* variant, int& nin, int& nout) {
+    if ([variant isEqualToString:@"mono"])        { nin = 1; nout = 1; return true; }
+    if ([variant isEqualToString:@"mono_stereo"]) { nin = 1; nout = 2; return true; }
+    if ([variant isEqualToString:@"stereo"])      { nin = 2; nout = 2; return true; }
+    return false;
+}
+
+// Les refus constatés À L'APPLICATION (setBusesLayout a répondu non), mémorisés par (clé, variante) :
+// le sondage d'un VST3 actif n'est pas exact (voir plus bas), ce refus-là l'est.
+static std::set<std::string>& objLayoutRefusals() {
+    static std::set<std::string> refusals;
+    return refusals;
+}
+
+static juce::AudioProcessor::BusesLayout objLayoutForVariant(juce::AudioProcessor& proc, int nin, int nout) {
+    auto layout = proc.getBusesLayout();
+    if (layout.inputBuses.size() > 0)  layout.inputBuses.getReference(0)  = juce::AudioChannelSet::canonicalChannelSet(nin);
+    if (layout.outputBuses.size() > 0) layout.outputBuses.getReference(0) = juce::AudioChannelSet::canonicalChannelSet(nout);
+    return layout;
+}
+
+// L'instance accepte-t-elle cette variante ? AU : exact et sans initialisation (JUCE compare aux
+// layouts qu'elle a lus une fois pour toutes). VST3 : exact seulement tant qu'il n'est pas actif
+// (`isBusesLayoutSupported` essaie alors vraiment le layout puis revient) ; actif, JUCE répond « oui,
+// sauf discret » — d'où le drapeau `exact` rendu à l'appelant.
+static bool objVariantSupported(juce::AudioProcessor& proc, int nin, int nout) {
+    if (proc.getBusCount(true) < 1 || proc.getBusCount(false) < 1) return false;
+    return proc.checkBusesLayoutSupported(objLayoutForVariant(proc, nin, nout));
+}
+
+// The probe's answer, kept per plugin key: a card's context menu is built with the view's body, so the
+// probe can be asked for at every redraw — and a VST3's probe really TRIES each layout. The answer only
+// changes with the instance, its current bus, or whether the probe is exact (a VST3 in an active
+// context): those four are the cache's key, so nothing has to invalidate it by hand.
+struct OBJWidthProbe {
+    const juce::AudioProcessor* proc = nullptr;
+    int nin = -1, nout = -1;
+    bool exact = false;
+    bool supported[3] = { false, false, false };
+};
+static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
+    static std::map<std::string, OBJWidthProbe> cache;
+    return cache;
+}
+
+- (NSDictionary<NSString*, id>*)pluginChannelInfo:(NSString*)pluginKey probeVariants:(BOOL)probe {
+    std::string pk([pluginKey UTF8String]);
+    auto it = _pluginMap.find(pk);
+    if (it == _pluginMap.end() || !it->second) return nil;
+    te::Plugin& plugin = *it->second;
+
+    NSMutableDictionary* info = [NSMutableDictionary dictionary];
+    auto* external = dynamic_cast<te::ExternalPlugin*>(&plugin);
+    info[@"external"] = @(external != nullptr);
+
+    if (!external) {
+        // Un plugin interne (Tracktion ou de la maison) : on rapporte ce que le graphe lit, sans menu.
+        juce::StringArray ins, outs;
+        plugin.getChannelNames(&ins, &outs);
+        info[@"loaded"] = @YES;
+        info[@"inputs"] = @(ins.size());
+        info[@"outputs"] = @(std::max(1, outs.size()));
+        return info;
+    }
+
+    juce::AudioProcessor* proc = external->getAudioPluginInstance();
+    if (!objPluginIsLoaded(plugin) || !proc) {
+        info[@"loaded"] = @NO;
+        return info;
+    }
+    info[@"loaded"] = @YES;
+
+    const int nin  = proc->getMainBusNumInputChannels();
+    const int nout = proc->getMainBusNumOutputChannels();
+    info[@"inputs"]  = @(nin);
+    info[@"outputs"] = @(std::max(1, nout));
+    info[@"format"]  = objNS(external->desc.pluginFormatName);
+    if (const char* cur = objWidthVariantID(nin, nout)) info[@"current"] = [NSString stringWithUTF8String:cur];
+    else                                                info[@"current"] = [NSNull null];
+
+    if (probe) {
+        const bool isVST3 = external->desc.pluginFormatName == "VST3";
+        const bool isAU   = external->desc.pluginFormatName == "AudioUnit";
+        // Exact : AU toujours ; VST3 hors contexte de lecture alloué ; tout autre format : non garanti.
+        const bool exact = isAU || (isVST3 && !_edit->getTransport().isPlayContextActive());
+        info[@"exact"] = @(exact);
+
+        NSMutableArray* variants = [NSMutableArray array];
+        static const char* kIDs[] = { "mono", "mono_stereo", "stereo" };
+        auto& probeEntry = objWidthProbeCache()[pk];
+        if (probeEntry.proc != proc || probeEntry.nin != nin || probeEntry.nout != nout || probeEntry.exact != exact) {
+            probeEntry.proc = proc; probeEntry.nin = nin; probeEntry.nout = nout; probeEntry.exact = exact;
+            for (int v = 0; v < 3; ++v) {
+                int vin = 0, vout = 0;
+                objWidthVariantCounts([NSString stringWithUTF8String:kIDs[v]], vin, vout);
+                probeEntry.supported[v] = objVariantSupported(*proc, vin, vout);
+            }
+        }
+        for (int v = 0; v < 3; ++v) {
+            const char* vid = kIDs[v];
+            NSString* variant = [NSString stringWithUTF8String:vid];
+            int vin = 0, vout = 0;
+            objWidthVariantCounts(variant, vin, vout);
+            bool supported = probeEntry.supported[v];
+            if (supported && objLayoutRefusals().count(pk + "|" + vid)) supported = false;
+            [variants addObject:@{ @"id": variant, @"inputs": @(vin), @"outputs": @(vout),
+                                   @"supported": @(supported),
+                                   @"current": @(vin == nin && vout == nout) }];
+        }
+        info[@"variants"] = variants;
+    }
+    return info;
+}
+
+- (NSDictionary<NSString*, id>*)setChannelLayoutVariant:(NSString*)variant
+                                              forPlugin:(NSString*)pluginKey
+                                            forObjectID:(NSString*)hostKey {
+    auto fail = [](NSString* reason) -> NSDictionary* { return @{ @"ok": @NO, @"reason": reason }; };
+    if (!pluginKey || !variant || !_edit) return fail(@"bad_params");
+    const std::string pk([pluginKey UTF8String]);
+    auto it = _pluginMap.find(pk);
+    if (it == _pluginMap.end() || !it->second) return fail(@"unknown_plugin");
+    if (hostKey && [self refuseForeignPluginKey:pk forHost:std::string([hostKey UTF8String])
+                                      operation:"setChannelLayout"]) return fail(@"foreign_host");
+
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    if (!ext) return fail(@"not_external");
+    int nin = 0, nout = 0;
+    if (!objWidthVariantCounts(variant, nin, nout)) return fail(@"bad_variant");
+    auto* proc = ext->getAudioPluginInstance();
+    if (!objPluginIsLoaded(*ext) || !proc) return fail(@"not_loaded");
+
+    // Déjà dans cette variante : rien à faire, et surtout rien à dérégler.
+    if (proc->getMainBusNumInputChannels() == nin && proc->getMainBusNumOutputChannels() == nout)
+        return @{ @"ok": @YES, @"changed": @NO, @"inputs": @(nin), @"outputs": @(nout), @"current": variant };
+
+    // Le changement libère puis ré-alloue le contexte de lecture (ScopedRenderStatus) : en pleine
+    // lecture il l'arrêterait. On refuse plutôt que de couper le son sous la main.
+    auto& transport = _edit->getTransport();
+    if (transport.isPlaying()) return fail(@"playing");
+
+    // Refus déjà constaté pour cette instance et cette variante : pas la peine d'insister.
+    const std::string refusalKey = pk + "|" + std::string([variant UTF8String]);
+    if (objLayoutRefusals().count(refusalKey) || !objVariantSupported(*proc, nin, nout))
+        return fail(@"unsupported");
+
+    // Un AU pas encore initialisé refuse son état ET certains changements de bus : on alloue le
+    // graphe de lecture d'abord (ce que fait `play`, sans démarrer le transport).
+    if (!transport.isPlayContextActive()) transport.ensureContextAllocated();
+
+    // L'état AVANT le changement, tel que l'instance le rend : un AU peut le perdre en changeant de
+    // bus, c'est la ré-affirmation ci-dessous qui le lui rend (le même mécanisme qu'au chargement).
+    if (objCanFlushPluginState(*ext)) ext->flushPluginStateToValueTree();
+    const juce::var stateBefore = ext->state.getProperty(te::IDs::state);
+
+    if (!ext->setBusesLayout(objLayoutForVariant(*proc, nin, nout))) {
+        objLayoutRefusals().insert(refusalKey);
+        return fail(@"refused");
+    }
+
+    // `setBusesLayout` a déjà écrit le nouveau `layout` dans l'arbre (flushBusesLayoutToValueTree).
+    // L'arbre à ré-affirmer porte ce layout ET le chunk d'avant : la ré-application ne ramène jamais
+    // l'ancienne largeur.
+    if (stateBefore.toString().isNotEmpty()) {
+        juce::ValueTree wanted = ext->state.createCopy();
+        wanted.setProperty(te::IDs::state, stateBefore, nullptr);
+        [self schedulePluginStateReassert:it->second fromTree:wanted];
+    }
+
+    // Les fils de sidechain dépendent du nombre d'entrées : on les repose pour la nouvelle largeur.
+    if (ext->getSidechainSourceID().isValid()) {
+        auto wires = ext->state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
+        if (wires.isValid()) ext->state.removeChild(wires, nullptr);
+        objLayBridgeWires(*ext);
+    }
+
+    transport.ensureContextAllocated();
+    _edit->restartPlayback();
+
+    return @{ @"ok": @YES, @"changed": @YES,
+              @"inputs": @(proc->getMainBusNumInputChannels()),
+              @"outputs": @(std::max(1, proc->getMainBusNumOutputChannels())),
+              @"current": variant };
+}
+
 
 - (NSDictionary*)linkStateDebugInfo {
     NSMutableDictionary* pushes   = [NSMutableDictionary dictionary];
@@ -9466,8 +9679,32 @@ static void objDumpPluginList(te::PluginList& pl,
     // pour la même raison qu'elle existe : un AU pas encore initialisé refuse `setStateInformation`
     // EN SILENCE, et repartirait à ses réglages d'usine.
     if (auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get())) {
+        // The channel width travels with the state (the binary `layout` property): undoing a mono /
+        // stereo change puts the buses back BEFORE the chunk, which was taken under that layout.
+        // Writing the property on the live tree is the engine's own door (`valueTreePropertyChanged` →
+        // `setBusesLayout`); it frees the playback context, so it is skipped in playback — the model
+        // keeps the width it asked for, and the next load applies it.
+        bool layoutMoved = false;
+        if (saved.hasProperty(te::IDs::layout)
+            && saved.getProperty(te::IDs::layout) != ext->state.getProperty(te::IDs::layout)
+            && ext->getAudioPluginInstance() != nullptr && _edit
+            && !_edit->getTransport().isPlaying()) {
+            if (!_edit->getTransport().isPlayContextActive()) _edit->getTransport().ensureContextAllocated();
+            ext->state.setProperty(te::IDs::layout, saved.getProperty(te::IDs::layout), nullptr);
+            layoutMoved = true;
+        }
         ext->restorePluginStateFromValueTree(saved);
         [self schedulePluginStateReassert:it->second fromTree:saved];
+        if (layoutMoved) {
+            // A keyed plugin's sidechain wires follow the number of inputs.
+            if (ext->getSidechainSourceID().isValid()) {
+                auto wires = ext->state.getChildWithName(te::IDs::SIDECHAINCONNECTIONS);
+                if (wires.isValid()) ext->state.removeChild(wires, nullptr);
+                objLayBridgeWires(*ext);
+            }
+            _edit->getTransport().ensureContextAllocated();
+            _edit->restartPlayback();
+        }
         return YES;
     }
 

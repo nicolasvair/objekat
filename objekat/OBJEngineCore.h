@@ -606,6 +606,30 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // enabled by default, main, layout). nil = key unknown. `loaded` NO = an external plugin whose
 // instance is still loading: the buses are not known YET, not absent. Reads only, touches nothing.
 - (NSDictionary<NSString*, id>* _Nullable)pluginBusesInfo:(NSString* _Nonnull)pluginKey;
+// MARK: Channel width of a plugin (mono / mono→stereo / stereo) — the main bus, as the graph reads it.
+// Variants: "mono" (1→1), "mono_stereo" (1→2), "stereo" (2→2). nil = key unknown.
+//   external   YES for an AU/VST3; NO for a built-in / in-house plugin (no menu, only the counts).
+//   loaded     NO = the instance is still loading: nothing else is known YET.
+//   inputs / outputs   the main bus's channels (outputs >= 1, as `getNumOutputChannelsGivenInputs`).
+//   current    the variant name, or NSNull when the instance is in none of the three.
+// With `probe` YES (an external, loaded plugin): `variants` = [{id, inputs, outputs, supported, current}] and
+// `exact`. AU: `supported` is exact (JUCE compares with the layouts the unit declared, no initialisation
+// needed). VST3: exact while the playback context is NOT allocated; once it is, JUCE answers "yes unless
+// discrete" — `exact` NO says so, and a refusal met at application is remembered (supported becomes NO).
+// Reads only: touches no state (the VST3 probe, hors contexte actif, essaie puis restaure le layout).
+- (NSDictionary<NSString*, id>* _Nullable)pluginChannelInfo:(NSString* _Nonnull)pluginKey
+                                              probeVariants:(BOOL)probe;
+// Puts an external plugin's main bus in a variant. Main thread; allocates the playback context first (an AU
+// refuses state and some bus changes until initialised), captures the state, applies `setBusesLayout`
+// (which writes the new `layout` into the plugin's tree), re-asserts the state behind (the existing deferred
+// mechanism), re-lays a keyed plugin's sidechain wires and rebuilds the graph. {ok, changed, inputs, outputs,
+// current} or {ok: NO, reason}: bad_params, unknown_plugin, foreign_host, not_external, bad_variant, not_loaded,
+// playing (the change frees the playback context, which stops playback: refused while it runs), unsupported,
+// refused. The model's `stateXML` is NOT updated here (EditViewModel+ChannelWidth does it, with the undo point).
+- (NSDictionary<NSString*, id>* _Nonnull)setChannelLayoutVariant:(NSString* _Nonnull)variant
+                                                       forPlugin:(NSString* _Nonnull)pluginKey
+                                                     forObjectID:(NSString* _Nullable)hostKey
+    NS_SWIFT_NAME(setChannelLayout(variant:forPlugin:forObjectID:));
 // MARK: The audio bridge (sidechain) — docs/plan_sidechain.md §5.8. The model decides what is routed
 // (EditViewModel+Bridge); these lay it down in ONE transaction per sync, on the main thread:
 // beginBridgeSync, the ensure/set calls for every active route, commitBridgeSync (clears what the

@@ -31,6 +31,13 @@ struct SynopticCardView: View {
     var linkSiblingCount: Int = 0
     /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
     var sidechainBadge: SidechainBadge? = nil
+    /// This plugin's main bus as the engine reports it (an external plugin that is loaded; nil = none to
+    /// say: a built-in, an instance still loading, the demo). Drawn as a small tag above the top-right
+    /// corner: "1", "1→2" or "2" (@see SynopticWidthFlow).
+    var channels: PluginChannels? = nil
+    /// A STEREO signal reaches this plugin and its bus has fewer channels than that (@see
+    /// SynopticWidthFlow.crushesStereo): the tag turns orange with a warning glyph.
+    var crushesStereo: Bool = false
 
     /// The bound view's actions — read ONLY by a gain stage's faces (@see SynopticGainStageControls): its
     /// values (`gainStageValues`), its writes (`onSetGainStage`, `onBeginGainEdit`) and the automation row a
@@ -142,6 +149,9 @@ struct SynopticCardView: View {
                 .help(badge.text)
             }
         }
+        // The main bus's width, OUTSIDE the card, above its top-right corner (the sidechain tag's gap, on
+        // the other side): "1", "1→2" or "2", orange with a warning glyph when a stereo signal is crushed.
+        .overlay(alignment: .topTrailing) { widthTag }
         // The ARA source's tag: the sidechain's capsule, in the same spot above the top-left corner.
         .overlay(alignment: .topLeading) {
             if isARA {
@@ -157,6 +167,47 @@ struct SynopticCardView: View {
                     .help(L("synoptic.ara.source"))
             }
         }
+    }
+
+    /// The width tag (@see `channels`). Nothing for a gain stage, an ARA source or a plugin the engine
+    /// reports no bus for.
+    @ViewBuilder private var widthTag: some View {
+        if let ch = channels, plugin.gainStage == nil, !isARA {
+            let tint: Color = crushesStereo ? .orange : .secondary
+            HStack(spacing: 3) {
+                if crushesStereo {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8, weight: .bold))
+                }
+                Text(verbatim: ch.badge)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 5)
+            .frame(height: 13)
+            .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+            .overlay(Capsule().strokeBorder(tint.opacity(0.6), lineWidth: 1))
+            .fixedSize()
+            .offset(x: -4, y: -15)
+            .help(widthHelp(ch))
+        }
+    }
+
+    /// The tag's tooltip: what the bus is, and — when a stereo signal is crushed — what becomes of it.
+    private func widthHelp(_ ch: PluginChannels) -> String {
+        let what: String
+        switch ch.variant {
+        case .mono?:       what = L("synoptic.width.help.mono")
+        case .monoStereo?: what = L("synoptic.width.help.monoStereo")
+        case .stereo?:     what = L("synoptic.width.help.stereo")
+        case nil:          what = L("synoptic.width.help.other", ch.inputs, ch.outputs)
+        }
+        guard crushesStereo else { return what }
+        let warning: String
+        if ch.inputs < 2 && ch.outputs < 2 { warning = L("synoptic.width.warn.dryRight") }
+        else if ch.inputs < 2              { warning = L("synoptic.width.warn.leftOnly") }
+        else                               { warning = L("synoptic.width.warn.fold") }
+        return what + "\n" + warning
     }
 
     /// The ordinary face: on/off · name · link badge · ✕, and the VU line.
