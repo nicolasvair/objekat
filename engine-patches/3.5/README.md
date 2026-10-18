@@ -485,8 +485,9 @@ Checked as still biting: `develop` still had the linear `std::find`.
   samples at every rate pair, and Lagrange whatever the `ResamplingQuality`. The proxy branch of
   `createNodeForAudioClip` now builds a `WaveNodeRealTime` on the proxy file; the frozen-track and
   group-freeze nodes, `createWaveNodeForFile`, the tape start/stop effect and the comp render move too, so
-  no legacy wave node is built outside the engine's own tests. Branch `objekat-proxy-wavenode-0043` (local,
-  NOT published), commit on top of `objekat-plugin-meters-0042`. Files: `tracktion_EditNodeBuilder.cpp`,
+  no legacy wave node is built outside the engine's own tests. Branch `objekat-proxy-wavenode-0043`
+  (published on the fork 18 October 2026, `objekat-patches-3.5` fast-forwarded onto it, `faf50d8821b`),
+  commit on top of `objekat-plugin-meters-0042`. Files: `tracktion_EditNodeBuilder.cpp`,
   `tracktion_ClipEffects.cpp`, `tracktion_CompManager.cpp`. The next number is `0044`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
