@@ -238,7 +238,7 @@ extension CommandRegistry {
                  summary: "Performs an entry of the OBJECT menu, by its machine name "
                         + "(`selection.context_click` lists them in `entries`: `disband_group`, "
                         + "`consolidate_group`, `consolidate_clip`, `consolidate_linked`, "
-                        + "`consolidate_each`, `deconsolidate`, `group_selection`, `create_aux`, "
+                        + "`consolidate_each`, `deconsolidate`, `group_selection`, `heal_groups`, `create_aux`, "
                         + "`create_midi_clip`, `set_color`, `create_fx_link`, `run_script`). `id` is "
                         + "the object the click lands on (omit it for an empty lane). The scope is "
                         + "the SELECTION by default — the object clicked is selected first when it "
@@ -565,6 +565,20 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state, message: "no group created")
             }
             return .object(["id": .string(groupID.uuidString)])
+        }
+
+        register("timesel.heal",
+                 summary: "Joins the pieces of a cut group that the time selection straddles: the "
+                        + "groups the range crosses on its lanes, jointive (end of one = start of the "
+                        + "next, same lane, same parent), whose JUNCTION the range covers, become ONE "
+                        + "group (@see `group.heal`). Refused with `invalid_state` if nothing there can "
+                        + "be joined.",
+                 undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let sel = vm.timeSelection else {
+                throw CommandError(code: .invalid_state, message: "no time selection")
+            }
+            return try CommandRegistry.healResult(vm.healGroups(inZone: sel))
         }
 
         // MARK: clipboard

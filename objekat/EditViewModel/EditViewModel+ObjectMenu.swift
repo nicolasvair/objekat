@@ -45,6 +45,8 @@ nonisolated enum ObjectMenuAction: Equatable {
     case deconsolidate
     /// Clips → one group: the selection, or, in `.zone` scope, the range (`createGroupFromTimeSelection`).
     case groupSelection
+    /// Jointive pieces of a cut group → ONE group again (the selection, or the range's junction).
+    case healGroups
     /// An aux clip over the range (zone scope, no object under the point).
     case createAux
     /// A MIDI clip over the range (zone scope, no object under the point).
@@ -69,7 +71,8 @@ nonisolated enum ObjectMenuAction: Equatable {
         case .consolidateEach:    return "consolidate_each"
         case .deconsolidate:      return "deconsolidate"
         case .groupSelection:     return "group_selection"
-        case .createAux:          return "create_aux"
+        case .healGroups:         return "heal_groups"
+        case .createAux:         return "create_aux"
         case .createMidiClip:     return "create_midi_clip"
         case .setColor:           return "set_color"
         case .createFXLink:       return "create_fx_link"
@@ -193,6 +196,10 @@ extension EditViewModel {
             }
         }
 
+        // 'Join' — two or more groups on the scope: the pieces of a group that was cut come back
+        // as one (greyed, with the reason, when they cannot).
+        if let heal = healMenuEntry(scope: scope, targetIDs: targetIDs) { out.append(heal) }
+
         guard let item else { return out }
 
         // Third-party scripts declared for an OBJECT context: they have no business in the bar's
@@ -277,6 +284,8 @@ extension EditViewModel {
             if let id = clickedID { deconsolidate(placementID: id) }
         case .groupSelection:
             createGroupFromSelection(ids)
+        case .healGroups:
+            _ = healGroups(ids: Array(ids))
         case .createAux, .createMidiClip, .baking:
             break   // zone scope only / informational
         case .setColor(let value):
