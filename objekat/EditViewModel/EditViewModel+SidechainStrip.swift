@@ -39,11 +39,9 @@ extension EditViewModel {
     // MARK: - The editor's Sidechain strip
 
     /// True if this plugin's editor gets a Sidechain strip: its live instance has a sidechain input
-    /// and it sits in an FX chain (instruments have no strip yet), on a host that is not a closed
-    /// consolidated object.
+    /// and it sits in an FX chain (instruments have no strip yet).
     func showsSidechainStrip(host: UUID, plugin: UUID) -> Bool {
         guard let engine, engine.pluginCanSidechain(plugin.uuidString) else { return false }
-        if find(id: host)?.isConsolidateInstance == true { return false }
         return Self.flattenLeaves(chainPlugins(host) ?? []).contains { $0.id == plugin }
     }
 

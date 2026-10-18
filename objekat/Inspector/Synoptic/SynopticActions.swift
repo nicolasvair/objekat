@@ -190,6 +190,10 @@ struct SynopticActions {
     var joinableFXLinks: (() -> [(id: UUID, name: String)])? = nil
     var onJoinFXLink: ((UUID) -> Void)? = nil
 
+    /// A double click on the content pill of a consolidated instance: open its content, or validate
+    /// it when it is open.
+    var onToggleContent: (() -> Void)? = nil
+
     /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
     var onOpenARAEditor: (() -> Void)? = nil
     var onRemoveARA: (() -> Void)? = nil
@@ -341,6 +345,13 @@ struct SynopticInfinite: Equatable {
     let kindLabel: String
 }
 
+/// The CONTENT pill of a consolidated instance: the shared content it reads, by the definition's name.
+/// `isOpen`: the instance is being edited (its stage is open) — a double click then validates it.
+struct SynopticContentPill: Equatable {
+    let name: String
+    let isOpen: Bool
+}
+
 /// A group's 'loop' option (the chain head, @see BusHeadZoneView) or a MIDI clip's (the MIDI
 /// zone, @see midiZoneView). Non-nil ⇔ `SoundObject.canLoop` — audio has its own badge in
 /// `AudioFileZoneView` (@see [[loop-item-plan]]).
@@ -395,13 +406,6 @@ extension View {
     @ViewBuilder
     func helpIf(_ text: String?) -> some View {
         if let text, !text.isEmpty { self.help(text) } else { self }
-    }
-
-    /// Greys out and neutralises the FX of a CLOSED consolidated object, saying why they do not answer.
-    func fxReadOnlyLocked(_ readOnly: Bool) -> some View {
-        disabled(readOnly)
-            .opacity(readOnly ? 0.45 : 1)
-            .helpIf(readOnly ? L("synoptic.openToEdit") : nil)
     }
 
     /// Applies `.onDrag` only if a provider is supplied (otherwise it leaves the view untouched).
