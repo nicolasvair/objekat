@@ -27,6 +27,9 @@
 #include <vector>
 #include <array>
 #include <functional>
+#include <map>
+#include <optional>
+#include <cmath>
 #include <limits>
 #include <dlfcn.h>
 #include <sys/sysctl.h>
@@ -48,6 +51,13 @@ struct OBJRenderPluginFilter {
     static inline bool                    active = false;
     static inline std::set<te::EditItemID> allowedClips;
     static inline te::EditItemID           targetTrack;
+    // Régime EXPORT du mix (@see ExportScope) : toute piste (stems, pool) et tout plugin sans clip
+    // propriétaire (chaîne Main) sont TOUJOURS chargés ; seuls les plugins de CLIPS sont filtrés.
+    static inline bool                    exportMode = false;
+    // Décompte de l'export (journal [PERF]) : plugins externes qui ont demandé à se charger pendant
+    // la fenêtre du filtre, et parmi eux ceux qu'on a refusés.
+    static inline int                     consulted = 0;
+    static inline int                     refused   = 0;
 
     // Vrai si ce plugin appartient à la chaîne rendue. On REMONTE jusqu'au premier CLIP ou
     // TRACK — c'est lui le propriétaire. Remonter, et pas se contenter du parent direct, parce
@@ -57,9 +67,11 @@ struct OBJRenderPluginFilter {
             if (te::Clip::isClipState(v))
                 return allowedClips.count(te::EditItemID::fromID(v)) > 0;
             if (te::TrackList::isTrack(v))
-                return te::EditItemID::fromID(v) == targetTrack;
+                return exportMode || te::EditItemID::fromID(v) == targetTrack;
         }
-        return false;   // ni clip ni piste au-dessus : hors de ce qu'on rend
+        // Ni clip ni piste au-dessus : hors de ce qu'on rend pour un bake ; pour un export c'est
+        // la chaîne Main (ou un hôte inconnu), qu'on charge toujours — le doute autorise.
+        return exportMode;
     }
 
     struct Scope {
@@ -67,11 +79,25 @@ struct OBJRenderPluginFilter {
             allowedClips.clear();
             allowedClips.insert(clips.begin(), clips.end());
             targetTrack = track;
+            exportMode = false;
             // Chaîne VIDE = objet inconnu, et le rendu prend alors toute la piste : on ne filtre
             // pas, faute de savoir ce qui doit sonner. @see renderChainForKey:.
             active = !allowedClips.empty();
         }
         ~Scope() { active = false; allowedClips.clear(); }
+    };
+
+    // Export du mix sur copie : l'ensemble de clips vient de la plage IN-OUT (@see
+    // exportLoadScopeFrom:to:), tout le reste (pistes, Main) reste chargé.
+    struct ExportScope {
+        explicit ExportScope(const std::set<te::EditItemID>& clips) {
+            allowedClips = clips;
+            targetTrack  = {};
+            exportMode   = true;
+            consulted = refused = 0;
+            active       = true;
+        }
+        ~ExportScope() { active = false; exportMode = false; allowedClips.clear(); }
     };
 };
 
@@ -253,7 +279,10 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
         // rendue ont été repassés en lecture fichier dans la copie (@see objStampARAArchives), donc
         // tout ARA parentless qui se construit ici sert la chaîne rendue.
         if (!p.state.getParent().isValid() && p.desc.hasARAExtension) return true;
-        return OBJRenderPluginFilter::wants(p.state);
+        const bool wanted = OBJRenderPluginFilter::wants(p.state);
+        ++OBJRenderPluginFilter::consulted;
+        if (!wanted) ++OBJRenderPluginFilter::refused;
+        return wanted;
     }
 
     te::EditLimits getEditLimits() override {
@@ -1273,8 +1302,10 @@ struct OBJExternalPluginCount { int declared = 0; int loaded = 0; };
 
 static OBJExternalPluginCount objCountExternalPlugins(te::Edit& edit) {
     OBJExternalPluginCount c;
+    std::set<te::EditItemID> seen;   // objAllPluginsDeep liste certains plugins deux fois (mesuré)
     for (auto* p : objAllPluginsDeep(edit))
         if (auto* ext = dynamic_cast<te::ExternalPlugin*>(p)) {
+            if (!seen.insert(ext->itemID).second) continue;
             ++c.declared;
             if (ext->getAudioPluginInstance() != nullptr) ++c.loaded;
         }
@@ -1347,7 +1378,18 @@ struct OBJRenderChain {
     std::vector<te::EditItemID> ancestors;
 };
 
+// Ce que le clone d'un EXPORT SUR COPIE doit charger de plugins de clips. @see
+// -exportLoadScopeFrom:to:livePlugins:.
+struct OBJExportLoadScope {
+    std::set<te::EditItemID> clips;   // clips dont les plugins se chargent (le reste est écarté)
+    int    clipsTotal  = 0;           // tous les clips de l'Edit, containers et enfants compris
+    double tailMargin  = 0.0;         // secondes d'avant-plage tenues pour la queue des effets
+    double preRoll     = 0.0;         // secondes d'après-plage tenues (latence, pré-roll)
+};
+
 @interface OBJEngineCore ()
+- (OBJExportLoadScope)exportLoadScopeFrom:(double)startSecs to:(double)endSecs
+                              livePlugins:(const te::Plugin::Array&)livePlugins;
 - (void)ensureMasterMeter;
 // Décide, sur la fréquence que la carte ouverte tourne DÉJÀ, de l'adopter ou — seulement si elle
 // est inutilisable — de la ramener à une fréquence proposée. @see la définition.
@@ -4433,19 +4475,155 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     return -1.0f;
 }
 
+// MARK: - Export — ensemble de clips à charger (filtre IN-OUT)
+//
+// Un export SUR COPIE clone tout l'Edit, plugins compris ; la plage borne ce qu'on REND, pas ce
+// qu'on CHARGE. Ici on décide, depuis l'Edit VIVANT (les identifiants sont ceux de la copie),
+// quels CLIPS gardent leurs plugins externes. Règle, volontairement LARGE — un export muet est pire
+// qu'un export lent :
+//   • un clip est gardé si sa position réelle (moteur) rencontre
+//     [début − queue, fin + pré-roll] ; queue = max(30 s, 1,5 × la plus longue queue déclarée par un
+//     plugin vivant), pré-roll = 10 s ;
+//   • TOUJOURS gardés : les aux, les groupes infinis (sans fenêtre au moteur), tout container
+//     inconnu du registre et tout type de clip inconnu — le doute autorise ;
+//   • tout ancêtre d'un clip gardé, et tout descendant d'un container gardé qui BOUCLE (ses enfants
+//     sont dans le repère du motif, pas de la timeline) ou qui a une vitesse ≠ 1 ; dans un
+//     container ordinaire (temps local = temps edit) les enfants se jugent un par un ;
+//   • fermeture transitive sur les clés de sidechain : la source (objet) visée par un plugin
+//     d'un clip gardé, ou d'une piste/du Main, est gardée avec ses ancêtres et ses descendants.
+// Pistes (stems, pool) et chaîne Main ne sont pas des clips : le filtre les charge toujours
+// (@see OBJRenderPluginFilter::ExportScope). Les envois vers un aux n'ajoutent rien : le plugin d'envoi
+// vit sur l'émetteur, qui se juge comme tout clip, et l'aux est toujours gardé.
+- (OBJExportLoadScope)exportLoadScopeFrom:(double)startSecs to:(double)endSecs
+                              livePlugins:(const te::Plugin::Array&)livePlugins {
+    OBJExportLoadScope out;
+    if (!_edit) return out;
+
+    constexpr double kMinTail = 30.0, kPreRoll = 10.0, kInfiniteTail = 120.0;
+    double tail = kMinTail;
+    for (auto* p : livePlugins) {
+        if (!p) continue;
+        double t = p->getTailLength();
+        if (std::isinf(t)) t = kInfiniteTail;
+        if (t > 0.0) tail = std::max(tail, t * 1.5);
+    }
+    out.tailMargin = tail;
+    out.preRoll    = kPreRoll;
+    const double reachStart = startSecs - tail;
+    const double reachEnd   = endSecs + kPreRoll;
+
+    // Copies locales : une lambda ne lit pas les ivars sans capturer self.
+    std::map<te::EditItemID, std::string> keyOf;
+    for (auto& kv : _containerClipMap) if (kv.second) keyOf[kv.second->itemID] = kv.first;
+    const std::unordered_set<std::string> auxKeys = _auxKeys;
+    std::unordered_set<std::string> midiKeys, boundedKeys;
+    for (auto& kv : _midiClipMap)   midiKeys.insert(kv.first);
+    for (auto& kv : _groupBoundsMap) boundedKeys.insert(kv.first);
+
+    std::map<te::EditItemID, te::Clip*>        clipById;
+    std::map<te::EditItemID, te::EditItemID>   parentOf;
+
+    auto alwaysOn = [&](te::Clip& c) -> bool {
+        if (auto* cc = dynamic_cast<te::ContainerClip*>(&c)) {
+            if (cc->isObjAuxBus()) return true;
+            auto it = keyOf.find(cc->itemID);
+            if (it == keyOf.end()) return true;                  // inconnu : le doute autorise
+            if (auxKeys.count(it->second)) return true;
+            if (midiKeys.count(it->second)) return false;        // objet MIDI : borné par son enfant
+            if (boundedKeys.count(it->second)) return false;     // groupe borné : sa fenêtre
+            return true;                                         // groupe INFINI (bus)
+        }
+        if (dynamic_cast<te::WaveAudioClip*>(&c) || dynamic_cast<te::MidiClip*>(&c)) return false;
+        return true;                                             // type inconnu
+    };
+    auto reaches = [&](te::Clip& c) -> bool {
+        const auto t = c.getPosition().time;
+        return t.getStart().inSeconds() < reachEnd && t.getEnd().inSeconds() > reachStart;
+    };
+    auto loops = [&](te::Clip& c) -> bool {
+        if (auto* cc = dynamic_cast<te::ContainerClip*>(&c))
+            return cc->isLooping() || !cc->getLoopRange().isEmpty() || cc->getSpeedRatio() != 1.0;
+        return false;
+    };
+
+    std::function<bool(te::Clip&, bool, te::EditItemID)> visit;
+    visit = [&](te::Clip& c, bool forced, te::EditItemID parentID) -> bool {
+        ++out.clipsTotal;
+        clipById[c.itemID] = &c;
+        parentOf[c.itemID] = parentID;
+        const bool self = forced || alwaysOn(c) || reaches(c);
+        bool anyChild = false;
+        if (auto* owner = dynamic_cast<te::ClipOwner*>(&c)) {
+            const bool childForced = forced || (self && loops(c));
+            for (auto* ch : owner->getClips())
+                if (ch) anyChild |= visit(*ch, childForced, c.itemID);
+        }
+        if (self || anyChild) { out.clips.insert(c.itemID); return true; }
+        return false;
+    };
+    for (auto* t : te::getClipTracks(*_edit))
+        for (auto* c : t->getClips())
+            if (c) visit(*c, false, te::EditItemID());
+
+    // Sidechain : plugin (hôte = clip propriétaire, ou invalide pour une piste/le Main) → tap visé.
+    struct Dep { te::EditItemID host, tap; };
+    std::vector<Dep> deps;
+    std::function<void(const juce::ValueTree&, te::EditItemID)> scan;
+    scan = [&](const juce::ValueTree& v, te::EditItemID host) {
+        if (te::Clip::isClipState(v))              host = te::EditItemID::fromID(v);
+        else if (te::TrackList::isTrack(v))        host = te::EditItemID();
+        if (v.hasProperty(te::IDs::sidechainSourceID)) {
+            auto tap = te::EditItemID::fromVar(v[te::IDs::sidechainSourceID]);
+            if (tap.isValid()) deps.push_back({ host, tap });
+        }
+        for (int i = 0; i < v.getNumChildren(); ++i) scan(v.getChild(i), host);
+    };
+    scan(_edit->state, te::EditItemID());
+
+    std::map<te::EditItemID, std::string> tapSource;
+    for (auto& kv : _bridgeTapMap) if (kv.second) tapSource[kv.second->itemID] = kv.first;
+
+    std::function<void(te::Clip&)> addDown;
+    addDown = [&](te::Clip& c) {
+        out.clips.insert(c.itemID);
+        if (auto* o = dynamic_cast<te::ClipOwner*>(&c))
+            for (auto* ch : o->getClips()) if (ch) addDown(*ch);
+    };
+    for (int guard = 0; guard < 64; ++guard) {
+        bool changed = false;
+        for (auto& d : deps) {
+            if (d.host.isValid() && out.clips.count(d.host) == 0) continue;   // hôte écarté
+            auto ts = tapSource.find(d.tap);
+            if (ts == tapSource.end()) continue;                              // source = stem/Main
+            te::Clip* src = [self bridgeClipForKey:ts->second];
+            if (!src || out.clips.count(src->itemID)) continue;
+            for (auto cur = src->itemID; cur.isValid();) {                    // ancêtres
+                out.clips.insert(cur);
+                auto pit = parentOf.find(cur);
+                cur = pit == parentOf.end() ? te::EditItemID() : pit->second;
+            }
+            if (auto cit = clipById.find(src->itemID); cit != clipById.end()) addDown(*cit->second);
+            changed = true;
+        }
+        if (!changed) break;
+    }
+    return out;
+}
+
 // MARK: - Export — rendu du mix complet
 //
 // Sans aucune des restrictions du bake : ni `tracksToDo` (vide = toutes les pistes), ni
-// `allowedClips`, ni filtre de plugins. C'est la sortie générale telle qu'on l'entend, chaîne de
+// `allowedClips`. C'est la sortie générale telle qu'on l'entend, chaîne de
 // mastering et fader master inclus (`useMasterPlugins`).
 //
 // Deux régimes (@see OBJEngineCore.h, où l'arbitrage est expliqué) :
 //
 //   • SUR COPIE — même ossature qu'un bake : flush des états → copie de l'arbre → clone en rôle
 //     forRendering → ré-affirmation des états. L'app reste pleinement utilisable pendant le
-//     rendu, mais le clone instancie TOUS les AU du projet sur le thread principal. Le bake s'en
-//     tire en ne chargeant que sa chaîne (@see OBJRenderPluginFilter) ; un export ne le peut pas.
-//     Les jalons [PERF] disent où part ce temps d'attente.
+//     rendu, mais le clone instancie les AU sur le thread principal. Le bake ne charge que sa
+//     chaîne ; l'export charge TOUT SAUF les plugins de clips que la plage IN-OUT ne fait pas
+//     sonner (@see OBJRenderPluginFilter::ExportScope, -exportLoadScopeFrom:to:livePlugins:).
+//     Les jalons [PERF] disent où part ce temps d'attente et combien d'AU sont écartés.
 //
 //   • DIRECT — on rend l'Edit vivant. Rien à cloner, rien à instancier, rien à flusher : les
 //     plugins qui vont rendre sont exactement ceux qu'on entend, avec leur état courant. Le
@@ -4477,27 +4655,11 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     te::Edit* renderEdit = _edit.get();
 
     if (onEditCopy) {
-        // OPTIMISATION À FAIRE — ne charger que ce que la fenêtre IN-OUT fait sonner.
-        //
-        // Le clone instancie TOUS les AU déclarés dans l'arbre, y compris ceux de clips situés
-        // hors de [startSecs, endSecs] : la plage borne ce qu'on REND, pas ce qu'on CHARGE.
-        // Exporter huit secondes d'une session longue coûte donc le chargement complet.
-        //
-        // Le mécanisme existe déjà : OBJRenderPluginFilter (en tête de ce fichier) est consulté
-        // par shouldLoadPlugin pendant le clonage, et c'est ainsi que les bakes ne chargent que
-        // la chaîne d'un objet. Il resterait à en dériver l'ensemble des clips qui chevauchent
-        // la fenêtre — en tenant compte des groupes (un enfant qui déborde la fenêtre de son
-        // parent est déjà muet) et des objets liés — et à toujours autoriser, sans exception,
-        // les chaînes de stems, d'aux et de master.
-        //
-        // Deux raisons de ne pas l'avoir fait tout de suite : un export MUET est plus grave
-        // qu'un export lent (se tromper d'ensemble = un plugin manquant, silencieusement, et un
-        // rendu qui diffère de ce qu'on entend), et le gain dépend entièrement du projet — là où
-        // les mêmes AU tournent d'un bout à l'autre, le filtre n'écarterait presque rien. À
-        // tenter en filtrant large, avec un [PERF] comptant les AU écartés : c'est ce chiffre,
-        // sur de vraies sessions, qui dira si ça vaut la complexité.
-        //
-        // Sans objet dans l'autre régime : le rendu direct ne charge rien du tout.
+        // Le clone instancie les AU déclarés dans l'arbre ; la plage borne ce qu'on REND, pas ce
+        // qu'on CHARGE. On restreint donc le chargement des plugins de CLIPS à ceux que la fenêtre
+        // fait sonner, en filtrant LARGE (@see exportLoadScopeFrom:to:livePlugins:) : pistes, stems,
+        // aux et Main restent chargés sans condition, et dans le doute un clip est gardé — un
+        // export muet est pire qu'un export lent. Sans objet en rendu direct (rien n'est cloné).
 
         // Sans ce flush, le clone partirait du dernier état SÉRIALISÉ des plugins et non de ce
         // qu'on entend — un réglage touché depuis l'ouverture du projet ne serait pas dans le
@@ -4508,15 +4670,37 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
             if (p && objCanFlushPluginState(*p)) { p->flushPluginStateToValueTree(); ++flushedCount; }
         const double tFlush = juce::Time::getMillisecondCounterHiRes();
 
+        const OBJExportLoadScope loadScope = [self exportLoadScopeFrom:startSecs to:endSecs livePlugins:livePlugins];
+        const bool filtering = !loadScope.clips.empty();
+        const double tScope = juce::Time::getMillisecondCounterHiRes();
+
         auto stateCopy = _edit->state.createCopy();
         {   // Source ARA : les retouches vivent dans l'instance, pas dans l'arbre (@see objStampARAArchives).
-            const int stamped = objStampARAArchives(_clipMap, stateCopy, nullptr);
-            if (stamped > 0) NSLog(@"[ARA] export : %d archive(s) transmise(s) au clone", stamped);
+            // Un clip ARA écarté est hors plage (donc muet) : repassé en lecture fichier, sans Melodyne.
+            int demoted = 0;
+            const int stamped = objStampARAArchives(_clipMap, stateCopy,
+                                                    filtering ? &loadScope.clips : nullptr, &demoted);
+            if (stamped > 0 || demoted > 0)
+                NSLog(@"[ARA] export : %d archive(s) transmise(s) au clone, %d source(s) repassée(s) en fichier",
+                      stamped, demoted);
         }
         const double tCopy = juce::Time::getMillisecondCounterHiRes();
-        // Pas de OBJRenderPluginFilter::Scope ici : tout le projet doit sonner.
-        clone = te::loadEditFromState(*_engine, stateCopy, te::Edit::EditRole::forRendering);
+        int refusedAU = 0, consultedAU = 0;
+        {
+            std::optional<OBJRenderPluginFilter::ExportScope> pluginFilter;
+            if (filtering) pluginFilter.emplace(loadScope.clips);
+            clone = te::loadEditFromState(*_engine, stateCopy, te::Edit::EditRole::forRendering);
+            refusedAU = OBJRenderPluginFilter::refused;
+            consultedAU = OBJRenderPluginFilter::consulted;
+        }
         const double tClone = juce::Time::getMillisecondCounterHiRes();
+        if (filtering)
+            NSLog(@"[PERF] export : filtre IN-OUT [%.2f s → %.2f s] : %d/%d clips gardés "
+                  @"(queue %.0f s, pré-roll %.0f s, calcul %.1f ms) | %d AU écartés / %d déclarés",
+                  startSecs, endSecs, (int)loadScope.clips.size(), loadScope.clipsTotal,
+                  loadScope.tailMargin, loadScope.preRoll, tScope - tFlush, refusedAU, consultedAU);
+        else
+            NSLog(@"[PERF] export : pas de filtre IN-OUT (aucun clip)");
         if (!clone) { if (completion) completion(NO, @"Copie du projet impossible."); return; }
         objUpgradeResamplingForRender(*clone);   // sincBest sur la copie ; le rendu DIRECT garde sincMedium
 
