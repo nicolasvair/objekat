@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""c02 — the part of a child that sticks out of its group's window (out-of-range veil) answers NOTHING.
-Scene: G2's window is 1..5 s, its child B1 lasts 1..7 s. Hovering B1 at 2 s and 4.5 s (inside) reads B1;
-at 6 s and 6.9 s (under the veil) it must read nobody (before the fix: B1, with its move zone and cursor).
-B1's left edge is INSIDE the window: its trim-left handle keeps working; its right edge (7 s) is under the
-veil: no resize handle there. With the screen unlocked, a drag on the veiled part is tried
-too (it must not move B1 nor select it). Usage: c02_...py [socket]"""
+"""c02 — the part of a child that sticks out of its group's window (out-of-range veil) is GRABBABLE.
+(Reversed on 19 October 2026: the veil is only a dim; from 2 October to then this part answered nothing.)
+Scene: G2's window is 1..5 s, its child B1 lasts 1..7 s. Hovering B1 at 2 s and 4.5 s (inside) AND at
+6 s and 6.9 s (under the veil) reads B1. B1's left edge is inside the window: trim-left handle; its right
+edge (7 s) is under the veil: the resize handle is there too. With the screen unlocked, a drag on the
+veiled part is tried too (it must move/select B1). Usage: c02_...py [socket]"""
 import sys, json
 sys.path.insert(0, __file__.rsplit('/canvas_nested_cases', 1)[0])
 import scenario_canvas_nested as s
@@ -27,20 +27,19 @@ def is_b1(hv): return (hv.get("hovered_id") or "").upper() == I['B1'].upper()
 for t in (2, 4.5):
     hv = hov(t); check("t=%.1f s (inside the window): B1 hovered, zone %s" % (t, hv.get("zone")), is_b1(hv), hv)
 for t in (6, 6.9):
-    hv = hov(t); check("t=%.1f s (under the veil): nobody hovered" % t, not hv.get("hovered_id") and not hv.get("zone"), hv)
+    hv = hov(t); check("t=%.1f s (under the veil): B1 hovered, zone %s" % (t, hv.get("zone")), is_b1(hv), hv)
 hv = hov(1, 3); check("left edge (inside the window): trim handle still there", is_b1(hv) and hv.get("zone") == "trimLeft", hv)
-hv = hov(7, -3); check("right edge (under the veil): no resize handle", not is_b1(hv), hv)
-# the same masked hover with another tool (cut: no cut line on the veil)
+hv = hov(7, -3); check("right edge (under the veil): resize handle there too", is_b1(hv) and hv.get("zone") == "resizeRight", hv)
+# the same hover with another tool (cut: the cut line follows the hand on the veiled part too)
 c.send("tool.set", {"tool": "cut"})
-hv = hov(6); check("cut tool, under the veil: no cut hover", not is_b1(hv) and not hv.get("cut_hover"), hv)
+hv = hov(6); check("cut tool, under the veil: B1 cut-hovered", is_b1(hv) or bool(hv.get("cut_hover")), hv)
 c.send("tool.set", {"tool": "selection"})
 # click / drag on the veil (real mouse events: need the window key, i.e. an unlocked screen)
 try:
     before = s.items_state(c)
     c.send("selection.clear")
     c.send("input.drag", {"x": 6 * g['pps'] - g['sx'], "y": yy, "dx": 50, "dy": 0, "duration_ms": 400}); s.settle(c, 400)
-    check("drag under the veil moves nothing", s.items_state(c) == before)
-    check("... and selects nothing of B1", I['B1'].upper() not in json.dumps(c.send("selection.get")).upper())
+    check("drag under the veil moves B1", s.items_state(c) != before)
 except Exception as e:
     print("SKIP  real click/drag (%s)" % str(e)[:140])
 print("ALL PASS" if not fails else "FAILED: %s" % fails)

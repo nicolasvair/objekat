@@ -357,6 +357,9 @@ struct LaneEntry: Identifiable {
     /// The window of the timeline (absolute seconds) this block is visible through: the intersection
     /// of the windows of its ancestor groups. Outside it the block lies under the out-of-range veil
     /// and answers nothing (hover, click, drag). Open (±∞) for a top-level entry.
+    /// ⚠️ Since 19 October 2026 `buildLaneEntries` leaves it OPEN for every entry (the veil is only a
+    /// dim, the part of a child sticking out of its group stays grabbable): the mechanism is kept
+    /// but unused.
     /// @see LaneClip (Shared/LaneEntryIndex.swift)
     var clipLo: Double = -.infinity
     var clipHi: Double = .infinity

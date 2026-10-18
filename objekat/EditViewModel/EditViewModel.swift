@@ -1224,10 +1224,13 @@ final class EditViewModel {
                     parentID:          item.id,
                     depth:             depth + 1,
                     displayLaneOffset: dl + 1,
-                    // The children are seen through the group's window (the out-of-range veil).
-                    clip: LaneClip.narrowed(clip, groupStart: item.startTime,
-                                            groupDuration: item.duration,
-                                            infinite: item.isInfiniteBus)
+                    // The out-of-range veil is only a DIM: the part of a child sticking out of its
+                    // group's window stays grabbable (hover, click, drag, trims, fades). The window is
+                    // therefore NOT narrowed any more — `clip` stays open all the way down. To make the
+                    // veiled part inert again, pass `LaneClip.narrowed(clip, groupStart: item.startTime,
+                    // groupDuration: item.duration, infinite: item.isInfiniteBus)` here (the pure
+                    // `LaneClip` and every `isUnmasked` site are kept for it).
+                    clip: clip
                 )
             }
         }
