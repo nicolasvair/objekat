@@ -27,7 +27,7 @@ and the sections added by the later steps (guards, copies, un-make, creation, ne
 Exit: 0 if every assertion passes, 1 otherwise. `EXPECTED FAIL` lines do not count.
 """
 
-import array, json, os, shutil, struct, sys, tempfile, time, traceback
+import array, json, os, shutil, struct, subprocess, sys, tempfile, time, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -121,7 +121,17 @@ def children(o):
 
 
 def read_wav(path):
-    """(channels, sample_rate, samples) for the PCM 16/24/32 and float32 files the app writes."""
+    """(channels, sample_rate, samples) for the PCM 16/24/32 and float32 files the app writes.
+    A `.flac` (the consolidated waves are FLAC since the FLAC renders) is first decoded by CoreAudio's
+    `afconvert` into a 32-bit float wav — exact for the 16/24-bit integer content of a FLAC."""
+    if path.endswith(".flac"):
+        tmpdir = tempfile.mkdtemp(prefix="objk-flac-", dir="/tmp")
+        try:
+            out = os.path.join(tmpdir, "decoded.wav")
+            subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEF32", path, out], check=True)
+            return read_wav(out)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
     d = open(path, "rb").read()
     i, fmt, data = 12, None, None
     while i < len(d):
@@ -948,7 +958,7 @@ def main():
     cmd("project.save"); settle()
     # Forge an old definition: the sidecar's root carries a -6 dB fader, the manifest says it is not content.
     sidecar = [f for f in os.listdir(os.path.join(PROJ14, "samples", "consolidate"))
-               if f.startswith(defs()[b_def]["wave"][:-4]) and f.endswith("_objectstate.json")][0]
+               if f.startswith(os.path.splitext(defs()[b_def]["wave"])[0]) and f.endswith("_objectstate.json")][0]
     sp_ = os.path.join(PROJ14, "samples", "consolidate", sidecar)
     sj = json.load(open(sp_)); sj["volume"] = -6.0; json.dump(sj, open(sp_, "w"))
     doc = json.load(open(cp))

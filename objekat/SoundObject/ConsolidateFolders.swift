@@ -21,6 +21,14 @@ nonisolated enum ConsolidateFolders {
     /// The sub-folder name old projects wrote to. Read for ever, never written again.
     static let legacyFolderName = "objects"
 
+    /// The extension of the wave a NEW render writes: FLAC (lossless, integer 24 bits — about half
+    /// the weight of the 32-bit float WAV the bakes used to be). Only NEW writes: a definition
+    /// records its wave by file NAME (`ConsolidateDefinition.wave`), so every project saved with
+    /// `.wav` waves keeps loading as it is, with no migration — the extension is never assumed
+    /// anywhere else (the sidecar is derived with `deletingPathExtension`). The engine picks the
+    /// file format from this extension (@see OBJEngineCore.h, « FORMAT DU FICHIER »).
+    static let renderExtension = "flac"
+
     /// `<projectFolder>/samples/consolidate` — the folder new bakes write into.
     static func consolidateFolder(projectFolder: URL) -> URL {
         projectFolder.appendingPathComponent("samples", isDirectory: true)

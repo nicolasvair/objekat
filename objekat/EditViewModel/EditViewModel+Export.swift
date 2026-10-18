@@ -253,7 +253,10 @@ extension EditViewModel {
         // Working files in the destination folder: the same volume, so the final
         // putting in place is a simple (atomic) rename, with no copying.
         let stem = ".objekat-export-\(UUID().uuidString.prefix(8))"
-        let renderTarget = settings.folder.appendingPathComponent(stem + ".wav")
+        // The extension picks the engine's file format: `.flac` is written as FLAC, anything else as a
+        // WAV (the MP3 goes through a WAV intermediate). @see OBJEngineCore.h, « FORMAT DU FICHIER ».
+        let renderTarget = settings.folder.appendingPathComponent(
+            stem + (settings.format == .flac ? ".flac" : ".wav"))
 
         if persistingPreferences { persistExportPreferences(settings) }
         // The panel stays open for a DIRECT render, and that is the whole point of the setting's
@@ -292,7 +295,7 @@ extension EditViewModel {
 
         // MP3 goes through a FLOATING-POINT wave (32 bits): it is an intermediate, no reason
         // to quantise it before encoding it.
-        let renderBitDepth = settings.format == .wav ? settings.bitDepth : 32
+        let renderBitDepth = settings.format.isIntegerPCM ? settings.bitDepth : 32
 
         // WHY THIS DEFERRAL: in a render on a copy, `exportMixToFileAsync` only returns
         // after cloning the Edit, which INSTANTIATES every plugin in the project on the main
@@ -313,7 +316,7 @@ extension EditViewModel {
                              start: range.lowerBound, end: range.upperBound,
                              sampleRate: settings.sampleRate,
                              bitDepth: renderBitDepth,
-                             dithering: settings.format == .wav && settings.dithering,
+                             dithering: settings.format.isIntegerPCM && settings.dithering,
                              onEditCopy: settings.renderInBackground) { [weak self] ok, errorMessage in
                 guard let self else { return }
                 self.stopExportProgressPolling()
@@ -327,7 +330,7 @@ extension EditViewModel {
                     return
                 }
                 switch settings.format {
-                case .wav:
+                case .wav, .flac:
                     self.placeExportResult(from: renderTarget, to: destination)
                 case .mp3:
                     self.encodeExportToMp3(renderedWave: renderTarget,

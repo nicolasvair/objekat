@@ -467,8 +467,8 @@ struct ExportPanelView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 130)
-                Text(settings.format == .wav ? L("export.format.pcmStereo") : L("export.format.mp3Stereo", ExportSettings.mp3BitrateKbps))
+                .frame(width: 190)
+                Text(formatCaption)
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
                 Spacer()
@@ -484,7 +484,7 @@ struct ExportPanelView: View {
                 .frame(width: 130)
                 .help(L("audio.menu.sampleRate"))
 
-                if settings.format == .wav {
+                if settings.format.isIntegerPCM {
                     // The 'Resolution' label has gone: the picker already says '16 bit' and
                     // '24 bit', and the explanation fits in the tooltip.
                     Picker(noLabel, selection: bound(\.bitDepth)) {
@@ -498,13 +498,22 @@ struct ExportPanelView: View {
                 Spacer()
             }
 
-            if settings.format == .wav {
+            if settings.format.isIntegerPCM {
                 Toggle(isOn: bound(\.dithering)) {
                     Text(L("export.dithering"))
                         .font(.system(size: 11))
                 }
                 .toggleStyle(.checkbox)
             }
+        }
+    }
+
+    /// The small grey line next to the format picker.
+    private var formatCaption: String {
+        switch settings.format {
+        case .wav:  return L("export.format.pcmStereo")
+        case .flac: return L("export.format.flacStereo")
+        case .mp3:  return L("export.format.mp3Stereo", ExportSettings.mp3BitrateKbps)
         }
     }
 
@@ -591,6 +600,8 @@ struct ExportPanelView: View {
         let mo = bytes / (1024 * 1024)
         let size = mo < 1 ? L("export.size.kilobytes", Int(bytes / 1024))
                           : L("export.size.megabytes", mo)
-        return L("export.size.estimated", size)
+        // A FLAC is compressed without loss: its size depends on the material, the PCM figure is
+        // only the ceiling (a mix typically lands well under it) — said as such.
+        return L(settings.format == .flac ? "export.size.estimatedMax" : "export.size.estimated", size)
     }
 }

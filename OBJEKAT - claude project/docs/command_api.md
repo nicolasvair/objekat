@@ -2061,8 +2061,17 @@ its assertions rather than failing on a machine where it is present.
 loop. Its defaults are **not** the window's — MP3 44.1 kHz over the whole project, where
 it offers WAV 48/24. The window serves to deliver, the API to check quickly.
 
+`export.run`'s `format` is `mp3` (default), `wav` or `flac`. FLAC is lossless but **integer** (16 or 24 bits,
+`bit_depth` as for WAV, dithering likewise): unlike the 32-bit float WAV bakes it has no headroom, so anything
+the mix does above 0 dBFS is clipped in the file. During a FLAC render the file in progress is NOT a readable
+file (no total length before it is closed), so `export.preview`'s `audible_seconds` stays 0 during the
+render and the listening only becomes possible once it has ended (the waveform still grows); WAV and
+MP3 are unchanged. `export.regions`' `format` accepts the same three.
+
 **`object.render_isolated {id, path, start?, end?, sample_rate?, bit_depth?}`** renders ONE object — just the
-object — into a wav (asynchronous: a `job_id`, then `job.wait`). The file carries everything that belongs to the object (its
+object — into a wav — or a flac when `path` ends in `.flac` (integer, 16 or 24 bits; the `job.wait` result then also carries
+`peak_linear` and `clipped`, the level handed to the writer, since a FLAC cannot hold more than 0 dBFS)
+(asynchronous: a `job_id`, then `job.wait`). The file carries everything that belongs to the object (its
 own plugins, gain and pan, fades, window, speed; its content for a group or MIDI object) and nothing around it:
 not its parent groups' chains, not the stem or the master, no aux or sends. Laid back at the same `start` as a
 bare clip, it is iso with the object as it sounded alone. Unlike a consolidation bake, the object's own fader and
@@ -2472,7 +2481,7 @@ A few points of vocabulary that save mistakes:
 
 The sound list's footer line ("1,2 GB · 340 MB unused") and its popover are two commands. A project
 folder piles up files nothing reads any more — above all the old revisions of consolidated waves
-(`samples/consolidate/<name>_<def8>[_vN].wav` + `_objectstate.json`, every re-bake keeps the
+(`samples/consolidate/<name>_<def8>[_vN].flac` — `.wav` for a project older than the FLAC renders — + `_objectstate.json`, every re-bake keeps the
 previous one), embedded sources (`samples/sources`) and orphan `waveforms/*.wfc` caches. **Only
 those folders are ever listed**; nothing else of the project folder can be offered, whatever a
 script asks for.

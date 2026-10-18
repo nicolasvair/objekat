@@ -23,6 +23,12 @@ import Observation
 // at the next top-up. The gap is audible, and it is the honest thing to show: a silence that says
 // the render is behind.
 //
+// A FLAC export is the exception: a FLAC has no length before it is closed and no header to rewrite
+// (JUCE's writer does not flush), so `AVAudioFile` cannot open the file in progress and `start`/`probe`
+// find nothing to hear until the render has ended — the listening is then available as for any file.
+// Graceful (the listen button stays unavailable, as before the first flush), but it is a real limit
+// of the format, measured by `tools/scenario_flac_renders.py` (E).
+//
 // Deliberately NOT the project's engine: Tracktion is either rendering or playing something else,
 // and the two must not be entangled. A separate `AVAudioEngine` is one more client of the device,
 // which CoreAudio has always allowed.

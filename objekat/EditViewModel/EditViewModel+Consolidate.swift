@@ -70,6 +70,29 @@ extension EditViewModel {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
 
+    /// Where a NEW consolidate render writes its wave: `<folder>/<base>.flac`. The engine chooses the
+    /// file format from the extension. Old waves (`.wav`) are never rewritten; they are found by the
+    /// name their definition records.
+    func consolidateRenderURL(base: String, in folder: URL) -> URL {
+        folder.appendingPathComponent("\(base).\(ConsolidateFolders.renderExtension)")
+    }
+
+    /// FLAC is integer: the 32-bit float WAV the renders used to be kept whatever went past 0 dBFS
+    /// (a loud group sums above it quite normally, and the instance's fader can bring it back down),
+    /// the FLAC writer clips it. The engine measures the peak it handed the writer; when it went
+    /// past full scale, say so — a clipped wave must never pass for a clean one. Called once the
+    /// render has succeeded, before the wave is adopted. Does NOT undo anything: the wave is valid,
+    /// only flattened at the peaks (the model keeps the original in the sidecar, so a re-bake after
+    /// lowering the level is the remedy).
+    func warnIfConsolidateRenderClipped(_ wave: URL, objectName: String) {
+        guard let peak = engine?.takeRenderPeak(forFilePath: wave.path)?.doubleValue,
+              peak > 1.0 + 1e-6 else { return }
+        let db = 20 * log10(peak)
+        NSLog("[OBJECT] consolidate render « \(objectName) » clipped: peak \(String(format: "%+.1f", db)) dBFS, written to FLAC (integer) → flattened at 0 dBFS")
+        notify(L("consolidate.warning.clipped.title"),
+               L("consolidate.warning.clipped.info", objectName, String(format: "%+.1f", db)))
+    }
+
     /// The path of the sidecar (the original editable sub-tree) associated with a definition's current wave.
     func consolidateSidecarURL(forWave wave: String, in folder: URL) -> URL {
         let base = (wave as NSString).deletingPathExtension
@@ -361,7 +384,7 @@ extension EditViewModel {
 
         let nextRevision = def.revision + 1
         let base = "\(bakeSafeName(def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
-        let wav  = folder.appendingPathComponent("\(base).wav")
+        let wav  = consolidateRenderURL(base: base, in: folder)
 
         let renderStart = restored.startTime
         let renderEnd   = restored.startTime + restored.duration
@@ -384,6 +407,7 @@ extension EditViewModel {
                 NSLog("[OBJECT] headless rebake \(defID): render failed")
                 completion(false); return
             }
+            self.warnIfConsolidateRenderClipped(wav, objectName: restored.displayName)
             // The new sidecar (child refs up to date; the original ids/plugins preserved), written
             // with the rule of the content: the root is entirely content.
             let newSidecar = self.consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
@@ -455,7 +479,7 @@ extension EditViewModel {
             fromSidecar: withCapturedPluginStates(find(id: groupID) ?? group),
             def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
         let base  = "\(bakeSafeName(group.displayName))_\(defID.uuidString.prefix(8))"
-        let wav   = folder.appendingPathComponent("\(base).wav")
+        let wav   = consolidateRenderURL(base: base, in: folder)
 
         let range        = bakeRenderRange(group)
         let renderStart  = range.start
@@ -511,7 +535,7 @@ extension EditViewModel {
             fromSidecar: withCapturedPluginStates(clip),
             def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
         let base = "\(bakeSafeName(clip.displayName))_\(defID.uuidString.prefix(8))"
-        let wav  = folder.appendingPathComponent("\(base).wav")
+        let wav  = consolidateRenderURL(base: base, in: folder)
         let renderStart = clip.startTime
         let renderEnd   = clip.startTime + clip.duration
         guard renderEnd > renderStart else { return }
@@ -662,6 +686,8 @@ extension EditViewModel {
             try? FileManager.default.removeItem(at: wav)
             return
         }
+
+        warnIfConsolidateRenderClipped(wav, objectName: live.displayName)
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
@@ -960,7 +986,7 @@ extension EditViewModel {
         let original = withCapturedPluginStates(content)
         let nextRevision = def.revision + 1
         let base = "\(bakeSafeName(find(id: placementID)?.displayName ?? def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
-        let wav  = folder.appendingPathComponent("\(base).wav")
+        let wav  = consolidateRenderURL(base: base, in: folder)
 
         bakingIDs.insert(placementID)
         bakeRenderKeys[placementID] = contentID   // the veil is the stage's, the render the root's
@@ -1046,6 +1072,8 @@ extension EditViewModel {
             try? FileManager.default.removeItem(at: wav)
             return
         }
+
+        warnIfConsolidateRenderClipped(wav, objectName: stage.displayName)
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {

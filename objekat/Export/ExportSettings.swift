@@ -25,15 +25,30 @@ struct ExportSettings: Equatable {
     }
 
     enum FileFormat: String, CaseIterable, Identifiable {
-        case wav, mp3
+        // The order is the segmented picker's order. FLAC sits last: the rawValues are persisted
+        // (the last format used), so adding a case here changes nothing for what is already stored.
+        case wav, mp3, flac
         var id: String { rawValue }
-        var label: String { self == .wav ? "WAV" : "MP3" }
+        var label: String {
+            switch self {
+            case .wav:  return "WAV"
+            case .mp3:  return "MP3"
+            case .flac: return "FLAC"
+            }
+        }
         var fileExtension: String { rawValue }
 
+        /// True for the formats written straight from the render at an integer bit depth (16 or
+        /// 24) — the ones that offer the bit-depth choice and the dithering. MP3 goes through a
+        /// floating-point intermediate wave and is encoded from it. FLAC is integer-only: unlike WAV
+        /// it has no 32-bit float, so the level above 0 dBFS (if any) is clipped at the file.
+        var isIntegerPCM: Bool { self != .mp3 }
+
         /// The sample rates offered. MP3 (MPEG-1 Layer III) only knows 32 / 44.1 / 48 kHz — offering
-        /// 88.2 or 96 kHz would make no sense, the encoder would resample.
+        /// 88.2 or 96 kHz would make no sense, the encoder would resample. FLAC takes the same rates
+        /// as WAV.
         var sampleRates: [Double] {
-            self == .wav ? [44100, 48000, 88200, 96000] : [44100, 48000]
+            self == .mp3 ? [44100, 48000] : [44100, 48000, 88200, 96000]
         }
     }
 
@@ -58,7 +73,7 @@ struct ExportSettings: Equatable {
     /// The same default as the `export.run` command, so panel and script render the same thing.
     var format: FileFormat = .mp3
     var sampleRate: Double = 44100
-    /// WAV bit depth: 16 or 24 bits. Not applicable to MP3, where the intermediate render is
+    /// WAV / FLAC bit depth: 16 or 24 bits. Not applicable to MP3, where the intermediate render is
     /// always floating point.
     var bitDepth: Int = 24
     /// Dither on render, INDEPENDENT of the bit depth: one may want 16 bits without dither noise

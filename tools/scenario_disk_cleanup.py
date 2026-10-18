@@ -105,7 +105,7 @@ def main(cmd):
         return "samples/consolidate/" + d["wave"]
 
     def sidecar_rel(d):
-        return "samples/consolidate/" + d["wave"][:-4] + "_objectstate.json"
+        return "samples/consolidate/" + os.path.splitext(d["wave"])[0] + "_objectstate.json"
 
     def render(path):
         j = job_wait(cmd("export.run", path=path, format="wav", sample_rate=44100, bit_depth=24))
@@ -300,7 +300,7 @@ def main(cmd):
     check("C5 V1, reopened, signals the wave missing (the usual missing-file alert)",
           cmd("project.rescan_missing")["path_count"] >= 1)
     for t in r["trashed"][0]["trash"]:       # put them back by hand (moved, never deleted)
-        rel = wave_rel(V1wave) if t.endswith(".wav") else sidecar_rel(V1wave)
+        rel = wave_rel(V1wave) if t.endswith((".wav", ".flac")) else sidecar_rel(V1wave)
         shutil.move(t, os.path.join(Q, rel))
     check("C5 put back: V1 is whole again", cmd("project.rescan_missing")["path_count"] == 0)
 

@@ -701,6 +701,29 @@ What has landed since mid-August, in order:
   hand-over from the temporary wave to the final file can be heard (in MP3 above all, where it is
   not the same file), and whether "waiting for the render" reads as an explanation or as a fault.
 
+- **Internal renders are FLAC (18 October 2026, branch `feat/flac-renders`).** The engine has two
+  render entry points (`renderTrackToFileAsync`: every bake and consolidation; `exportMixToFileAsync`:
+  the mix export) and the FORMAT IS CHOSEN BY THE EXTENSION of the destination (`.flac` → JUCE
+  `FlacAudioFormat`, anything else → the WAV with the « created by objekat » bext). No engine patch.
+  FLAC is **integer, 16 or 24 bits only** (any other depth makes the writer, hence the render, fail:
+  `objFlacBitDepth` maps everything but 16 to 24): the 32-bit float WAVs the bakes used to be kept
+  whatever went past 0 dBFS, a FLAC clips it at the writer. Nothing may clip in silence, so a render to
+  a `.flac` is measured by an `IncomingDataReceiver` (`OBJRenderPeakProbe`, passed to
+  `EditRenderer::render` like `OBJExportTap`) and `takeRenderPeak(forFilePath:)` hands the peak back once:
+  a consolidation above 0 dBFS raises a dialogue naming it (`warnIfConsolidateRenderClipped`, through
+  `notify` so a headless run journals it), `object.render_isolated` into a `.flac` answers
+  `peak_linear`/`clipped`. New consolidated waves are `.flac` (`ConsolidateFolders.renderExtension`);
+  a definition stores its wave by NAME, so old `.wav` waves load as ever, are never migrated, and the
+  sidecar is always derived by `deletingPathExtension` (never `[:-4]` — `.flac` is five characters).
+  Export: `ExportSettings.FileFormat.flac` beside WAV and MP3, same rates as WAV, 16/24 + dithering
+  (`isIntegerPCM`). **Not converted**: the engine's own derived files (`.wf` proxies, reversed renders),
+  the `.wfc` caches (not audio), the MP3's intermediate WAV (32-bit float, deleted after encoding),
+  and `render_isolated` into any path that does not end in `.flac` (the caller's choice).
+  **A FLAC in progress cannot be listened to**: it has no length before it is closed (the WAV rewrites
+  its header every six seconds), so `export.preview`'s `audible_seconds` stays 0 during a FLAC export and
+  `ExportAudition` simply finds nothing to play until the end — graceful, not a fault.
+  `tools/scenario_flac_renders.py` asserts all of it (decoding through `afconvert`).
+
 - **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had
   been used) — each one a place where the answer given that morning was right about the problem and
   wrong about the remedy.
