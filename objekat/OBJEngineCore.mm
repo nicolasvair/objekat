@@ -990,6 +990,45 @@ struct OBJExportTap : public juce::AudioFormatWriter::ThreadedWriter::IncomingDa
     }
 };
 
+// Sonde de crête d'un rendu de bake : la valeur absolue maximale du signal tel qu'il est remis à
+// l'écrivain, AVANT quantification. Elle existe pour le FLAC : un fichier FLAC est entier (16 ou
+// 24 bits), alors que les bakes étaient des WAV 32 bits flottants qui conservaient tout dépassement
+// de 0 dBFS ; l'écrivain JUCE écrête en silence tout échantillon |x| ≥ 1,0. Cette crête permet à
+// l'appelant de DIRE qu'un wave baké a été écrêté, au lieu de le laisser passer sous silence.
+// Pas de patch moteur : EditRenderer::render accepte un IncomingDataReceiver (comme OBJExportTap),
+// et NodeRenderContext l'appelle avec le tampon final juste avant l'écriture. Un seul écrivain
+// (le thread de rendu), un seul lecteur (le message thread, une fois le rendu fini).
+struct OBJRenderPeakProbe : public juce::AudioFormatWriter::ThreadedWriter::IncomingDataReceiver {
+    std::atomic<float> peak { 0.0f };
+
+    void reset(int, double, juce::int64) override { peak.store(0.0f, std::memory_order_relaxed); }
+
+    void addBlock(juce::int64, const juce::AudioBuffer<float>& buffer,
+                  int startOffsetInBuffer, int numSamples) override {
+        if (numSamples <= 0) return;
+        float m = peak.load(std::memory_order_relaxed);
+        for (int ch = buffer.getNumChannels(); --ch >= 0;)
+            m = juce::jmax(m, buffer.getMagnitude(ch, startOffsetInBuffer, numSamples));
+        peak.store(m, std::memory_order_relaxed);
+    }
+};
+
+// Choix du format d'écriture d'un rendu d'après l'EXTENSION de la destination : `.flac` → FLAC,
+// tout le reste → WAV (comportement historique, bext « created by objekat »). C'est l'extension, et
+// non un paramètre de plus, qui décide : le nom de fichier est déjà ce que l'appelant maîtrise, et
+// ce que le moteur relira (Tracktion choisit lui aussi son lecteur par l'extension).
+static bool objIsFlacDestination(const juce::File& f) {
+    return f.hasFileExtension("flac");
+}
+
+// FLAC est ENTIER, 16 ou 24 bits seulement (FlacAudioFormat::getPossibleBitDepths ; un autre
+// nombre fait échouer la création de l'écrivain, donc le rendu entier). 16 si on le demande
+// explicitement, 24 sinon — y compris pour un défaut « 32 bits flottant » d'avant, dont le FLAC
+// ne peut pas conserver le dépassement de 0 dBFS.
+static int objFlacBitDepth(int requested) {
+    return requested == 16 ? 16 : 24;
+}
+
 // MARK: - OBJEngineCore
 
 // INC 2 — veilleur de latence (PDC à chaud). Un te::Plugin peut changer la latence qu'il rapporte
@@ -1443,6 +1482,7 @@ struct OBJRenderChain {
     // AVANT _engine : détruit APRÈS lui, donc après tout rendu encore en vol (le Renderer en tient
     // un pointeur brut).
     std::unique_ptr<OBJWavAudioFormat> _wavFormat;
+    std::unique_ptr<juce::FlacAudioFormat> _flacFormat;   // destination `.flac` (@see objIsFlacDestination)
     std::unique_ptr<te::Engine> _engine;
     // Décision de fréquence de la carte (@see -applySampleRatePolicy, OBJSampleRatePolicy.h).
     // `_rateDecision` = OBJRateDecisionKind ; 0 (adopt) tant qu'aucune décision n'a été prise.
@@ -1717,6 +1757,10 @@ struct OBJRenderChain {
     // jobID (NSString) → block completion (retenu côté ObjC — ne JAMAIS capturer un block ObjC
     // dans un lambda C++ type-erasé : ARC ne le gère pas de façon fiable → crash).
     NSMutableDictionary<NSString*, id>*                    _renderCompletions;
+    // Chemin du fichier FLAC baké → crête (linéaire, avant quantification) du signal remis à
+    // l'écrivain, posée à la fin du rendu et retirée par -takeRenderPeakForFilePath:. Sert à
+    // signaler un écrêtage (FLAC = entier, la marge au-dessus de 0 dBFS du WAV flottant est perdue).
+    std::unordered_map<std::string, float>                 _renderPeaks;
 
     // Export du mix : le job vit dans _renderJobs comme un bake, mais son identifiant est retenu
     // à part — c'est lui qui répond à « un export tourne-t-il ? », « où en est-il ? » et
@@ -1772,6 +1816,7 @@ static BOOL gOBJAudioDisabled = NO;
         // Gain de sortie clip post-FX (plage -96…+40 dB). Doit être enregistré
         // avant toute création/restauration de clip.
         _wavFormat = std::make_unique<OBJWavAudioFormat>();
+        _flacFormat = std::make_unique<juce::FlacAudioFormat>();
         _engine->getPluginManager().createBuiltInType<te::ObjGainPlugin>();
         // The user GAIN STAGE (a "+" gesture, or a migrated trim / FX link output): one class, two
         // type names — its two faces (@see OBJGainStagePlugin.h). Not in tracktionBuiltInPluginList():
@@ -4034,8 +4079,17 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     r.tracksToDo         = tracksToDo;
     r.allowedClips       = allowedClips;   // vide = toute la piste
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
-    r.audioFormat        = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
-    r.bitDepth           = fileSpec.bitDepth;   // défaut : WAV 32-bit float (headroom, lisible partout)
+    // Format d'après l'extension de la destination. WAV : 32 bits flottant par défaut (marge au-dessus
+    // de 0 dBFS conservée, lisible partout). FLAC : entier, 16 ou 24 bits (@see objFlacBitDepth) —
+    // la marge flottante est perdue, d'où la sonde de crête ci-dessous.
+    const bool flacTarget = objIsFlacDestination(r.destFile);
+    if (flacTarget) {
+        r.audioFormat    = _flacFormat.get();
+        r.bitDepth       = objFlacBitDepth(fileSpec.bitDepth);
+    } else {
+        r.audioFormat    = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
+        r.bitDepth       = fileSpec.bitDepth;
+    }
     r.sampleRateForAudio = fileSpec.sampleRate > 0.0 ? fileSpec.sampleRate : dm.getSampleRate();
     r.blockSizeForAudio  = dm.getBlockSize();
     r.time               = te::TimeRange(te::TimePosition::fromSeconds(startSecs),
@@ -4056,13 +4110,19 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     juce::File outFile = r.destFile;
     __unsafe_unretained OBJEngineCore* weakSelf = self;  // l'engine vit pour toute la session
 
+    // Sonde de crête, pour les seuls rendus FLAC (entiers : tout dépassement de 0 dBFS y est écrêté).
+    std::shared_ptr<OBJRenderPeakProbe> peakProbe;
+    if (flacTarget) peakProbe = std::make_shared<OBJRenderPeakProbe>();
+    const std::string peakKey([filePath UTF8String]);
+
     // EditRenderer::render lance un thread dédié ; finishedCallback à la fin (succès/échec).
     // Le lambda C++ ne capture QUE des POD/objets C++ (jamais le block ObjC) ; on marshale vers
     // le main thread via juce::MessageManager::callAsync, où on récupère le block côté ObjC.
     auto handle = te::EditRenderer::render(r,
-        [weakSelf, jobID, outFile](tl::expected<juce::File, std::string> res) {
+        [weakSelf, jobID, outFile, peakProbe, peakKey](tl::expected<juce::File, std::string> res) {
             const bool ok = res.has_value() && outFile.existsAsFile();
-            juce::MessageManager::callAsync([weakSelf, jobID, ok] {
+            juce::MessageManager::callAsync([weakSelf, jobID, ok, peakProbe, peakKey] {
+                if (peakProbe) weakSelf->_renderPeaks[peakKey] = peakProbe->peak.load(std::memory_order_relaxed);
                 // Cette ligne DÉTRUIT le clone, donc ferme toutes
                 // ses instances d'AU — sur le message thread. C'est le second blocage, celui qui
                 // tombe alors que le rendu est déjà terminé.
@@ -4076,7 +4136,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                 [weakSelf->_renderCompletions removeObjectForKey:k];
                 if (cb) cb(ok ? YES : NO);
             });
-        });
+        }, peakProbe);
 
     if (!handle) {
         NSLog(@"[OBJ] renderTrackToFileAsync: EditRenderer::render a échoué (%@)", desc);
@@ -4488,8 +4548,16 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // tracksToDo et allowedClips laissés VIDES : le renderer prend alors tout (@see
     // render_utils::createRenderTask, `allowedTracks = tracksToDo.isZero() ? nullptr : …`).
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
-    r.audioFormat        = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
-    r.bitDepth           = (int)bitDepth;
+    // Format d'après l'extension (@see objIsFlacDestination). FLAC : 16 ou 24 bits entiers ; le
+    // panneau ne propose pas le 32 flottant avec ce format, mais on borne ici aussi, un 32 faisant
+    // échouer la création de l'écrivain donc tout l'export.
+    if (objIsFlacDestination(r.destFile)) {
+        r.audioFormat    = _flacFormat.get();
+        r.bitDepth       = objFlacBitDepth((int)bitDepth);
+    } else {
+        r.audioFormat    = _wavFormat.get();   // @see OBJWavAudioFormat (bext : « created by objekat »)
+        r.bitDepth       = (int)bitDepth;
+    }
     r.sampleRateForAudio = sampleRate > 0 ? sampleRate : dm.getSampleRate();
     r.blockSizeForAudio  = dm.getBlockSize();
     r.time               = te::TimeRange(te::TimePosition::fromSeconds(startSecs),
@@ -4567,6 +4635,15 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
           filePath, startSecs, endSecs, sampleRate, (long)bitDepth,
           dithering ? " + dithering" : "", jobID.c_str(),
           onEditCopy ? "sur copie" : "direct");
+}
+
+- (NSNumber*)takeRenderPeakForFilePath:(NSString*)filePath {
+    const std::string key([filePath UTF8String]);
+    auto it = _renderPeaks.find(key);
+    if (it == _renderPeaks.end()) return nil;
+    NSNumber* v = @(it->second);
+    _renderPeaks.erase(it);
+    return v;
 }
 
 - (float)exportProgress {

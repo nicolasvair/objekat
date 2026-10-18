@@ -206,6 +206,10 @@
 - (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
 
 // MARK: - Bake — rendu offline
+// FORMAT DU FICHIER = EXTENSION de `filePath` : `.flac` → FLAC (entier 16 ou 24 bits, 24 par
+// défaut — JAMAIS le 32 flottant du WAV : ce que le moteur rend au-delà de 0 dBFS y est écrêté,
+// d'où `takeRenderPeakForFilePath:`), toute autre extension → WAV (32 bits flottant). Vaut pour les
+// quatre rendus de piste ci-dessous et pour l'export du mix.
 // Rend la sortie complète du sous-mix d'un groupe (FolderTrack + sous-pistes : dry, bus FX,
 // returns d'aux internes) dans un fichier wave, EN TÂCHE DE FOND : rendu sur une COPIE de l'Edit
 // (rôle forRendering → ne touche jamais le graphe live), via EditRenderer async sur son propre
@@ -300,7 +304,8 @@
 // fonctionnent pareil.
 //
 // `sampleRate` est la fréquence de RENDU (le graphe entier tourne à cette fréquence, plugins
-// compris) et `bitDepth` vaut 16, 24 ou 32 (32 = flottant). `dithering` est indépendant de la
+// compris) et `bitDepth` vaut 16, 24 ou 32 (32 = flottant ; en FLAC, 16 ou 24 seulement, tout autre
+// nombre vaut 24). `dithering` est indépendant de la
 // profondeur — c'est un choix, pas une conséquence : bruit de dispersion ajouté avant la
 // quantification pour casser la distorsion de troncature. Sans effet en 32 bits flottant, où
 // rien n'est quantifié.
@@ -321,6 +326,12 @@
                   onEditCopy:(BOOL)onEditCopy
                   completion:(void(^)(BOOL ok, NSString* _Nullable errorMessage))completion
                   NS_SWIFT_UI_ACTOR;
+
+// Crête (valeur absolue maximale, linéaire : 1.0 = 0 dBFS) du signal envoyé à l'écrivain par le
+// dernier rendu de piste FLAC vers `filePath`, avant quantification — nil si ce rendu n'a pas été
+// mesuré (destination non FLAC, rendu échoué). Lecture UNIQUE : la valeur est retirée. Au-delà de
+// 1.0, le fichier FLAC est écrêté (FLAC est entier) ; c'est à l'appelant de le signaler.
+- (NSNumber* _Nullable)takeRenderPeakForFilePath:(NSString* _Nonnull)filePath;
 
 // Avancement de l'export en cours (0…1), 0 si aucun. À poller pour une barre de progression.
 - (float)exportProgress;

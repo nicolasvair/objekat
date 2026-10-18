@@ -2485,6 +2485,52 @@
         }
       }
     },
+    "consolidate.warning.clipped.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %1$@ » peaks at %2$@ dBFS. Consolidated waves are stored as 24-bit FLAC (integer), which cannot hold anything above 0 dBFS: the peaks have been flattened in the wave. To avoid it, lower the level of the content (or of its loudest objects) and consolidate again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %1$@ » alcanza %2$@ dBFS. Los waves consolidados se guardan en FLAC de 24 bits (entero), que no puede contener nada por encima de 0 dBFS: los picos se han aplanado en el wave. Para evitarlo, baja el nivel del contenido (o de sus objetos más fuertes) y vuelve a consolidar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %1$@ » atteint %2$@ dBFS. Les waves consolidés sont enregistrés en FLAC 24 bits (entier), qui ne peut rien contenir au-dessus de 0 dBFS : les crêtes ont été aplaties dans le wave. Pour l’éviter, baisse le niveau du contenu (ou de ses objets les plus forts) puis consolide à nouveau."
+          }
+        }
+      }
+    },
+    "consolidate.warning.clipped.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Level above 0 dBFS: wave clipped"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nivel por encima de 0 dBFS: wave recortado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niveau au-dessus de 0 dBFS : wave écrêté"
+          }
+        }
+      }
+    },
     "dialog.dirty.discard": {
       "extractionState": "manual",
       "localizations": {
@@ -4325,6 +4371,29 @@
         }
       }
     },
+    "export.format.flacStereo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lossless, stereo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin pérdida, estéreo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sans perte, stéréo"
+          }
+        }
+      }
+    },
     "export.format.mp3Stereo": {
       "extractionState": "manual",
       "localizations": {
@@ -5195,6 +5264,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Taille estimée %@"
+          }
+        }
+      }
+    },
+    "export.size.estimatedMax": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated size %@ at most (FLAC)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tamaño estimado %@ como máximo (FLAC)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taille estimée %@ au plus (FLAC)"
           }
         }
       }

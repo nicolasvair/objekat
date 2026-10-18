@@ -22,13 +22,14 @@ extension CommandRegistry {
                  params: [ParamSpec("path", "string", required: false,
                                     "Destination file. The extension is imposed by the "
                                     + "format. Default: <project folder>/<project name>."),
-                          ParamSpec("format", "string", required: false, "mp3 (default) or wav."),
+                          ParamSpec("format", "string", required: false, "mp3 (default), wav or flac."),
                           ParamSpec("sample_rate", "number", required: false,
-                                    "44100 (default) or 48000; WAV also takes 88200 and 96000."),
+                                    "44100 (default) or 48000; WAV and FLAC also take 88200 and 96000."),
                           ParamSpec("bit_depth", "int", required: false,
-                                    "16 or 24 (default). WAV only."),
+                                    "16 or 24 (default). WAV and FLAC only (FLAC is integer: no 32-bit float, "
+                                    + "anything above 0 dBFS is clipped)."),
                           ParamSpec("dithering", "bool", required: false,
-                                    "Dither noise on render (default true). WAV only."),
+                                    "Dither noise on render (default true). WAV and FLAC only."),
                           ParamSpec("range", "string", required: false,
                                     "project (default) = all the content; inout = the range between "
                                     + "the project's IN/OUT markers; regions = one file PER REGION "
@@ -387,7 +388,7 @@ extension CommandRegistry {
                         + "an unticked region; names are made unique among the TICKED ones only. "
                         + "`warnings` may hold empty_name, duplicate_name, file_exists. Read-only.",
                  params: [ParamSpec("format", "string", required: false,
-                                    "mp3 (default) or wav — decides the extension of `file_name`."),
+                                    "mp3 (default), wav or flac — decides the extension of `file_name`."),
                           ParamSpec("folder", "string", required: false,
                                     "The destination folder `file_exists` is checked against. Default: "
                                     + "the project folder; without one, file_exists is never reported.")]) { p in
@@ -465,7 +466,9 @@ extension CommandRegistry {
         }
 
         register("object.render_isolated",
-                 summary: "Renders ONE object, just the object, to a wav file (asynchronous). Returns a "
+                 summary: "Renders ONE object, just the object, to a wav file — or a flac file when `path` "
+                        + "ends in .flac (integer, see `bit_depth`; the result then reports the peak). "
+                        + "Asynchronous. Returns a "
                         + "job_id. The file holds everything that belongs to the object — its own plugins, "
                         + "gain and pan, fades, window, speed, and its content for a group or MIDI object — "
                         + "and nothing around it: no parent group's chain, no stem, no master, no aux or "
@@ -473,7 +476,8 @@ extension CommandRegistry {
                         + "sounded alone. Unlike `export.run`, it does not render the mix.",
                  params: [ParamSpec("id", "uuid", "Object to render (clip, group or MIDI; not an aux "
                                     + "nor an infinite bus)."),
-                          ParamSpec("path", "string", "Destination wav (written as is, overwritten)."),
+                          ParamSpec("path", "string", "Destination wav or flac (written as is, overwritten). "
+                                    + "The extension picks the format."),
                           ParamSpec("start", "number", required: false,
                                     "Start in seconds (default: the object's start)."),
                           ParamSpec("end", "number", required: false,
@@ -481,7 +485,7 @@ extension CommandRegistry {
                                     + "to the sample, with no tail margin."),
                           ParamSpec("sample_rate", "number", required: false, "Default 48000."),
                           ParamSpec("bit_depth", "int", required: false,
-                                    "16 or 24 (default; written as an integer wav).")],
+                                    "16 or 24 (default; written as an integer wav or flac).")],
                  // A render reads the project, never writes it.
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -517,9 +521,19 @@ extension CommandRegistry {
                                      sampleRate: sampleRate, bitDepth: depth) { ok in
                 Task { @MainActor in
                     if ok {
-                        JobRegistry.shared.finish(jobID, result: .object([
+                        var result: [String: JSONValue] = [
                             "path": .string(path), "start": .number(start), "end": .number(end),
-                            "sample_rate": .number(sampleRate), "bit_depth": .int(depth)]))
+                            "sample_rate": .number(sampleRate), "bit_depth": .int(depth)]
+                        // FLAC is integer: the engine measured what it handed the writer, so a script
+                        // learns that the file was clipped instead of finding out by ear. (The engine is
+                        // fetched here, on the main actor: it is not Sendable, so the completion cannot
+                        // capture it.) Only a FLAC render is measured; any other answers nil.
+                        if let peak = try? CommandContext.shared.requireEngine()
+                            .takeRenderPeak(forFilePath: path)?.doubleValue {
+                            result["peak_linear"] = .number(peak)
+                            result["clipped"] = .bool(peak > 1.0 + 1e-6)
+                        }
+                        JobRegistry.shared.finish(jobID, result: .object(result))
                     } else {
                         JobRegistry.shared.fail(jobID, error: CommandError(
                             code: .engine_error, message: "the isolated render failed (see the log)"))
