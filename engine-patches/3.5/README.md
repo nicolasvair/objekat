@@ -495,7 +495,8 @@ Checked as still biting: `develop` still had the linear `std::find`.
   read the ORIGINAL file and played it forward. When the Edit does not play, `initialise()` now adopts the
   file `RenderManager::getAudioFileForHash` names for the clip's hash if it already exists (the clone shares
   the live Edit's temp directory). Limit: a clone made before the live Edit has finished that render still
-  reads the original. Branch `objekat-reverse-render-0044` (NOT published), commit on top of
+  reads the original. Branch `objekat-reverse-render-0044`
+  (published on the fork 19 October 2026, `objekat-patches-3.5` fast-forwarded onto it, `dc3d5198809`), commit on top of
   `objekat-proxy-wavenode-0043`. File: `tracktion_AudioClipBase.cpp`. The next number is `0045`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
