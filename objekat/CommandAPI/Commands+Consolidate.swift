@@ -62,6 +62,7 @@ extension CommandRegistry {
             guard !object.isConsolidateInstance else {
                 throw CommandError(code: .invalid_state, message: "already an instance of a consolidated object")
             }
+            if let why = vm.sessionRefusal(.consolidate, ids: [id]) { throw CommandError(code: .invalid_state, message: why) }
             guard vm.consolidateFolder != nil else {
                 throw CommandError(code: .invalid_state,
                                    message: "save the project first (samples/consolidate/ is required)")
@@ -212,6 +213,7 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found,
                                    message: "unknown instance: \(placementID.uuidString)")
             }
+            if let why = vm.sessionRefusal(.deconsolidate, ids: [placementID]) { throw CommandError(code: .invalid_state, message: why) }
             vm.deconsolidate(placementID: placementID)
             return .object(["placement": .string(placementID.uuidString),
                             "still_linked": .bool(vm.find(id: placementID)?.isConsolidateInstance ?? false)])

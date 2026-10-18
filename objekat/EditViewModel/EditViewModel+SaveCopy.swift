@@ -345,7 +345,7 @@ extension EditViewModel {
 
         // 6) The project document: items (with captured plugin states) rewritten + the definition
         //    registry filtered down to the closure (orphan definitions are dropped).
-        let rewrittenItems = portableItems(itemsWithCapturedPluginStates().map(rewrite),
+        let rewrittenItems = portableItems(itemsFoldingOpenSessions(itemsWithCapturedPluginStates()).map(rewrite),
                                            projectFolder: destFolder)
         let closureDefs = processedDefs.compactMap { consolidateDefinitions[$0] }
         // The SAME document as a save (@see projectDocument): snap, viewport, tempo, grid and the

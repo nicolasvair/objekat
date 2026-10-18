@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // MARK: - The release of a MOVE (clips and groups, no time selection)
@@ -45,7 +46,7 @@ extension EditViewModel {
         // at `base + (anchor.lane − grabbed.lane)`, i.e. exactly `plan.lane + rank`.
         var anchors = rawAnchors
         var plan: LaneInsertion.Plan? = nil
-        let decision: MoveDropResolution.Decision
+        let rawDecision: MoveDropResolution.Decision
         if let ir = insertionRow,
            let p = laneInsertionPlan(row: ir, ids: ids, anchors: rawAnchors,
                                      sourceGroupID: sourceGroupID, isAltCopy: isAltCopy) {
@@ -56,16 +57,21 @@ extension EditViewModel {
             }
             let lane = p.lane + (ranks[grabbedID] ?? 0)
             if let target = p.parentID {
-                decision = target == sourceGroupID ? .moveInSource(lane: lane)
-                                                   : .reparent(groupID: target, lane: lane)
+                rawDecision = target == sourceGroupID ? .moveInSource(lane: lane)
+                                                      : .reparent(groupID: target, lane: lane)
             } else {
-                decision = sourceGroupID == nil ? .root(lane: lane) : .eject(rootLane: lane)
+                rawDecision = sourceGroupID == nil ? .root(lane: lane) : .eject(rootLane: lane)
             }
         } else {
-            decision = resolveMoveDrop(ids: ids, grabbedDisplayLane: grabbedDisplayLane,
+            rawDecision = resolveMoveDrop(ids: ids, grabbedDisplayLane: grabbedDisplayLane,
                                        sourceGroupID: sourceGroupID, isAltCopy: isAltCopy, dl: dl)
         }
         guard let grabbedAnchor = anchors[grabbedID] else { return .cancel }
+        // An open consolidated object protects its stage and its content root (@see sessionMoveDropGate):
+        // a refusal leaves no undo point behind, like any other cancel.
+        guard let decision = sessionMoveDropGate(ids: ids, sourceGroupID: sourceGroupID,
+                                                 isAltCopy: isAltCopy, dt: dt, decision: rawDecision)
+        else { NSSound.beep(); return .cancel }
 
         // Nothing is touched before the guards: a `cancel`, or a decision that needs a source
         // group the objects do not have, leaves no undo point behind.

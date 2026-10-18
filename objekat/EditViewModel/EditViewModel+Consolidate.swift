@@ -429,6 +429,7 @@ extension EditViewModel {
         guard let engine, let group = find(id: groupID), group.isGroup,
               !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
+        if refusedBySession(.consolidate, ids: [groupID]) { return }
         guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
@@ -476,6 +477,7 @@ extension EditViewModel {
                                  midChainSends: SendBakePolicy.Choice? = nil) {
         guard let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
               !firstRead.isConsolidateInstance, !isBaking(clipID) else { return }
+        if refusedBySession(.consolidate, ids: [clipID]) { return }
         guard consolidateFolder != nil else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
@@ -989,7 +991,7 @@ extension EditViewModel {
     /// against the zero the stage was opened on, and `delta` — how much LATER the new wave's own zero
     /// is (0 when the wave is the one it was opened on) — brings it onto the new wave, clamped inside it
     /// (@see SoundObject.realignedInstance). Called while the stage is still in the engine.
-    private func closedInstance(ofStage stage: SoundObject, wavePath: String, waveLength: Double,
+    func closedInstance(ofStage stage: SoundObject, wavePath: String, waveLength: Double,
                                 oldWaveZero: Double, delta: Double, defID: UUID,
                                 automationOpen: Bool) -> SoundObject {
         var source = withCapturedPluginStates(stage)

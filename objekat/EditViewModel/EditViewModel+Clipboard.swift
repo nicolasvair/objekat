@@ -261,14 +261,17 @@ extension EditViewModel {
     func copySelected() {
         guard !selectedIDs.isEmpty else { return }
 
-        let entries = laneEntries.filter { effectiveSelectedIDs.contains($0.item.id) }
+        // The content root of an open consolidated object is not copied alone (E7); the stage is,
+        // as the CLOSED instance it stands for (@see itemsFoldingOpenSessions).
+        let entries = laneEntries.filter { effectiveSelectedIDs.contains($0.item.id)
+                                           && !sessionContentRootIDs.contains($0.item.id) }
         guard !entries.isEmpty else { return }
 
         // The plugin state (stateXML) is frozen NOW: for a cut→paste, the original
         // engine instances will be destroyed before the paste, so copiedPlugins' live
         // capture would fail and the fallback onto this frozen stateXML is needed.
         let clips = entries.map { entry -> SoundObject in
-            var abs = withCapturedPluginStates(entry.item)
+            var abs = withCapturedPluginStates(folded(entry.item))
             abs.startTime = entry.absStart
             abs.lane      = entry.displayLane
             return abs
@@ -390,8 +393,17 @@ extension EditViewModel {
         var capturedGroupIDs: Set<UUID> = []
         var fragments: [SoundObject] = []
 
-        for entry in laneEntries {
-            guard lanes.contains(entry.displayLane) else { continue }
+        for rawEntry in laneEntries {
+            guard lanes.contains(rawEntry.displayLane) else { continue }
+            // An open stage / a mirror is a CLOSED instance for whatever leaves the session: it
+            // becomes a clip here (a fragment of it), and its content below is skipped.
+            var entry = rawEntry
+            if let closed = closedFormIfOpenOrNil(rawEntry.item) {
+                entry = LaneEntry(displayLane: rawEntry.displayLane, item: closed, absStart: rawEntry.absStart,
+                                  depth: rawEntry.depth, parentID: rawEntry.parentID,
+                                  expandedSpan: rawEntry.expandedSpan)
+                capturedGroupIDs.insert(rawEntry.item.id)
+            }
             let s = entry.absStart
             let e = s + entry.item.duration
             guard s < hi && e > lo else { continue }
@@ -574,6 +586,7 @@ extension EditViewModel {
     func carveTimeRange(lo: Double, hi: Double, lanes: Set<Int>) -> Bool {
         let affectedAll = laneEntries.filter { e in
             if e.item.isInfiniteBus { return false }
+            if isSessionScaffold(e.item.id) { return false }   // E7: the stage / content root stay
             return lanes.contains(e.displayLane)
                 && e.absStart < hi
                 && e.absStart + e.item.duration > lo
@@ -982,6 +995,7 @@ extension EditViewModel {
 
         let insideAll = laneEntries.filter { e in
             sel.lanes.contains(e.displayLane)
+                && !isSessionScaffold(e.item.id)      // E7: the stage does not move in time
                 && e.absStart >= lo
                 && e.absStart + e.item.duration <= hi
         }
@@ -1121,7 +1135,8 @@ extension EditViewModel {
             // ── The item-selection branch ─────────────────────────────────────────
             guard !selectedIDs.isEmpty else { return }
 
-            let entries = laneEntries.filter { effectiveSelectedIDs.contains($0.item.id) }
+            let entries = laneEntries.filter { effectiveSelectedIDs.contains($0.item.id)
+                                               && !sessionContentRootIDs.contains($0.item.id) }
             guard !entries.isEmpty else { return }
 
             let originTime = entries.map(\.absStart).min()!
@@ -1137,9 +1152,10 @@ extension EditViewModel {
                 var copies: [SoundObject] = []
                 for entry in entries {
                     let newAbsStart = endTime + (entry.absStart - originTime)
-                    copies.append(makeCopy(entry.item, startTime: newAbsStart,
+                    let closed = folded(entry.item)
+                    copies.append(makeCopy(closed, startTime: newAbsStart,
                                            lane: entry.displayLane, idMap: &idMap))
-                    maxAbsEnd = max(maxAbsEnd, newAbsStart + entry.item.duration)
+                    maxAbsEnd = max(maxAbsEnd, newAbsStart + closed.duration)
                 }
                 for copy in copies {
                     added.append(placeClip(Self.remappingSends(copy, using: idMap),

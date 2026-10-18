@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 extension EditViewModel {
@@ -41,7 +42,10 @@ extension EditViewModel {
     private func removeSelectedObjects() {
         var childrenByGroup: [UUID: [UUID]] = [:]
         var topLevel: [UUID] = []
-        for id in effectiveSelectedIDs {
+        // The stage and the content root of an open consolidated object stay (E7).
+        let doomed = effectiveSelectedIDs.filter { !isSessionScaffold($0) }
+        if doomed.count != effectiveSelectedIDs.count { NSSound.beep() }
+        for id in doomed {
             if let group = parentGroup(for: id) {
                 childrenByGroup[group.id, default: []].append(id)
             } else {
@@ -104,6 +108,8 @@ extension EditViewModel {
     ///   travel off the grabbed object, and snapping each start again on its own pulled every
     ///   object to its nearest grid line — the gaps between them changed (5 October 2026).
     func updateStartTime(id: UUID, newStart: Double, snap: Bool = true) {
+        // The stage of an open consolidated object does not move in time (E7).
+        if refusedBySession(.moveInTime, ids: [id]) { return }
         // The floor at 0, at any depth (@see ZeroFloor): the object stops at 0 — unless it already
         // starts before it, in which case it is free while it stays there (a group's window is a
         // frame and its children keep an absolute start; the engine bridge translates such a head

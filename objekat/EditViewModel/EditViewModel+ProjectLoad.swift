@@ -263,7 +263,13 @@ extension EditViewModel {
             NSLog("[LOAD] send markers repaired on %d object(s) or stem(s)", consistent.changed)
             stems = consistent.stems
         }
-        items = consistent.items
+        // An open consolidated object that reached a file (an older build, a hand edit) is put back
+        // as the closed instance it stands for (@see repairedOpenStages).
+        let unstaged = repairedOpenStages(in: consistent.items)
+        if unstaged.repaired > 0 {
+            NSLog("[LOAD] %d open consolidated stage(s) in the file folded back to closed instances", unstaged.repaired)
+        }
+        items = unstaged.items
         return (duplicates, fixed.repairs.count)
     }
 

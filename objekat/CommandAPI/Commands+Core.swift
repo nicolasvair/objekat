@@ -667,6 +667,7 @@ extension CommandRegistry {
             guard removed > 0 else {
                 throw CommandError(code: .invalid_state, message: "no object to delete")
             }
+            if let why = vm.sessionRefusal(.delete, ids: vm.effectiveSelectedIDs) { throw CommandError(code: .invalid_state, message: why) }
             vm.removeSelected()
             return .object(["removed": .int(removed)])
         }
@@ -695,6 +696,9 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'lane' or 'start' required")
             }
             let snap = try p.bool("snap", or: false)
+            if start != nil, let why = vm.sessionRefusal(.moveInTime, ids: [id]) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
             // An infinite bus goes through ONE definition, the same the hand's drag reaches
             // (@see EditViewModel.moveInfiniteBus): a full-width band cannot simply be set down
             // on a row that already holds matter, and the API has no business creating the state
@@ -816,6 +820,7 @@ extension CommandRegistry {
             guard !ids.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no object to cut")
             }
+            if let why = vm.sessionRefusal(.split, ids: ids) { throw CommandError(code: .invalid_state, message: why) }
             var keeping: CutKeepSide? = nil
             if p.raw["keep"] != nil {
                 switch try p.string("keep") {

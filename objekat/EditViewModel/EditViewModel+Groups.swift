@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 extension EditViewModel {
@@ -166,7 +167,9 @@ extension EditViewModel {
 
     // MARK: - Adding a child (model + engine)
 
-    func addChild(_ child: SoundObject, toGroupID: UUID) {
+    func addChild(_ child: SoundObject, toGroupID requestedGroupID: UUID) {
+        // Whatever is added to the stage of an open consolidated object goes into its content (E7).
+        let toGroupID = sessionDropTarget(requestedGroupID)
         guard let group = find(id: toGroupID) else { return }
         var child = child
         child.stemID = group.stemID
@@ -238,6 +241,8 @@ extension EditViewModel {
         // inside a group manufactured a top-level group (empty, since the target objects
         // are children) laid alongside — you left the group without having asked to.
         if let container = containerGroupEntry(forDisplayLanes: sel.lanes) {
+            // Never a second child for the stage of an open consolidated object (E7).
+            if refusedBySession(.regroup, ids: [container.item.id].filter { sessionStageIDs.contains($0) }) { return }
             createGroupFromTimeSelection(sel, inGroupEntry: container)
             return
         }
@@ -364,6 +369,7 @@ extension EditViewModel {
     }
 
     func createGroup(from ids: Set<UUID>) {
+        if refusedBySession(.regroup, ids: ids) { return }
         // The selected top-level items: clips AND groups.
         let members = items.filter { ids.contains($0.id) }
         guard !members.isEmpty else { return }
@@ -440,6 +446,8 @@ extension EditViewModel {
 
     /// cmd+G on children of ONE SAME group: creates a sub-group INSIDE the parent.
     func createGroup(from ids: Set<UUID>, in parentID: UUID) {
+        // Grouping inside the stage would give it a second child (E7).
+        if refusedBySession(.regroup, ids: sessionStageIDs.contains(parentID) ? ids.union([parentID]) : ids) { return }
         guard let parent = find(id: parentID),
               case .group(let parentChildren, _) = parent.kind,
               parentChildren.contains(where: { ids.contains($0.id) }) else { return }
@@ -501,6 +509,7 @@ extension EditViewModel {
     // MARK: - Dissolving a group
 
     func disbandGroup(id: UUID) {
+        if refusedBySession(.ungroup, ids: [id]) { return }
         guard let group = find(id: id),
               case .group(let children, _) = group.kind else { return }
         guard !isBaking(id) else { return }   // a bake under way: the sub-tree is locked

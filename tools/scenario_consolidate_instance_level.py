@@ -27,7 +27,7 @@ and the sections added by the later steps (guards, copies, un-make, creation, ne
 Exit: 0 if every assertion passes, 1 otherwise. `EXPECTED FAIL` lines do not count.
 """
 
-import array, json, os, shutil, struct, sys, tempfile, time
+import array, json, os, shutil, struct, sys, tempfile, time, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -500,6 +500,218 @@ def main():
     check("redo: the new revision again, I1 still a closed instance",
           defs()[def_id]["revision"] == rev0 + 1 and clip_of(find(i1)) is not None)
 
+    # ── 8 — guards ──
+    section("8 — what an open consolidated object protects")
+
+    def refused(label, name, **params):
+        try:
+            cmd(name, **params)
+            check(label, False, "accepted, expected invalid_state")
+        except ObjekatError as e:
+            check(label, e.code == "invalid_state", "%s: %s" % (e.code, e.message))
+
+    def parent_of(oid):
+        def look(items, parent):
+            for o in items:
+                if o["id"] == oid:
+                    return parent
+                if kind(o).get("type") == "group":
+                    r = look(children(o), o["id"])
+                    if r is not False:
+                        return r
+            return False
+        return look(state_items(), None)
+
+    def count_all():
+        return len(list(walk(state_items())))
+
+    def_id, i1, i2, i3 = build("s8")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    stage = find(i1)
+    a = children(stage)[0]["id"]
+    n0 = count_all()
+    refused("delete the stage: refused", "object.remove", ids=[i1])
+    refused("delete A: refused", "object.remove", ids=[a])
+    refused("ungroup the stage: refused", "group.disband", id=i1)
+    refused("ungroup A: refused", "group.disband", id=a)
+    refused("group A with something else: refused", "group.create", ids=[a, i3])
+    refused("split the stage: refused", "object.split_at", seconds=0.5, ids=[i1])
+    refused("split A: refused", "object.split_at", seconds=0.5, ids=[a])
+    refused("move the stage in time: refused", "object.move", id=i1, start=1.0)
+    refused("un-make the stage: refused", "consolidate.unmake", placement=i1)
+    refused("consolidate A: refused", "consolidate.make", id=a)
+    refused("take A out of the stage: refused", "group.eject", ids=[a])
+    refused("move A into another group: refused", "group.reparent", ids=[a], group=i2)
+    check("nothing moved: same objects, the stage still has A as its only child",
+          count_all() == n0 and [c["id"] for c in children(find(i1))] == [a])
+    cmd("object.move", id=a, start=0.3); settle()
+    check("A moves INSIDE the stage (content)", near(find(a)["startTime"], 0.3), str(find(a)["startTime"]))
+    cmd("object.move", id=a, start=0.0); settle()
+
+    # A drag release (DEBUG): the stage cannot be moved in time, A can.
+    r = cmd("debug.move_drop", id=i1, dt=0.5)
+    check("a drag of the stage in time: cancelled", r.get("decision") == "cancel", str(r))
+    check("...and the stage did not move", near(find(i1)["startTime"], 0.0))
+    r = cmd("debug.move_drop", id=a, dt=0.25)
+    check("a drag of A in time: accepted", r.get("decision") == "move_in_source", str(r))
+    check("...and A moved", near(find(a)["startTime"], 0.25), str(find(a)["startTime"]))
+    cmd("object.move", id=a, start=0.0); settle()
+
+    # Something dropped ON the stage goes into A.
+    extra = cmd("object.add", path=BIP, lane=4, start=0.5)["id"]
+    cmd("group.reparent", ids=[extra], group=i1); settle()
+    check("a clip reparented to the stage lands in A, the stage keeps ONE child",
+          parent_of(extra) == a and len(children(find(i1))) == 1, "parent=%s" % parent_of(extra))
+    # Grouping inside A is content: allowed.
+    kids = [c["id"] for c in children(find(a))][:2]
+    g2 = cmd("group.create", ids=kids)["id"]; settle()
+    check("grouping two children of A is allowed (content)", parent_of(g2) == a)
+    cmd("consolidate.edit_cancel"); settle()
+    check("cancel: the three instances are closed clips again", all(clip_of(find(i)) for i in (i1, i2, i3)))
+
+    # ── 9 — copy / paste / duplicate / time selection in a session ──
+    section("9 — what leaves the session is the CLOSED instance")
+    def_id, i1, i2, i3 = build("s9")
+    fxa = pid(cmd("plugin.add_gain_stage", host=i1, face="gain", gain_db=-1.0))
+    cmd("plugin.link", **{"from": i1, "plugin": fxa, "to": i3}); settle()
+    # Room for the copies (a duplicate lands right after its original and would overwrite its neighbour).
+    cmd("object.move", id=i2, start=20.0); cmd("object.move", id=i3, start=30.0); settle()
+    link0 = [p.get("linkGroupID") for p in find(i1).get("plugins", [])]
+    check("setup: the FX of I1 is linked to I3's copy", len(link0) == 1 and link0[0] is not None, str(link0))
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    stage = find(i1); a = children(stage)[0]["id"]
+
+    def groups_with_def():
+        return [o["id"] for o in walk(state_items()) if kind(o).get("type") == "group" and o.get("definitionID")]
+
+    def stages_open():
+        """Expanded linked groups: the stage (a mirror is FOLDED)."""
+        return [o["id"] for o in walk(state_items()) if kind(o).get("type") == "group"
+                and o.get("definitionID") and kind(o).get("isExpanded")]
+
+    known = {i1, i2, i3}
+    cmd("selection.set", ids=[i1]); cmd("clipboard.copy")
+    cmd("transport.seek", seconds=6.0)
+    cmd("clipboard.paste"); settle()
+    check("copy / paste of the stage: no second stage (the new linked instance is a MIRROR while open)",
+          stages_open() == [i1], str(stages_open()))
+    r = cmd("object.duplicate", ids=[i1]); settle()
+    check("duplicate of the stage: still one stage", stages_open() == [i1], str(stages_open()))
+    r = cmd("object.duplicate", ids=[i2]); settle()
+    check("duplicate of a MIRROR: still one stage", stages_open() == [i1], str(stages_open()))
+    n0 = len(list(walk(state_items())))
+    try:
+        cmd("object.duplicate", ids=[a]); settle()
+    except ObjekatError:
+        pass
+    check("duplicate of A: nothing created, the stage still has one child",
+          len(list(walk(state_items()))) == n0 and len(children(find(i1))) == 1)
+    cmd("selection.set", ids=[a])
+    try:
+        cmd("clipboard.copy")
+    except ObjekatError:
+        pass
+
+    # The time selection over the stage's row: a fragment that is a closed instance.
+    cmd("timesel.set", start=0.2, end=0.9, lanes=[0]); cmd("timesel.copy")
+    cmd("transport.seek", seconds=9.0); cmd("timesel.clear")
+    cmd("clipboard.paste"); settle()
+    # The time selection also leaves the scaffolding alone (delete over the stage's row).
+    cmd("timesel.set", start=0.0, end=1.4, lanes=[0])
+    try:
+        cmd("timesel.delete")
+    except ObjekatError:
+        pass
+    settle()
+    check("a time-selection delete over the stage leaves the stage and A", find(i1) is not None and find(a) is not None
+          and len(children(find(i1))) == 1)
+    cmd("timesel.clear")
+    cmd("consolidate.edit_cancel"); settle()
+    copies = [o for o in walk(state_items()) if o["id"] not in known and o.get("definitionID") == def_id]
+    check("after the cancel every copy is a CLOSED linked clip (3 copies + the fragment)",
+          len(copies) >= 4 and all(clip_of(o) is not None for o in copies),
+          str([(kind(o).get("type")) for o in copies]))
+    check("...each reading the OFFICIAL wave (the content of the session was never baked)",
+          all(clip_of(o)["filePath"].endswith(defs()[def_id]["wave"]) for o in copies if clip_of(o)))
+    frag = [o for o in state_items() if 8.9 <= o["startTime"] < 12.0]
+    check("the time-selection fragment pasted at 9 s is a CLOSED linked clip",
+          len(frag) == 1 and clip_of(frag[0]) is not None and frag[0].get("definitionID") == def_id,
+          str([(kind(o).get("type"), o.get("definitionID")) for o in frag]))
+    linked = [o for o in copies if o.get("plugins") and o["plugins"][0].get("linkGroupID") == link0[0]]
+    check("...the FX of those taken from I1 (and from its mirror I3) keep the link group by default",
+          len(linked) >= 2, str([[x.get("linkGroupID") for x in o.get("plugins", [])] for o in copies]))
+
+    # ── 15 — save in a session, reopen ──
+    section("15 — a file never holds an open stage")
+    def_id, i1, i2, i3 = build("s15")
+    path = os.path.join(PROJ, "p.objekat")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    a = children(find(i1))[0]["id"]
+    cmd("object.set_gain", ids=[i1], db=-2.0)
+    cmd("object.set_gain", ids=[a], db=-9.0)
+    fxs = pid(cmd("plugin.add_gain_stage", host=i1, face="gain", gain_db=-6.0)); settle()
+    cmd("project.save"); settle()
+    doc = json.load(open(path))
+    fl = list(walk(doc["items"]))
+    byid = {o["id"]: o for o in fl}
+    check("the file holds I1 as a linked CLOSED clip", kind(byid[i1]).get("type") == "clip"
+          and byid[i1].get("definitionID") == def_id, str(kind(byid[i1]).get("type")))
+    check("...with the stage's fader and FX", abs(byid[i1].get("volume", 0) + 2.0) < 1e-6
+          and [x["id"] for x in byid[i1].get("plugins", [])] == [fxs])
+    check("...reading the official wave", clip_of(byid[i1])["filePath"].endswith(defs()[def_id]["wave"]),
+          str(clip_of(byid[i1])))
+    check("the mirrors are closed clips in the file too",
+          all(kind(byid[i]).get("type") == "clip" for i in (i2, i3)))
+    check("no group of the file carries a link (no stage, no mirror)",
+          all(not (kind(o).get("type") == "group" and o.get("definitionID")) for o in fl))
+    check("the content root A is not in the file", a not in byid)
+    check("the session is still open after the save", cmd("consolidate.state").get("editing") is True)
+    commit()
+    check("...and still commits (fader -2 dB kept on the closed I1)",
+          clip_of(find(i1)) is not None and abs(find(i1)["volume"] + 2.0) < 1e-6)
+    cmd("project.save"); settle()
+    # Reopen what was saved mid-session (a cancelled session: the content is the official one).
+    def_id, i1, i2, i3 = build("s15b")
+    path = os.path.join(PROJ, "p.objekat")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    staged_state = cmd("project.get_state")            # the unfolded form: what an older build could write
+    cmd("project.save"); settle()
+    cmd("project.open", path=path); settle()
+    check("reopened: the three instances are closed linked clips",
+          all(clip_of(find(i)) and find(i).get("definitionID") == def_id for i in (i1, i2, i3)),
+          str([kind(find(i)).get("type") if find(i) else None for i in (i1, i2, i3)]))
+    check("reopened: no session", cmd("consolidate.state").get("editing") is False)
+    # Repair: an unfolded document (an older build, a hand edit) comes back closed.
+    stage_doc = os.path.join(PROJ, "staged.objekat")
+    json.dump(staged_state, open(stage_doc, "w"))
+    cmd("project.open", path=stage_doc); settle()
+    r1 = find(i1)
+    check("a file that HOLDS an open stage is folded back on loading: I1 a linked closed clip",
+          r1 is not None and clip_of(r1) is not None and r1.get("definitionID") == def_id,
+          str(kind(r1).get("type")) if r1 else "missing")
+
+    # ── 18 — playing while a session is open ──
+    section("18 — play during a session, close while playing")
+    def_id, i1, i2, i3 = build("s18")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    cmd("transport.play", seconds=0.0)
+    time.sleep(0.6)
+    cmd("object.set_gain", ids=[i1], db=-1.0)
+    a = children(find(i1))[0]["id"]
+    cmd("object.set_gain", ids=[a], db=-2.0); settle()
+    r = cmd("consolidate.edit_commit")
+    j = cmd("job.wait", id=r["job_id"], timeout_ms=60000)
+    cmd("transport.stop"); settle()
+    check("committed while playing: the application answers, I1 closed and linked",
+          clip_of(find(i1)) is not None and find(i1).get("definitionID") == def_id)
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    cmd("transport.play", seconds=0.0)
+    time.sleep(0.3)
+    cmd("consolidate.edit_cancel"); settle()
+    cmd("transport.stop")
+    check("cancelled while playing: the application answers, I1 closed again",
+          clip_of(find(i1)) is not None)
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0
@@ -511,6 +723,7 @@ try:
 except ObjekatError as e:
     fails.append("exception: %s: %s" % (e.code, e.message))
     print("FAIL  exception %s: %s" % (e.code, e.message))
+    traceback.print_exc()
 finally:
     if not KEEP:
         shutil.rmtree(ROOT, ignore_errors=True)
