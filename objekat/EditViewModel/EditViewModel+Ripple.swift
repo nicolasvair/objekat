@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 // MARK: - Ripple editing, bounded by the container, aimed at the lanes one selected
@@ -147,6 +148,12 @@ extension EditViewModel {
     func rippleRemoveTimeRange(lo: Double, hi: Double, container: UUID?, rows: Set<RippleRow>) -> Bool {
         let hole = hi - lo
         guard hole > 0.001 else { return false }
+        // A ripple at the root (or in a stage) slides what follows the hole IN TIME — stages and
+        // mirrors included, which a session does not allow (@see sessionRefusal(.moveInTime)).
+        if !consolidateEditStack.isEmpty, container == nil || sessionStageIDs.contains(container!) {
+            NSSound.beep()
+            return false
+        }
 
         // A porthole scope is refused: the window of a LOOPING group is laid on a repeating
         // pattern, not on an edge (@see isLoopedGroupPorthole). Shortening the pattern under the
@@ -355,7 +362,7 @@ extension EditViewModel {
         // `effectiveSelectedIDs`, not `selectedIDs`: a child whose ancestor is selected too is
         // dropped. Its span is already inside its parent's, and rippling it in the parent's own
         // scope would close the same gap twice.
-        var remaining = rippleVisibleIDs(effectiveSelectedIDs)
+        var remaining = rippleVisibleIDs(effectiveSelectedIDs).filter { !isSessionScaffold($0) }
         guard !remaining.isEmpty else { return false }
         let container = rippleContainerID(forObjects: remaining)
         // The rows the SELECTED objects sit on, read once: the objects go one by one and the rows

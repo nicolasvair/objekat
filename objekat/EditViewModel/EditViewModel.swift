@@ -254,6 +254,10 @@ final class EditViewModel {
     /// ids): the indicator is keyed by the definition, the engine knows only the temporary.
     /// Laid before the render, removed in its completion. @see pollRenderProgress
     @ObservationIgnored var recomputeRenderKeys: [UUID: UUID] = [:]
+    /// For a bake whose veil is worn by one object and whose render runs under ANOTHER id: the
+    /// closing of an editing session renders the content root, while the circle sits on the open
+    /// placement (the stage). Laid before the render, removed in its completion. @see pollRenderProgress
+    @ObservationIgnored var bakeRenderKeys: [UUID: UUID] = [:]
     /// How far each consolidated render on screen has got, read by the filling circle on the
     /// blocks. A `let` holding its OWN observable object, so that the ten ticks a second reach the
     /// circles and not the timeline's body. @see RenderProgressStore
@@ -301,6 +305,9 @@ final class EditViewModel {
     /// open — they drive the closing/cancelling UI and the mirror indicator.
     var editingConsolidateID: UUID? { consolidateEditStack.last?.defID }
     var editingPlacementID: UUID? { consolidateEditStack.last?.placementID }
+    /// The CONTENT ROOT of the current session: the one child of the open placement (the stage),
+    /// the only thing a closing renders and a signature watches.
+    var editingContentRootID: UUID? { consolidateEditStack.last?.contentRootID }
     /// A snapshot of the EXACT instance before materialisation (the current session) — restored as it is by
     /// `cancelConsolidateEdit`, independently of the other edits made in the meantime elsewhere
     /// in the project (unlike a generic undo).

@@ -124,20 +124,23 @@ with ObjekatClient(SOCK, timeout=180) as c:
 
     cmd("project.save_as", path=SRC_JSON)
 
-    ids_before_consolidate = {o["id"] for o in cmd("object.list")["objects"]}
     oc_clip = cmd("object.add", path=BIP, lane=5, start=10)["id"]
     job = cmd("consolidate.make", id=oc_clip)["job_id"]
-    # `consolidate.make` on a LONE clip wraps it in a fresh one-item group FIRST (synchronously),
-    # and it is that WRAPPER's id — not the clip's own — that survives as the top-level
-    # consolidated placement once the render lands (@see consolidateWrappingClip/finishConsolidate).
-    # The wrapper starts COLLAPSED, so its child (`oc_clip`) is not even in `object.list` (it only
-    # flattens what `laneEntries` shows) — the wrapper is simply the one new TOP-LEVEL id.
-    oc = next(o["id"] for o in cmd("object.list")["objects"]
-             if o["id"] not in ids_before_consolidate and o["id"] != oc_clip)
+    # A LONE clip is its own content (QB-1 of plan_consolidate_instance_level): no wrapper group,
+    # the clip keeps its id and becomes the top-level consolidated placement once the render lands.
+    oc = oc_clip
     cmd("job.wait", id=job, timeout_ms=30000)
     cmd("wait_idle", timeout_ms=10000)
     def_id = cmd("object.get", id=oc).get("definition")
     check("consolidating oc produced a definition", def_id is not None)
+    # The INSTANCE LEVEL of the consolidated placement (plan_consolidate_instance_level): an FX of its
+    # own, a fader and a fade. It must cross the tabs with the instance, the FX frozen at the copy.
+    OC_ORIG, OC_TARGET = 3000.0, 7000.0
+    oc_fx = cmd("plugin.add", host=oc, identifier="lowpass")["plugin"]["id"]
+    cmd("plugin.set_param", plugin=oc_fx, index=0, value=OC_ORIG)
+    cmd("object.set_gain", ids=[oc], db=-3.0)
+    cmd("object.set_fade", id=oc, **{"in": 0.05, "out": 0.0})
+    check("the closed instance holds its own FX", len(cmd("object.get", id=oc).get("plugins", [])) == 1)
     cmd("project.save")  # persist the group/links/sends/stem/definition to SRC_JSON
 
     # ── the V1/V2 fork: rename the live tab (save_as, in place — tab count unchanged), then ──
@@ -165,6 +168,7 @@ with ObjekatClient(SOCK, timeout=180) as c:
     V_TARGET = lo + (hi - lo) * 0.9
     cmd("plugin.set_param", plugin=p1, index=0, value=V_TARGET)
     cmd("plugin.set_param", plugin=sp, index=0, value=SP_TARGET)
+    cmd("plugin.set_param", plugin=oc_fx, index=0, value=OC_TARGET)    # the target's OWN instance FX, same id
 
     objects_before = {o["id"] for o in cmd("object.list")["objects"]}
 
@@ -265,6 +269,19 @@ with ObjekatClient(SOCK, timeout=180) as c:
         new_def = new_oc.get("definition")
         check("the pasted consolidated object carries a definition", new_def is not None)
         check("...and it is a BRAND NEW one, never the source's", new_def != def_id)
+        full = cmd("object.get", id=new_oc["id"])
+        fxs = full.get("plugins", [])
+        check("the pasted instance carries its OWN FX, under a fresh id", len(fxs) == 1 and fxs[0]["id"] != oc_fx,
+              str([x.get("id") for x in fxs]))
+        if len(fxs) == 1:
+            got_fx = cmd("plugin.get_params", plugin=fxs[0]["id"])["params"][0]["value"]
+            check("...with the SOURCE's frozen value, not the target's live one",
+                  abs(got_fx - OC_ORIG) < 1.0 and abs(got_fx - OC_TARGET) > 1.0, "got %s" % got_fx)
+        check("...and its fader and fade", abs(full.get("volume_db", 0) + 3.0) < 1e-6 and abs(full.get("fade_in", 0) - 0.05) < 1e-6,
+              str((full.get("volume_db"), full.get("fade_in"))))
+        still_oc = cmd("plugin.get_params", plugin=oc_fx)["params"][0]["value"]
+        check("the target's own instance FX (same id as the source's) kept ITS OWN value",
+              abs(still_oc - OC_TARGET) < 1.0, "got %s" % still_oc)
 
     # ── ONE undo point for the whole paste ──────────────────────────────────────────────────
     cmd("edit.undo")

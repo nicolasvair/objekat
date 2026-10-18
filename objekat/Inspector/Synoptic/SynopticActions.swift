@@ -113,8 +113,6 @@ struct SynopticActions {
     var onToggleMute: (() -> Void)? = nil
     var onToggleSolo: (() -> Void)? = nil
     var onBeginMixEdit: (() -> Void)? = nil
-    /// A double click on the link icon of a mix attribute (a consolidated object): toggles synced/independent.
-    var onToggleAttrSync: ((SynopticMixAttr) -> Void)? = nil
 
     // The 'stems' zone (output): assigning the stem.
     var onAssignStem: ((UUID) -> Void)? = nil
@@ -191,6 +189,10 @@ struct SynopticActions {
     /// The bins this host does not hold yet, and joining one.
     var joinableFXLinks: (() -> [(id: UUID, name: String)])? = nil
     var onJoinFXLink: ((UUID) -> Void)? = nil
+
+    /// A double click on the content pill of a consolidated instance: open its content, or validate
+    /// it when it is open.
+    var onToggleContent: (() -> Void)? = nil
 
     /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
     var onOpenARAEditor: (() -> Void)? = nil
@@ -306,17 +308,6 @@ extension SynopticAudioFile {
     }
 }
 
-/// A consolidated object's mix attribute ('clip' zone) whose synced/independent link can be toggled.
-enum SynopticMixAttr { case volume, pan, mute }
-
-/// The synced/independent state of a consolidated object instance's mix attributes (`true` = synced
-/// with the other instances). nil on `SynopticMix.attrLinks` = an unlinked object (no icons).
-struct SynopticMixLinks: Equatable {
-    var volumeSynced: Bool
-    var panSynced: Bool
-    var muteSynced: Bool
-}
-
 /// What makes an object audible on its own, in ONE state — the two solo layers add up, but a
 /// button has only one look: held wins, since that is the one that will outlive the gesture.
 enum SynopticSoloState: Equatable {
@@ -337,8 +328,6 @@ struct SynopticMix: Equatable {
     /// Volume / pan driven by an automation CURVE (their static setting is neutralised).
     var volumeAutomated: Bool = false
     var panAutomated: Bool = false
-    /// Non-nil ⇒ a consolidated object instance: it shows the per-attribute link icons.
-    var attrLinks: SynopticMixLinks? = nil
 }
 
 /// A stem badge ('stems' zone) carried over into the signal view.
@@ -354,6 +343,13 @@ struct SynopticInfinite: Equatable {
     let isOn: Bool
     /// 'aux' / 'group' — used in the tooltip.
     let kindLabel: String
+}
+
+/// The CONTENT pill of a consolidated instance: the shared content it reads, by the definition's name.
+/// `isOpen`: the instance is being edited (its stage is open) — a double click then validates it.
+struct SynopticContentPill: Equatable {
+    let name: String
+    let isOpen: Bool
 }
 
 /// A group's 'loop' option (the chain head, @see BusHeadZoneView) or a MIDI clip's (the MIDI
@@ -410,13 +406,6 @@ extension View {
     @ViewBuilder
     func helpIf(_ text: String?) -> some View {
         if let text, !text.isEmpty { self.help(text) } else { self }
-    }
-
-    /// Greys out and neutralises the FX of a CLOSED consolidated object, saying why they do not answer.
-    func fxReadOnlyLocked(_ readOnly: Bool) -> some View {
-        disabled(readOnly)
-            .opacity(readOnly ? 0.45 : 1)
-            .helpIf(readOnly ? L("synoptic.openToEdit") : nil)
     }
 
     /// Applies `.onDrag` only if a provider is supplied (otherwise it leaves the view untouched).

@@ -16147,71 +16147,71 @@
         }
       }
     },
-    "synoptic.consolidate.attrIndependent": {
+    "synoptic.consolidate.content": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Linked consolidated object, independent attribute — double-click to sync it again"
+            "value": "Content: %@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objeto consolidado vinculado, atributo independiente — doble clic para volver a sincronizarlo"
+            "value": "Contenido: %@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objet consolidé lié, attribut indépendant — double-clic pour le resynchroniser"
+            "value": "Contenu : %@"
           }
         }
       }
     },
-    "synoptic.consolidate.attrSynced": {
+    "synoptic.consolidate.contentHelp": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Linked consolidated object, synced attribute — double-click to make it independent"
+            "value": "The content this instance plays, shared by every instance of the consolidated object. Double-click to open it for editing."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objeto consolidado vinculado, atributo sincronizado — doble clic para volverlo independiente"
+            "value": "El contenido que reproduce esta instancia, compartido por todas las instancias del objeto consolidado. Doble clic para abrirlo y editarlo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objet consolidé lié, attribut synchronisé — double-clic pour le rendre indépendant"
+            "value": "Le contenu que joue cette instance, partagé par toutes les instances de l'objet consolidé. Double-clic pour l'ouvrir et le modifier."
           }
         }
       }
     },
-    "synoptic.consolidate.linked": {
+    "synoptic.consolidate.contentOpen": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Linked consolidated object"
+            "value": "Content open for editing. Double-click to validate it (the shared wave is re-baked; the instance's own FX and mix are never part of it)."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objeto consolidado vinculado"
+            "value": "Contenido abierto para edición. Doble clic para validarlo (la onda compartida se recalcula; los efectos y la mezcla propios de la instancia nunca forman parte de ella)."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Objet consolidé lié"
+            "value": "Contenu ouvert en édition. Double-clic pour le valider (l'onde partagée est recalculée ; les effets et le mix propres à l'instance n'en font jamais partie)."
           }
         }
       }
@@ -16745,6 +16745,29 @@
         }
       }
     },
+    "synoptic.mix.kind.content": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "shared content"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "contenido compartido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "contenu partagé"
+          }
+        }
+      }
+    },
     "synoptic.mix.kind.group": {
       "extractionState": "manual",
       "localizations": {
@@ -16787,29 +16810,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
-          }
-        }
-      }
-    },
-    "synoptic.openToEdit": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consolidated: double-click the object to edit it"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consolidado: doble clic en el objeto para editarlo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consolidé : double-clic sur l'objet pour l'éditer"
           }
         }
       }
@@ -18305,6 +18305,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Changement d'onglet refusé"
+          }
+        }
+      }
+    },
+    "timeline.outsideContent": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "outside the content"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fuera del contenido"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hors contenu"
+          }
+        }
+      }
+    },
+    "timeline.outsideContent.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The shared content no longer reaches this instance: it keeps its place and length and plays silence. Open the content to extend it, or move the instance."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El contenido compartido ya no llega a esta instancia: conserva su posición y duración y reproduce silencio. Abra el contenido para alargarlo, o mueva la instancia."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le contenu partagé n'atteint plus cette instance : elle garde sa place et sa durée et joue du silence. Ouvrez le contenu pour l'allonger, ou déplacez l'instance."
           }
         }
       }

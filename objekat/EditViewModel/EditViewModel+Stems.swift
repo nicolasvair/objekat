@@ -175,24 +175,6 @@ extension EditViewModel {
                            fromStemID: oldStemID == mainStemID ? nil : oldStemID.uuidString,
                            toStemID: isMain ? nil : stemID.uuidString)
 
-        // A SHARED object: the stem is SYNCHRONISED across every placement of the same definition
-        // (the same logic as colour/name, see EditViewModel+ObjectColor/renameObject) — a
-        // linked object stays on the same bus everywhere it appears. EXCEPTION: an instance
-        // inside a group follows its group (no stem of its own), and is skipped.
-        if let defID = obj.consolidateID {
-            for sid in placementIDs(forConsolidate: defID, excluding: objectID) {
-                guard let sibling = find(id: sid),
-                      parentGroup(for: sid) == nil else { continue }
-                let siblingOld = sibling.stemID ?? mainStemID
-                guard siblingOld != stemID else { continue }
-                update(id: sid) { $0.stemID = newStemID }
-                engine?.moveObject(sid.uuidString,
-                                   fromStemID: siblingOld == mainStemID ? nil : siblingOld.uuidString,
-                                   toStemID: isMain ? nil : stemID.uuidString)
-                pushMixTree(sid)
-            }
-        }
-
         // The stem takes part in composing the silence: joining a muted bus (or leaving it)
         // changes what the engine must hear, with no volume having moved. Targeted, and not
         // a global refreshAudibility: `assignStemSelected` calls this in a loop.

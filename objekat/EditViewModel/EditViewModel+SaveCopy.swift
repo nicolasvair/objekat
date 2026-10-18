@@ -337,14 +337,15 @@ extension EditViewModel {
 
         for (defID, original) in objectSidecars {
             guard let def = consolidateDefinitions[defID],
-                  let data = try? encodedConsolidateSidecar(rewrite(original), projectFolder: destFolder)
+                  let data = try? encodedConsolidateSidecar(rewrite(original), rootIsContent: def.rootIsContent,
+                                                        projectFolder: destFolder)
             else { continue }
             sidecarWrites.append((consolidateSidecarURL(forWave: def.wave, in: consolidateDst), data))
         }
 
         // 6) The project document: items (with captured plugin states) rewritten + the definition
         //    registry filtered down to the closure (orphan definitions are dropped).
-        let rewrittenItems = portableItems(itemsWithCapturedPluginStates().map(rewrite),
+        let rewrittenItems = portableItems(itemsFoldingOpenSessions(itemsWithCapturedPluginStates()).map(rewrite),
                                            projectFolder: destFolder)
         let closureDefs = processedDefs.compactMap { consolidateDefinitions[$0] }
         // The SAME document as a save (@see projectDocument): snap, viewport, tempo, grid and the

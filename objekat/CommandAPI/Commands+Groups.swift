@@ -27,6 +27,7 @@ extension CommandRegistry {
             guard !ids.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no object to group")
             }
+            if let why = vm.sessionRefusal(.regroup, ids: ids) { throw CommandError(code: .invalid_state, message: why) }
             // Naming the group just created: compare the identifiers before and after. (All the
             // grouping paths now leave the selection on the new group, but a time-selection or
             // no-op path would not say so; the comparison needs no assumption about it.)
@@ -53,6 +54,7 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state,
                                    message: "a render is running on this group — wait for it (wait_idle)")
             }
+            if let why = vm.sessionRefusal(.ungroup, ids: [id]) { throw CommandError(code: .invalid_state, message: why) }
             let childCount = children.count
             vm.disbandGroup(id: id)
             return .object(["released": .int(childCount)])
@@ -94,6 +96,16 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: "'ids' cannot be empty")
             }
             let childLane = max(0, try p.int("child_lane", or: 0))
+            // An open consolidated object keeps its scaffolding: refused, or redirected into the
+            // content when the target is its stage (@see sessionMoveDropGate).
+            guard let gated = vm.sessionMoveDropGate(ids: ids, sourceGroupID: vm.parentGroup(for: grabbed)?.id,
+                                                     isAltCopy: false, dt: 0,
+                                                     decision: .reparent(groupID: groupID, lane: childLane)),
+                  case .reparent(let groupID, _) = gated else {
+                throw CommandError(code: .invalid_state,
+                                   message: vm.sessionRefusal(.relocate, ids: ids)
+                                       ?? "an open consolidated object keeps its content inside it")
+            }
             // `dt = 0` and anchors taken from the CURRENT positions: that is exactly the drag
             // "dropped without moving". The method stays the sole owner of recomputing relative
             // lanes, of re-wiring the engine and of the cycle guard.
@@ -126,6 +138,12 @@ extension CommandRegistry {
                                    message: "object already at root level: \(grabbed.uuidString)")
             }
             let lane = max(0, try p.int("lane", or: group.lane))
+            guard vm.sessionMoveDropGate(ids: ids, sourceGroupID: group.id, isAltCopy: false, dt: 0,
+                                         decision: .eject(rootLane: lane)) != nil else {
+                throw CommandError(code: .invalid_state,
+                                   message: vm.sessionRefusal(.relocate, ids: ids)
+                                       ?? "the content of an open consolidated object cannot leave it")
+            }
             let anchors = CommandAdapters.currentAnchors(ids, in: vm)
             vm.ejectFromGroup(childIDs: ids, groupID: group.id, anchors: anchors,
                               grabbedID: grabbed, dt: 0, baseLane: lane)

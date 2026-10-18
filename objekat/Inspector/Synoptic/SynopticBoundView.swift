@@ -84,7 +84,10 @@ struct SynopticBoundView: View {
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
-        let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
+        // A consolidated INSTANCE has none: it reads a wave the app baked, which has neither a speed
+        // choice of its own nor a channel choice nor an ARA source — its source is the content pill.
+        let isInstance = obj?.isConsolidateInstance ?? false
+        let audioFile: SynopticAudioFile? = ((obj?.isClip ?? false) && !isInstance)
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
                                                        ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
@@ -93,13 +96,11 @@ struct SynopticBoundView: View {
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
         let mix: SynopticMix? = obj.map { o in
-            let title = L(o.isGroup ? "synoptic.mix.kind.group"
-                        : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip"))
-            let links: SynopticMixLinks? = o.isConsolidateInstance
-                ? SynopticMixLinks(volumeSynced: viewModel.isAttrSynced(o, .volume),
-                                   panSynced:    viewModel.isAttrSynced(o, .pan),
-                                   muteSynced:   viewModel.isAttrSynced(o, .mute))
-                : nil
+            // The content root of an open consolidated object: its fader is the CONTENT's, shared by every
+            // instance (@see ConsolidateEditSession.contentRootID).
+            let title = L(viewModel.sessionContentRootIDs.contains(o.id) ? "synoptic.mix.kind.content"
+                        : (o.isGroup ? "synoptic.mix.kind.group"
+                        : (o.isAux ? "synoptic.mix.kind.aux" : "synoptic.mix.kind.clip")))
             // Volume / pan AUTOMATED: we show what the curve plays at the playback
             // position, not the static setting it has replaced (@see liveAutomationValue).
             // The control stays neutralised — it shows, it no longer sets.
@@ -110,8 +111,7 @@ struct SynopticBoundView: View {
             return SynopticMix(title: title, volumeDb: vol, pan: pan, isMuted: o.isMuted,
                                solo: solo,
                                volumeAutomated: viewModel.isAutomated(.volume, on: o),
-                               panAutomated:    viewModel.isAutomated(.pan, on: o),
-                               attrLinks: links)
+                               panAutomated:    viewModel.isAutomated(.pan, on: o))
         }
 
         // Output zone: a group's CHILD is routed to its group (read only, the stem being
@@ -165,13 +165,13 @@ struct SynopticBoundView: View {
 
         // The 'infinite' option: carried by the chain head of top-level auxes / groups.
         let infinite: SynopticInfinite? = obj.flatMap { o in
-            guard o.canBeInfinite, viewModel.items.contains(where: { $0.id == o.id }) else { return nil }
+            guard !isInstance, o.canBeInfinite, viewModel.items.contains(where: { $0.id == o.id }) else { return nil }
             return SynopticInfinite(isOn: o.isInfinite, kindLabel: o.isAux ? L("synoptic.infinite.kind.aux") : L("synoptic.infinite.kind.group"))
         }
         // Looping: a group (the chain head) or a MIDI clip (the MIDI zone) — audio has its own
         // badge in `audioFile`. No top-level restriction here, unlike `infinite`.
         let loop: SynopticLoop? = obj.flatMap { o in
-            (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
+            !isInstance && (o.isGroup || o.isMIDI) && o.canLoop ? SynopticLoop(isOn: o.loopEnabled) : nil
         }
 
         // A drop target's aim, as a place of THIS host's chain: the table of series ids is the one of the
@@ -222,10 +222,14 @@ struct SynopticBoundView: View {
                             audioFile: audioFile, mix: mix, stems: stems,
                             groupRouting: groupRouting,
                             sends: sends, canSend: canSend, receivedSends: received, infinite: infinite, loop: loop,
-                            // A closed consolidated object → read-only FX ('Open to edit'). While editing, the
-                            // placement is materialised (no longer isConsolidateInstance) so the FX become
-                            // interactive again.
-                            fxReadOnly: (obj?.isConsolidateInstance ?? false),
+                            // A consolidated instance, closed or open: its own FX are editable (they are the
+                            // instance's, never baked); the source is the shared content.
+                            contentPill: obj.flatMap { o in
+                                guard let defID = o.consolidateID else { return nil }
+                                return SynopticContentPill(
+                                    name: viewModel.consolidateDefinitions[defID]?.name ?? o.displayName,
+                                    isOpen: viewModel.isInConsolidateEditStack(o.id))
+                            },
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
             onOpenEditors: { openEditors(clicked: $0, ids: $1) },
@@ -345,16 +349,6 @@ struct SynopticBoundView: View {
             // would replay auditions instead of undoing edits.
             onToggleSolo: { viewModel.toggleSoloHold(objectID: objectID) },
             onBeginMixEdit: { viewModel.pushUndo() },
-            onToggleAttrSync: { attr in
-                guard let o = viewModel.find(id: objectID) else { return }
-                let mask: ConsolidateAttrLinks
-                switch attr {
-                case .volume: mask = .volume
-                case .pan:    mask = .pan
-                case .mute:   mask = .mute
-                }
-                viewModel.setAttrSynced(mask, !viewModel.isAttrSynced(o, mask), forPlacement: objectID)
-            },
             onAssignStem: { stemID in viewModel.edit { viewModel.assignStem(objectID: objectID, stemID: stemID) } },
             // An aux lists the sends it RECEIVES: the row carries the SENDER's id, and so it is the
             // sender we set (sender → this aux). Otherwise we set this object → the target aux.
@@ -465,6 +459,13 @@ struct SynopticBoundView: View {
             },
             joinableFXLinks: { viewModel.joinableFXLinks(host: objectID) },
             onJoinFXLink: { viewModel.attachFXLink($0, to: objectID) },
+            onToggleContent: {
+                if viewModel.isInConsolidateEditStack(objectID) {
+                    if viewModel.editingPlacementID == objectID { viewModel.closeConsolidate() }
+                } else if !viewModel.isLiveMirror(objectID) {
+                    viewModel.openConsolidate(viaPlacementID: objectID)
+                }
+            },
             onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
             onRemoveARA: { viewModel.removeARASource(objectID: objectID) },
             onToggleARABypass: { viewModel.toggleARABypass(objectID: objectID) },

@@ -16,15 +16,7 @@ extension EditViewModel {
     /// (children, sub-groups, auxes), the group's bounds included. Used to render ALL the content
     /// (not just the window) → the baked clip can reveal the tail/the pre-window by trimming.
     func bakeRenderRange(_ group: SoundObject) -> (start: Double, end: Double) {
-        var minS = group.startTime
-        var maxE = group.startTime + group.duration
-        func walk(_ obj: SoundObject) {
-            minS = min(minS, obj.startTime)
-            maxE = max(maxE, obj.startTime + obj.duration)
-            if case .group(let ch, _) = obj.kind { for c in ch { walk(c) } }
-        }
-        if case .group(let ch, _) = group.kind { for c in ch { walk(c) } }
-        return (minS, maxE)
+        group.bakeSpan   // pure model code, @see SoundObject.bakeSpan (ConsolidateContentRoot.swift)
     }
 
     /// The real duration (in seconds) of an audio file, or nil if it cannot be read.
@@ -201,96 +193,6 @@ extension EditViewModel {
         let rebuilt = rebuild(root)
         fxLinks += createdFXLinks.values
         return rebuilt
-    }
-
-    // MARK: - Realigning a restored sub-tree
-
-    /// Rebuilds `original` (a sub-tree from a sidecar, with fresh ids) ALIGNED on the window/
-    /// position of any LIVE wrapper (`wrapper`: the consolidated placement being opened,
-    /// being detached, or an instance being turned into a mirror — only its generic fields
-    /// startTime/duration/fades/lane/volume/pan/.../sourceOffset/speedRatio count here, whatever
-    /// the mechanism that produced it). See `EditViewModel+Consolidate.openConsolidate` /
-    /// `detachFromObjectDefinition` / `applyLiveMirror` for the callers. Does not touch the result's
-    /// `consolidateID` (set to nil, to be laid back by the caller if needed) nor its own
-    /// `plugins` (to be merged by the caller).
-    func restoredSubtree(from original: SoundObject, alignedTo wrapper: SoundObject) -> SoundObject {
-        var restored = deepFreshCopy(original)
-        restored.id        = wrapper.id
-        restored.lane      = wrapper.lane
-        restored.volume    = wrapper.volume
-        restored.pan       = wrapper.pan
-        restored.isMuted   = wrapper.isMuted
-        restored.stemID    = wrapper.stemID
-        restored.sends     = wrapper.sends
-        restored.label     = wrapper.label
-        restored.colorIndex = wrapper.colorIndex
-        // The ROOT's automation: the two halves of the sharing are GLUED BACK together. The sidecar kept
-        // only those the render carries away (the parameters of the root's user FX, baked into
-        // the wave); the others — gain, pan, trims, sends, and the plugins belonging to the
-        // instance — belong to the placement and arrive with it.
-        // @see SoundObject.asConsolidateDefinition, which carries the rule and its reason.
-        //
-        // It is this gluing back that holds the invariant: opening, re-editing then re-baking a
-        // definition does not lose the own curve of the instance it was entered through — and
-        // the other instances, turned into live mirrors, EACH keep their own instead
-        // of inheriting the origin's.
-        //
-        // `automationOpen` is NOT carried over: on a group, the band REPLACES the display of the
-        // children (@see SoundObject.showsChildrenInline), and materialising a content just
-        // opened for editing with its children hidden would be a contradiction. The open
-        // state comes back with the placement, on closing as on cancelling.
-        let ownParams = Set(wrapper.automation.map(\.param))
-        restored.automation           = restored.automation.filter { !ownParams.contains($0.param) }
-                                      + wrapper.automation
-        restored.automationTouchOrder = wrapper.automationTouchOrder
-        restored.consolidateID = nil
-
-        if case .group(var children, let isExpanded) = restored.kind {
-            let spd            = wrapper.speedRatio
-            let renderStart    = bakeRenderRange(original).start
-            let contentLeftAbs = renderStart + wrapper.sourceOffset
-            let dStart = wrapper.startTime - contentLeftAbs
-            restored.startTime = wrapper.startTime
-            restored.duration  = wrapper.duration * spd
-            restored.fadeIn    = wrapper.fadeIn   * spd
-            restored.fadeOut   = wrapper.fadeOut  * spd
-            // The baked one may have been varispeeded: the materialised content lasts `spd` times longer, and
-            // the instance's own curves stretch by as much to stay in front of it.
-            restored.automation = restored.automation.timeScaled(by: spd)
-            restored.markers    = restored.markers.timeScaled(by: spd)
-            if dStart != 0 { EditViewModel.shiftStartTimes(&children, by: dStart) }
-            func propagateStem(_ kids: inout [SoundObject]) {
-                for i in kids.indices {
-                    kids[i].stemID = wrapper.stemID
-                    if case .group(var gk, let e) = kids[i].kind {
-                        propagateStem(&gk)
-                        kids[i].kind = .group(children: gk, isExpanded: e)
-                    }
-                }
-            }
-            propagateStem(&children)
-            restored.kind = .group(children: children, isExpanded: isExpanded)
-        } else {
-            restored.startTime = wrapper.startTime
-            if case .clip(let fp, let so, let fd, let sr, let rev) = restored.kind {
-                let spd = wrapper.speedRatio
-                restored.duration = wrapper.duration * spd
-                restored.fadeIn   = wrapper.fadeIn  * spd
-                restored.fadeOut  = wrapper.fadeOut * spd
-                restored.automation = restored.automation.timeScaled(by: spd)   // see the group case
-                restored.markers    = restored.markers.timeScaled(by: spd)
-                restored.kind = .clip(filePath: fp, sourceOffset: so + wrapper.sourceOffset * sr,
-                                      fileDuration: fd, speedRatio: sr, isReversed: rev)
-            } else if case .midiClip = restored.kind {
-                // A restored MIDI clip: no varispeed equivalent (the notes are in beats) —
-                // the wrapper's window is taken as it is (timeline duration/fades). Without
-                // this case, resizing the baked wrapper was ignored on opening.
-                restored.duration = wrapper.duration
-                restored.fadeIn   = wrapper.fadeIn
-                restored.fadeOut  = wrapper.fadeOut
-            }
-        }
-        return restored
     }
 
     // MARK: - Naming, alert, lock

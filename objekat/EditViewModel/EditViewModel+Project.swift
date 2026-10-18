@@ -235,9 +235,9 @@ extension EditViewModel {
     /// project there is no reference folder and the paths stay absolute.
     func encodedSession() throws -> Data {
         guard let folder = projectFolder else {
-            return try encodedSession(projectFolder: URL(fileURLWithPath: "/"))
+            return try encodedSession(projectFolder: URL(fileURLWithPath: "/"), foldingSessions: false)
         }
-        return try encodedSession(projectFolder: folder)
+        return try encodedSession(projectFolder: folder, foldingSessions: false)
     }
 
     /// THE session document, for every writer (a save, `project.get_state`, "Save a copy"): only
@@ -280,8 +280,15 @@ extension EditViewModel {
     /// files that live in the project folder are written RELATIVE to `folder` (the folder
     /// this version file lands in): moving the folder breaks no link.
     /// See `ProjectPaths`.
-    func encodedSession(projectFolder folder: URL) throws -> Data {
-        let doc = projectDocument(items: portableItems(itemsWithCapturedPluginStates(), projectFolder: folder),
+    ///
+    /// `foldingSessions`: a FILE never holds an open consolidated object as the group it is on screen —
+    /// each stage goes back to the closed instance it opens from, each mirror to its snapshot
+    /// (@see itemsFoldingOpenSessions). `project.get_state` (the no-argument form) shows what is on
+    /// screen instead.
+    func encodedSession(projectFolder folder: URL, foldingSessions: Bool = true) throws -> Data {
+        let captured = itemsWithCapturedPluginStates()
+        let doc = projectDocument(items: portableItems(foldingSessions ? itemsFoldingOpenSessions(captured) : captured,
+                                                       projectFolder: folder),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

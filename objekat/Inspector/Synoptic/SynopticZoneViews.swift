@@ -658,15 +658,7 @@ struct ClipMixZoneView: View {
                     .lineLimit(1)
                     .fixedSize()
                     .layoutPriority(1)
-                // A 'linked consolidated object' marker (the attributes below carry a link icon).
-                if mix.attrLinks != nil {
-                    Image(systemName: "waveform.circle")
-                        .font(.system(size: 17))
-                        .foregroundStyle(LinkColor.consolidate)
-                        .help(L("synoptic.consolidate.linked"))
-                }
                 Spacer(minLength: 0)
-                // Each attribute: the value, then (tight to the right) its link icon.
                 HStack(spacing: 3) {
                     // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
                     // tenths, they do not halve them. The drag stays continuous here and is brought
@@ -682,7 +674,6 @@ struct ClipMixZoneView: View {
                                  onChange: { actions.onSetPan?(Float($0)) },
                                  onReset: { actions.onSetPan?(0) })
                         .automationLocked(mix.panAutomated)
-                    if let links = mix.attrLinks { attrLinkBadge(.pan, synced: links.panSynced) }
                 }
                 HStack(spacing: 3) {
                     GainDbControl(dB: mix.volumeDb, minDb: -96, maxDb: 40,
@@ -691,31 +682,16 @@ struct ClipMixZoneView: View {
                         actions.onSetVolume?(newDB)
                     }
                     .automationLocked(mix.volumeAutomated)
-                    if let links = mix.attrLinks { attrLinkBadge(.volume, synced: links.volumeSynced) }
                 }
                 HStack(spacing: 3) {
                     muteButton
                     soloButton
-                    if let links = mix.attrLinks { attrLinkBadge(.mute, synced: links.muteSynced) }
                 }
             }
             .padding(.horizontal, 10)
             .frame(width: rect.width, height: rect.height, alignment: .leading)
             .position(x: rect.midX, y: rect.midY)
         }
-    }
-
-    /// An attribute's link icon (a consolidated object): green = synced between instances,
-    /// red = independent. Double click to flip the state.
-    private func attrLinkBadge(_ attr: SynopticMixAttr, synced: Bool) -> some View {
-        Image(systemName: "arrow.down.left.arrow.up.right.square.fill")
-            .font(.system(size: 17))
-            .foregroundStyle(synced ? Color.green : Color.red)
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { actions.onToggleAttrSync?(attr) }
-            .help(synced
-                  ? L("synoptic.consolidate.attrSynced")
-                  : L("synoptic.consolidate.attrIndependent"))
     }
 
     private var muteButton: some View {

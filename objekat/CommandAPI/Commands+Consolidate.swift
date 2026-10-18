@@ -27,9 +27,6 @@ extension CommandRegistry {
                     "revision": .int(def.revision),
                     "was_group": .bool(def.wasGroup),
                     "wave": .string(def.wave),
-                    "volume_db": .number(Double(def.volume)),
-                    "pan": .number(Double(def.pan)),
-                    "muted": .bool(def.isMuted),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
                     "stale": .bool(vm.isConsolidateStale(def.id)),
@@ -41,7 +38,9 @@ extension CommandRegistry {
         }
 
         register("consolidate.make",
-                 summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id.",
+                 summary: "Turns an object into a reusable consolidated object (asynchronous bake). Returns a job_id. "
+                        + "A group or a lone clip is the CONTENT (its FX, window and children are baked into the wave); "
+                        + "its fader, pan, mute, fades and sends stay on the placement, which becomes an instance.",
                  params: [ParamSpec("id", "uuid", "Group or clip to share."),
                           ParamSpec("also_link", "array<uuid>", required: false,
                                     "Other objects to replace with a linked instance."),
@@ -65,6 +64,7 @@ extension CommandRegistry {
             guard !object.isConsolidateInstance else {
                 throw CommandError(code: .invalid_state, message: "already an instance of a consolidated object")
             }
+            if let why = vm.sessionRefusal(.consolidate, ids: [id]) { throw CommandError(code: .invalid_state, message: why) }
             guard vm.consolidateFolder != nil else {
                 throw CommandError(code: .invalid_state,
                                    message: "save the project first (samples/consolidate/ is required)")
@@ -111,9 +111,9 @@ extension CommandRegistry {
             if object.isGroup {
                 vm.consolidate(groupID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             } else {
-                // A lone clip is first wrapped in a one-item group: that wrapper is what carries
-                // fades and live sends on the instance.
-                vm.consolidateWrappingClip(clipID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
+                // A lone clip is its own content: no wrapper group. Its fader, fades and sends
+                // become the instance's (the wave holds the clip's source, window and FX).
+                vm.consolidateClip(clipID: id, alsoLinkIDs: alsoLink, midChainSends: policy)
             }
             CommandAdapters.followBake(jobID, in: vm) {
                 .object(["definitions": .int(vm.consolidateDefinitions.count)])
@@ -146,6 +146,9 @@ extension CommandRegistry {
                 "editing": .bool(vm.isEditingConsolidate),
                 "definition": .stringOrNull(vm.editingConsolidateID?.uuidString),
                 "placement": .stringOrNull(vm.editingPlacementID?.uuidString),
+                // The CONTENT ROOT inside the open stage: the one child of the placement, and the
+                // only thing a commit bakes (@see SoundObject.consolidateStage).
+                "content_root_id": .stringOrNull(vm.editingContentRootID?.uuidString),
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
                 "renders": .array(bakes + rebakes),
@@ -153,8 +156,9 @@ extension CommandRegistry {
         }
 
         register("consolidate.edit_begin",
-                 summary: "Opens an instance for editing: its original content is restored in "
-                        + "place, and the other instances become its live mirror.",
+                 summary: "Opens an instance for editing: the instance becomes a STAGE (a group holding its "
+                        + "own FX, mix, window and sends) with ONE child, the content root, and the other "
+                        + "instances become its live mirror (see consolidate.state content_root_id).",
                  params: [ParamSpec("placement", "uuid", "Instance to open.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -212,6 +216,7 @@ extension CommandRegistry {
                 throw CommandError(code: .not_found,
                                    message: "unknown instance: \(placementID.uuidString)")
             }
+            if let why = vm.sessionRefusal(.deconsolidate, ids: [placementID]) { throw CommandError(code: .invalid_state, message: why) }
             vm.deconsolidate(placementID: placementID)
             return .object(["placement": .string(placementID.uuidString),
                             "still_linked": .bool(vm.find(id: placementID)?.isConsolidateInstance ?? false)])

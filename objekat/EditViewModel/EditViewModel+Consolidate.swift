@@ -7,10 +7,19 @@ struct ConsolidateEditSession: Identifiable {
     let defID: UUID
     /// The materialised placement (its content replaces this placement in `items` for the length of the session).
     let placementID: UUID
-    /// A snapshot of the baked instance BEFORE materialisation (restored as it is by a cancel).
+    /// The CONTENT ROOT inside the stage: the one child of the open placement, and the only thing a
+    /// closing renders. The placement itself (`placementID`) is the STAGE — the instance level
+    /// (@see SoundObject.consolidateStage).
+    let contentRootID: UUID
+    /// The edit-time instant of the position 0 of the wave the instance read when it was opened:
+    /// `startTime − sourceOffset` of the closed placement. The content root was laid to start exactly
+    /// there, and a new wave's own zero is measured against it (@see SoundObject.realignedInstance).
+    let oldWaveZero: Double
+    /// A snapshot of the baked instance BEFORE materialisation (restored as it is by a cancel; also
+    /// the undo point of a commit — the instance as it was opened).
     var originalPlacement: SoundObject?
-    /// A snapshot of the sub-tree materialised AT OPENING (the content, with the plugin state coming from the
-    /// sidecar). Used to detect "no modification" at closing → the re-bake is skipped.
+    /// A snapshot of the CONTENT ROOT as laid at opening (its plugin state coming from the sidecar).
+    /// Used to detect "no modification" at closing → the re-bake is skipped.
     var openedSubtree: SoundObject?
     /// The OTHER instances, turned into live mirrors for the length of the session: for each, the
     /// `.clip` placement from BEFORE (restored on closing as on cancelling). It is also what
@@ -146,72 +155,6 @@ extension EditViewModel {
             guard let o = find(id: id) else { return false }
             return hasLinkedSiblings(o)
         }
-    }
-
-    // MARK: - Linked attributes (volume / pan / mute)
-
-    /// True if `attr` (volume/pan/mute) of `obj` follows the common value of its definition:
-    /// `obj` is a linked instance AND has not detached that attribute.
-    func isAttrSynced(_ obj: SoundObject, _ attr: ConsolidateAttrLinks) -> Bool {
-        obj.isConsolidateInstance && !obj.independentAttrs.contains(attr)
-    }
-
-    /// Propagates `attr` (volume/pan/mute) from the instance `objectID` to its definition and
-    /// to every other instance still synchronised for that attribute. To be called AFTER writing
-    /// the new value onto `objectID` (the volume/pan/mute setters already do so).
-    /// A no-op if `objectID` is not a linked instance synchronised for `attr`.
-    func propagateLinkedAttr(_ attr: ConsolidateAttrLinks, from objectID: UUID) {
-        guard let src = find(id: objectID), isAttrSynced(src, attr),
-              let defID = src.consolidateID, var def = consolidateDefinitions[defID] else { return }
-
-        switch attr {
-        case .volume: def.volume  = src.volume
-        case .pan:    def.pan     = src.pan
-        case .mute:   def.isMuted = src.isMuted
-        default: break
-        }
-        consolidateDefinitions[defID] = def
-
-        for tid in placementIDs(forConsolidate: defID, excluding: objectID) {
-            guard let other = find(id: tid), isAttrSynced(other, attr) else { continue }
-            update(id: tid) { o in
-                switch attr {
-                case .volume: o.volume  = def.volume
-                case .pan:    o.pan     = def.pan
-                case .mute:   o.isMuted = def.isMuted
-                default: break
-                }
-            }
-            pushMix(tid)
-        }
-    }
-
-    /// Toggles the synced/independent state of `attr` for the instance `id`.
-    /// - `synced == false`: detaches the attribute (it keeps its current value, frozen in place).
-    /// - `synced == true` : reattaches the attribute → realigns the instance's value on the
-    ///   definition's and pushes it to the engine.
-    func setAttrSynced(_ attr: ConsolidateAttrLinks, _ synced: Bool, forPlacement id: UUID) {
-        guard let obj = find(id: id), obj.isConsolidateInstance else { return }
-        guard obj.independentAttrs.contains(attr) == synced else { return }   // already in the state wanted
-        pushUndo()
-        if synced {
-            let def = obj.consolidateID.flatMap { consolidateDefinitions[$0] }
-            update(id: id) { o in
-                o.independentAttrs.remove(attr)
-                if let def {
-                    switch attr {
-                    case .volume: o.volume  = def.volume
-                    case .pan:    o.pan     = def.pan
-                    case .mute:   o.isMuted = def.isMuted
-                    default: break
-                    }
-                }
-            }
-            pushMix(id)
-        } else {
-            update(id: id) { $0.independentAttrs.insert(attr) }
-        }
-        isDirty = true
     }
 
     // MARK: - Staleness
@@ -402,8 +345,12 @@ extension EditViewModel {
             completion(false); return
         }
 
-        // Fresh ids (zero timeline collision) + child refs pointing at the CURRENT waves.
-        let restored = refreshConsolidateReferences(in: deepFreshCopy(original))
+        // The CONTENT of the definition (the root normalised to what its wave holds), with fresh ids
+        // (zero timeline collision) and child refs pointing at the CURRENT waves. Its start is the
+        // position 0 of the wave about to be written, which is the one of the wave it replaces —
+        // the realignment of the instances is therefore the identity (δ = 0).
+        let content = refreshConsolidateReferences(in: SoundObject.contentRoot(fromSidecar: original, def: def))
+        let restored = deepFreshCopy(content)
 
         // Instantiates in the engine ALONE (not in `items`) and mutes so as to stay silent live.
         syncAdd(restored)
@@ -416,11 +363,13 @@ extension EditViewModel {
         let base = "\(bakeSafeName(def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
         let wav  = folder.appendingPathComponent("\(base).wav")
 
-        let renderStart: Double, renderEnd: Double
-        if restored.isGroup {
-            let range = bakeRenderRange(restored); renderStart = range.start; renderEnd = range.end
-        } else {
-            renderStart = restored.startTime; renderEnd = restored.startTime + restored.duration
+        let renderStart = restored.startTime
+        let renderEnd   = restored.startTime + restored.duration
+        guard renderEnd > renderStart else {
+            recomputeRenderKeys[defID] = nil
+            removeFromEngine(restored)
+            NSLog("[OBJECT] headless rebake \(defID): empty content — skipped")
+            completion(false); return
         }
 
         let finish: (Bool) -> Void = { [weak self] ok in
@@ -435,11 +384,11 @@ extension EditViewModel {
                 NSLog("[OBJECT] headless rebake \(defID): render failed")
                 completion(false); return
             }
-            // The new sidecar (child refs up to date; the original ids/plugins preserved).
+            // The new sidecar (child refs up to date; the original ids/plugins preserved), written
+            // with the rule of the content: the root is entirely content.
             let newSidecar = self.consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
             do {
-                try self.encodedConsolidateSidecar(self.refreshConsolidateReferences(in: original),
-                                              projectFolder: self.projectFolder)
+                try self.encodedConsolidateSidecar(content, rootIsContent: true, projectFolder: self.projectFolder)
                     .write(to: newSidecar, options: .atomic)
             } catch {
                 NSLog("[OBJECT] headless rebake \(defID): sidecar write failed — \(error.localizedDescription)")
@@ -450,24 +399,18 @@ extension EditViewModel {
             let prev = self.consolidateDefinitions[defID]
             self.consolidateDefinitions[defID] = ConsolidateDefinition(
                 id: defID, name: prev?.name ?? restored.displayName, wave: wav.lastPathComponent,
-                revision: nextRevision, wasGroup: prev?.wasGroup ?? restored.isGroup,
-                volume: prev?.volume ?? restored.volume, pan: prev?.pan ?? restored.pan,
-                isMuted: prev?.isMuted ?? restored.isMuted,
+                revision: nextRevision, wasGroup: prev?.wasGroup ?? restored.isGroup, rootIsContent: true,
                 dependsOn: self.collectConsolidateDependencies(restored))
             // Propagates the new wave to ALL the placements of this definition (model + engine).
-            self.propagateConsolidateUpdate(defID: defID, exceptPlacementID: UUID())
+            self.propagateConsolidateUpdate(defID: defID, exceptPlacementID: UUID(), delta: 0)
             self.markConsolidateResynced(defID)   // a transient ✓ on the resynchronised placements
             self.isDirty = true
             NSLog("[OBJECT] headless rebake \(defID) → \(wav.lastPathComponent) (revision \(nextRevision))")
             completion(true)
         }
-        if restored.isGroup {
-            engine.renderGroup(toFileAsync: restored.id.uuidString, filePath: wav.path,
-                               start: renderStart, end: renderEnd, completion: finish)
-        } else {
-            engine.renderClip(toFileAsync: restored.id.uuidString, filePath: wav.path,
-                              start: renderStart, end: renderEnd, completion: finish)
-        }
+        engine.renderConsolidateContent(toFileAsync: restored.id.uuidString, filePath: wav.path,
+                                        start: renderStart, end: renderEnd,
+                                        faders: contentRenderFaders(of: restored), completion: finish)
     }
 
     // MARK: - Creating a consolidated object ("make object")
@@ -486,6 +429,7 @@ extension EditViewModel {
         guard let engine, let group = find(id: groupID), group.isGroup,
               !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
+        if refusedBySession(.consolidate, ids: [groupID]) { return }
         guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
@@ -502,8 +446,14 @@ extension EditViewModel {
         guard resolveMidChainSends(for: [groupID] + alsoLinkIDs, choice: midChainSends) else { return }
 
         // Re-read: settling the sends may have rewritten the object.
-        let original = withCapturedPluginStates(find(id: groupID) ?? group)
         let defID = UUID()
+        // The CONTENT ROOT the sidecar will hold: the group with a neutral fader, no fade, its full extent
+        // as window, no send, and without the curves that stay on the instance (@see
+        // SoundObject.contentRoot — the render below bypasses exactly these, so the wave is the one this
+        // root renders). The group's own fader / window / fades / sends / curves go to the instance.
+        let original = SoundObject.contentRoot(
+            fromSidecar: withCapturedPluginStates(find(id: groupID) ?? group),
+            def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
         let base  = "\(bakeSafeName(group.displayName))_\(defID.uuidString.prefix(8))"
         let wav   = folder.appendingPathComponent("\(base).wav")
 
@@ -525,62 +475,67 @@ extension EditViewModel {
         }
     }
 
-    /// "Create a consolidated object" on a LONE CLIP/MIDI: a design decision — a consolidated object is
-    /// ALWAYS a group. So the clip is first wrapped in a group of one (the existing grouping
-    /// primitive, which preserves the nesting: a sub-group if the clip is already inside
-    /// a group, a top-level group otherwise), and then that group is turned into a consolidated object.
-    func consolidateWrappingClip(clipID: UUID, alsoLinkIDs: [UUID] = [],
-                                 midChainSends: SendBakePolicy.Choice? = nil) {
-        guard let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
+    /// "Create a consolidated object" on a LONE CLIP/MIDI (QB-1 of the plan): the CONTENT is the clip
+    /// itself — no wrapper group. Opened for editing, the instance gives a stage holding that clip.
+    ///
+    /// The clip's own FX, window and source are content and are baked; its fader, pan, mute, fades and
+    /// sends are the instance's and stay on it (they are bypassed by the render, which forces the
+    /// target's fader to neutral and clears its fades, @see renderConsolidateContent). The wave lasts
+    /// as long as the clip's window and its position 0 is the clip's start: the instance reads it from
+    /// 0 over the clip's own place and length.
+    func consolidateClip(clipID: UUID, alsoLinkIDs: [UUID] = [],
+                         midChainSends: SendBakePolicy.Choice? = nil) {
+        guard let engine, let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
               !firstRead.isConsolidateInstance, !isBaking(clipID) else { return }
-        guard consolidateFolder != nil else {
+        if refusedBySession(.consolidate, ids: [clipID]) { return }
+        guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
             return
         }
-        // Q-U6: BEFORE the sends are carried onto the wrapper and the chain is baked. A marker would
-        // be left behind on the baked clip otherwise (its send moves, its marker does not).
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            bakeAlert(L("consolidate.error.failed.title"),
+                        L("consolidate.error.folderFailed.info", error.localizedDescription))
+            return
+        }
+        // Q-U6: BEFORE the chain is baked (a marker would be left behind on the baked clip otherwise).
         guard resolveMidChainSends(for: [clipID] + alsoLinkIDs, choice: midChainSends) else { return }
         guard let clip = find(id: clipID) else { return }
-        // A LONE object: its fade must live ON the consolidated object (group level, live/editable) and
-        // not stay baked into the wav from the clip. Rendering the group bypasses the group's
-        // window/fade (→ not baked, it stays live on the placement) but bakes the fade of a CHILD clip.
-        // So the fade is moved clip → wrapper group BEFORE the render. (In a multiple selection, the
-        // creation goes through consolidate(groupID:) and the clips' fades stay
-        // inside — unchanged behaviour.)
-        let fadeIn  = clip.fadeIn
-        let fadeOut = clip.fadeOut
-        // Sends: the SAME logic as the fades. The send lives on the CLIP; left there, it
-        // is lost in the transformation — the child clip is baked into the wav and its routing to
-        // the aux destroyed (rendering the submix does not capture the aux send). So it is moved onto the
-        // wrapper group BEFORE the render: the placement will inherit a LIVE send from it (rewired by
-        // syncSends in finishConsolidate). The wrapper's window matches the clip's →
-        // the aux stays overlapped, and the send keeps its meaning.
-        let sends = sendsWithLiveStates(of: clip)   // the plugins a send carries go with it, states live
 
-        // Wrapping in a group of one (an internal pushUndo, rebuilds the engine).
-        createGroupFromSelection([clipID])
-        // The clip is now a child of the freshly created group: it is found again to be shared.
-        guard let wrapper = parentGroup(for: clipID), wrapper.isGroup else { return }
+        // The content, as the sidecar will hold it: the clip with its states captured, a neutral
+        // fader, no fade, no send — and the curves of the fader / sends removed (they are the instance's).
+        let defID = UUID()
+        let content = SoundObject.contentRoot(
+            fromSidecar: withCapturedPluginStates(clip),
+            def: ConsolidateDefinition(id: defID, name: "", wave: "", rootIsContent: false))
+        let base = "\(bakeSafeName(clip.displayName))_\(defID.uuidString.prefix(8))"
+        let wav  = folder.appendingPathComponent("\(base).wav")
+        let renderStart = clip.startTime
+        let renderEnd   = clip.startTime + clip.duration
+        guard renderEnd > renderStart else { return }
 
-        if fadeIn > 0 || fadeOut > 0 {
-            // Removes the child clip's fade (→ a "clean" rendered submix, the fade not baked)…
-            updateFadeIn(id: clipID, fadeIn: 0)
-            updateFadeOut(id: clipID, fadeOut: 0)
-            // …and carries it over onto the wrapper group: the placement will inherit a live fade from it.
-            updateFadeIn(id: wrapper.id, fadeIn: fadeIn)
-            updateFadeOut(id: wrapper.id, fadeOut: fadeOut)
+        // The render clones the Edit with the clip's fades as they are in the engine: they are the
+        // instance's, so they are taken off the live clip for the length of the render and put back
+        // after it (the model never changes — the placement takes them from it).
+        let fadeIn = clip.fadeIn, fadeOut = clip.fadeOut
+        let hasFades = fadeIn > 0 || fadeOut > 0
+        if hasFades { engine.updateFade(in: 0, fadeOut: 0, forID: clipID.uuidString) }
+        bakingIDs.insert(clipID)
+        let completion: (Bool) -> Void = { [weak self] ok in
+            guard let self else { return }
+            self.bakingIDs.remove(clipID)
+            if hasFades { self.engine?.updateFade(in: fadeIn, fadeOut: fadeOut, forID: clipID.uuidString) }
+            self.finishConsolidate(objectID: clipID, ok: ok, wav: wav, folder: folder,
+                                   defID: defID, original: content, sourceOffset: 0,
+                                   renderStart: renderStart, renderEnd: renderEnd,
+                                   alsoLinkIDs: alsoLinkIDs)
         }
-
-        if !sends.isEmpty {
-            // Removes the child clip's sends (the model emptied; the bridge sync below takes the engine's away)…
-            update(id: clipID) { $0.sends.removeAll() }
-            // …and carries them over onto the wrapper group (model + engine wiring of the active sends).
-            update(id: wrapper.id) { $0.sends = sends }
-            if let w = find(id: wrapper.id) { syncSends(w) }
-        }
-
-        consolidate(groupID: wrapper.id, alsoLinkIDs: alsoLinkIDs)
+        engine.renderConsolidateContent(toFileAsync: clipID.uuidString, filePath: wav.path,
+                                        start: renderStart, end: renderEnd,
+                                        faders: contentRenderFaders(of: content),
+                                        completion: completion)
     }
 
     // MARK: - Creating N consolidated objects from a multiple selection
@@ -624,7 +579,7 @@ extension EditViewModel {
             if o.isGroup {
                 consolidate(groupID: id)
             } else if o.isClip || o.isMIDI {
-                consolidateWrappingClip(clipID: id)
+                consolidateClip(clipID: id)
             } else {
                 continue
             }
@@ -643,9 +598,9 @@ extension EditViewModel {
 
     // MARK: - Replacing an identical multiple selection with N consolidated objects
 
-    /// The case of a plain wav copy-and-paste: returns N if the selection (≥ 2) is a batch of strictly
-    /// identical AUDIO clips (the same file, the same trim/speed/direction, the same volume / pan /
-    /// mute / fades / stem / colour / sends, with no plugin). The position (startTime / lane) may
+    /// The case of a plain wav copy-and-paste: returns N if the selection (≥ 2) is a batch of AUDIO clips
+    /// with the same CONTENT (the same file, the same trim/speed/direction and length, with no plugin —
+    /// @see identicalClipContent; their volume / pan / mute / fades / stem / sends may differ). The position (startTime / lane) may
     /// differ — that is precisely what marks them out as copies. nil otherwise → the option is hidden.
     func uniformClipSelectionForConsolidate() -> Int? {
         guard consolidateFolder != nil else { return nil }
@@ -661,16 +616,18 @@ extension EditViewModel {
         return objs.count
     }
 
-    /// True if two clips have EXACTLY the same content and the same settings (position aside).
+    /// True if two clips have EXACTLY the same CONTENT (Q9A): the same file, the same source range,
+    /// speed and direction, the same length and channel choice, no ARA source. The instance level —
+    /// volume, pan, mute, fades, sends, stem — is each instance's own and plays no part: copies that
+    /// differ only by it are still the same sound, and become instances that keep their own mix. The
+    /// position (startTime / lane) may differ — that is precisely what marks them out as copies.
     private func identicalClipContent(_ a: SoundObject, _ b: SoundObject) -> Bool {
         guard case .clip(let fpA, let soA, let fdA, let srA, let revA) = a.kind,
               case .clip(let fpB, let soB, let fdB, let srB, let revB) = b.kind else { return false }
         return fpA == fpB && soA == soB && fdA == fdB && srA == srB && revA == revB
             && a.duration == b.duration
-            && a.volume == b.volume && a.pan == b.pan && a.isMuted == b.isMuted
-            && a.fadeIn == b.fadeIn && a.fadeOut == b.fadeOut
-            && a.stemID == b.stemID && a.colorIndex == b.colorIndex && a.colorHex == b.colorHex
-            && a.sends == b.sends
+            && a.channelMode == b.channelMode
+            && a.araSource == nil && b.araSource == nil
     }
 
     /// "Replace with N consolidated objects": bakes ONE of the clips into a definition, and turns
@@ -686,7 +643,7 @@ extension EditViewModel {
         // Q-U6 for the WHOLE batch (the others become instances of the same definition and are
         // folded or cleared the same way), then the existing path.
         guard resolveMidChainSends(for: ordered.map(\.id)) else { return }
-        consolidateWrappingClip(clipID: source.id, alsoLinkIDs: Array(others))
+        consolidateClip(clipID: source.id, alsoLinkIDs: Array(others))
     }
 
     /// The common completion (group or clip), on the main thread: sidecar + recording the
@@ -708,7 +665,7 @@ extension EditViewModel {
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
-            try encodedConsolidateSidecar(original, projectFolder: projectFolder)
+            try encodedConsolidateSidecar(original, rootIsContent: true, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
             bakeAlert(L("consolidate.error.failed2.title"),
@@ -726,8 +683,7 @@ extension EditViewModel {
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
         consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: live.displayName, wave: wav.lastPathComponent,
-            revision: 0, wasGroup: live.isGroup,
-            volume: live.volume, pan: live.pan, isMuted: live.isMuted,
+            revision: 0, wasGroup: live.isGroup, rootIsContent: true,
             dependsOn: collectConsolidateDependencies(original))
 
         // Automation: what the render has BAKED IN goes with the content (the children's curves
@@ -774,7 +730,7 @@ extension EditViewModel {
                 lane: other.lane, volume: other.volume, pan: other.pan,
                 fadeIn: other.fadeIn, fadeOut: other.fadeOut, isMuted: other.isMuted,
                 stemID: other.stemID, plugins: [],
-                label: other.label ?? other.displayName, colorIndex: other.colorIndex, colorHex: other.colorHex,
+                label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
                 sends: otherSends, baseBPM: nil,
                 consolidateID: defID,
                 automationTouchOrder: other.automationTouchOrder,
@@ -821,16 +777,20 @@ extension EditViewModel {
     }
 
     /// OPENS the consolidated object referenced by `placementID`: it leaves
-    /// the baked regime and moves to the LIVE regime. Its sub-tree (from the sidecar) is
-    /// materialised in the place of THIS placement, and the other instances become
-    /// mirrors of it — they stop reading the wave and play the same content, put back in their own place. The
-    /// return to the wave happens at CLOSING (`closeConsolidate`, a new bake) or at
-    /// the cancel (`cancelConsolidateEdit`, with the wave unchanged). If a session is already running,
-    /// editing a NESTED consolidated object stacks a child session (the mirrors always follow
-    /// the top of the stack).
+    /// the baked regime and moves to the LIVE regime. The placement becomes its own STAGE — a group
+    /// that keeps everything which is the INSTANCE's (its FX, fader, window, fades, sends, stem,
+    /// automation) — and the sub-tree from the sidecar, the CONTENT ROOT, is materialised INSIDE it
+    /// (@see SoundObject.consolidateStage). The content is what a closing bakes and shares; the stage is
+    /// heard around it but never baked, because a render makes the ancestors of its target transparent.
+    /// The other instances become mirrors of the content — they stop reading the wave and play the same
+    /// content, put back in their own place, with their own FX and mix. The return to the wave happens at
+    /// CLOSING (`closeConsolidate`, a new bake) or at the cancel (`cancelConsolidateEdit`, with the wave
+    /// unchanged). If a session is already running, editing a NESTED consolidated object stacks a
+    /// child session (the mirrors always follow the top of the stack).
     func openConsolidate(viaPlacementID placementID: UUID) {
+        // A CLOSED instance only: a stage (a group carrying the link) is already open.
         guard let placement = find(id: placementID), let defID = placement.consolidateID,
-              let def = consolidateDefinitions[defID] else { return }
+              let def = consolidateDefinitions[defID], case .clip = placement.kind else { return }
         guard !isBaking(placementID) else { return }
         // Nesting is allowed, but a placement already present in the stack is not reopened — nor is
         // a mirrored instance, which is only the reflection of an origin already open.
@@ -850,19 +810,27 @@ extension EditViewModel {
             return
         }
 
-        // A consolidated descendant of the sub-tree may have a definition more recent than the one
-        // captured at the last bake of THIS definition (staleness) → it is reopened on the UP-TO-DATE
-        // content for editing.
-        var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
-        // The placement's sends arrive with it (@see restoredSubtree) — and the plugins they carry
-        // with their LIVE states: the placement leaves the engine below.
-        restored.sends = sendsWithLiveStates(of: placement)
+        // The CONTENT: the sidecar's root, normalised to what the wave actually holds (an older sidecar
+        // still carries the instance's fader / window / fades on it), with fresh ids, and its nested
+        // consolidated descendants pointed at the UP-TO-DATE waves (a descendant's definition may be more
+        // recent than the one captured at the last bake of THIS definition — staleness).
+        let content = refreshConsolidateReferences(
+            in: deepFreshCopy(SoundObject.contentRoot(fromSidecar: original, def: def)))
 
         // The baked content may carry plugins absent from this machine: materialising it would
         // remove them (compileRack) and the object would be heard without its effects. We warn BEFORE
         // opening — hence before the pushUndo, since the cancel must leave nothing behind it.
         guard confirmMissingPluginsBeforeOpening(
-            restored, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
+            content, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
+
+        // The instance as it is NOW, with the live state of its plugins and of the plugins its sends
+        // carry — both leave the engine below, and are what a cancel gives back.
+        var instance = withCapturedPluginStates(placement)
+        instance.sends = sendsWithLiveStates(of: placement)
+        let waveZero = placement.consolidateWaveZero
+        let stage = SoundObject.consolidateStage(placement: instance, content: content,
+                                                 definitionID: defID, waveZero: waveZero)
+        guard case .group(let stageKids, _) = stage.kind, let contentRoot = stageKids.first else { return }
 
         // Perf: t0 AFTER the guards and the reading of the sidecar — what is wanted is
         // the cost of the gesture, not that of the resolution's I/O. The `[PERF] snapshot` of the pushUndo
@@ -871,37 +839,28 @@ extension EditViewModel {
 
         let undoDepthAtOpen = undoStack.count
         pushUndo()
-        // Opening for editing must make the CONTENT visible and clickable — in particular the
-        // NESTED consolidated objects that will be re-edited in their turn (a child session). A group
-        // is created/transformed FOLDED (isExpanded == false, see consolidate) and
-        // `restoredSubtree` reproduces that state faithfully → materialised folded, its children do not
-        // come out in `laneEntries` (buildLaneEntries only recurses if isExpanded) and so are
-        // not hit-testable. So the expansion is forced at opening.
-        if case .group(let children, _) = restored.kind {
-            restored.kind = .group(children: children, isExpanded: true)
-        }
 
         // Suspends the tracking of the PARENT session (if there is one) before stacking the child:
         // the engine watch only watches one sub-tree at a time → it will be re-installed on
         // the child by `armConsolidateEditParamWatch`, and reinstalled on the parent when it is popped.
         liveMirrorWorkItem?.cancel(); liveMirrorWorkItem = nil
 
-        // Stacks the session. Captures the state of the plugins BELONGING to the placement (live stateXML) BEFORE
-        // the removeFromEngine: the snapshot serves to restore them identically at closing as at
-        // a cancel (they belong to the placement, not to the content being edited).
+        // Stacks the session. The instance snapshot (plugin states captured above) serves to restore it
+        // identically at a cancel; the content root as laid serves to see, at closing, whether the content
+        // moved at all.
         consolidateEditStack.append(ConsolidateEditSession(defID: defID, placementID: placementID,
-                                                 originalPlacement: withCapturedPluginStates(placement),
-                                                 openedSubtree: restored,
+                                                 contentRootID: contentRoot.id, oldWaveZero: waveZero,
+                                                 originalPlacement: instance,
+                                                 openedSubtree: contentRoot,
                                                  undoDepthAtOpen: undoDepthAtOpen))
 
         removeFromEngine(placement)
-        update(id: placementID) { $0 = restored }
-        syncAdd(restored)
+        update(id: placementID) { $0 = stage }
+        syncAdd(stage)
         if let parent = parentGroup(for: placementID) {
             engine?.assignObject(placementID.uuidString, toGroupFolder: parent.id.uuidString)
-        }
-        if case .clip = restored.kind {
-            engine?.updateFade(in: restored.fadeIn, fadeOut: restored.fadeOut, forID: placementID.uuidString)
+        } else if let sid = stage.stemID {
+            engine?.assignObjects([placementID.uuidString], toStemID: sid.uuidString)
         }
         // The OTHER instances leave the baked wave and become LIVE mirrors of the content
         // just materialised: from here on, they all refer to the same origin.
@@ -914,26 +873,44 @@ extension EditViewModel {
         UIPerf.measureFrom(tOpen, "open the consolidated object")
     }
 
-    /// A stable signature of a sub-tree (a JSON encoding with sorted keys) to detect a
+    /// A stable signature of the CONTENT ROOT (a JSON encoding with sorted keys) to detect a
     /// modification between the opening and the closing of a consolidated object. `nil` if
     /// the encoding fails → treated as "different" (we re-bake, on the safe side).
+    ///
+    /// It is the root's whole content-side form (@see SoundObject.asContentRootDefinition): its fader,
+    /// window, fades, loop, curves, FX and children. The instance level lives on the stage, outside
+    /// it, so editing the instance's own FX or fader while the object is open never triggers a re-bake.
+    /// The root's fold state and its automation band are pure interface and are left out.
     private func subtreeSignature(_ o: SoundObject) -> Data? {
         let enc = JSONEncoder()
         enc.outputFormatting = [.sortedKeys]
-        // The same amputation as the sidecar: the ROOT's automation belongs to the instance,
-        // not to the definition. Without this, setting the instance's gain curve while
-        // editing its content would trigger a re-bake — hence one revision and one wave more —
-        // for a rigorously identical file.
-        return try? enc.encode(o.asConsolidateDefinition)
+        var root = o.asContentRootDefinition
+        root.automationOpen = false
+        if case .group(let ch, _) = root.kind { root.kind = .group(children: ch, isExpanded: true) }
+        guard let data = try? enc.encode(root), let text = String(data: data, encoding: .utf8) else { return nil }
+        // A plugin's state XML carries the id its engine instance was given (`<PLUGIN … id="1040">`),
+        // which differs between the state saved in a sidecar and the one captured from a live
+        // instance — and means nothing about the sound. Left in, it made every content with a
+        // plugin look modified, and a closing with no change re-baked for nothing.
+        let stable = text.replacingOccurrences(of: #"(<PLUGIN\b[^>]*?) id=\\"\d+\\""#, with: "$1",
+                                               options: .regularExpression)
+        return stable.data(using: .utf8)
     }
 
-    /// Confirms the edit under way: re-bakes the materialised sub-tree (the same pipeline as
-    /// `consolidate`), a new revision of the definition (a new wave + sidecar),
-    /// then propagates the new content to every OTHER placement that references it. The render is
-    /// asynchronous — `editingConsolidateID` stays laid down until the end.
+    /// Confirms the edit under way: re-bakes the CONTENT ROOT (the one child of the open stage), a new
+    /// revision of the definition (a new wave + sidecar), then propagates the new content to every
+    /// OTHER placement that references it. The render is asynchronous — `editingConsolidateID` stays
+    /// laid down until the end.
+    ///
+    /// What is baked is exactly the content root — its fader, window, fades, loop, FX and children
+    /// (@see EditViewModel.renderConsolidateContent): the wave lasts as long as the root's window and
+    /// its position 0 is the root's start. The stage (the instance's FX, fader, window, sends…) is
+    /// not part of it, and is kept on the instance, as it is NOW.
     func closeConsolidate() {
         guard let defID = editingConsolidateID, let placementID = editingPlacementID,
-              let engine, let live = find(id: placementID), let def = consolidateDefinitions[defID] else { return }
+              let contentID = editingContentRootID, let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
+              let engine, find(id: placementID) != nil, let content = find(id: contentID),
+              let def = consolidateDefinitions[defID] else { return }
         guard let folder = consolidateFolder else { return }
         guard !isBaking(placementID) else { return }
         // Cas E3: an old project may never have had samples/consolidate/ — create it before the
@@ -954,20 +931,24 @@ extension EditViewModel {
         let tClose = CFAbsoluteTimeGetCurrent()
         defer { UIPerf.measureFrom(tClose, "close the consolidated object (synchronous part)") }
 
-        // An optimisation: if the content (structure + internal mix + plugin state) is identical to
-        // the one materialised AT OPENING, the official wave already reflects exactly that sub-tree.
-        // No point re-rendering → it closes like a cancel (restoring the linked placement on the
-        // current wave, with no new revision and no render).
+        // An optimisation: if the content (structure + internal mix + window + plugin state) is identical
+        // to the one materialised AT OPENING, the official wave already reflects exactly that root.
+        // No point re-rendering → it closes like a cancel that KEEPS the instance level (the stage's FX,
+        // fader, window, sends… as they are now), on the current wave, with no new revision and no render.
         if let opened = consolidateEditStack.last?.openedSubtree,
            let sigOpen = subtreeSignature(opened),
-           let sigNow = subtreeSignature(withCapturedPluginStates(live)),
+           let sigNow = subtreeSignature(withCapturedPluginStates(content)),
            sigOpen == sigNow {
             NSLog("[OBJECT] closed with no modification (def \(defID)) — re-bake avoided")
-            // CLOSING is not CANCELLING: the content has not moved, but the ROOT's automation
-            // belongs to the instance and may have been edited during the session (it is amputated
-            // from the signature, deliberately — @see subtreeSignature). Restoring it from the opening
-            // snapshot would give back the curve just erased.
-            cancelConsolidateEdit(keepingRootAutomation: true)
+            cancelConsolidateEdit(keepingInstanceLevel: true)
+            return
+        }
+
+        // The wave lasts as long as the root's window: nothing to render from it.
+        let renderStart = content.startTime
+        let renderEnd   = content.startTime + content.duration
+        guard renderEnd > renderStart else {
+            bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
             return
         }
 
@@ -976,53 +957,91 @@ extension EditViewModel {
         // again in finishCloseConsolidate, once the official wave is written.
         teardownLiveMirroring()
 
-        let original = withCapturedPluginStates(live)
+        let original = withCapturedPluginStates(content)
         let nextRevision = def.revision + 1
-        let base = "\(bakeSafeName(live.displayName))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
+        let base = "\(bakeSafeName(find(id: placementID)?.displayName ?? def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
         let wav  = folder.appendingPathComponent("\(base).wav")
 
-        let renderStart: Double
-        let renderEnd: Double
-        let sourceOffset: Double
-        if live.isGroup {
-            let range = bakeRenderRange(live)
-            renderStart = range.start
-            renderEnd   = range.end
-            sourceOffset = max(0, live.startTime - renderStart)
-        } else {
-            renderStart = live.startTime
-            renderEnd   = live.startTime + live.duration
-            sourceOffset = 0
-        }
-
         bakingIDs.insert(placementID)
+        bakeRenderKeys[placementID] = contentID   // the veil is the stage's, the render the root's
         let completion: (Bool) -> Void = { [weak self] ok in
             guard let self else { return }
             self.bakingIDs.remove(placementID)
+            self.bakeRenderKeys[placementID] = nil
             self.finishCloseConsolidate(defID: defID, placementID: placementID, ok: ok,
-                                                  wav: wav, folder: folder, original: original,
-                                                  nextRevision: nextRevision, sourceOffset: sourceOffset,
-                                                  renderStart: renderStart, renderEnd: renderEnd)
+                                        wav: wav, folder: folder, original: original,
+                                        nextRevision: nextRevision, oldWaveZero: oldWaveZero,
+                                        renderStart: renderStart, renderEnd: renderEnd)
         }
-        if live.isGroup {
-            engine.renderGroup(toFileAsync: placementID.uuidString, filePath: wav.path,
-                               start: renderStart, end: renderEnd, completion: completion)
-        } else {
-            engine.renderClip(toFileAsync: placementID.uuidString, filePath: wav.path,
-                              start: renderStart, end: renderEnd, completion: completion)
+        engine.renderConsolidateContent(toFileAsync: contentID.uuidString, filePath: wav.path,
+                                        start: renderStart, end: renderEnd,
+                                        faders: contentRenderFaders(of: content),
+                                        completion: completion)
+    }
+
+    /// The faders a content render forces on its clone: the root's AND every descendant's, with the
+    /// values of the MODEL — volume, pan, the object's OWN mute, its gain curve in edit time. Never the
+    /// listening state: a stem mute or a solo elsewhere silences the live faders (`engineVolume`) and
+    /// takes the gain curves off them, and none of that belongs in a wave every instance will share.
+    func contentRenderFaders(of root: SoundObject) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        func walk(_ o: SoundObject) {
+            out.append(["id": o.id.uuidString,
+                        "gainDb": o.volume,
+                        "pan": o.pan,
+                        "muted": o.isMuted,
+                        "gainCurve": modelCurvePoints(.volume, on: o)])
+            if case .group(let children, _) = o.kind { for c in children { walk(c) } }
         }
+        walk(root)
+        return out
+    }
+
+    /// The CLOSED instance a stage stands for, on the wave `wavePath` of length `waveLength`:
+    /// everything that is the instance's is read from the stage as it is NOW (plugins with their live
+    /// state, sends with the live state of the plugins they carry), the source offset is measured
+    /// against the zero the stage was opened on, and `delta` — how much LATER the new wave's own zero
+    /// is (0 when the wave is the one it was opened on) — brings it onto the new wave, clamped inside it
+    /// (@see SoundObject.realignedInstance). Called while the stage is still in the engine.
+    func closedInstance(ofStage stage: SoundObject, wavePath: String, waveLength: Double,
+                                oldWaveZero: Double, delta: Double, defID: UUID,
+                                automationOpen: Bool) -> SoundObject {
+        var source = withCapturedPluginStates(stage)
+        source.sends = sendsWithLiveStates(of: stage)
+        return SoundObject
+            .closedInstance(fromStage: source, wavePath: wavePath, waveLength: waveLength,
+                            waveZero: oldWaveZero, definitionID: defID, automationOpen: automationOpen)
+            .realignedInstance(delta: delta, wavePath: wavePath, waveLength: waveLength)
+    }
+
+    /// Replaces the open stage by `placement` — a closed instance — in the model and in the engine,
+    /// and lays it back where it belongs (its group or its stem, its sends, its fades, its curves).
+    private func layBackClosedInstance(_ placement: SoundObject, replacing stage: SoundObject) {
+        guard let engine else { return }
+        removeFromEngine(stage)
+        update(id: placement.id) { $0 = placement }
+        engineAddClip(placement, lane: carrierLane(for: placement.id, fallback: placement.lane))
+        if let parent = parentGroup(for: placement.id) {
+            engine.assignObject(placement.id.uuidString, toGroupFolder: parent.id.uuidString)
+        } else if let sid = placement.stemID {
+            engine.assignObjects([placement.id.uuidString], toStemID: sid.uuidString)
+        }
+        syncSends(placement)
+        engine.updateFade(in: placement.fadeIn, fadeOut: placement.fadeOut, forID: placement.id.uuidString)
+        // The instance's own automation, on its clip: what the render never carried.
+        pushAutomation(placement)
     }
 
     private func finishCloseConsolidate(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
-                                                   folder: URL, original: SoundObject, nextRevision: Int,
-                                                   sourceOffset: Double, renderStart: Double, renderEnd: Double) {
-        guard let engine else { return }
+                                        folder: URL, original: SoundObject, nextRevision: Int,
+                                        oldWaveZero: Double, renderStart: Double, renderEnd: Double) {
+        guard engine != nil else { return }
         guard ok else {
             bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
             armConsolidateEditParamWatch()   // the session stays open → the listening is relaunched
             return
         }
-        guard let live = find(id: placementID) else {
+        guard let stage = find(id: placementID) else {
             NSLog("[OBJECT] placement \(placementID) gone during the render — orphan wave")
             try? FileManager.default.removeItem(at: wav)
             return
@@ -1030,7 +1049,8 @@ extension EditViewModel {
 
         let sidecar = consolidateSidecarURL(forWave: wav.lastPathComponent, in: folder)
         do {
-            try encodedConsolidateSidecar(original, projectFolder: projectFolder)
+            // A definition written now follows the format-26 rule: the root is entirely content.
+            try encodedConsolidateSidecar(original, rootIsContent: true, projectFolder: projectFolder)
                 .write(to: sidecar, options: .atomic)
         } catch {
             bakeAlert(L("consolidate.error.closeFailed.title"),
@@ -1046,69 +1066,34 @@ extension EditViewModel {
         restoreLiveMirrors()
 
         // The undo point of a COMMIT is the state it replaces as the user sees it: the instance
-        // LINKED to the previous revision — not the materialised content, which is what a plain
-        // `pushUndo()` here used to capture: undone, that content came back as an ordinary group,
-        // detached from its definition, with no session left to close it. The session's own
+        // LINKED to the previous revision, as it was opened — not the materialised content, which is
+        // what a plain `pushUndo()` here used to capture: undone, that content came back as an ordinary
+        // group, detached from its definition, with no session left to close it. The session's own
         // points (the opening, the edits of the content) go the same way, for the same reason.
         // See `closeSessionUndo`.
-        closeSessionUndo(pushing: snapshotWithSessionCancelled(current: live))
+        closeSessionUndo(pushing: snapshotWithSessionCancelled())
 
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
-        // Editing the CONTENT does not touch the common mix: the volume/pan/mute of the
-        // previous definition are carried over (falling back on the placement if it has gone).
-        let prev = consolidateDefinitions[defID]
+        // The definition carries no mix: volume/pan/mute belong to each instance.
         consolidateDefinitions[defID] = ConsolidateDefinition(
-            id: defID, name: live.displayName, wave: wav.lastPathComponent,
-            revision: nextRevision, wasGroup: live.isGroup,
-            volume: prev?.volume ?? live.volume, pan: prev?.pan ?? live.pan,
-            isMuted: prev?.isMuted ?? live.isMuted,
+            id: defID, name: stage.displayName, wave: wav.lastPathComponent,
+            revision: nextRevision, wasGroup: original.isGroup, rootIsContent: true,
             dependsOn: collectConsolidateDependencies(original))
 
-        let liveSends = sendsWithLiveStates(of: live)   // read before the object leaves the engine
-        removeFromEngine(live)
-        // The mix (volume/pan/mute), the state of the attribute links AND the plugins belonging to the
-        // placement belong to the PLACEMENT, not to the content being edited: they are restored from
-        // the snapshot taken when the edit was opened (otherwise the sub-tree's internal volume would be
-        // adopted, out of step with the definition — and the placement's plugins were lost,
-        // though propagateConsolidateUpdate does keep them on the OTHER
-        // placements).
-        let snap = editingOriginalPlacement
-        var placement = SoundObject(
-            id: live.id, startTime: live.startTime, duration: live.duration,
-            lane: live.lane, volume: snap?.volume ?? live.volume, pan: snap?.pan ?? live.pan,
-            fadeIn: live.fadeIn, fadeOut: live.fadeOut, isMuted: snap?.isMuted ?? live.isMuted,
-            stemID: live.stemID, plugins: snap?.plugins ?? [],
-            label: live.label ?? live.displayName, colorIndex: live.colorIndex, colorHex: live.colorHex,
-            sends: liveSends, baseBPM: nil,
-            consolidateID: defID,
-            independentAttrs: snap?.independentAttrs ?? [],
-            automationTouchOrder: live.automationTouchOrder,
-            kind: .clip(filePath: wav.path, sourceOffset: sourceOffset, fileDuration: waveLen,
-                        speedRatio: 1.0, isReversed: false))
-        // The root's automation belongs to THIS instance: it was laid on it at
-        // opening (@see restoredSubtree), and it leaves with it. It is the project's invariant
-        // — re-editing then re-baking a definition does not erase the instance's own curve.
-        // The placement's plugins are restored from the snapshot just above, so a
-        // plugin-parameter curve finds its carrier again there; what no longer has one (the FX
-        // INTERNAL to the content, now baked into the wave) falls away by itself.
-        placement.automation     = live.automationSurvivingBake
-        placement.automationOpen = (snap?.automationOpen ?? false) && !placement.automation.isEmpty
-
-        update(id: live.id) { $0 = placement }
-        engineAddClip(placement, lane: carrierLane(for: placement.id, fallback: placement.lane))
-        if let parent = parentGroup(for: placement.id) {
-            engine.assignObject(placement.id.uuidString, toGroupFolder: parent.id.uuidString)
-        } else if let sid = placement.stemID {
-            engine.assignObjects([placement.id.uuidString], toStemID: sid.uuidString)
-        }
-        syncSends(placement)
-        pushAutomation(placement)   // the instance's own automation, on its re-baked clip
+        // The instance level is whatever the stage holds now: the session was where it could be
+        // edited, and what it holds is kept (a cancel is what gives the old values back).
+        // The new wave's zero is the content root's start; the old one is where the root was laid.
+        let delta = renderStart - oldWaveZero
+        let placement = closedInstance(ofStage: stage, wavePath: wav.path, waveLength: waveLen,
+                                       oldWaveZero: oldWaveZero, delta: delta, defID: defID,
+                                       automationOpen: editingOriginalPlacement?.automationOpen ?? false)
+        layBackClosedInstance(placement, replacing: stage)
 
         // Pops the current session then propagates the new official wave to the OTHER placements.
         // If a parent session remains (a nested edit), it is picked up again; otherwise everything is cut.
         if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
-        propagateConsolidateUpdate(defID: defID, exceptPlacementID: placement.id)
+        propagateConsolidateUpdate(defID: defID, exceptPlacementID: placement.id, delta: delta)
         markConsolidateResynced(defID)   // a transient ✓ on the OTHER resynchronised instances
         resumeParentObjectEditAfterPop()
 
@@ -1117,16 +1102,16 @@ extension EditViewModel {
         NSLog("[OBJECT] definition \(defID) re-baked → \(wav.lastPathComponent) (revision \(nextRevision))")
     }
 
-    /// Cancels the edit under way: restores the materialised placement to its linked state from BEFORE
+    /// Cancels the edit under way: restores the open stage to its linked state from BEFORE
     /// the edit (the exact snapshot taken at opening), whatever was modified during
     /// the session. Writes nothing (no new revision).
     ///
-    /// `keepingRootAutomation`: keep the ROOT's curves as they are NOW.
-    /// False for a real cancel (✕), where everything goes back. True for a CLOSING
-    /// with no modification of the content, which comes through here to avoid a pointless re-bake: those
-    /// curves belong to the instance, not to the content being edited, and giving them back their
-    /// opening state would resurrect an automation just erased.
-    func cancelConsolidateEdit(keepingRootAutomation: Bool = false) {
+    /// `keepingInstanceLevel`: keep the INSTANCE's side as it is NOW — the stage's FX, fader, window,
+    /// fades, sends, stem, automation. False for a real cancel (✕), where everything goes back. True for
+    /// a CLOSING with no modification of the content, which comes through here to avoid a pointless
+    /// re-bake: the stage is where the instance could be edited meanwhile, and giving it back its
+    /// opening state would undo exactly what a closing is meant to keep.
+    func cancelConsolidateEdit(keepingInstanceLevel: Bool = false) {
         // Cuts the listening and the pending re-mirroring, then gives the other instances back their
         // baked clip: their snapshot IS the state from before the session, there is nothing to recompute.
         let defID = editingConsolidateID
@@ -1137,7 +1122,8 @@ extension EditViewModel {
 
         guard let placementID = editingPlacementID,
               let originalPlacement = editingOriginalPlacement,
-              let engine, let current = find(id: placementID) else {
+              let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
+              engine != nil, let current = find(id: placementID) else {
             // An inconsistent session: at least put the other instances back on the official wave
             // (a mirror may have resisted the restoration), pop and pick the parent up again.
             if let defID { propagateConsolidateUpdate(defID: defID, exceptPlacementID: editingPlacementID ?? UUID()) }
@@ -1146,32 +1132,26 @@ extension EditViewModel {
             return
         }
 
-        // The same boundary as at closing with a render (@see finishCloseConsolidate): what survives the
-        // wave leaves with the instance, the rest falls with the content that carried it.
-        let restored = cancelledPlacement(originalPlacement, current: current,
-                                          keepingRootAutomation: keepingRootAutomation)
-
-        removeFromEngine(current)
-        update(id: placementID) { $0 = restored }
-        engineAddClip(restored, lane: carrierLane(for: placementID, fallback: restored.lane))
-        if let parent = parentGroup(for: placementID) {
-            engine.assignObject(placementID.uuidString, toGroupFolder: parent.id.uuidString)
-        } else if let sid = restored.stemID {
-            engine.assignObjects([placementID.uuidString], toStemID: sid.uuidString)
+        // A real cancel gives back the instance exactly as it was opened. A closing with no change of
+        // content rebuilds it from the stage, on the wave it already reads (so δ = 0, and the window is
+        // only brought back inside the content if it had been dragged outside).
+        var restored = originalPlacement
+        if keepingInstanceLevel, let defID,
+           case .clip(let wavePath, _, let waveLen, _, _) = originalPlacement.kind {
+            restored = closedInstance(ofStage: current, wavePath: wavePath, waveLength: waveLen,
+                                      oldWaveZero: oldWaveZero, delta: 0, defID: defID,
+                                      automationOpen: originalPlacement.automationOpen)
         }
-        syncSends(restored)
-        engine.updateFade(in: restored.fadeIn, fadeOut: restored.fadeOut,
-                          forID: placementID.uuidString)
-        pushAutomation(restored)
+        layBackClosedInstance(restored, replacing: current)
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).
 
         // The undo stack: a cancel leaves nothing behind it — the session's points (the opening,
         // the edits of the materialised content) are cut, since restoring one without its session
         // would hand back the content as a detached group. A closing with no content change that
-        // kept the ROOT's curves leaves one point, the instance as it was opened, when those
-        // curves did move (otherwise their edits could no longer be undone).
+        // kept the INSTANCE's side leaves one point, the instance as it was opened, when that side did
+        // move (otherwise its edits could no longer be undone).
         var before: EditSnapshot? = nil
-        if keepingRootAutomation, restored != originalPlacement {
+        if keepingInstanceLevel, restored != originalPlacement {
             let snap = currentSnapshot()
             before = EditSnapshot(items: Self.replacingSubtree(placementID, with: originalPlacement,
                                                                 in: snap.items),
@@ -1191,30 +1171,16 @@ extension EditViewModel {
 
     // MARK: - The undo stack of an editing session
 
-    /// The linked instance a CANCEL of the current session would put back: the exact placement
-    /// taken at opening, with the ROOT's curves as they are now when `keepingRootAutomation`
-    /// (they belong to the instance, not to the content being edited).
-    private func cancelledPlacement(_ original: SoundObject, current: SoundObject,
-                                    keepingRootAutomation: Bool) -> SoundObject {
-        var restored = original
-        if keepingRootAutomation {
-            restored.automation           = current.automationSurvivingBake
-            restored.automationTouchOrder = current.automationTouchOrder
-            restored.automationOpen       = current.automationOpen && !restored.automation.isEmpty
-        }
-        return restored
-    }
-
-    /// The live state with the CURRENT session cancelled: the materialised placement replaced by
-    /// its linked instance from before the opening (root curves kept, as at a closing). Called
-    /// once the mirrors are back on the official wave and before the registry moves to the new
-    /// revision — so it is exactly "the consolidated object as it was before the commit", other
-    /// instances and nested definitions included. nil if the session is inconsistent.
-    private func snapshotWithSessionCancelled(current: SoundObject) -> EditSnapshot? {
-        guard let original = editingOriginalPlacement else { return nil }
-        let linked = cancelledPlacement(original, current: current, keepingRootAutomation: true)
+    /// The live state with the CURRENT session cancelled: the open stage replaced by the instance
+    /// as it was OPENED (linked to the previous revision, with the FX, fader, window and sends it then
+    /// had — the stage's edits since belong to the commit this point precedes). Called once the mirrors
+    /// are back on the official wave and before the registry moves to the new revision — so it is
+    /// exactly "the consolidated object as it was before the commit", other instances and nested
+    /// definitions included. nil if the session is inconsistent.
+    private func snapshotWithSessionCancelled() -> EditSnapshot? {
+        guard let placementID = editingPlacementID, let original = editingOriginalPlacement else { return nil }
         let snap = currentSnapshot()
-        return EditSnapshot(items: Self.replacingSubtree(current.id, with: linked, in: snap.items),
+        return EditSnapshot(items: Self.replacingSubtree(placementID, with: original, in: snap.items),
                             stems: snap.stems, consolidateDefinitions: snap.consolidateDefinitions,
                             tempo: snap.tempo, timeSigNumerator: snap.timeSigNumerator,
                             timeSigDenominator: snap.timeSigDenominator,
@@ -1282,11 +1248,17 @@ extension EditViewModel {
     /// references `defID` after a re-bake. No audio recomputation: only the engine clip is
     /// recreated on the new file (as free as reading a different wav — that is
     /// the whole point of sharing).
-    private func propagateConsolidateUpdate(defID: UUID, exceptPlacementID: UUID) {
+    ///
+    /// `delta`: how much LATER the new wave's position 0 is than the old one's (edit time) — 0 when
+    /// the content did not move, which is also what a plain re-sync gets. Every instance is
+    /// re-aimed onto the new wave by `realignedInstance`: the material stays opposite the same place,
+    /// the window is cut where the wave has no more, and never grows.
+    private func propagateConsolidateUpdate(defID: UUID, exceptPlacementID: UUID, delta: Double = 0) {
         guard let def = consolidateDefinitions[defID], let folder = consolidateFolder else { return }
         let wav = folder.appendingPathComponent(def.wave)
         let waveLen = audioFileDuration(wav) ?? 0
-        applyConsolidateWave(defID: defID, waveURL: wav, waveLen: waveLen, excluding: exceptPlacementID)
+        applyConsolidateWave(defID: defID, waveURL: wav, waveLen: waveLen,
+                             excluding: exceptPlacementID, delta: delta)
     }
 
     /// The lane of the TRACK carrying an object: that of its group if it is nested (its own lane is
@@ -1301,15 +1273,13 @@ extension EditViewModel {
     /// as a normal read — that is the whole point of the baked regime.
     /// The instances still in a live mirror are ignored (they are not `.clip`s):
     /// `restoreLiveMirrors` has normally already given them back their clip before the call.
-    private func applyConsolidateWave(defID: UUID, waveURL: URL, waveLen: Double, excluding: UUID?) {
+    private func applyConsolidateWave(defID: UUID, waveURL: URL, waveLen: Double, excluding: UUID?,
+                                      delta: Double = 0) {
         guard let engine else { return }
         for tid in placementIDs(forConsolidate: defID, excluding: excluding) {
-            guard let obj = find(id: tid),
-                  case .clip(_, let so, _, let sr, let rev) = obj.kind else { continue }
+            guard let obj = find(id: tid), case .clip = obj.kind else { continue }
             removeFromEngine(obj)
-            var refreshed = obj
-            refreshed.kind = .clip(filePath: waveURL.path, sourceOffset: so, fileDuration: waveLen,
-                                   speedRatio: sr, isReversed: rev)
+            let refreshed = obj.realignedInstance(delta: delta, wavePath: waveURL.path, waveLength: waveLen)
             update(id: tid) { $0 = refreshed }
             engineAddClip(refreshed, lane: carrierLane(for: tid, fallback: refreshed.lane))
             if let parent = parentGroup(for: tid) {
@@ -1362,7 +1332,9 @@ extension EditViewModel {
     /// movement does not go through the model, so it would never arm the re-mirroring without this.
     /// Idempotent (called again when plugins have been added).
     private func armConsolidateEditParamWatch() {
-        guard let placementID = editingPlacementID, let live = find(id: placementID) else { return }
+        // Only the CONTENT is listened to: the stage's own FX are the instance's, and moving one does
+        // not change what the other instances play.
+        guard let contentID = editingContentRootID, let live = find(id: contentID) else { return }
         engine?.onConsolidateEditParamChanged = { [weak self] in
             // The engine's parameter listeners fire on the message thread (= main); we
             // go back through the main queue to hop the actor cleanly.
@@ -1409,7 +1381,9 @@ extension EditViewModel {
         guard !consolidateEditStack.isEmpty,
               let defID = editingConsolidateID,
               let placementID = editingPlacementID,
-              let live = find(id: placementID) else { return }
+              let contentID = editingContentRootID,
+              let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
+              let live = find(id: contentID) else { return }
 
         var snapshots: [UUID: SoundObject] = [:]
         for tid in liveMirrorTargets(defID: defID, origin: placementID) {
@@ -1424,7 +1398,7 @@ extension EditViewModel {
         // of instances — the item to watch when a definition is heavily placed.
         let tMirrors = CFAbsoluteTimeGetCurrent()
         for (tid, snap) in snapshots {
-            applyLiveMirror(to: tid, alignedTo: snap, from: live, defID: defID)
+            applyLiveMirror(to: tid, alignedTo: snap, fromContent: live, oldWaveZero: oldWaveZero, defID: defID)
         }
         let mirrorsMs = (CFAbsoluteTimeGetCurrent() - tMirrors) * 1000
         consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature =
@@ -1442,7 +1416,9 @@ extension EditViewModel {
         guard isEditingConsolidate, !liveMirrorSuppressed, !consolidateEditStack.isEmpty,
               let defID = editingConsolidateID,
               let placementID = editingPlacementID,
-              let engine, let live = find(id: placementID) else { return }
+              let contentID = editingContentRootID,
+              let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
+              let engine, let live = find(id: contentID) else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.
@@ -1477,28 +1453,33 @@ extension EditViewModel {
 
         consolidateEditStack[consolidateEditStack.count - 1].mirrorSnapshots = snapshots
         for (tid, snap) in snapshots {
-            applyLiveMirror(to: tid, alignedTo: snap, from: live, defID: defID)
+            applyLiveMirror(to: tid, alignedTo: snap, fromContent: captured, oldWaveZero: oldWaveZero, defID: defID)
         }
         consolidateEditStack[consolidateEditStack.count - 1].lastMirrorSignature = signature
     }
 
-    /// Lays (or lays again) the origin's content onto `targetID`, aligned on `snapshot` — the
-    /// position, the window and the mix of THAT instance. The alignment is always on the snapshot and
-    /// never on the target's current state: once mirrored it is a group, it no longer has
-    /// a `sourceOffset` or a `speedRatio` to question, and the alignment would drift on each
-    /// pass.
+    /// Lays (or lays again) the origin's CONTENT onto `targetID`, as a STAGE built from `snapshot` —
+    /// the instance as it was before the session: its position, window, fades, FX, mix, sends. The
+    /// content sits inside at the place that instance's wave had it (`snapshot.consolidateWaveZero`),
+    /// carried by as much as the origin's own content has moved since the opening
+    /// (`liveContent.startTime − oldWaveZero`). The alignment is always on the snapshot and never on
+    /// the target's current state: once mirrored it is a group, it no longer has a `sourceOffset` or a
+    /// `speedRatio` to question, and the alignment would drift on each pass.
     private func applyLiveMirror(to targetID: UUID, alignedTo snapshot: SoundObject,
-                                 from live: SoundObject, defID: UUID) {
+                                 fromContent liveContent: SoundObject, oldWaveZero: Double,
+                                 defID: UUID) {
         guard let engine else { return }
 
-        var mirror = refreshConsolidateReferences(in: restoredSubtree(from: live, alignedTo: snapshot))
-        // `restoredSubtree` cuts the link (that is what detaching expects); here the instance
-        // stays an instance — a link halo, synchronised attributes, a return to the wave at closing.
-        mirror.consolidateID = defID
-        // The FX belonging to the instance apply AFTER the content, as when detaching.
-        mirror.plugins = mirror.plugins + snapshot.plugins
-        if case .group(let children, _) = mirror.kind {
-            mirror.kind = .group(children: children, isExpanded: false)
+        let content = refreshConsolidateReferences(in: deepFreshCopy(liveContent))
+        let waveZero = liveContent.startTime + (snapshot.consolidateWaveZero - oldWaveZero)
+        var mirror = SoundObject.consolidateStage(placement: snapshot, content: content,
+                                                  definitionID: defID, waveZero: waveZero)
+        // A mirror is looked at, not edited: the stage and the content root are both folded.
+        if case .group(var kids, _) = mirror.kind {
+            for i in kids.indices {
+                if case .group(let ak, _) = kids[i].kind { kids[i].kind = .group(children: ak, isExpanded: false) }
+            }
+            mirror.kind = .group(children: kids, isExpanded: false)
         }
 
         if let current = find(id: targetID) { removeFromEngine(current) }
@@ -1571,15 +1552,22 @@ extension EditViewModel {
 
     // MARK: - Detaching
 
-    /// Detaches an instance from its definition by RE-MATERIALISING it to its original
-    /// editable content (clip / group / MIDI, from the definition's sidecar) — like
-    /// opening an edit, but with NO session: the object becomes an ordinary clip/group/MIDI
-    /// again, fully modifiable, with no link. The other instances go on sharing
-    /// the definition normally. The user can then "Create a consolidated object" again
-    /// if they wish. The inverse of the link created by `consolidate` / copy-and-pasting an instance.
+    /// Detaches an instance from its definition (QC-2 of the plan): the instance becomes an ORDINARY
+    /// GROUP G holding the content — the same construction as the stage of an editing session
+    /// (@see SoundObject.consolidateStage), with NO link and NO session. G keeps everything that was the
+    /// instance's — id, FX (their states captured), fader / pan / mute, window, fades, sends, stem, label,
+    /// colour, automation, loop — and its one child A is the content root from the sidecar (fresh ids,
+    /// its own FX / fader / window / fades / children, a nested instance staying an instance), laid so
+    /// that it starts where the wave it replaces had its position 0: the sound is the one the baked
+    /// instance had, and the content is fully editable. G is folded. The other instances go on sharing
+    /// the definition. One undo point.
+    ///
+    /// Limit: the content plays at speed 1 under G, whose window is scaled by the instance's speed (as
+    /// for a session).
     func deconsolidate(placementID: UUID) {
         guard let engine, let placement = find(id: placementID), placement.isConsolidateInstance,
-              let defID = placement.consolidateID, let def = consolidateDefinitions[defID] else { return }
+              let defID = placement.consolidateID, let def = consolidateDefinitions[defID],
+              case .clip = placement.kind else { return }
         // Detaching a nested instance DURING the editing of a parent is allowed (it is a
         // plain modification of the parent's content); only detaching a placement that
         // is itself an editing session under way is forbidden.
@@ -1599,38 +1587,35 @@ extension EditViewModel {
             return
         }
 
+        // The content, as an opening reads it: normalised to what the wave holds, fresh ids, its nested
+        // consolidated descendants pointed at the up-to-date waves.
+        let content = refreshConsolidateReferences(
+            in: deepFreshCopy(SoundObject.contentRoot(fromSidecar: original, def: def)))
+
         // The same warning as at opening for editing: detaching materialises the content, hence
         // loses the plugins this machine has not got (see confirmMissingPluginsBeforeOpening).
         guard confirmMissingPluginsBeforeOpening(
-            original, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
+            content, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
 
         pushUndo()
-        // The plugins BELONGING to the placement (added after the transformation, applying to the baked
-        // submix) → to be carried over AFTER the restored internal plugins, as with the mirror.
-        let wrapperPlugins = withCapturedPluginStates(placement).plugins
-
-        // The original sub-tree aligned on the placement's LIVE window/position, fresh ids everywhere,
-        // internal references refreshed (a consolidated descendant may have been updated
-        // since the last bake). `restoredSubtree` already sets consolidateID to nil on the
-        // result.
-        var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
-        restored.plugins = restored.plugins + wrapperPlugins
-        restored.sends = sendsWithLiveStates(of: placement)   // the sends' own plugins, states live
+        // The instance as it is now, the states of its plugins and of the plugins its sends carry live.
+        var instance = withCapturedPluginStates(placement)
+        instance.sends = sendsWithLiveStates(of: placement)
+        var group = SoundObject.consolidateStage(placement: instance, content: content,
+                                                 definitionID: nil, waveZero: placement.consolidateWaveZero)
+        if case .group(let kids, _) = group.kind { group.kind = .group(children: kids, isExpanded: false) }
 
         removeFromEngine(placement)
-        update(id: placementID) { $0 = restored }
-        syncAdd(restored)
+        update(id: placementID) { $0 = group }
+        syncAdd(group)
         if let parent = parentGroup(for: placementID) {
             engine.assignObject(placementID.uuidString, toGroupFolder: parent.id.uuidString)
-        } else if let sid = restored.stemID {
+        } else if let sid = group.stemID {
             engine.assignObjects([placementID.uuidString], toStemID: sid.uuidString)
         }
-        if restored.isClip || restored.isMIDI {
-            engine.updateFade(in: restored.fadeIn, fadeOut: restored.fadeOut, forID: placementID.uuidString)
-        }
-        syncSends(restored)
+        syncSends(group)
         selectedIDs = [placementID]
         isDirty = true
-        NSLog("[OBJECT] placement \(placementID) detached from the definition \(defID) → editable content restored")
+        NSLog("[OBJECT] placement \(placementID) detached from the definition \(defID) → ordinary group holding the content")
     }
 }

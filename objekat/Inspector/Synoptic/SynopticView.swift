@@ -45,11 +45,11 @@ struct SynopticView: View {
     /// Non-nil ⇒ looping is available: a group (the chain head) or a MIDI clip (the MIDI zone).
     /// Audio has its own badge in `audioFile` (@see [[loop-item-plan]]).
     var loop: SynopticLoop? = nil
-    /// True = a consolidated object shown CLOSED: the FX (cards, '+' inserts, parallel branches, branch
-    /// and chain gains) are visible but greyed out and disabled, with an 'Open to edit' tooltip.
-    /// The source, the mix and the stems stay interactive. Fully interactive as soon as the object
-    /// is opened for editing (double click). See SynopticBoundView.
-    var fxReadOnly: Bool = false
+    /// A consolidated INSTANCE (closed clip or open stage): its source is the shared CONTENT, shown as a
+    /// pill with the definition's name — double click opens it for editing (or validates it when it
+    /// is open). Replaces the 'audio file' zone and the Source pill. The instance's own FX, mix, sends
+    /// and stem are the instance's: fully interactive, closed or open.
+    var contentPill: SynopticContentPill? = nil
     var actions = SynopticActions()
 
     // The marquee's state, all of it torn down at the end of the gesture. @see marqueeGesture
@@ -99,7 +99,9 @@ struct SynopticView: View {
             Canvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
 
-            if let mz = d.midiZone {
+            if let cp = contentPill {
+                contentPillView(cp, rect: d.sourcePill)
+            } else if let mz = d.midiZone {
                 midiZoneView(mz, slot: d.instrumentSlot)
             } else if let az = d.audioZone, let af = audioFile {
                 audioFileZoneView(az, file: af, folded: d.audioZoneFolded)
@@ -148,9 +150,7 @@ struct SynopticView: View {
                 pill(L("synoptic.out"), rect: d.outPill)
             }
 
-            // FX (cards, inserts, branches, gains): greyed out and disabled outside the editing of a
-            // closed consolidated object (`fxReadOnly`), fully interactive otherwise. Source / mix / stems are
-            // NOT in this group (they always stay active).
+            // FX (cards, inserts, branches, gains). Source / mix / stems are NOT in this group.
             Group {
             // 'Cable' drop zones: rendered FIRST (hence under the cards) so that dropping a plugin on a
             // branch's axis inserts it there — even an empty parallel branch. A hovered card keeps
@@ -191,7 +191,7 @@ struct SynopticView: View {
                         fxLinkMenu(ids: selection.contains(c.plugin.id) ? Array(selection) : [c.plugin.id])
                         // A parallel branch of this card — of the selected run round it when it is selected
                         // (@see SynopticBranchRun.around). Never for a bin's instance: its block is branched whole.
-                        if !fxReadOnly, !c.plugin.inFXBlock, let branch = actions.onBranch {
+                        if !c.plugin.inFXBlock, let branch = actions.onBranch {
                             Button(L("synoptic.menu.createBranch")) { branch(.plugin(c.plugin.id)) }
                         }
                     }
@@ -249,7 +249,6 @@ struct SynopticView: View {
                 .position(x: vg.center.x + 48, y: vg.center.y)
             }
             }   // Group FX
-            .fxReadOnlyLocked(fxReadOnly)
 
             // The '+' on the wire mixer → stems: a send taken after the fader, its only gesture (D2) — a
             // click opens the same "Send to…" menu. Not in the FX group: a closed consolidated object keeps
@@ -353,8 +352,7 @@ struct SynopticView: View {
             if hoveredPlus != k { hoveredPlus = k }
         })
         .contentShape(Rectangle())
-        .gesture(fxReadOnly ? nil : marqueeGesture(cards: d.placement.cards,
-                                                   blockers: marqueeBlockers(d)))
+        .gesture(marqueeGesture(cards: d.placement.cards, blockers: marqueeBlockers(d)))
         .contextMenu { fxLinkMenu(ids: Array(selection)) }
     }
 
@@ -460,7 +458,6 @@ struct SynopticView: View {
                                midi: isMIDI, audioFile: audioFile != nil,
                                audioStereo: audioFile?.channelMode != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
-                               mixWide: mix?.attrLinks != nil,
                                stems: stems != nil || groupRouting != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                infiniteOption: infinite != nil,
@@ -539,20 +536,17 @@ struct SynopticView: View {
     }
 
     /// The FX link entries of the right-click menus: make a bin of the plugins in hand, or join one
-    /// that exists. Nothing at all (an empty menu is not shown) when neither applies, and never on a
-    /// closed consolidated object, whose FX are read-only.
+    /// that exists. Nothing at all (an empty menu is not shown) when neither applies.
     @ViewBuilder
     private func fxLinkMenu(ids: [UUID]) -> some View {
-        if !fxReadOnly {
-            if !ids.isEmpty, actions.canCreateFXLink?(ids) == true {
-                Button(L("fxlink.menu.create")) { actions.onCreateFXLink?(ids) }
-            }
-            let joinable = actions.joinableFXLinks?() ?? []
-            if !joinable.isEmpty {
-                Menu(L("fxlink.menu.join")) {
-                    ForEach(joinable, id: \.id) { j in
-                        Button(j.name) { actions.onJoinFXLink?(j.id) }
-                    }
+        if !ids.isEmpty, actions.canCreateFXLink?(ids) == true {
+            Button(L("fxlink.menu.create")) { actions.onCreateFXLink?(ids) }
+        }
+        let joinable = actions.joinableFXLinks?() ?? []
+        if !joinable.isEmpty {
+            Menu(L("fxlink.menu.join")) {
+                ForEach(joinable, id: \.id) { j in
+                    Button(j.name) { actions.onJoinFXLink?(j.id) }
                 }
             }
         }
@@ -662,6 +656,31 @@ struct SynopticView: View {
     }
 
     // MARK: Source / Out pills
+
+    /// The CONTENT pill of a consolidated instance: a violet waveform icon and the definition's name.
+    /// Double click = open the content for editing / validate it when it is open.
+    private func contentPillView(_ cp: SynopticContentPill, rect: CGRect) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "waveform.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.purple)
+            Text(L("synoptic.consolidate.content", cp.name))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 8)
+        .frame(width: rect.width, height: rect.height)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.purple.opacity(cp.isOpen ? 0.14 : 0.06))
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor))))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(Color.purple.opacity(cp.isOpen ? 0.7 : 0.35), lineWidth: cp.isOpen ? 1 : 0.5))
+        .contentShape(RoundedRectangle(cornerRadius: 10))
+        .onTapGesture(count: 2) { actions.onToggleContent?() }
+        .help(L(cp.isOpen ? "synoptic.consolidate.contentOpen" : "synoptic.consolidate.contentHelp"))
+        .position(x: rect.midX, y: rect.midY)
+    }
 
     private func pill(_ text: String, rect: CGRect) -> some View {
         Text(text)

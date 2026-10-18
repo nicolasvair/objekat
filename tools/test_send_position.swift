@@ -393,7 +393,7 @@ enum SendPositionTest {
             check("named() inverts them", SendPosition.named("pre_fader") == .preFader
                   && SendPosition.named("chain", index: 2) == .chain(2)
                   && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
-            check("the session format is 25", SessionSchema.formatVersion == 25)
+            check("the session format is 26", SessionSchema.formatVersion == 26)
             check("the notice mentions both new keys",
                   SessionSchema.note.joined(separator: "\n").contains("sendMarker")
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))

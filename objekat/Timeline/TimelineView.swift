@@ -2796,6 +2796,9 @@ struct TimelineView: View {
     struct ConsolidateBadge {
         var stale: Bool
         var resynced: Bool
+        /// The content moved or shrank away from under this instance (Q2 of the plan): it keeps its
+        /// place and length and plays silence — flagged in orange, "outside the content".
+        var outside: Bool = false
     }
 
     private func partitionVisibleBlocks(_ entries: [LaneEntry], tools: ToolPartitionContext) -> BlockPartition {
@@ -2825,7 +2828,8 @@ struct TimelineView: View {
                     let id = entry.item.id
                     p.consolidated[id] = ConsolidateBadge(
                         stale: viewModel.isStale(id),
-                        resynced: entry.item.consolidateID.map { viewModel.recentlyResyncedConsolidateIDs.contains($0) } ?? false)
+                        resynced: entry.item.consolidateID.map { viewModel.recentlyResyncedConsolidateIDs.contains($0) } ?? false,
+                        outside: entry.item.isOutsideConsolidateContent)
                 }
             }
         }
@@ -3651,6 +3655,17 @@ struct TimelineView: View {
                                 c.draw(GlyphResolveCache.shared.glyph("exclamationmark.triangle.fill", size: 9,
                                                                        weight: .bold, color: .orange, in: ctx),
                                        at: corner, anchor: .topTrailing)
+                            }
+                            if badge.outside {
+                                // The silent passage: an orange speaker-off glyph, and its name when it fits.
+                                c.draw(GlyphResolveCache.shared.glyph("speaker.slash.fill", size: 9,
+                                                                       weight: .bold, color: .orange, in: ctx),
+                                       at: corner, anchor: .topTrailing)
+                                if w >= 90 {
+                                    c.draw(Text(L("timeline.outsideContent"))
+                                            .font(.system(size: 9, weight: .semibold)).foregroundColor(.orange),
+                                           at: CGPoint(x: corner.x - 14, y: corner.y), anchor: .topTrailing)
+                                }
                             }
                             if badge.resynced {
                                 c.draw(GlyphResolveCache.shared.glyph("checkmark.circle.fill", size: 11,

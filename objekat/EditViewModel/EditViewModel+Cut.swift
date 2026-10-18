@@ -175,7 +175,8 @@ extension EditViewModel {
     /// cut can actually split. An infinite bus is skipped whether it is selected or under the cut
     /// line — it has no edge to cut at.
     func cuttableIDs(_ ids: [UUID]) -> [UUID] {
-        ids.filter { find(id: $0)?.isInfiniteBus != true }
+        // The stage and the content root of an open consolidated object are never split (E7).
+        ids.filter { find(id: $0)?.isInfiniteBus != true && !isSessionScaffold($0) }
     }
 
     /// The objects concerned by a cut triggered on `id`. Alone → it. In a multiple selection it
@@ -476,6 +477,9 @@ extension EditViewModel {
         // stay linked to the same definition. NB: detaching one half restores the WHOLE
         // original sub-tree (the sidecar stands for the whole), positioned at the start of the half — so it
         // can overrun. An accepted behaviour.
+
+        // The stage and the content root of an open consolidated object are never split (E7).
+        if isSessionScaffold(id) { return nil }
 
         // Case 1: a top-level clip
         if let i = items.firstIndex(where: { $0.id == id }),

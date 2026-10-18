@@ -39,7 +39,6 @@ extension EditViewModel {
         update(id: id) { $0.pan = pan.clamped(to: -1...1) }
         recordAutomationTouch(id, .pan)
         pushMix(id)
-        propagateLinkedAttr(.pan, from: id)
     }
 
     /// The door a HAND comes in by when it SETS a pan rather than adding to it (the synoptic's box,
@@ -68,9 +67,7 @@ extension EditViewModel {
     /// spread it started with.
     func applyPanDelta(_ delta: Float, from anchors: [UUID: Float]) {
         guard !anchors.isEmpty else { return }
-        // Two passes (see adjustVolumeDB): apply the delta everywhere BEFORE propagating, otherwise a
-        // linked instance still to come in the loop would see its delta doubled. The whole thing in
-        // ONE batch: every `update` writes `items`, and each write alone rebuilt the lane entries
+        // The whole thing in ONE batch: every `update` writes `items`, and each write alone rebuilt the lane entries
         // (O(N)) — K objects cost K rebuilds per step. Nothing in here reads `laneEntries`.
         batchItemsMutation {
             // ONE traversal and ONE write of `items` for the whole selection (`updateMany`): the
@@ -82,7 +79,6 @@ extension EditViewModel {
                 o.recordAutomationTouch(.pan)
             }
             for id in anchors.keys { pushMix(id) }
-            for id in anchors.keys { propagateLinkedAttr(.pan, from: id) }
             isDirty = true
         }
     }

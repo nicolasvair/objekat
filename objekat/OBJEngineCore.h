@@ -244,6 +244,29 @@
                             bitDepth:(NSInteger)bitDepth
                           completion:(void(^ _Nonnull)(BOOL ok))completion;
 
+// Rendu du CONTENU d'un objet consolidé (étage d'instance). La racine du contenu est entièrement du
+// contenu : son fader (gain, pan, mute), sa fenêtre, ses fondus, sa boucle et ses FX sont CUITS dans
+// le fichier, qui revient à la même place sans rien réappliquer. Comme le rendu « juste l'objet »
+// (sans groupes parents, sans stem ni master, sans aux ni envois ; plage écrite à l'échantillon
+// près, à la fréquence de la carte, 32 bits flottant), avec trois différences :
+//   • RIEN n'est coupé sur la cible : sa fenêtre / ses fondus (ObjWindowFade) restent actifs et
+//     l'étendue de son container n'est PAS ouverte — la fenêtre de la racine fait partie du rendu ;
+//   • les faders (ObjGain) de la cible ET de tout son contenu sont FORCÉS sur le clone aux valeurs du
+//     MODÈLE (`faders`) : sur le graphe vivant ils portent aussi le mute de stem et le solo ailleurs
+//     (engineVolume), qui ne doivent jamais entrer dans le wave. Une entrée par objet :
+//     @{@"id": uuid, @"gainDb": float, @"pan": float, @"muted": BOOL (mute PROPRE de l'objet : −96 dB,
+//     courbe écartée), @"gainCurve": [@{@"t" (secondes edit), @"v" (dB), @"c"}] (courbe de gain du
+//     modèle, que le solo écarte du graphe vivant)}. L'entrée de la cible est obligatoire : sans
+//     elle (ou si son fader est inconnu) le rendu est refusé ;
+//   • les groupes ancêtres, eux, restent rendus transparents et ouverts, comme pour un bake.
+// La plage attendue est [début de la racine, début + durée]. Même mécanique de fond que le bake.
+- (void)renderConsolidateContentToFileAsync:(NSString* _Nonnull)objectID
+                                   filePath:(NSString* _Nonnull)filePath
+                                      start:(double)startSecs
+                                        end:(double)endSecs
+                                     faders:(NSArray<NSDictionary*>* _Nonnull)faders
+                                 completion:(void(^ _Nonnull)(BOOL ok))completion;
+
 // Avancement (0…1) du bake EN COURS de cet objet — l'identifiant passé à renderGroupToFileAsync: /
 // renderClipToFileAsync:. -1 si le moteur ne connaît aucun rendu de cet objet (pas encore lancé,
 // déjà terminé). À poller depuis le thread principal pour un indicateur déterminé : c'est le

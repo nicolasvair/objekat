@@ -61,7 +61,8 @@ extension EditViewModel {
             }
         }
         // A bake is rendered under the id of the object that wears the veil.
-        for id in bakingIDs { read(id, engineKey: id) }
+        // (the closing of an editing session renders the content root under the stage's veil)
+        for id in bakingIDs { read(id, engineKey: bakeRenderKeys[id] ?? id) }
         // A re-bake is rendered under a TEMPORARY's id, and shown on every instance of the
         // definition. @see recomputeRenderKeys
         for (defID, renderID) in recomputeRenderKeys where recomputingConsolidateIDs.contains(defID) {

@@ -10,7 +10,7 @@ import AppKit
 // the other sends: an object that has both is refused.
 //
 // Hooked at the ENTRY of every operation that bakes an object: `consolidate(groupID:)`,
-// `consolidateWrappingClip`, `consolidateEachInSelection`, `consolidateSelectionAsLinkedInstances`.
+// `consolidateClip`, `consolidateEachInSelection`, `consolidateSelectionAsLinkedInstances`.
 // It runs BEFORE the first mutation of the operation, so a "Cancel" leaves the project untouched, and
 // the existing bake path is otherwise unchanged.
 

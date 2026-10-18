@@ -1128,7 +1128,7 @@ def section_P(c):
     level_and_index("P the old-session send now sounds", dry, wet, -6.0)
     c.send("project.save")
     d2 = json.load(open(path))
-    check("P: saved again as format 25", d2.get("version") == 25, d2.get("version"))
+    check("P: saved again as format 26", d2.get("version") == 26, d2.get("version"))
     blob = json.dumps(d2)
     check("P: neither the ghost send nor its curve survive the save", ghost not in blob, "")
 
@@ -2093,10 +2093,20 @@ def y2_consolidate(c, x, **extra):
     return r
 
 
-def y2_placement(c, before_ids):
+def y2_placement(c, before_ids, x=None):
     new = [o for o in c.send("object.list", {})["objects"] if o["id"] not in before_ids and o["kind"] != "aux"]
     tops = [o for o in new if o.get("parent") is None]
-    return tops[0]["id"] if tops else None
+    if tops:
+        return tops[0]["id"]
+    # A LONE clip is its own content (plan_consolidate_instance_level, QB-1): no wrapper group, the
+    # clip itself is the placement once it has become an instance.
+    if x is not None:
+        try:
+            if c.send("object.get", {"id": x}).get("definition"):
+                return x
+        except ObjekatError:
+            pass
+    return None
 
 
 def section_Y2(c):
@@ -2143,7 +2153,7 @@ def section_Y2(c):
     x, a = y2_build(c, "Y2fold", chain)
     ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
     y2_consolidate(c, x, mid_chain_sends="fold")
-    pl = y2_placement(c, ids0)
+    pl = y2_placement(c, ids0, x)
     check("Y2 fold: a placement was made", pl is not None, pl)
     if pl:
         rows = c.send("send.list", {"id": pl})["sends"]
@@ -2153,24 +2163,21 @@ def section_Y2(c):
         mk = [e for e in c.send("plugin.list", {"host": pl})["plugins"] if e.get("is_send_marker")]
         check("Y2 fold: no marker anywhere", mk == [] and c.send("debug.send_marker_audit").get("markers") == 0, mk)
         audit(c, "Y2 fold")
-        # the fold is its own undo point, taken before the wrap and the bake: three undos take the
-        # project back (the bake's commit, the wrap in a group — where the send moved to the wrapper —,
-        # then the fold: the chain send is back, marker included)
+        # the fold is its own undo point, taken before the bake: two undos take the project back (the
+        # bake's commit, then the fold: the chain send is back, marker included). A lone clip is its
+        # own content now (no wrapper group), so the send never moves to a wrapper.
         def sends_of(i):
             try:
                 return c.send("send.list", {"id": i}).get("sends")
             except ObjekatError:
                 return None
         c.send("edit.undo", {}); settle(c)
-        check("Y2 fold: undo 1 takes back the bake; the clip is inside its wrapper, the send on the wrapper",
-              sends_of(x) == [] and len(sends_of(pl) or []) == 1, (sends_of(x), sends_of(pl)))
-        c.send("edit.undo", {}); settle(c)
         rr = sends_of(x)
-        check("Y2 fold: undo 2 takes back the wrap; the send is on the clip, still post-fader (folded)",
+        check("Y2 fold: undo 1 takes back the bake; the send is on the clip, still post-fader (folded)",
               rr is not None and len(rr) == 1 and rr[0]["position"] == "post_fader", rr)
         c.send("edit.undo", {}); settle(c)
         rr = sends_of(x)
-        check("Y2 fold: undo 3 takes back the fold: chain 2 again",
+        check("Y2 fold: undo 2 takes back the fold: chain 2 again",
               rr is not None and len(rr) == 1 and rr[0]["position"] == "chain" and rr[0].get("index") == 2, rr)
         audit(c, "Y2 fold undone")
         # (the by-difference measure toggles send.enable, an undo point: it comes AFTER the undo checks)
@@ -2181,7 +2188,7 @@ def section_Y2(c):
     x, a = y2_build(c, "Y2remove", chain)
     ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
     y2_consolidate(c, x, mid_chain_sends="remove")
-    pl = y2_placement(c, ids0)
+    pl = y2_placement(c, ids0, x)
     check("Y2 remove: a placement was made", pl is not None, pl)
     if pl:
         rows = c.send("send.list", {"id": pl})["sends"]
@@ -2517,7 +2524,7 @@ def section_Z2(c):
     c.send("project.save")
     path = out("Z2/project.objekat")
     d1 = json.load(open(path))
-    check("Z2 file: saved as format 25", d1.get("version") == 25, d1.get("version"))
+    check("Z2 file: saved as format 26", d1.get("version") == 26, d1.get("version"))
     ox = find_obj(d1["items"], x)
     ow = find_obj(d1["items"], w)
     markers = [p_ for p_ in ox.get("plugins", []) if "sendMarker" in p_]
@@ -2593,7 +2600,7 @@ def section_PF(c):
     c.send("project.save")
     d2 = json.load(open(path))
     blob2 = json.dumps(d2["items"])
-    check("PF1: saved as format 25, and still without marker or tap", d2.get("version") == 25 and "sendMarker" not in blob2 and '"tap"' not in blob2,
+    check("PF1: saved as format 26, and still without marker or tap", d2.get("version") == 26 and "sendMarker" not in blob2 and '"tap"' not in blob2,
           d2.get("version"))
 
     # ---- (2) format 22 that breaks the rules: marker + tap, a duplicate marker, an orphan marker
@@ -3399,7 +3406,7 @@ def section_Z3(c):
     c.send("project.save")
     path = out("Z3/project.objekat")
     d1 = json.load(open(path))
-    check("Z3 file: saved as format 25", d1.get("version") == 25, d1.get("version"))
+    check("Z3 file: saved as format 26", d1.get("version") == 26, d1.get("version"))
     ox, ow = find_obj(d1["items"], x), find_obj(d1["items"], w)
     fp = [p_["id"].upper() for p_ in (ox["sends"][0].get("plugins") or [])]
     check("Z3 file: the send carries its two plugins, same ids, in order", fp == [pid.upper(), lp.upper()], fp)
@@ -3442,7 +3449,7 @@ def section_Z3(c):
     c.send("project.save")
     d2 = json.load(open(path))
     check("Z3b: the format-22 file is re-saved as 24 with `items` identical",
-          d2.get("version") == 25 and json.dumps(d2["items"], sort_keys=True) == items0, d2.get("version"))
+          d2.get("version") == 26 and json.dumps(d2["items"], sort_keys=True) == items0, d2.get("version"))
 
     # ---- a hand-written 23 file: a bin, a marker and a LINKED leaf inside a send's plugins
     pipeline_offset_db(c)
@@ -4282,7 +4289,7 @@ def section_B3(c):
     refused("B3: consolidate with an input send carrying a plugin, default", lambda: c.send("consolidate.make", {"id": x}))
     ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
     y2_consolidate(c, x, mid_chain_sends="fold")
-    pl = y2_placement(c, ids0)
+    pl = y2_placement(c, ids0, x)
     check("B3 fold: a placement was made", pl is not None, pl)
     if pl:
         rows = sends_of(pl) or []
@@ -4298,7 +4305,7 @@ def section_B3(c):
     h, pid = add_on_send(c, "B3 remove", x, a, "gainTester", gain_db=-12.0)
     ids0 = {o["id"] for o in c.send("object.list", {})["objects"]}
     y2_consolidate(c, x, mid_chain_sends="remove")
-    pl = y2_placement(c, ids0)
+    pl = y2_placement(c, ids0, x)
     check("B3 remove: a placement was made, with no send", pl is not None and sends_of(pl) == [], (pl, sends_of(pl) if pl else None))
     check("B3 remove: no engine key is left for the send's plugin", not in_engine(c, pid))
     m = audits3(c, "B3 remove")

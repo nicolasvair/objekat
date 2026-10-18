@@ -84,7 +84,7 @@ extension EditViewModel {
             if let id = piece(of: pieces) { consolidate(groupID: id) }
         case .consolidateClip:
             let pieces = isolateTimeSelectionAsOneStep(sel)
-            if let id = piece(of: pieces) { consolidateWrappingClip(clipID: id) }
+            if let id = piece(of: pieces) { consolidateClip(clipID: id) }
         case .consolidateEach:
             isolateTimeSelectionAsOneStep(sel)
             await consolidateEachInSelection()    // reads the selection: the pieces

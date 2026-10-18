@@ -13,7 +13,7 @@ import SwiftUI
 // The one subtlety, and it is the reason this takes a parameter instead of reading `kind` alone:
 // **an OPEN consolidated object is still a consolidated object.** Opening one for editing materialises its
 // content, so its `kind` really does become `.group` and its `consolidateID` really is cleared
-// (@see `EditViewModel.openConsolidate` and `restoredSubtree`, which sets `consolidateID = nil` on
+// (@see `EditViewModel.openConsolidate`; formerly it set `consolidateID = nil` on
 // purpose — while open, the content is edited as ordinary matter). Nothing in the object itself
 // can therefore tell it from a plain group, and an icon keyed on `kind` alone turns into a folder
 // on the double click and back into a consolidated object on closing. What one edited was a consolidated object

@@ -268,7 +268,7 @@ extension EditViewModel {
         case .consolidateGroup:
             if let id = clickedID { consolidate(groupID: id) }
         case .consolidateClip:
-            if let id = clickedID { consolidateWrappingClip(clipID: id) }
+            if let id = clickedID { consolidateClip(clipID: id) }
         case .consolidateLinked:
             consolidateSelectionAsLinkedInstances()
         case .consolidateEach:

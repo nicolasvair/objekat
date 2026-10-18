@@ -135,10 +135,19 @@ extension EditViewModel {
     /// a headless re-bake, saving a copy): a single site to hold, instead of a definition
     /// that would leave carrying an instance's automation as soon as one more write path
     /// was added. Idempotent: re-encoding an already read sidecar removes nothing more.
-    func encodedConsolidateSidecar(_ subtree: SoundObject, projectFolder folder: URL?) throws -> Data {
+    ///
+    /// `rootIsContent`: which writer. TRUE for a definition that follows the format-26 rule (the root is
+    /// entirely content: its fader, window, fades, loop and ALL its curves stay —
+    /// @see `SoundObject.asContentRootDefinition`), FALSE for the old rule, where the root is the
+    /// instance's layer (`asConsolidateDefinition`). A sidecar must be re-encoded with the rule of
+    /// the definition it belongs to: a copy of the project (which reads then writes every sidecar back)
+    /// passes the definition's own flag, and never converts one rule into the other by accident.
+    func encodedConsolidateSidecar(_ subtree: SoundObject, rootIsContent: Bool = false,
+                                   projectFolder folder: URL?) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let definition = freezingFXBlocks(in: subtree).asConsolidateDefinition
+        let frozen = freezingFXBlocks(in: subtree)
+        let definition = rootIsContent ? frozen.asContentRootDefinition : frozen.asConsolidateDefinition
         guard let folder else { return try enc.encode(definition) }
         return try enc.encode(ProjectPaths.rewritingClipPaths(definition) {
             ProjectPaths.portable($0, projectFolder: folder)

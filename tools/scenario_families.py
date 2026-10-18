@@ -1076,7 +1076,7 @@ with ObjekatClient(SOCK) as c:
         c.send("project.save")
         txt = open(PROJ).read()
         check("colour: file carries colorHex as text", '"colorHex" : "#FF8A00"' in txt, "colorHex missing")
-        check("colour: file format 25", json.load(open(PROJ)).get("version") == 25)
+        check("colour: file format 26", json.load(open(PROJ)).get("version") == 26)
         c.send("project.open", {"path": PROJ})
         c.send("wait_idle", {"timeout_ms": 30000})
         check("colour: reopened", col(icx) == ("#FF8A00", None), col(icx))

@@ -306,6 +306,23 @@ struct SoundBlockView: View {
                 .allowsHitTesting(false)
             }
 
+            // OUTSIDE THE CONTENT (Q2): the shared content moved or shrank away from under this
+            // instance. It keeps its place and its length and plays silence.
+            if object.isOutsideConsolidateContent {
+                VStack {
+                    HStack {
+                        Spacer()
+                        Image(systemName: "speaker.slash.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.orange)
+                            .padding(3)
+                    }
+                    Spacer()
+                }
+                .help(L("timeline.outsideContent.help"))
+                .allowsHitTesting(false)
+            }
+
             // The definition's AUTOMATIC re-bake UNDER WAY (a transitive cascade): a small discreet
             // circle filling with the render, not in the way. The object stays editable. It is
             // keyed by the DEFINITION, so every instance of it fills in step.
