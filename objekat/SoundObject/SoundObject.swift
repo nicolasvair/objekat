@@ -1012,7 +1012,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// parameters) stay in the sidecar, otherwise reopening the object to edit it would find the FX
     /// but no longer their curves, and the re-bake would produce a different sound. The others leave
     /// with the instance (@see automationSurvivingBake) — the two pieces are glued back together on
-    /// opening (@see EditViewModel.restoredSubtree).
+    /// opening (@see EditViewModel.openConsolidate).
     ///
     /// The invariant that follows, and which has to be preserved: re-editing then re-baking a
     /// definition does not wipe out a rendered instance's own automation.
@@ -1020,7 +1020,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         let rootSendsCarryPlugins = sends.contains { !$0.plugins.isEmpty }
         guard !automation.isEmpty || !automationTouchOrder.isEmpty || rootSendsCarryPlugins else { return self }
         var copy = self
-        // The ROOT's sends belong to the instance (the placement keeps them, @see restoredSubtree):
+        // The ROOT's sends belong to the instance (the placement keeps them, @see SoundObject.consolidateStage):
         // the definition must not hold a second copy of their plugins — same ids as the placement's,
         // which a re-bake materialising the sidecar beside it would hand to the engine twice.
         if rootSendsCarryPlugins { copy.sends = SendChain.strippingPlugins(sends) }

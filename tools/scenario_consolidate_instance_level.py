@@ -641,6 +641,48 @@ def main():
     check("...the FX of those taken from I1 (and from its mirror I3) keep the link group by default",
           len(linked) >= 2, str([[x.get("linkGroupID") for x in o.get("plugins", [])] for o in copies]))
 
+    # ── 10 — un-make ──
+    section("10 — de-consolidate: an ordinary group G holding the content")
+    def_id, i1, i2, i3 = build("s10")
+    fx10 = pid(cmd("plugin.add_gain_stage", host=i1, face="gain", gain_db=6.0))
+    cmd("object.set_gain", ids=[i1], db=-2.0)
+    cmd("object.set_fade", id=i1, **{"in": 0.1, "out": 0.1}); settle()
+    pre = render_instance(i1, "u_pre")
+    n_before = len(list(walk(state_items())))
+    r = cmd("consolidate.unmake", placement=i1); settle()
+    g = find(i1)
+    check("I1 is a GROUP with no link", kind(g).get("type") == "group" and g.get("definitionID") is None
+          and r.get("still_linked") is False, str(kind(g).get("type")))
+    check("...folded, holding ONE child (the content root A)", not kind(g).get("isExpanded") and len(children(g)) == 1)
+    a10 = children(g)[0]
+    check("A is an unlinked group with the two clips and the content FX (-3 dB)",
+          kind(a10).get("type") == "group" and a10.get("definitionID") is None and len(children(a10)) == 2
+          and len(a10.get("plugins", [])) == 1, str(len(a10.get("plugins", []))))
+    check("A has fresh ids (not the instance's, not an existing object)",
+          a10["id"] not in (i1, i2, i3))
+    check("G keeps the instance level: FX, fader, fades",
+          [x["id"] for x in g.get("plugins", [])] == [fx10] and abs(g["volume"] + 2.0) < 1e-6
+          and near(g["fadeIn"], 0.1) and near(g["fadeOut"], 0.1), str((g.get("volume"), g.get("fadeIn"))))
+    check("the other instances are untouched and still linked",
+          all(clip_of(find(i)) and find(i).get("definitionID") == def_id for i in (i2, i3))
+          and defs()[def_id]["placements"] == [i2, i3] or set(defs()[def_id]["placements"]) == {i2, i3},
+          str(defs()[def_id]["placements"]))
+    post = render_instance(i1, "u_post")
+    check("same sound: same length and same body (both bips)",
+          near(duration_of(post), duration_of(pre), 0.03)
+          and near(peak(post, 0.15, 0.35), peak(pre, 0.15, 0.35), 0.02)
+          and near(peak(post, 1.05, 1.25), peak(pre, 1.05, 1.25), 0.02)
+          and peak(post, 0.5, 0.9) < 0.01,
+          "%s %s | %s %s" % (peak(post, 0.15, 0.35), peak(pre, 0.15, 0.35), peak(post, 1.05, 1.25), peak(pre, 1.05, 1.25)))
+    cmd("edit.undo"); settle()
+    u = find(i1)
+    check("ONE undo gives the linked closed instance back, FX included",
+          clip_of(u) is not None and u.get("definitionID") == def_id
+          and [x["id"] for x in u.get("plugins", [])] == [fx10] and len(list(walk(state_items()))) == n_before,
+          str(kind(u).get("type")))
+    cmd("edit.redo"); settle()
+    check("redo: the group again", kind(find(i1)).get("type") == "group" and find(i1).get("definitionID") is None)
+
     # ── 15 — save in a session, reopen ──
     section("15 — a file never holds an open stage")
     def_id, i1, i2, i3 = build("s15")

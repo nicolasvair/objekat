@@ -1540,15 +1540,22 @@ extension EditViewModel {
 
     // MARK: - Detaching
 
-    /// Detaches an instance from its definition by RE-MATERIALISING it to its original
-    /// editable content (clip / group / MIDI, from the definition's sidecar) — like
-    /// opening an edit, but with NO session: the object becomes an ordinary clip/group/MIDI
-    /// again, fully modifiable, with no link. The other instances go on sharing
-    /// the definition normally. The user can then "Create a consolidated object" again
-    /// if they wish. The inverse of the link created by `consolidate` / copy-and-pasting an instance.
+    /// Detaches an instance from its definition (QC-2 of the plan): the instance becomes an ORDINARY
+    /// GROUP G holding the content — the same construction as the stage of an editing session
+    /// (@see SoundObject.consolidateStage), with NO link and NO session. G keeps everything that was the
+    /// instance's — id, FX (their states captured), fader / pan / mute, window, fades, sends, stem, label,
+    /// colour, automation, loop — and its one child A is the content root from the sidecar (fresh ids,
+    /// its own FX / fader / window / fades / children, a nested instance staying an instance), laid so
+    /// that it starts where the wave it replaces had its position 0: the sound is the one the baked
+    /// instance had, and the content is fully editable. G is folded. The other instances go on sharing
+    /// the definition. One undo point.
+    ///
+    /// Limit: the content plays at speed 1 under G, whose window is scaled by the instance's speed (as
+    /// for a session).
     func deconsolidate(placementID: UUID) {
         guard let engine, let placement = find(id: placementID), placement.isConsolidateInstance,
-              let defID = placement.consolidateID, let def = consolidateDefinitions[defID] else { return }
+              let defID = placement.consolidateID, let def = consolidateDefinitions[defID],
+              case .clip = placement.kind else { return }
         // Detaching a nested instance DURING the editing of a parent is allowed (it is a
         // plain modification of the parent's content); only detaching a placement that
         // is itself an editing session under way is forbidden.
@@ -1568,38 +1575,35 @@ extension EditViewModel {
             return
         }
 
+        // The content, as an opening reads it: normalised to what the wave holds, fresh ids, its nested
+        // consolidated descendants pointed at the up-to-date waves.
+        let content = refreshConsolidateReferences(
+            in: deepFreshCopy(SoundObject.contentRoot(fromSidecar: original, def: def)))
+
         // The same warning as at opening for editing: detaching materialises the content, hence
         // loses the plugins this machine has not got (see confirmMissingPluginsBeforeOpening).
         guard confirmMissingPluginsBeforeOpening(
-            original, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
+            content, what: L("consolidate.missingPlugins.what", placement.displayName)) else { return }
 
         pushUndo()
-        // The plugins BELONGING to the placement (added after the transformation, applying to the baked
-        // submix) → to be carried over AFTER the restored internal plugins, as with the mirror.
-        let wrapperPlugins = withCapturedPluginStates(placement).plugins
-
-        // The original sub-tree aligned on the placement's LIVE window/position, fresh ids everywhere,
-        // internal references refreshed (a consolidated descendant may have been updated
-        // since the last bake). `restoredSubtree` already sets consolidateID to nil on the
-        // result.
-        var restored = refreshConsolidateReferences(in: restoredSubtree(from: original, alignedTo: placement))
-        restored.plugins = restored.plugins + wrapperPlugins
-        restored.sends = sendsWithLiveStates(of: placement)   // the sends' own plugins, states live
+        // The instance as it is now, the states of its plugins and of the plugins its sends carry live.
+        var instance = withCapturedPluginStates(placement)
+        instance.sends = sendsWithLiveStates(of: placement)
+        var group = SoundObject.consolidateStage(placement: instance, content: content,
+                                                 definitionID: nil, waveZero: placement.consolidateWaveZero)
+        if case .group(let kids, _) = group.kind { group.kind = .group(children: kids, isExpanded: false) }
 
         removeFromEngine(placement)
-        update(id: placementID) { $0 = restored }
-        syncAdd(restored)
+        update(id: placementID) { $0 = group }
+        syncAdd(group)
         if let parent = parentGroup(for: placementID) {
             engine.assignObject(placementID.uuidString, toGroupFolder: parent.id.uuidString)
-        } else if let sid = restored.stemID {
+        } else if let sid = group.stemID {
             engine.assignObjects([placementID.uuidString], toStemID: sid.uuidString)
         }
-        if restored.isClip || restored.isMIDI {
-            engine.updateFade(in: restored.fadeIn, fadeOut: restored.fadeOut, forID: placementID.uuidString)
-        }
-        syncSends(restored)
+        syncSends(group)
         selectedIDs = [placementID]
         isDirty = true
-        NSLog("[OBJECT] placement \(placementID) detached from the definition \(defID) → editable content restored")
+        NSLog("[OBJECT] placement \(placementID) detached from the definition \(defID) → ordinary group holding the content")
     }
 }
