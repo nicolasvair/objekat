@@ -38,10 +38,11 @@ struct ExportSettings: Equatable {
         }
         var fileExtension: String { rawValue }
 
-        /// True for the formats written straight from the render at an integer bit depth (16 or
-        /// 24) — the ones that offer the bit-depth choice and the dithering. MP3 goes through a
-        /// floating-point intermediate wave and is encoded from it. FLAC is integer-only: unlike WAV
-        /// it has no 32-bit float, so the level above 0 dBFS (if any) is clipped at the file.
+        /// True for the formats rendered at an integer bit depth (16 or 24) — the ones that offer
+        /// the bit-depth choice and the dithering. WAV is written straight from the render; FLAC is
+        /// rendered as a WAV of that depth and converted at the end (exact, read back). MP3 goes
+        /// through a floating-point intermediate wave and is encoded from it. FLAC is integer-only:
+        /// unlike WAV it has no 32-bit float, so the level above 0 dBFS (if any) is clipped at the file.
         var isIntegerPCM: Bool { self != .mp3 }
 
         /// The sample rates offered. MP3 (MPEG-1 Layer III) only knows 32 / 44.1 / 48 kHz — offering

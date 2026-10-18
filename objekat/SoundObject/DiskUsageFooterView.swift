@@ -82,6 +82,8 @@ struct DiskUsagePopoverView: View {
     /// they stay unticked until the user opts in.
     @State private var optedIn: Set<String> = []
     @State private var isCleaning = false
+    /// The WAV → FLAC conversion is under way (its look at the files first, then the writing).
+    @State private var isConverting = false
 
     private var result: DiskUsageResult? { viewModel.diskUsage }
     private var cleanable: [ProjectFileUsage.Candidate]? { result?.cleanable(in: scope) }
@@ -121,12 +123,21 @@ struct DiskUsagePopoverView: View {
             }
 
             Divider()
+            // For filing or sending the project: its WAVs become FLACs, with no loss.
+            HStack(spacing: 6) {
+                Button(L("flacArchive.button")) { convertToFlac() }
+                    .disabled(blockedKey != nil || isCleaning || isConverting || viewModel.isComputingDiskUsage)
+                    .help(L("flacArchive.help"))
+                if isConverting { ProgressView().controlSize(.small) }
+                Spacer(minLength: 0)
+            }
             HStack {
                 Button(L("export.reveal")) { reveal() }
                     .disabled(result == nil)
                 Spacer()
                 Button(trashTitle) { moveToTrash() }
-                    .disabled(ticked.isEmpty || blockedKey != nil || isCleaning || viewModel.isComputingDiskUsage)
+                    .disabled(ticked.isEmpty || blockedKey != nil || isCleaning || isConverting
+                              || viewModel.isComputingDiskUsage)
             }
         }
         .padding(12)
@@ -302,6 +313,38 @@ struct DiskUsagePopoverView: View {
             let outcome = await viewModel.cleanUnusedFiles(selection: chosen, scope: scope, dryRun: false)
             isCleaning = false
             report(outcome)
+        }
+    }
+
+    /// Looks first (a dry run: nothing is written), asks with the figures, then converts. The
+    /// project becomes modified; the original WAVs stay where they are until the clean-up.
+    private func convertToFlac() {
+        isConverting = true
+        Task { @MainActor in
+            defer { isConverting = false }
+            let title = L("flacArchive.title")
+            let plan = await viewModel.convertAudioToFlac(dryRun: true)
+            if plan.refusal != nil { reportFlac(plan, title: title); return }
+            guard !plan.converted.isEmpty else {
+                viewModel.notify(title, plan.summaryText, style: .informational)
+                return
+            }
+            var info = L("flacArchive.confirm.info", plan.converted.count, DiskUsageFormat.bytes(plan.bytesBefore))
+            if !plan.kept.isEmpty { info += "\n\n" + L("flacArchive.confirm.kept", plan.kept.count) }
+            guard viewModel.confirm(L("flacArchive.confirm.title"), info,
+                                    yes: L("flacArchive.confirm.yes"), no: L("common.cancel"),
+                                    style: .informational) else { return }
+            let outcome = await viewModel.convertAudioToFlac(dryRun: false)
+            if outcome.refusal != nil { reportFlac(outcome, title: title); return }
+            viewModel.notify(title, outcome.summaryText, style: .informational)
+        }
+    }
+
+    private func reportFlac(_ outcome: FlacArchiveOutcome, title: String) {
+        switch outcome.refusal {
+        case .busy(let key): viewModel.notify(title, L(key))
+        case .projectChanged: viewModel.notify(title, L("flacArchive.changed"))
+        case .unsaved, nil: break
         }
     }
 

@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""The FLAC renders: the mix export in FLAC, the consolidated waves written as FLAC, and what that costs.
+"""The FLAC renders, taken back: internal renders are 32-bit float WAVs again, FLAC is an export format.
 
-Every internal render used to be a WAV (the consolidations in 32-bit float). They are now FLAC — integer
-16/24 bits, lossless — and the export window offers FLAC beside WAV and MP3. What is asserted here, with
-no screen and no ear:
+The branch `feat/flac-renders` (18 October 2026) made every internal render a FLAC; `feat/flac-archive` took
+that back — an integer file clips whatever goes past 0 dBFS, and a bake must never clip. FLAC stays at the
+export (rendered as a WAV, then converted) and at the archive conversion (`scenario_flac_archive.py`). What
+is asserted here, with no screen and no ear:
 
   A  the mix export in FLAC: a real `fLaC` file, 24 and 16 bits, 44.1 and 96 kHz; once decoded it is
      SAMPLE-FOR-SAMPLE the WAV export of the same range (dithering off);
-  B  a consolidation writes a `.flac` wave and a sidecar named after it; the sound is the same as before;
-     an export launched the very instant after the consolidation hears the new wave (Tracktion reads a
-     FLAC through a proxy it decodes in the background: the first blocks must not come out silent);
-  C  a level above 0 dBFS cannot be kept by an integer FLAC: the consolidation REPORTS it (a dialogue,
-     naming the peak) instead of clipping in silence, and `object.render_isolated` into a `.flac`
-     answers `clipped: true`; a clean render says nothing;
-  D  a project whose consolidated wave is an old `.wav` (the wave and its sidecar both renamed back)
-     still opens, and the instance still plays it;
-  E  the file in progress of a FLAC export (what the listening reads) never makes the preview lie.
+  B  a consolidation writes a 32-bit FLOAT `.wav` wave and a sidecar named after it; the sound is the same;
+     an export launched the very instant after the consolidation hears the new wave, nested bakes too;
+  C  a level above 0 dBFS is KEPT by the float wave (no clipping, no dialogue any more); and
+     `object.render_isolated` into a `.flac` still answers `peak_linear`/`clipped` (the caller's choice);
+  D  a project whose consolidated wave is a `.flac` (written by the FLAC-render build, or archived) still
+     opens, the instance still plays it, and a re-bake writes a `.wav` revision beside it;
+  E  the file in progress of a FLAC export is a WAV: the listening has something to play BEFORE the end.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --language=en --socket=/tmp/f.sock
     ./scenario_flac_renders.py /tmp/f.sock
 
-Decoding goes through `afconvert` (CoreAudio), the same decoder Tracktion's proxy uses on macOS.
+Decoding goes through `afconvert` (CoreAudio).
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
@@ -64,6 +63,20 @@ def near(a, b, tol=1e-3):
 def magic(path):
     with open(path, "rb") as f:
         return f.read(4)
+
+
+def wav_fmt(path):
+    """(format tag, bits) of a RIFF wave: tag 1 = integer PCM, 3 = IEEE float."""
+    d = open(path, "rb").read()
+    i = 12
+    while i < len(d):
+        cid = d[i:i + 4]
+        sz = struct.unpack("<I", d[i + 4:i + 8])[0]
+        if cid == b"fmt ":
+            tag, _ch, _sr, _br, _ba, bits = struct.unpack("<HHIIHH", d[i + 8:i + 24])
+            return tag, bits
+        i += 8 + sz + (sz & 1)
+    return None, None
 
 
 def read_wav(path):
@@ -189,7 +202,7 @@ def main(c):
     check("A6 export.regions accepts flac", "regions" in regs, regs)
 
     # ═══ B — consolidation ══════════════════════════════════════════════════════════════════
-    section("B — a consolidation writes a FLAC")
+    section("B — a consolidation writes a 32-bit float WAV")
     job = cmd("consolidate.make", id=clip)
     wait(job)
     idle()
@@ -198,47 +211,47 @@ def main(c):
     wave = d[0]["wave"]
     wpath = os.path.join(P, "samples", "consolidate", wave)
     side = os.path.join(P, "samples", "consolidate", os.path.splitext(wave)[0] + "_objectstate.json")
-    check("B1 the wave is a .flac", wave.endswith(".flac"), wave)
-    check("B1 the file exists and is a real FLAC", os.path.isfile(wpath) and magic(wpath) == b"fLaC", wpath)
-    check("B1 24 bits (the 32-bit float of the WAV renders cannot be kept)", flac_bits(wpath) == 24, flac_bits(wpath))
-    check("B1 the sidecar is named after the wave (.flac removed)", os.path.isfile(side), side)
+    check("B1 the wave is a .wav", wave.endswith(".wav"), wave)
+    check("B1 the file exists and is a real RIFF", os.path.isfile(wpath) and magic(wpath) == b"RIFF", wpath)
+    check("B1 32-bit float (format tag 3)", wav_fmt(wpath) == (3, 32), wav_fmt(wpath))
+    check("B1 the sidecar is named after the wave", os.path.isfile(side), side)
     bw = read_audio(wpath)
     check("B1 the baked sound is the clip's (peak 0.549)", near(peak(bw), 0.549, 0.01), peak(bw))
-    check("B1 no .wav left in the consolidate folder",
-          not [x for x in os.listdir(os.path.join(P, "samples", "consolidate")) if x.endswith(".wav")],
+    check("B1 no .flac written by a consolidation",
+          not [x for x in os.listdir(os.path.join(P, "samples", "consolidate")) if x.endswith(".flac")],
           os.listdir(os.path.join(P, "samples", "consolidate")))
     quiet = [x for x in cmd("app.dialogs")["dialogs"]] if True else []
     check("B1 no clipping warning for a clean level", not any("0 dBFS" in x["title"] for x in quiet), quiet)
 
-    # the very next render hears the new wave (the FLAC proxy is decoded in the background)
+    # the very next render hears the new wave
     t0 = time.time()
     imm, j = export("b_imm.wav", "wav", depth=24)
     f = read_wav(imm)
-    check("B2 an export launched at once hears the FLAC wave (%.1f s after)" % (time.time() - t0),
+    check("B2 an export launched at once hears the new wave (%.1f s after)" % (time.time() - t0),
           j["state"] == "done" and near(peak(f), 0.549, 0.01), peak(f))
     inst_id = d[0]["placements"][0]
-    # a bake that READS the FLAC wave: group it with another clip (not overlapping) and consolidate the group
+    # a bake that READS the new wave: group it with another clip (not overlapping) and consolidate the group
     clip2 = cmd("object.add", path=BIP, lane=1, start=1.0)["id"]
     gid = cmd("group.create", ids=[clip2, inst_id])["id"]
     wait(cmd("consolidate.make", id=gid))
-    # ... and a render on a COPY of the Edit launched at once (the clone reads the new FLAC waves)
+    # ... and a render on a COPY of the Edit launched at once (the clone reads the new waves)
     bg, j = export("b_bg.wav", "wav", depth=24, end=1.5, background=True)
     idle()
     defs2 = cmd("consolidate.list")["definitions"]
     nested = [x for x in defs2 if x["id"] != d[0]["id"]]
-    check("B3 the nested bake wrote a FLAC too", len(nested) == 1 and nested[0]["wave"].endswith(".flac"), defs2)
+    check("B3 the nested bake wrote a .wav too", len(nested) == 1 and nested[0]["wave"].endswith(".wav"), defs2)
     if len(nested) == 1:
         nw = read_audio(os.path.join(P, "samples", "consolidate", nested[0]["wave"]))
-        check("B3 it heard BOTH sources (no silent FLAC proxy): 0.549 at 0 s and at 1 s",
+        check("B3 it heard BOTH sources: 0.549 at 0 s and at 1 s",
               near(peak(nw, 0.0, 0.4), 0.549, 0.02) and near(peak(nw, 1.0, 1.4), 0.549, 0.02),
               (peak(nw, 0.0, 0.4), peak(nw, 1.0, 1.4)))
     f = read_wav(bg)
-    check("B4 a background (copy) export right after reads the FLAC waves",
+    check("B4 a background (copy) export right after reads the new waves",
           j["state"] == "done" and near(peak(f, 0.0, 0.4), 0.549, 0.02) and near(peak(f, 1.0, 1.4), 0.549, 0.02),
           (j, peak(f, 0.0, 0.4), peak(f, 1.0, 1.4)))
 
-    # A LONG wave: Tracktion reads a FLAC through a proxy it decodes in the background, and a long file
-    # is where that decoding would not be finished when the next render starts. 90 s stereo tone, lane 7.
+    # A LONG wave, read at once by the next renders (kept from the FLAC-render days, when Tracktion read the
+    # FLAC through a proxy decoded in the background). 90 s stereo tone, lane 7.
     import math, wave as wavemod
     LONG = 90.0
     longwav = os.path.join(ROOT, "long_tone.wav")
@@ -261,19 +274,19 @@ def main(c):
     tail, j = export("b5_tail.wav", "wav", depth=24, start=100.0 + LONG - 3.0, end=100.0 + LONG - 1.0,
                      background=True)
     tp = peak(read_wav(tail))
-    check("B5 the tail of a 90 s FLAC wave is heard by an export on a copy launched at once (peak ~0.3)",
+    check("B5 the tail of a 90 s wave is heard by an export on a copy launched at once (peak ~0.3)",
           j["state"] == "done" and near(tp, 0.3, 0.02), (j, tp))
     mid_g = cmd("group.create", ids=[big, cmd("object.add", path=BIP, lane=8, start=100.0)["id"]])["id"]
     wait(cmd("consolidate.make", id=mid_g), ms=240000)
     idle()
     big2 = next(x for x in cmd("consolidate.list")["definitions"] if x["id"] not in
-                [big_def["id"]] and x["wave"].endswith(".flac") and x["was_group"] and mid_g in x["placements"])
+                [big_def["id"]] and x["wave"].endswith(".wav") and x["was_group"] and mid_g in x["placements"])
     bw2 = read_audio(os.path.join(P, "samples", "consolidate", big2["wave"]))
-    check("B5 a bake READING the 90 s FLAC wave right after it was written heard its end (peak ~0.3 at 86..89 s)",
+    check("B5 a bake READING the 90 s wave right after it was written heard its end (peak ~0.3 at 86..89 s)",
           near(peak(bw2, LONG - 4.0, LONG - 1.0), 0.3, 0.02), peak(bw2, LONG - 4.0, LONG - 1.0))
 
     # ═══ C — a level above 0 dBFS ═══════════════════════════════════════════════════════════
-    section("C — above 0 dBFS: reported, never silent")
+    section("C — above 0 dBFS: kept by the float wave, never clipped")
     cmd("app.dialogs", clear=True)
     loud = cmd("object.add", path=BIP, lane=3, start=5.0)["id"]
     cmd("object.set_gain", ids=[loud], db=12.0)
@@ -284,10 +297,12 @@ def main(c):
     idle()
     dl = cmd("app.dialogs")
     hits = [x for x in dl["dialogs"] if "0 dBFS" in x["title"]]
-    check("C1 the clipped consolidation raises ONE warning", len(hits) == 1, dl)
-    if hits:
-        print("info  C1 dialogue: %s | %s" % (hits[0]["title"], hits[0]["info"]))
-        check("C1 it names the peak in dBFS (~ +6.8)", "+6." in hits[0]["info"] or "+7." in hits[0]["info"], hits[0]["info"])
+    check("C1 no « clipped » dialogue any more", not hits, dl)
+    ld = next(x for x in cmd("consolidate.list")["definitions"] if loud in x["placements"])
+    lw = os.path.join(P, "samples", "consolidate", ld["wave"])
+    lpk = peak(read_wav(lw))
+    check("C1 the loud wave is a float WAV that keeps its level past 0 dBFS (peak %.2f, ~ +6.8 dBFS)" % lpk,
+          wav_fmt(lw) == (3, 32) and lpk > 1.5, (wav_fmt(lw), lpk))
 
     # the isolated render: flac = measured, wav = not
     clean = cmd("object.add", path=BIP, lane=6, start=30.0)["id"]
@@ -309,7 +324,7 @@ def main(c):
           "clipped" not in res and magic(wp) == b"RIFF", (res, magic(wp)))
 
     # ═══ D — an old project: .wav consolidated waves ════════════════════════════════════════
-    section("D — an old project with a .wav consolidated wave still opens")
+    section("D — a project with a .flac consolidated wave still opens")
     # a definition of its own, so that nothing else in the project depends on the wave being turned back
     oc = cmd("object.add", path=BIP, lane=5, start=20.0)["id"]
     wait(cmd("consolidate.make", id=oc))
@@ -318,11 +333,13 @@ def main(c):
     wpath = os.path.join(P, "samples", "consolidate", wave)
     cmd("project.save")
     idle()
-    # turn that definition's wave back into a WAV (as a project saved before the FLAC renders has it)
+    # turn that definition's wave into a FLAC 24 (as the FLAC-render build, or an archive, left it)
     cons = os.path.join(P, "samples", "consolidate")
     base = os.path.splitext(wave)[0]
-    old_wave = os.path.join(cons, base + ".wav")
-    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEF32", wpath, old_wave], check=True)
+    old_wave = os.path.join(cons, base + ".flac")
+    i24 = os.path.join(ROOT, "d_i24.wav")
+    subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI24", wpath, i24], check=True)
+    subprocess.run(["afconvert", "-f", "flac", "-d", "flac", i24, old_wave], check=True)
     os.remove(wpath)
     mpath = os.path.join(P, "proj.objekat")
     man = json.load(open(mpath)) if mpath.endswith(".json") else None
@@ -332,7 +349,7 @@ def main(c):
         if os.path.isfile(fp) and fn.endswith((".objekat", ".json")):
             txt = open(fp, encoding="utf-8").read()
             if wave in txt:
-                open(fp, "w", encoding="utf-8").write(txt.replace(wave, base + ".wav"))
+                open(fp, "w", encoding="utf-8").write(txt.replace(wave, base + ".flac"))
     cmd("project.new")
     idle()
     for fn in sorted(os.listdir(P)):
@@ -344,14 +361,14 @@ def main(c):
     miss = cmd("project.missing_files")
     check("D1 reopened: nothing missing", miss["path_count"] == 0, miss)
     dd = {x["id"]: x for x in cmd("consolidate.list")["definitions"]}
-    old = [x for x in dd.values() if x["wave"].endswith(base + ".wav")]
-    check("D1 the definition records the .wav name", len(old) == 1, [x["wave"] for x in dd.values()])
+    old = [x for x in dd.values() if x["wave"].endswith(base + ".flac")]
+    check("D1 the definition records the .flac name", len(old) == 1, [x["wave"] for x in dd.values()])
     pl0 = old[0]["placements"][0]
     iso = os.path.join(ROOT, "d_iso.wav")
     j = wait(cmd("object.render_isolated", id=pl0, path=iso, start=20.0, end=20.4, sample_rate=44100, bit_depth=24))
     f = read_wav(iso)
-    check("D2 the instance plays the old .wav wave (peak 0.549)", j["state"] == "done" and near(peak(f), 0.549, 0.02), peak(f))
-    # a re-bake of that definition writes a FLAC next to it, the .wav stays
+    check("D2 the instance plays the .flac wave (peak 0.549)", j["state"] == "done" and near(peak(f), 0.549, 0.02), peak(f))
+    # a re-bake of that definition writes a float WAV next to it, the .flac stays
     pl = old[0]["placements"][0] if old and old[0].get("placements") else None
     if pl:
         cmd("consolidate.edit_begin", placement=pl)
@@ -361,8 +378,10 @@ def main(c):
         wait(cmd("consolidate.edit_commit"))
         idle()
         nd = {x["id"]: x for x in cmd("consolidate.list")["definitions"]}[old[0]["id"]]
-        check("D3 a re-bake of the old definition writes a FLAC revision", nd["wave"].endswith("_v1.flac") and nd["revision"] == 1, nd)
-        check("D3 the old .wav is left in place (no migration, no GC)", os.path.isfile(old_wave))
+        check("D3 a re-bake of the FLAC-waved definition writes a float WAV revision",
+              nd["wave"].endswith("_v1.wav") and nd["revision"] == 1
+              and wav_fmt(os.path.join(cons, nd["wave"])) == (3, 32), nd)
+        check("D3 the .flac is left in place (no migration, no GC)", os.path.isfile(old_wave))
         f = read_audio(os.path.join(cons, nd["wave"]))
         check("D3 the new revision holds the -6 dB content (peak ~ 0.275)", near(peak(f), 0.549 * lin(-6), 0.02), peak(f))
 
@@ -389,6 +408,8 @@ def main(c):
           [(p["peaks_filled"], p["peaks_total"]) for p in seen[:4]])
     check("E1 the listening never claims more than rendered (audible <= range)", all(a <= long_end + 0.5 for a in aud), aud[:6])
     print("info  E1 audible_seconds while rendering: %s" % aud[:12])
+    if len(seen) >= 3:
+        check("E1 something is audible BEFORE the end (the file in progress is a WAV)", any(a > 0 for a in aud), aud[:12])
     done = cmd("export.preview")
     check("E2 once finished, the whole FLAC is audible", abs(done.get("audible_seconds", 0) - long_end) < 1.0, done)
 

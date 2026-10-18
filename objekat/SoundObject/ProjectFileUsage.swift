@@ -12,7 +12,8 @@ import Foundation
 //
 // THE MODEL OF A PROJECT FOLDER. Every version file (`*.objekat`, or the legacy `*.json`) of a
 // folder shares `samples/` and `waveforms/`. What lives there:
-//   • `samples/consolidate/<name>_<def8>[_vN].flac` (`.wav` in a project older than the FLAC renders) + its sidecar `…_objectstate.json` — a
+//   • `samples/consolidate/<name>_<def8>[_vN].wav` (`.flac` once the project has been archived — @see
+//     `EditViewModel+FlacArchive`) + its sidecar `…_objectstate.json` — a
 //     consolidated object's baked wave. EVERY re-bake writes a `_v(N+1)` and none ever deletes the
 //     old one: those are the orphans this exists for;
 //   • `samples/objects/` — the legacy place of the same files, read for ever, never written;

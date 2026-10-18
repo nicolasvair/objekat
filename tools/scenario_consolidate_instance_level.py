@@ -122,7 +122,7 @@ def children(o):
 
 def read_wav(path):
     """(channels, sample_rate, samples) for the PCM 16/24/32 and float32 files the app writes.
-    A `.flac` (the consolidated waves are FLAC since the FLAC renders) is first decoded by CoreAudio's
+    A `.flac` (an archived project's consolidated wave) is first decoded by CoreAudio's
     `afconvert` into a 32-bit float wav — exact for the 16/24-bit integer content of a FLAC."""
     if path.endswith(".flac"):
         tmpdir = tempfile.mkdtemp(prefix="objk-flac-", dir="/tmp")
