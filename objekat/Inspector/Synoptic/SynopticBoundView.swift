@@ -58,6 +58,9 @@ struct SynopticBoundView: View {
     @State private var isOnScreen = false
     // The ARA source of this object is still analysing (polled with the instance states).
     @State private var araAnalysing = false
+    // The main bus of every external plugin of the chain (loaded instances only), polled with the states and
+    // written ONLY when it changes: the widths along the chain are derived from it in `body`, never per frame.
+    @State private var channelCounts: [UUID: PluginChannels] = [:]
     // An aux: the senders listed at the head (the sends it receives). A STICKY list — a row taken
     // down to -∞ stays shown until the selection changes, otherwise it would vanish mid-drag
     // (activeSenders filters silent sends out) and SwiftUI would re-associate the gesture with a neighbour.
@@ -82,6 +85,11 @@ struct SynopticBoundView: View {
         // instrument. Compared by value, so the registration follows the chain, not each render.
         let meteredIDs = meteredPluginIDs()
 
+        // The width the chain is fed with (an audio clip's file; a stereo pair for everything else), and what
+        // becomes of it along the chain — derived from the polled bus counts, so it follows the chain.
+        let sourceWidth = viewModel.sourceChannelWidth(hostID: objectID)
+        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, channels: channelCounts)
+
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
         // A consolidated INSTANCE has none: it reads a wave the app baked, which has neither a speed
@@ -91,7 +99,8 @@ struct SynopticBoundView: View {
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
                                                        ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
-                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) }) }
+                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) },
+                                                       sourceChannels: sourceWidth) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
@@ -230,6 +239,7 @@ struct SynopticBoundView: View {
                                     name: viewModel.consolidateDefinitions[defID]?.name ?? o.displayName,
                                     isOpen: viewModel.isInConsolidateEditStack(o.id))
                             },
+                            widthFlow: widthFlow, pluginChannels: channelCounts,
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
             onOpenEditors: { openEditors(clicked: $0, ids: $1) },
@@ -275,6 +285,8 @@ struct SynopticBoundView: View {
             onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
             linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
             sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
+            channelMenu: { viewModel.channelMenuState(pluginID: $0, host: objectID) },
+            onSetChannelVariant: { viewModel.setChannelVariantFromHand($1, pluginID: $0, host: objectID) },
             dragProvider: { dragProvider($0) },
             dropOutcome: { target, flags in
                 // A send card in the hand is answered by the send table (a plugin never is one).
@@ -854,6 +866,9 @@ struct SynopticBoundView: View {
         }
         if st != instanceStates { instanceStates = st }
         if errs != loadErrors { loadErrors = errs }
+        // The main buses of the external instances that are loaded (a cheap read each, no probing).
+        let channels = viewModel.pluginChannels(pluginIDs: Array(st.keys))
+        if channels != channelCounts { channelCounts = channels }
     }
 }
 

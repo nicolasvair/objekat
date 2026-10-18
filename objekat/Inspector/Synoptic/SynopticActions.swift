@@ -66,6 +66,13 @@ struct SynopticActions {
     // plugin editor's Sidechain strip (@see SidechainStripView), not from the card.
     var sidechainBadge: ((UUID) -> SidechainBadge?)? = nil
 
+    // The width of a plugin's main bus (mono / mono→stereo / stereo): the "Channels" submenu of a card.
+    // `channelMenu` answers nil for a card that has none (a built-in, an instrument, a gain stage, the demo);
+    // `onSetChannelVariant` carries out a choice (the view-model refuses it with a reason, and the view
+    // beeps). @see EditViewModel.channelMenuState / setChannelVariant.
+    var channelMenu: ((UUID) -> ChannelMenuState?)? = nil
+    var onSetChannelVariant: ((_ plugin: UUID, _ variant: ChannelVariant) -> Void)? = nil
+
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
     // What a release at `target` would do with the drag in flight, for the cursor and the band
@@ -278,6 +285,9 @@ struct SynopticAudioFile: Equatable {
     /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
     /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
     var ara: SynopticARA? = nil
+    /// The source file's channels as the chain is fed with them (1 = mono, 2 = stereo), said by a small tag
+    /// in the zone's title row. nil = unknown (the demo).
+    var sourceChannels: Int? = nil
 }
 
 /// A setting of the 'audio file' zone that the FOLDED zone hides and that is not neutral: the folded row

@@ -50,6 +50,11 @@ struct SynopticView: View {
     /// is open). Replaces the 'audio file' zone and the Source pill. The instance's own FX, mix, sends
     /// and stem are the instance's: fully interactive, closed or open.
     var contentPill: SynopticContentPill? = nil
+    /// The width of the signal along the chain (@see SynopticWidthFlow), computed by the bound view once per
+    /// chain change. Empty = nothing to say (the demo): the wires keep their single look.
+    var widthFlow = SynopticWidthFlow()
+    /// The main bus of every external plugin the engine reports one for: the tag on its card.
+    var pluginChannels: [UUID: PluginChannels] = [:]
     var actions = SynopticActions()
 
     // The marquee's state, all of it torn down at the end of the gesture. @see marqueeGesture
@@ -193,6 +198,10 @@ struct SynopticView: View {
                         // (@see SynopticBranchRun.around). Never for a bin's instance: its block is branched whole.
                         if !c.plugin.inFXBlock, let branch = actions.onBranch {
                             Button(L("synoptic.menu.createBranch")) { branch(.plugin(c.plugin.id)) }
+                        }
+                        // The width of the main bus: mono / mono→stereo / stereo (only an external plugin has one).
+                        if c.plugin.gainStage == nil, let menu = actions.channelMenu?(c.plugin.id) {
+                            channelsMenu(menu, plugin: c.plugin.id)
                         }
                     }
                     .position(x: c.frame.midX, y: c.frame.midY)
@@ -529,10 +538,47 @@ struct SynopticView: View {
             onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
             linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
             sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id),
+            channels: isStage ? nil : pluginChannels[c.plugin.id],
+            crushesStereo: widthFlow.crushed.contains(c.plugin.id),
             // A gain stage's faces read and write their values through the bound view (@see
             // SynopticGainStageControls); a plugin card ignores it.
             actions: actions
         )
+    }
+
+    /// The "Channels" submenu of a card: the three variants, the current one ticked, the ones this plugin
+    /// cannot take (or any, while playback runs) greyed. A hint says why, or that the change reaches the
+    /// plugin's linked instances too.
+    @ViewBuilder
+    private func channelsMenu(_ m: ChannelMenuState, plugin id: UUID) -> some View {
+        Menu(L("synoptic.menu.channels")) {
+            ForEach(m.entries, id: \.variant) { e in
+                Button {
+                    actions.onSetChannelVariant?(id, e.variant)
+                } label: {
+                    if e.isCurrent {
+                        Label(Self.variantTitle(e.variant), systemImage: "checkmark")
+                    } else {
+                        Text(Self.variantTitle(e.variant))
+                    }
+                }
+                .disabled(!e.supported || m.blockedByPlayback)
+            }
+            if m.blockedByPlayback || m.linkedCount > 0 || !m.exact {
+                Divider()
+                if m.blockedByPlayback { Text(L("synoptic.menu.channels.playing")) }
+                if m.linkedCount > 0 { Text(L("synoptic.menu.channels.linked", m.linkedCount)) }
+                if !m.exact { Text(L("synoptic.menu.channels.approximate")) }
+            }
+        }
+    }
+
+    private static func variantTitle(_ v: ChannelVariant) -> String {
+        switch v {
+        case .mono:       return L("synoptic.menu.channels.mono")
+        case .monoStereo: return L("synoptic.menu.channels.monoStereo")
+        case .stereo:     return L("synoptic.menu.channels.stereo")
+        }
     }
 
     /// The FX link entries of the right-click menus: make a bin of the plugins in hand, or join one
@@ -776,7 +822,41 @@ struct SynopticView: View {
 
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
 
+    /// How a cable is drawn once the widths are known: its thickness (1 channel / 2 channels), and whether it
+    /// leads into a plugin that crushes a stereo signal.
+    private struct CableLook {
+        var lineWidth: CGFloat = 1.5
+        var crushed = false
+    }
+
+    /// The cable → look function of one drawing pass. A cable is matched to the cards GEOMETRICALLY (the
+    /// layout gives cables as two points, not as ids): one that ends on a card's entry carries the width that
+    /// reaches that card, one that leaves a card's exit the width that comes out of it. Anything else —
+    /// the demo, an empty series, the fork and merge curves not touching a card — keeps the single look.
+    private func makeCableLook(_ cards: [SynopticLayout.CardPlacement]) -> (SynopticLayout.Cable) -> CableLook {
+        guard !widthFlow.inputOf.isEmpty else { return { _ in CableLook() } }
+        func key(_ p: CGPoint) -> [Int] { [Int(p.x.rounded()), Int(p.y.rounded())] }
+        var entries: [[Int]: UUID] = [:]
+        var exits: [[Int]: UUID] = [:]
+        for c in cards {
+            entries[key(CGPoint(x: c.frame.midX, y: c.frame.minY))] = c.plugin.id
+            exits[key(CGPoint(x: c.frame.midX, y: c.frame.maxY))] = c.plugin.id
+        }
+        let flow = widthFlow
+        return { cable in
+            func width(_ n: Int) -> CGFloat { n >= 2 ? 2.6 : 1.1 }
+            if let id = entries[key(cable.to)], let n = flow.inputOf[id] {
+                return CableLook(lineWidth: width(n), crushed: flow.crushed.contains(id))
+            }
+            if let id = exits[key(cable.from)], let n = flow.outputOf[id] {
+                return CableLook(lineWidth: width(n), crushed: false)
+            }
+            return CableLook()
+        }
+    }
+
     private func draw(_ ctx: GraphicsContext, diagram d: SynopticLayout.Diagram) {
+        let cableLook = makeCableLook(d.placement.cards)
         // The object's FRAME (§B.5): its FILL here, UNDER everything; its line is laid ABOVE the head and the
         // mixer (@see objectFrameLine), whose outer outline it is.
         if let f = d.objectFrame {
@@ -813,9 +893,13 @@ struct SynopticView: View {
                               control2: CGPoint(x: cable.to.x, y: midY))
             }
             let isGhost = cable.style == .ghost
+            // Width: a mono wire is thin, a stereo one thick, and the one that arrives at a plugin crushing
+            // the stereo is orange. A cable that touches no card keeps the single look.
+            let look = cableLook(cable)
             ctx.stroke(path,
-                       with: .color(Color.secondary.opacity(isGhost ? 0.4 : 0.7)),
-                       style: StrokeStyle(lineWidth: isGhost ? 1 : 1.5,
+                       with: .color((look.crushed ? Color.orange : Color.secondary)
+                                        .opacity(isGhost ? 0.4 : (look.crushed ? 0.9 : 0.7))),
+                       style: StrokeStyle(lineWidth: isGhost ? 1 : look.lineWidth,
                                           lineCap: .round,
                                           dash: isGhost ? [3, 3] : []))
             if cable.style == .connector || cable.style == .fork {

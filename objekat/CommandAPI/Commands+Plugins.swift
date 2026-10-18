@@ -149,6 +149,121 @@ extension CommandRegistry {
                             "reason": .stringOrNull(why?.rawValue)])
         }
 
+        register("plugin.channel_layouts",
+                 summary: """
+                 The width of a plugin's MAIN bus, and which of the three variants it can take: `mono` \
+                 (1 in, 1 out), `mono_stereo` (1 in, 2 out), `stereo` (2 in, 2 out). `external` false \
+                 (a built-in or in-house plugin) or `loaded` false (the instance is still loading — wait \
+                 and ask again) means no variants. `current` is the variant now in force (null for a bus \
+                 outside the three, a surround plugin). Each variant carries `supported`; `exact` false \
+                 means that answer is best-effort (a VST3 once the playback context is allocated): a \
+                 refusal met when applying is remembered and shows as `supported: false` afterwards. \
+                 `linked` is how many OTHER instances change together with this one (an FX link's \
+                 mirrors, a manual link's peers): a variant is `supported` only if EVERY member takes it. \
+                 `playing` true = the change would be refused now. Reads only. Instruments (a MIDI \
+                 object's virtual instrument) are not supported: only leaf plugins of a chain.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin of the chain.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            var payload: [String: JSONValue] = ["host": .string(host.uuidString),
+                                                "plugin": .string(pluginID.uuidString),
+                                                "playing": .bool(vm.isTransportPlaying)]
+            guard let info = engine.pluginChannelInfo(pluginID.uuidString, probeVariants: true) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "plugin \(pluginID.uuidString) has no engine instance yet")
+            }
+            let external = (info["external"] as? NSNumber)?.boolValue == true
+            let loaded = (info["loaded"] as? NSNumber)?.boolValue == true
+            payload["external"] = .bool(external)
+            payload["loaded"] = .bool(loaded)
+            payload["variants"] = .array([])
+            payload["linked"] = .int(0)
+            guard external, loaded else { return .object(payload) }
+            payload["inputs"] = .int((info["inputs"] as? NSNumber)?.intValue ?? 0)
+            payload["outputs"] = .int((info["outputs"] as? NSNumber)?.intValue ?? 0)
+            payload["format"] = .stringOrNull(info["format"] as? String)
+            payload["current"] = .stringOrNull(info["current"] as? String)
+            if let menu = vm.channelMenuState(pluginID: pluginID, host: host) {
+                payload["exact"] = .bool(menu.exact)
+                payload["linked"] = .int(menu.linkedCount)
+                payload["variants"] = .array(menu.entries.map { e in
+                    .object(["id": .string(e.variant.rawValue),
+                             "inputs": .int(e.variant.inputs), "outputs": .int(e.variant.outputs),
+                             "supported": .bool(e.supported), "current": .bool(e.isCurrent)])
+                })
+            }
+            return .object(payload)
+        }
+
+        register("plugin.set_channel_layout",
+                 summary: """
+                 Puts a plugin's main bus in a variant: `mono` (1 in, 1 out), `mono_stereo` (1 in, 2 out) \
+                 or `stereo` (2 in, 2 out). The plugin's state is kept, its sidechain wires are laid again, \
+                 and the new width is saved with the plugin (its state carries it) and undone with it. \
+                 Applies to EVERY active member of the plugin's link group, or to none (`instances` says \
+                 how many changed). One undo step. `bad_params`: unknown variant, a built-in plugin, or a \
+                 variant the plugin does not accept (`details.reason`: `not_external`, `bad_variant`, \
+                 `unsupported`, `refused`). `invalid_state`: the transport is PLAYING (changing the bus \
+                 frees the playback context — stop first, `details.reason` `playing`) or the instance is \
+                 still loading (`not_loaded`). Already in that variant: `changed` false, no undo step. \
+                 Answers `{ok, changed, instances, variant, inputs, outputs}`.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin of the chain."),
+                          ParamSpec("variant", "string", "mono | mono_stereo | stereo.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            let raw = try p.string("variant")
+            guard let variant = ChannelVariant(rawValue: raw) else {
+                throw CommandError(code: .bad_params, message: "unknown variant '\(raw)' (mono | mono_stereo | stereo)",
+                                   details: .object(["reason": .string("bad_variant")]))
+            }
+            var instances = 0
+            switch vm.setChannelVariant(variant, pluginID: pluginID, host: host) {
+            case .applied(let n):
+                instances = n
+            case .unchanged:
+                break
+            case .refused(let reason):
+                let details = JSONValue.object(["reason": .string(reason)])
+                switch reason {
+                case "playing":
+                    throw CommandError(code: .invalid_state,
+                                       message: "playback is running: changing the channels would stop it. Stop the transport first",
+                                       details: details)
+                case "not_loaded":
+                    throw CommandError(code: .invalid_state,
+                                       message: "plugin \(pluginID.uuidString) is still loading", details: details)
+                case "not_external":
+                    throw CommandError(code: .bad_params,
+                                       message: "plugin \(pluginID.uuidString) is a built-in plugin: it has no channel layout to choose",
+                                       details: details)
+                case "unsupported", "refused", "bad_variant":
+                    throw CommandError(code: .bad_params,
+                                       message: "plugin \(pluginID.uuidString) does not accept '\(raw)'", details: details)
+                case "unknown_plugin":
+                    throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)", details: details)
+                default:
+                    throw CommandError(code: .invalid_state, message: "channel layout refused: \(reason)", details: details)
+                }
+            }
+            let info = engine.pluginChannelInfo(pluginID.uuidString, probeVariants: false)
+            return .object(["ok": .bool(true), "changed": .bool(instances > 0), "instances": .int(instances),
+                            "variant": .string(raw),
+                            "inputs": .int((info?["inputs"] as? NSNumber)?.intValue ?? variant.inputs),
+                            "outputs": .int((info?["outputs"] as? NSNumber)?.intValue ?? variant.outputs)])
+        }
+
         register("plugin.add",
                  summary: "Adds a plugin at the end of a host's chain.",
                  params: [ParamSpec("host", "uuid", "Receiving object or stem."),
