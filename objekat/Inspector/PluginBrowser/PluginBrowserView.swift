@@ -290,15 +290,7 @@ struct PluginBrowserView: View {
                                          @ViewBuilder label: () -> Label) -> some View {
         let active = currentPage == target
         return label()
-            .font(.system(size: 11, weight: active ? .semibold : .regular))
-            .padding(.horizontal, 10)
-            .frame(height: 20)
-            .background(
-                Capsule().fill(active ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.25)
-                                      : Color.clear)
-            )
-            .foregroundStyle(active ? Color.primary : Color.secondary)
-            .contentShape(Capsule())
+            .capsuleTab(active: active)
             .onTapGesture { select(target) }
             .accessibilityAddTraits(.isButton)
             .helpIf(help)

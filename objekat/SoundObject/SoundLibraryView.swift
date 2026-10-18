@@ -131,6 +131,11 @@ final class SoundLibraryNode: Identifiable {
 
 // MARK: - ViewModel
 
+/// The Finder tab's state. It is NOT owned by the view: the left panel swaps its tabs with a
+/// `switch`, so the view leaves the hierarchy at every change of tab and everything it held in a
+/// `@State` (the folder shown, what is unfolded, the selection, the search, the scroll) went with
+/// it — the tab "closed itself" each time one came back. `ContentView` owns one instance for the
+/// window's whole life and hands it to the view.
 @MainActor
 @Observable
 final class SoundLibraryViewModel {
@@ -149,6 +154,10 @@ final class SoundLibraryViewModel {
     var searchResults: [SoundLibraryNode] = []
 
     var isSearching: Bool { !searchText.isEmpty }
+
+    /// The row at the top of the list, kept so the scroll survives the view leaving the hierarchy
+    /// (a tab change). Not observed: it is written all along a scroll, and nothing draws from it.
+    @ObservationIgnored var scrollTopID: UUID? = nil
 
     var selectedID: UUID? = nil
     private(set) var selectedNode: SoundLibraryNode? = nil
@@ -200,25 +209,81 @@ final class SoundLibraryViewModel {
         return cur.lastPathComponent
     }
 
-    func openFolderPanel() {
+    /// The slots' memory (@see FinderSlotStore); the view reads it to draw its row.
+    @ObservationIgnored let slots = FinderSlotStore.shared
+
+    /// Asks for a folder. nil if the panel is cancelled.
+    private func pickFolder() -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = L("common.chooseShort")
-        if panel.runModal() == .OK, let url = panel.url {
-            ObjekatPreferences.shared.soundLibraryFolder = url.path
-            baseURL = url
-            navigate(to: url)
-        }
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
-    func restoreFolder() {
-        let path = ObjekatPreferences.shared.soundLibraryFolder
-        guard !path.isEmpty else { return }
-        let url = URL(fileURLWithPath: path)
+    /// The header's folder button. With a slot shown it gives THAT slot another folder; with none it
+    /// sets the folder the Finder opens on when no slot has been used.
+    func openFolderPanel() {
+        guard let url = pickFolder() else { return }
+        if let slot = slots.activeSlot {
+            slots.setPath(url.path, forSlot: slot)
+        } else {
+            ObjekatPreferences.shared.soundLibraryFolder = url.path
+        }
+        show(url)
+    }
+
+    /// A click on a colour: shows that slot's folder. An empty slot (or one whose folder has gone)
+    /// asks for a folder instead. A click on the slot already shown changes nothing: it must not
+    /// fold back what was unfolded.
+    func chooseSlot(_ slot: Int) {
+        if slots.activeSlot == slot, baseURL != nil { return }
+        guard let url = Self.existingFolder(slots.path(forSlot: slot)) else { assignSlot(slot); return }
+        slots.setActive(slot)
+        show(url)
+    }
+
+    /// "Choose a folder…": gives the slot a folder and shows it.
+    func assignSlot(_ slot: Int) {
+        guard let url = pickFolder() else { return }
+        slots.setPath(url.path, forSlot: slot)
+        slots.setActive(slot)
+        show(url)
+    }
+
+    /// "Empty": the slot forgets its folder. What is on screen stays.
+    func clearSlot(_ slot: Int) {
+        slots.setPath(nil, forSlot: slot)
+    }
+
+    private func show(_ url: URL) {
+        searchText = ""
+        baseURL = url
+        navigate(to: url)
+    }
+
+    private static func existingFolder(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return }
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// Opens the Finder on its folder — the shown slot's, else the single folder the tab used to keep.
+    /// Does nothing once a folder is up: the view comes back at every change of tab, and the folder
+    /// the hand navigated to is not to be replaced by the one it started from.
+    func restoreFolder() {
+        guard baseURL == nil else { return }
+        if let slot = slots.activeSlot {
+            if let url = Self.existingFolder(slots.path(forSlot: slot)) {
+                baseURL = url
+                navigate(to: url)
+                return
+            }
+            slots.setActive(nil)
+        }
+        guard let url = Self.existingFolder(ObjekatPreferences.shared.soundLibraryFolder) else { return }
         baseURL = url
         navigate(to: url)
     }
@@ -244,6 +309,7 @@ final class SoundLibraryViewModel {
         multiSelectedIDs = []
         rangeAnchorID = nil
         cursorID = nil
+        scrollTopID = nil
         currentURL = url
         rootNodes = makeNodes(for: url, depth: 0)
         applySearch()
@@ -613,13 +679,17 @@ final class SoundLibraryViewModel {
 // MARK: - Main view
 
 struct SoundLibraryView: View {
-    @State private var vm = SoundLibraryViewModel()
+    /// Owned by `ContentView`, never by this view (@see SoundLibraryViewModel).
+    @Bindable var vm: SoundLibraryViewModel
     @FocusState private var listFocused: Bool
 
     private var rows: [SoundLibraryNode] { vm.displayedRows }
 
     var body: some View {
         VStack(spacing: 0) {
+            FinderSlotsBar(vm: vm)
+            Divider()
+
             // Header: navigation and search
             VStack(spacing: 4) {
                 if vm.baseURL == nil {
@@ -717,7 +787,11 @@ struct SoundLibraryView: View {
             }
         }
         .onAppear { vm.restoreFolder() }
-        .onDisappear { KeyboardClaim.shared.release(.explorer) }
+        .onDisappear {
+            KeyboardClaim.shared.release(.explorer)
+            // The model outlives the view now: a preview left running would play on from another tab.
+            vm.stopPreview()
+        }
     }
 
     // MARK: List (tree plus keyboard navigation)
@@ -732,7 +806,10 @@ struct SoundLibraryView: View {
                         Divider()
                     }
                 }
+                .scrollTargetLayout()
             }
+            // The scroll comes back where it was when the tab is shown again.
+            .scrollPosition(id: Binding(get: { vm.scrollTopID }, set: { vm.scrollTopID = $0 }))
             .focusable()
             .focused($listFocused)
             .onChange(of: listFocused) { _, f in
@@ -777,6 +854,51 @@ struct SoundLibraryView: View {
         if flags.contains(.shift) { vm.rangeSelect(to: node) }
         else if flags.contains(.command) { vm.toggleMultiSelect(node) }
         else { vm.select(node) }
+    }
+}
+
+// MARK: - The colour slots (Finder tab)
+
+/// The row of six colours under the tab switcher: each one remembers a folder, a click shows it.
+/// Same capsules and same colours as the plugin browser's tab bar (@see `capsuleTab`,
+/// `PluginCategoryPalette.base`). An empty slot is an outlined circle: a click asks for a folder; a
+/// right click offers "Choose a folder…" / "Empty" on any of them.
+private struct FinderSlotsBar: View {
+    var vm: SoundLibraryViewModel
+    private var slots: FinderSlotStore { vm.slots }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<FinderSlotStore.slotCount, id: \.self) { slot in
+                slotCapsule(slot)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private func slotCapsule(_ slot: Int) -> some View {
+        let path = slots.path(forSlot: slot)
+        let colour = ObjekatPalette.pluginCategory(FinderSlotStore.colourIndex(forSlot: slot))
+        return Group {
+            if path != nil {
+                Circle().fill(colour).frame(width: 9, height: 9)
+            } else {
+                Circle().strokeBorder(colour.opacity(0.6), lineWidth: 1).frame(width: 9, height: 9)
+            }
+        }
+        .capsuleTab(active: slots.activeSlot == slot)
+        .onTapGesture { vm.chooseSlot(slot) }
+        .accessibilityAddTraits(.isButton)
+        .help(path ?? L("library.slot.empty.help"))
+        .contextMenu {
+            Button(L("library.chooseFolder")) { vm.assignSlot(slot) }
+            Button(L("library.slot.clear")) { vm.clearSlot(slot) }
+                .disabled(path == nil)
+        }
     }
 }
 

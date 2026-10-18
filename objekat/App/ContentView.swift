@@ -21,6 +21,9 @@ struct ContentView: View {
     @State private var outputDevices: [String] = []
     @State private var selectedDevice: String = ""
     @State private var leftPanelTab: LeftPanelTab = .liste
+    /// The Finder tab's state, owned here so that it outlives the tab: the `switch` below removes the
+    /// view from the hierarchy at every change of tab, and a `@State` inside it went with it.
+    @State private var soundLibrary = SoundLibraryViewModel()
     /// The monitor that gives back the click coming home from a plugin's window
     /// (@see FirstClickThrough). A token in a `@State`, removed in `.onDisappear`.
     @State private var firstClickMonitor: Any? = nil
@@ -79,7 +82,7 @@ struct ContentView: View {
                         switch leftPanelTab {
                         case .liste: SoundObjectListView(viewModel: viewModel,
                                                          onOwnSelection: { listMadeSelection = $0 })
-                        case .sons:  SoundLibraryView()
+                        case .sons:  SoundLibraryView(vm: soundLibrary)
                         case .objet: ObjectInspectorView(viewModel: viewModel)
                         }
                     }

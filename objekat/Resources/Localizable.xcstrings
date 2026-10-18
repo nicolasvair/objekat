@@ -9454,6 +9454,52 @@
         }
       }
     },
+    "library.slot.clear": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Empty"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vaciar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vider"
+          }
+        }
+      }
+    },
+    "library.slot.empty.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Empty slot: click to choose a folder"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Espacio vacío: clic para elegir una carpeta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Emplacement vide : cliquer pour choisir un dossier"
+          }
+        }
+      }
+    },
     "markers.lane.color.help": {
       "extractionState": "manual",
       "localizations": {
@@ -11231,19 +11277,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sounds"
+            "value": "Finder"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sonidos"
+            "value": "Finder"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sons"
+            "value": "Finder"
           }
         }
       }
