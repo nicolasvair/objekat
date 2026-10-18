@@ -739,9 +739,9 @@ What has landed since mid-August, in order:
   latency, and which ignored `ResamplingQuality` (those clips were still Lagrange). They play through
   `WaveNodeRealTime` now, like every other clip; no legacy wave node is built outside the engine's tests.
   Measured with an impulse at 4800: exact at every rate pair, WAV and FLAC alike; `scenario_flac_archive.py`
-  C3/C5 pass (they were the known failure). **Trap of the measurement**: a render to an EXISTING path APPENDS
-  a second RIFF instead of replacing the file, and a reader stops at the first (the OLD render) — delete the
-  destination before rendering in a test. Seen and NOT fixed: in a render (`render_isolated`, export on a
+  C3/C5 pass (they were the known failure). A render to an EXISTING path used to APPEND a second RIFF
+  (Tracktion's writer opens with `createOutputStream()`, positioned at the end, and expects the caller to
+  delete first); both render entry points of the bridge now clear the destination (`objClearRenderDestination`). Seen and NOT fixed: in a render (`render_isolated`, export on a
   copy) a reversed clip reads the ORIGINAL file and plays forward (pre-existing, unrelated to `0043`).
 
 - **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had

@@ -1050,6 +1050,19 @@ static bool objIsFlacDestination(const juce::File& f) {
     return f.hasFileExtension("flac");
 }
 
+// La destination d'un rendu doit être VIDÉE avant : l'écrivain de Tracktion ouvre son flux par
+// `File::createOutputStream()`, qui se place à la FIN d'un fichier existant — un rendu par-dessus un
+// fichier ajoutait donc un second RIFF derrière l'ancien, et tout lecteur s'arrêtait au premier,
+// c'est-à-dire à l'ANCIEN rendu. Tracktion attend que l'appelant efface (@see
+// EditRenderer::checkFileForOverwrite) ; ce pont ne passait pas par là.
+static bool objClearRenderDestination(const juce::File& f) {
+    if (!f.existsAsFile()) return true;
+    if (f.deleteFile()) return true;
+    const juce::String path = f.getFullPathName();   // toRawUTF8() jamais sur un temporaire
+    NSLog(@"[OBJ] rendu : impossible d'effacer la destination existante %s", path.toRawUTF8());
+    return false;
+}
+
 // FLAC est ENTIER, 16 ou 24 bits seulement (FlacAudioFormat::getPossibleBitDepths ; un autre
 // nombre fait échouer la création de l'écrivain, donc le rendu entier). 16 si on le demande
 // explicitement, 24 sinon — y compris pour un défaut « 32 bits flottant » d'avant, dont le FLAC
@@ -4121,6 +4134,10 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     r.tracksToDo         = tracksToDo;
     r.allowedClips       = allowedClips;   // vide = toute la piste
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
+    if (!objClearRenderDestination(r.destFile)) {
+        if (completion) completion(NO);
+        return;
+    }
     // Format d'après l'extension de la destination. WAV : 32 bits flottant par défaut (marge au-dessus
     // de 0 dBFS conservée, lisible partout). FLAC : entier, 16 ou 24 bits (@see objFlacBitDepth) —
     // la marge flottante est perdue, d'où la sonde de crête ci-dessous.
@@ -4732,6 +4749,11 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // tracksToDo et allowedClips laissés VIDES : le renderer prend alors tout (@see
     // render_utils::createRenderTask, `allowedTracks = tracksToDo.isZero() ? nullptr : …`).
     r.destFile           = juce::File(juce::String::fromUTF8([filePath UTF8String]));
+    if (!objClearRenderDestination(r.destFile)) {
+        if (!onEditCopy && _edit) _edit->getTransport().ensureContextAllocated();   // rendu direct : transport déjà arrêté
+        if (completion) completion(NO, @"Le fichier de destination existe et ne peut pas être remplacé.");
+        return;
+    }
     // Format d'après l'extension (@see objIsFlacDestination). FLAC : 16 ou 24 bits entiers ; le
     // panneau ne propose pas le 32 flottant avec ce format, mais on borne ici aussi, un 32 faisant
     // échouer la création de l'écrivain donc tout l'export.
