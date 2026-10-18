@@ -1078,7 +1078,13 @@ enum CommandAdapters {
             "muted": .bool(item.isMuted),
             "parent": .stringOrNull(entry.parentID?.uuidString),
         ]
-        if let defID = item.consolidateID { payload["definition"] = .string(defID.uuidString) }
+        if let defID = item.consolidateID {
+            payload["definition"] = .string(defID.uuidString)
+            // Q2: the content moved or shrank so that no material is left under this instance's
+            // window — it keeps its place and length and plays silence (the orange "outside the
+            // content" badge).
+            payload["outside_content"] = .bool(item.isOutsideConsolidateContent)
+        }
         if let stemID = item.stemID { payload["stem"] = .string(stemID.uuidString) }
         // The object's own colour: the free one ("#RRGGBB") and/or the old pastel's index; both
         // null = the stem's colour (@see `object.set_color`).

@@ -143,6 +143,9 @@ extension CommandRegistry {
                 "editing": .bool(vm.isEditingConsolidate),
                 "definition": .stringOrNull(vm.editingConsolidateID?.uuidString),
                 "placement": .stringOrNull(vm.editingPlacementID?.uuidString),
+                // The CONTENT ROOT inside the open stage: the one child of the placement, and the
+                // only thing a commit bakes (@see SoundObject.consolidateStage).
+                "content_root_id": .stringOrNull(vm.editingContentRootID?.uuidString),
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
                 "renders": .array(bakes + rebakes),

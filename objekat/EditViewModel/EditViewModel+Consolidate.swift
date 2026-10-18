@@ -873,7 +873,14 @@ extension EditViewModel {
         var root = o.asContentRootDefinition
         root.automationOpen = false
         if case .group(let ch, _) = root.kind { root.kind = .group(children: ch, isExpanded: true) }
-        return try? enc.encode(root)
+        guard let data = try? enc.encode(root), let text = String(data: data, encoding: .utf8) else { return nil }
+        // A plugin's state XML carries the id its engine instance was given (`<PLUGIN … id="1040">`),
+        // which differs between the state saved in a sidecar and the one captured from a live
+        // instance — and means nothing about the sound. Left in, it made every content with a
+        // plugin look modified, and a closing with no change re-baked for nothing.
+        let stable = text.replacingOccurrences(of: #"(<PLUGIN\b[^>]*?) id=\\"\d+\\""#, with: "$1",
+                                               options: .regularExpression)
+        return stable.data(using: .utf8)
     }
 
     /// Confirms the edit under way: re-bakes the CONTENT ROOT (the one child of the open stage), a new
