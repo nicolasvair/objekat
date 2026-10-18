@@ -1,0 +1,43 @@
+From dc3d51988091c72cdfd41cd295eff3b0f45e08a7 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 22:51:23 +0200
+Subject: [PATCH] fix(render): a render clone adopts the already-rendered
+ source of a reversed clip
+
+An Edit loaded forRendering cannot play, so WaveAudioClip::needsRender() answers
+no and AudioClipBase::initialise() never switched a reversed (or clip-effects)
+clip to its rendered file: the bounce read the ORIGINAL file and came out forward.
+The clone now adopts the file for the clip's hash when the live Edit has already
+rendered it (same temp directory).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../model/clips/tracktion_AudioClipBase.cpp          | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp b/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
+index 2b60720c578..ce7ff80e531 100644
+--- a/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
++++ b/modules/tracktion_engine/model/clips/tracktion_AudioClipBase.cpp
+@@ -333,6 +333,18 @@ void AudioClipBase::initialise()
+         if (currentSourceFile != audioFile.getFile())
+             setCurrentSourceFile (audioFile.getFile());
+     }
++    else if (! edit.shouldPlay())
++    {
++        // Patch local Objekat — 0044 : une Edit qui ne joue pas (un clone de RENDU, forRendering)
++        // ne lance aucun rendu de source (needsRender() y répond non), si bien qu'un clip inversé
++        // ou à effets de clip y lisait son fichier ORIGINAL — un bounce sortait à l'endroit. Si
++        // l'Edit vivante a déjà rendu la source de ce hash (même dossier temporaire), on l'adopte.
++        auto audioFile = RenderManager::getAudioFileForHash (edit.engine, edit.getTempDirectory (false), getHash());
++
++        if (audioFile.getFile().existsAsFile() && audioFile.isValid()
++             && currentSourceFile != audioFile.getFile())
++            setCurrentSourceFile (audioFile.getFile());
++    }
+ 
+     // Exception will be caught by Edit constructor
+     if (! edit.getUndoManager().isPerformingUndoRedo())
+-- 
+2.50.1 (Apple Git-155)
+

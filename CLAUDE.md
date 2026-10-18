@@ -741,8 +741,9 @@ What has landed since mid-August, in order:
   Measured with an impulse at 4800: exact at every rate pair, WAV and FLAC alike; `scenario_flac_archive.py`
   C3/C5 pass (they were the known failure). A render to an EXISTING path used to APPEND a second RIFF
   (Tracktion's writer opens with `createOutputStream()`, positioned at the end, and expects the caller to
-  delete first); both render entry points of the bridge now clear the destination (`objClearRenderDestination`). Seen and NOT fixed: in a render (`render_isolated`, export on a
-  copy) a reversed clip reads the ORIGINAL file and plays forward (pre-existing, unrelated to `0043`).
+  delete first); both render entry points of the bridge now clear the destination (`objClearRenderDestination`). A reversed clip in a render (`render_isolated`, export on a
+  copy) read the ORIGINAL file and played forward: engine patch `0044` makes the render clone adopt the
+  reversed file the live Edit already rendered (a clone made before that render ends still plays forward).
 
 - **Four corrections read off the hand** (16 September 2026, the same day, after the seven above had
   been used) — each one a place where the answer given that morning was right about the problem and
