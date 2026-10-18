@@ -54,6 +54,7 @@ final class EditViewModel {
             sendChainHostsCache = nil
             multiSelectionCache = nil
             featureBadgeMapCache = nil
+            chainSilencedCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
             // pass per run-loop turn, and an unchanged topology costs one comparison.
@@ -101,6 +102,9 @@ final class EditViewModel {
     /// to rebuild on the next read. Dropped by `items` and `stems` (the sidechain-send badge reads the
     /// stems' chains too).
     @ObservationIgnored var featureBadgeMapCache: [UUID: [FeatureBadge]]? = nil
+    /// @see chainSilencedIDs — the objects whose chain's mutes cut every path to the output, with the
+    /// off-bins it was computed for. `nil` = to rebuild on the next read. Dropped by `items`.
+    @ObservationIgnored var chainSilencedCache: (offBins: Set<UUID>, ids: Set<UUID>)? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them

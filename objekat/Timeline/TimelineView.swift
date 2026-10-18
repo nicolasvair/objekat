@@ -1695,7 +1695,7 @@ struct TimelineView: View {
             item: item,
             color: item.customColor ?? viewModel.stemColor(for: item.id),
             isSelected: viewModel.isSelected(item.id),
-            isMuted: viewModel.isMutedInMix(item),
+            isMuted: viewModel.isShownMuted(item),
             containsMissingFile: viewModel.containsMissingDescendant(item),
             featureBadges: viewModel.featureBadges(of: item),
             blockHeight: blockHeight,
@@ -2696,7 +2696,7 @@ struct TimelineView: View {
             waveformGainDb: object.waveformDisplayGainDb(offBins: viewModel.offFXLinkIDs),
             displayLane: dLane,
             stemColor: viewModel.stemColor(for: object.id),
-            isMutedInMix:     viewModel.isMutedInMix(object),
+            isMutedInMix:     viewModel.isShownMuted(object),
             isMissingFile:    viewModel.isMissing(object),
             featureBadges:    viewModel.featureBadges(of: object),
             previewOffset:    previewOffset(for: object),
@@ -3031,7 +3031,7 @@ struct TimelineView: View {
                 icon: ObjectKindIcon.name(for: item,
                                           isOpenConsolidate: viewModel.isInConsolidateEditStack(item.id)),
                 missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
-                mutedInMix: viewModel.isMutedInMix(item),
+                mutedInMix: viewModel.isShownMuted(item),
                 badges: viewModel.featureBadges(of: item),
                 expanded: item.showsChildrenInline,
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
@@ -3152,7 +3152,12 @@ struct TimelineView: View {
                 // and we do not rewrite it here — it is a value, hence readable from this nested function,
                 // and it says exactly what the engine hears.
                 let audibility = viewModel.audibility
-                func isMutedItem(_ item: SoundObject) -> Bool { audibility.isMutedInMix(item) }
+                // Plus the objects whose signal-view mutes cut every path to the output (a value too,
+                // read ONCE per pass: @see EditViewModel.chainSilencedIDs).
+                let chainSilenced = viewModel.chainSilencedIDs
+                func isMutedItem(_ item: SoundObject) -> Bool {
+                    audibility.isMutedInMix(item) || chainSilenced.contains(item.id)
+                }
                 // The FX links switched off, read ONCE per pass: their gain stages are left out of the
                 // drawn gain (@see GainStageDisplay). Read here, a bin's on/off redraws the layer.
                 let offBins = viewModel.offFXLinkIDs
@@ -3769,7 +3774,7 @@ struct TimelineView: View {
             isSelected: viewModel.selectedIDs.contains(group.id),
             activeTool: viewModel.activeTool,
             stemColor: viewModel.stemColor(for: group.id),
-            isMutedInMix: viewModel.isMutedInMix(group),
+            isMutedInMix: viewModel.isShownMuted(group),
             containsMissingFile: viewModel.containsMissingDescendant(group),
             featureBadges: viewModel.featureBadges(of: group),
             isOpenConsolidate: viewModel.isInConsolidateEditStack(group.id),
