@@ -1497,6 +1497,8 @@ struct OBJExportLoadScope {
 - (void)dumpChainOrderForKey:(const std::string&)key in:(te::PluginList&)pl;
 // Où chaque envoi de `key` se tient dans la liste de son émetteur. YES si quelque chose a bougé.
 - (BOOL)applySendPositionsForKey:(const std::string&)key;
+// Pushes `_wetOnlyKeys`' verdict for `key` onto its window-fade's dry gate. @see -setWetOnlyObjectIDs:
+- (void)applyDryGateForKey:(const std::string&)key;
 // The send plugin of (sender, aux): the registry's, one adopted from the list, or — `create` — a new
 // one laid at the end, DISABLED and silent. `outcome`: 0 none, 1 was there, 2 new or adopted, -1 list full.
 - (te::ObjBridgeSendPlugin*)bridgeSendFrom:(const std::string&)sKey toAux:(const std::string&)aKey
@@ -1610,6 +1612,10 @@ struct OBJExportLoadScope {
     std::unordered_map<std::string, te::Plugin::Ptr>          _faderGainMap;
     // objectID → ObjWindowFade (fenêtre + fades post-FX), en fin de chaîne hôte.
     std::unordered_map<std::string, te::Plugin::Ptr>          _windowFadeMap;
+    // Objects heard ONLY through their sends (the solo of an aux they feed, @see
+    // -setWetOnlyObjectIDs:): their window-fade's dry gate is shut and their post-fader sends sit
+    // before it. A listening state written by the app, never an edit.
+    std::unordered_set<std::string>                           _wetOnlyKeys;
     // objectID → ObjChannelMode, en TÊTE de la plugin-list d'un clip stéréo. Absent tant que le
     // mode vaut LR : le plugin n'existe que quand il a quelque chose à faire.
     // @see updateChannelMode:forID:
@@ -2401,6 +2407,7 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _groupLoopRangeMap.clear();
     _faderGainMap.clear();
     _windowFadeMap.clear();
+    _wetOnlyKeys.clear();
     _channelModeMap.clear();
     _clipMap.clear();
     _midiClipMap.clear();
@@ -2747,6 +2754,8 @@ static te::Track* objOwningTrack(te::Clip& clip) {
                         start:window.getStart().inSeconds()
                           end:window.getEnd().inSeconds()
                        fadeIn:fadeIn fadeOut:fadeOut];
+        // A NEW window-fade is born open: an object heard only through its sends gets its gate back.
+        [self applyDryGateForKey:key];
     }
     // A rebuilt tail lands AFTER the sends already in the list: put them back where the model wants them.
     [self applySendPositionsForKey:key];
@@ -5506,6 +5515,7 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     // ONCE, before anything moves: a send moved below is never one of them (a bound that is a chain
     // send is placed by the chain pass, which keeps it between its neighbours).
     const auto [segmentStart, segmentEnd] = [self userSegmentBoundsForKey:key in:*pl];
+    const bool wetOnly = _wetOnlyKeys.count(key) > 0;
 
     bool moved = false;
     auto idx = [&](const te::Plugin::Ptr& p) { return pl->indexOf(p.get()); };
@@ -5601,7 +5611,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
             case te::ObjBridgeSendPlugin::chain:
                 break;                                                      // above
             default: {                                                      // post-fader
-                if (carriesPlugins(p) && window) {
+                // With plugins, OR while the sender is heard only through its sends (its window-fade
+                // shuts the dry: a tap behind it would copy that silence — @see -setWetOnlyObjectIDs:).
+                if ((carriesPlugins(p) || wetOnly) && window) {
                     // With plugins: after the fader, BEFORE the window-fade — the envelope is laid on
                     // the send's copy after its plugins, once (the tap must not carry it already).
                     if (!(idx(p) < idx(window) && (!fader || idx(p) > idx(fader)))) moveBefore(p, window);
@@ -5624,10 +5636,46 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     for (auto& [mk, raw] : mine) {
         auto* bs = dynamic_cast<te::ObjBridgeSendPlugin*>(raw.get());
         if (!bs) continue;
-        const bool follows = bs->getTapPosition() != te::ObjBridgeSendPlugin::postFader || carriesPlugins(raw);
+        const bool follows = bs->getTapPosition() != te::ObjBridgeSendPlugin::postFader || carriesPlugins(raw) || wetOnly;
         bs->setEnvelopeSource(follows ? te::ObjWindowFadePlugin::Ptr(windowPlugin) : te::ObjWindowFadePlugin::Ptr());
     }
     return moved;
+}
+
+// THE SOLO OF AN AUX — the objects heard ONLY through their sends (EditViewModel+Audibility,
+// `wetOnlySenders`). For each: the window-fade's DRY GATE shut (the direct output cut at the tail of the
+// chain, the fader left open so the sends keep tapping it), and its post-fader sends laid BEFORE that
+// window-fade, with the envelope on their copy (-applySendPositionsForKey:) — behind it they would copy
+// the silence. Muting the object would kill its sends, and its -96 dB fader sits upstream of a
+// post-fader tap: the gate is the one place that cuts the dry and nothing else. Only the keys whose
+// state CHANGES are touched; a send that moves costs ONE rebuild for the whole call. The gate itself is
+// hot (a 5 ms ramp). Idempotent.
+- (void)setWetOnlyObjectIDs:(NSArray<NSString*>*)ids {
+    if (!_edit || !ids) return;
+    std::unordered_set<std::string> wanted;
+    for (NSString* s in ids) wanted.insert(std::string([s UTF8String]));
+    if (wanted == _wetOnlyKeys) return;
+
+    std::set<std::string> changed;
+    for (auto& k : _wetOnlyKeys) if (!wanted.count(k)) changed.insert(k);
+    for (auto& k : wanted)       if (!_wetOnlyKeys.count(k)) changed.insert(k);
+    _wetOnlyKeys = std::move(wanted);
+
+    bool moved = false;
+    for (auto& key : changed) {
+        [self applyDryGateForKey:key];
+        if ([self applySendPositionsForKey:key]) moved = true;
+    }
+    if (moved) {
+        _latencyResyncPending = true;
+        _edit->restartPlayback();
+    }
+}
+
+- (void)applyDryGateForKey:(const std::string&)key {
+    if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end())
+        if (auto* wf = dynamic_cast<te::ObjWindowFadePlugin*>(it->second.get()))
+            wf->setDryGated(_wetOnlyKeys.count(key) > 0);
 }
 
 // The audibility gate of a send, hot: no rebuild, the plugin's smoother does the rest.

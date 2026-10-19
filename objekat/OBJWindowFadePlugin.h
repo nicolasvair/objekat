@@ -45,6 +45,9 @@ public:
         // ne courbe rien.
         fadeInAmount.referTo (state, juce::Identifier ("fadeInAmt"), um, 1.0f);
         fadeOutAmount.referTo(state, juce::Identifier ("fadeOutAmt"),um, 1.0f);
+        // NO undo manager: a listening state of the session (the solo of an aux), never an edit.
+        // In the tree all the same, so that a render on a COPY of the Edit hears it too.
+        dryGate.referTo      (state, juce::Identifier ("dryGate"),   nullptr, false);
     }
 
     ~ObjWindowFadePlugin() override                         { notifyListenersOfDeletion(); }
@@ -140,6 +143,21 @@ public:
         fadeOutAmount = juce::jlimit (0.0f, 1.0f, amountOut);
     }
 
+    /// THE DRY GATE — "only what this object SENDS is heard" (the solo of an aux it feeds, @see
+    /// EditViewModel+Audibility, `wetOnlySenders`). It cuts the object's DIRECT output, here at the
+    /// tail of its chain, and nothing upstream: the object's fader stays open, so a send keeps
+    /// tapping it. Two consequences the engine owns (-applySendPositionsForKey:): a post-fader send
+    /// of a gated object is laid BEFORE this plugin (after the fader) and lays the envelope on its
+    /// copy itself, as a post-fader send that carries plugins always does — otherwise it would tap
+    /// the silence this gate makes. And the gate is applied in `applyToBuffer` ONLY, never in
+    /// `applyEnvelope`, which is the envelope a send reads for its copy.
+    /// A mute was not an option: muting the object's track kills its sends, and a -96 dB fader is
+    /// upstream of a post-fader tap. Smoothed over `dryGateRampSeconds` (the fader's own cut ramp).
+    void setDryGated (bool g)                               { if (dryGate.get() != g) dryGate = g; }
+    bool isDryGated() const                                 { return dryGate.get(); }
+
+    static constexpr double dryGateRampSeconds = 0.005;
+
     //==============================================================================
     juce::String getName() const override                   { return TRANS("Group Window"); }
     juce::String getPluginType() override                   { return xmlTypeName; }
@@ -159,6 +177,8 @@ public:
     {
         if (info.sampleRate > 0.0)
             renderSampleRate.store (info.sampleRate);
+        dryLevel.reset (info.sampleRate > 0.0 ? info.sampleRate : 44100.0, dryGateRampSeconds);
+        dryLevel.setCurrentAndTargetValue (dryGate.get() ? 0.0f : 1.0f);
     }
     void deinitialise() override {}
 
@@ -170,6 +190,7 @@ public:
             return;
 
         applyEnvelope (*fc.destBuffer, fc.bufferStartSample, fc.bufferNumSamples, fc.editTime);
+        applyDryGate  (*fc.destBuffer, fc.bufferStartSample, fc.bufferNumSamples);
     }
 
     /// The window and the fades, applied to `buffer[start … start + n)` whose first sample sits at the
@@ -252,9 +273,35 @@ public:
     juce::CachedValue<double> windowStart, windowEnd, fadeIn, fadeOut;
     juce::CachedValue<int>    fadeInCurve, fadeOutCurve;
     juce::CachedValue<float>  fadeInAmount, fadeOutAmount;
+    juce::CachedValue<bool>   dryGate;
 
 private:
     std::atomic<double> renderSampleRate { 44100.0 };
+    juce::SmoothedValue<float> dryLevel { 1.0f };   // audio thread only (initialise / applyToBuffer)
+
+    /// The dry gate on the DIRECT path (@see setDryGated). Pass-through, at no cost, while open.
+    void applyDryGate (juce::AudioBuffer<float>& buffer, int startSample, int n)
+    {
+        if (n <= 0)
+            return;
+
+        dryLevel.setTargetValue (dryGate.get() ? 0.0f : 1.0f);
+
+        if (! dryLevel.isSmoothing())
+        {
+            if (dryLevel.getTargetValue() == 0.0f)
+                buffer.clear (startSample, n);
+            return;
+        }
+
+        const int numChans = buffer.getNumChannels();
+        for (int i = 0; i < n; ++i)
+        {
+            const float g = dryLevel.getNextValue();
+            for (int c = 0; c < numChans; ++c)
+                buffer.getWritePointer (c, startSample)[i] *= g;
+        }
+    }
 
     float envelopeGain (double t, double ws, double we, float pIn, float pOut) const
     {

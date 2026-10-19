@@ -8,6 +8,10 @@ import Foundation
 //     audible = closure(soloedIDs ∪ tempSoloRoots) ∪ the members of the soloed stems
 //               ∪ the AUXES fed by the above
 //
+// plus, for an aux soloed DIRECTLY, what is SENT to it: its senders that the above leaves silent are
+// heard through their sends to it and through nothing else — their direct sound is cut at the tail of
+// their chain, their sends to any other aux gated (@see EditViewModel.wetListening).
+//
 //  1. A CONFIRMED solo (the "solo on" attribute): persistent until it is turned off (Esc, ⇧⌫,
 //     s+⏎ on what is already confirmed). Carried by `soloedIDs` (objects confirmed one by one) and
 //     `soloedStemIDs` (stems confirmed wholesale, combinable: s+2+3+4).

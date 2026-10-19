@@ -204,6 +204,11 @@
 - (NSInteger)ensureBridgeSendFrom:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID levelDb:(float)levelDb gated:(BOOL)gated position:(NSInteger)position alive:(BOOL)alive;
 - (BOOL)retargetBridgeSendFrom:(NSString* _Nonnull)senderID oldAux:(NSString* _Nonnull)oldAuxID newAux:(NSString* _Nonnull)newAuxID;
 - (void)setSendGated:(BOOL)gated from:(NSString* _Nonnull)senderID toAux:(NSString* _Nonnull)auxID;
+// The solo of an aux: the objects heard ONLY through their sends. Each one's DIRECT output is cut at the
+// tail of its chain (its window-fade's dry gate; the fader stays open, so its sends keep tapping it) and
+// its post-fader sends are laid before that gate. The whole set, every time (the engine diffs it); a
+// send that has to move costs one rebuild. @see EditViewModel+Audibility (`wetOnlySenders`)
+- (void)setWetOnlyObjectIDs:(NSArray<NSString*>* _Nonnull)ids;
 
 // MARK: - Bake — rendu offline
 // FORMAT DU FICHIER = EXTENSION de `filePath` : `.flac` → FLAC (entier 16 ou 24 bits, 24 par

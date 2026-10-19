@@ -144,6 +144,10 @@ extension EditViewModel {
             }
             return
         }
+        // Who feeds which aux is part of what a solo makes heard — the auxes a soloed sender opens, the
+        // senders a soloed aux pulls in (@see recomputeSoloAudible, wetListening): a send created, cut,
+        // switched or refused DURING a solo recomposes it, once the engine holds the new sends.
+        defer { if hasAnySolo { refreshSolo() } }
 
         pruneOrphanSends()     // an aux deleted since the last sync: the sends that named it go with it
         let topology = bridgeTopology()

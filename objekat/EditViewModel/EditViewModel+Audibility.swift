@@ -74,6 +74,15 @@ struct AudibilitySnapshot {
     /// The ANCESTOR groups of a direct solo: their fader must stay open even if they are muted,
     /// otherwise the container would multiply by zero the descendant that is meant to be heard.
     var soloRootAncestors: Set<UUID> = []
+    /// THE SOLO OF AN AUX (@see EditViewModel.wetListening): the auxes DIRECTLY soloed…
+    var wetAuxes: Set<UUID> = []
+    /// …the objects heard ONLY through their sends to them (the outermost sender of each path: its
+    /// fader stays open, its direct output is cut at the tail of its chain by the engine)…
+    var wetOnlySenders: Set<UUID> = []
+    /// …and those senders with everything they contain: none of it is silenced by the solo's
+    /// filtering (a group's children feed the group that sends), and none of it feeds any aux but a
+    /// soloed one.
+    var wetZone: Set<UUID> = []
 
     /// True if the object shows as "muted": a mute — its own or its stem's — that the direct
     /// solo does not lift. The silence due to the solo's FILTERING is not part of it: it has its
@@ -94,7 +103,18 @@ struct AudibilitySnapshot {
         // muted, which it still is for all the rest of its content.
         if soloRootAncestors.contains(item.id) { return false }
         if isMutedInMix(item) { return true }
-        return soloActive && !soloAudible.contains(item.id)
+        // Heard through its sends to a soloed aux: not filtered out (its DRY is cut elsewhere — by the
+        // engine at the tail of its chain, @see wetOnlySenders — never by its fader, which its sends tap).
+        return soloActive && !soloAudible.contains(item.id) && !wetZone.contains(item.id)
+    }
+
+    /// `isSilenced` without the solo's FILTERING: the silence an explicit mute (the object's own or its
+    /// stem's) imposes, as the direct solo leaves it. What gates a send of the wet zone at an ancestor:
+    /// a group above it that is merely filtered out by the solo sits DOWNSTREAM of the tap and cuts
+    /// nothing of what is sent, whereas its MUTE does (Q-U1).
+    func isSilencedByMute(_ item: SoundObject) -> Bool {
+        if soloRoots.contains(item.id) || soloRootAncestors.contains(item.id) { return false }
+        return isMutedInMix(item)
     }
 }
 
@@ -131,7 +151,14 @@ extension EditViewModel {
     /// input). The mute is a -96 dB push onto the fader, and the fader sits DOWNSTREAM of such a tap: left
     /// alone, a muted object would go on feeding its aux. A post-fader send needs nothing — the fader
     /// already silenced what it taps — and a gate there would only duplicate it.
+    ///
+    /// The solo of an aux (@see wetListening): an object of the WET ZONE — heard only through what it
+    /// sends to a soloed aux — feeds no other aux (that would be heard on top of what was asked for),
+    /// and at its ancestors only a MUTE gates it: a group the solo merely filters out is downstream of
+    /// the tap, like its fader.
     func sendIsGated(sender: UUID, aux: UUID) -> Bool {
+        let inWetZone = audibility.wetZone.contains(sender)
+        if inWetZone, !audibility.wetAuxes.contains(aux) { return true }
         if let object = find(id: sender), let position = object.sendPosition(auxID: aux), position != .postFader,
            audibility.isSilenced(object) {
             return true
@@ -142,7 +169,8 @@ extension EditViewModel {
         var a = parents[aux]
         while let x = a { auxAncestors.insert(x); a = parents[x] }
         while true {
-            if !auxAncestors.contains(group), let g = find(id: group), audibility.isSilenced(g) { return true }
+            if !auxAncestors.contains(group), let g = find(id: group),
+               inWetZone ? audibility.isSilencedByMute(g) : audibility.isSilenced(g) { return true }
             guard let up = parents[group] else { return false }
             group = up
         }
@@ -210,13 +238,25 @@ extension EditViewModel {
         // CHANGES, and only those — re-laying a window moves a ContainerClip, which costs a graph
         // rebuild, so a solo retouched by a click must not re-push every group of the project.
         let previouslyOpened = audibility.soloRootAncestors
+        let previouslyWetOnly = audibility.wetOnlySenders
+        let wet = wetListening(roots: roots)
         audibility = AudibilitySnapshot(
             soloRoots:         roots,
             soloActive:        hasAnySolo,
             soloAudible:       soloAudibleObjectIDs,
             mutedStemIDs:      Set(stems.filter { $0.muted && $0.id != mainStemID }.map(\.id)),
-            soloRootAncestors: ancestors
+            soloRootAncestors: ancestors,
+            wetAuxes:          wet.auxes,
+            wetOnlySenders:    wet.senders,
+            wetZone:           wet.zone
         )
+        // The dry gates follow the same order as the windows below, for the same reason: a sender that
+        // ENTERS the wet zone has its dry cut BEFORE its fader is opened, one that LEAVES it is silenced
+        // by its fader (or heard whole) before its dry comes back (`applyAudibilityToEngine` pushes the
+        // final set) — never a few milliseconds of a dry nobody asked for.
+        if !wet.senders.isSubset(of: previouslyWetOnly) {
+            engine?.setWetOnlyObjectIDs(previouslyWetOnly.union(wet.senders).map(\.uuidString))
+        }
         // The ORDER around the faders is the point, and it runs opposite ways for the two
         // directions. The window's gate (the ObjWindowFade at the tail) moves the instant it is
         // written, the faders too: so a window is CLOSED before the faders give the group's other
@@ -290,6 +330,56 @@ extension EditViewModel {
                                     from: key.sender.uuidString, toAux: key.aux.uuidString)
             }
         }
+        // The dry gates of the solo of an aux, the whole set (the engine diffs it, so this costs nothing
+        // when it has not changed). After the faders: @see refreshAudibility for the order.
+        engine.setWetOnlyObjectIDs(audibility.wetOnlySenders.map(\.uuidString))
+    }
+
+    // MARK: The solo of an aux: hearing what is SENT to it
+
+    /// Soloing an aux is asking to hear what passes THROUGH it: its return and its FX, fed by the sends
+    /// that reach it — and not the senders' direct sound, nor the rest of the project. The solo's
+    /// filtering would silence those senders at their fader, and their fader is what a post-fader send
+    /// taps: the aux would turn over empty. So the senders of a DIRECTLY soloed aux that the solo does
+    /// not already make heard are lifted out of the filtering — fader open, every send to another aux
+    /// gated (@see sendIsGated) — and their direct output is cut by the engine at the tail of their
+    /// chain, downstream of every tap (@see OBJEngineCore `setWetOnlyObjectIDs:`).
+    ///
+    /// `senders` holds the OUTERMOST sender of each path only: a group that sends carries its
+    /// children's sound into that send, so a child of it that also sends directly keeps its dry
+    /// (it flows into the group, whose own dry is cut). `zone` is those senders with all they contain.
+    ///
+    /// What it does NOT do, deliberately: an aux heard by INHERITANCE (a soloed group or stem holding it)
+    /// pulls nothing in — soloing a group is hearing it as it is; a sender already audible (soloed itself,
+    /// or alongside) is heard whole, dry included; a muted sender stays silent (its fader is silenced by
+    /// the mute, and a pre-fader send by its gate — Q-U12). An aux does not send, so there is no chain of
+    /// auxes to follow.
+    func wetListening(roots: Set<UUID>) -> (auxes: Set<UUID>, senders: Set<UUID>, zone: Set<UUID>) {
+        guard hasAnySolo, !roots.isEmpty else { return ([], [], []) }
+        let flat = allObjectsFlat
+        let auxes = Set(flat.lazy.filter { $0.isAux && roots.contains($0.id) }.map(\.id))
+        guard !auxes.isEmpty else { return ([], [], []) }
+
+        let audible = soloAudibleObjectIDs
+        var candidates: Set<UUID> = []
+        for o in flat where !o.isAux && !audible.contains(o.id) {
+            if o.sends.contains(where: { $0.isRouted && auxes.contains($0.auxID)
+                                         && sendIsAcceptedByPlan(from: o.id, to: $0.auxID) }) {
+                candidates.insert(o.id)
+            }
+        }
+        guard !candidates.isEmpty else { return (auxes, [], []) }
+
+        let parents = parentIDMap()
+        func ancestor(of id: UUID, in set: Set<UUID>) -> Bool {
+            var a = parents[id]
+            while let x = a { if set.contains(x) { return true }; a = parents[x] }
+            return false
+        }
+        let senders = candidates.filter { !ancestor(of: $0, in: candidates) }
+        var zone = senders
+        for o in flat where !zone.contains(o.id) && ancestor(of: o.id, in: senders) { zone.insert(o.id) }
+        return (auxes, senders, zone)
     }
 
     /// Every object in the project, flattened, groups included (`allClips` gives only the leaves).
