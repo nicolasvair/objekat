@@ -173,6 +173,39 @@ with ObjekatClient(SOCK) as c:
     check("a load on a linked plugin carries to the linked instance", near(value(L), v1), value(L))
     check("...whose status names it too", (cmd("preset.list", plugin=L)["status"] or {}).get("name") == "Bright")
 
+    # an EXTERNAL plugin (Apple's AULowpass): its state carries `base64:layout`, which XMLDocument alone
+    # refuses — "Save as" answered noState on every AU / VST3 until the prefix was masked.
+    AU = "aufx,lpas,appl"
+    if any(p["identifier"] == AU for p in av):
+        D = cmd("object.add", path=SRC, lane=5, start=0)["id"]
+        idle()
+        PA = cmd("plugin.add", host=D, identifier=AU)["plugin"]["id"]
+        idle()
+        # Tracktion's own wrapper levels ("Dry Level" / "Wet Level") are not the AU's: a real one.
+        ka = next(q for q in params(PA) if q["name"] not in ("Dry Level", "Wet Level"))
+        alo, ahi = ka["min"], ka["max"]
+        a1, a2 = alo + 0.25 * (ahi - alo), alo + 0.75 * (ahi - alo)
+
+        def avalue():
+            return next(p["value"] for p in params(PA) if p["index"] == ka["index"])
+
+        cmd("plugin.set_param", plugin=PA, index=ka["index"], value=a1)
+        try:
+            sa = cmd("preset.save", plugin=PA, name="AU low")
+            check("AU: save works (no more noState)", sa["name"] == "AU low", sa)
+        except ObjekatError as e:
+            check("AU: save works (no more noState)", False, e)
+        cmd("plugin.set_param", plugin=PA, index=ka["index"], value=a2)
+        cmd("preset.load", plugin=PA, name="AU low")
+        check("AU: load lays the stored value back", abs(avalue() - a1) <= 1e-3 * max(1.0, ahi - alo), avalue())
+        st = cmd("project.get_state")
+        import json as _json
+        blob = _json.dumps(st)
+        check("AU: the state kept in the model has no masked prefix", "objekat_b64_" not in blob)
+        cmd("preset.delete", plugin=PA, name="AU low")
+    else:
+        print("note  AULowpass not installed: the AU block is skipped")
+
     # deletion
     check("loading a missing preset is not_found", refused("preset.load", plugin=P, name="Nope") == "not_found")
     check("an unknown plugin is not_found",

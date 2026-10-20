@@ -55,6 +55,25 @@ struct TestPluginPresetLibrary {
         check("fitted: no attribute the live instance lacks", !fitted.contains("windowX"), fitted)
         check("not a PLUGIN tree → nil", PresetStateXML.stripped("<RACK/>") == nil)
 
+        // An external plugin's real state: JUCE writes its binary channel layout as `base64:layout`,
+        // an attribute name XMLDocument alone refuses (undeclared namespace prefix) — "Save as" said noState.
+        let ext = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n\r\n<PLUGIN type=\"vst\" uid=\"6c757767\" id=\"1029\" enabled=\"1\"\r\n"
+            + "        state=\"167.hAGaoMGcv.i0AHv\"\r\n        base64:layout=\"99.LETVOUEU..P\" base64:other=\"12.AB\"/>"
+        let extStored = PresetStateXML.stripped(ext)
+        check("external state with base64: attributes → stripped", extStored != nil)
+        let es = extStored ?? ""
+        check("base64:layout is the instance's: taken out", !es.contains("layout"), es)
+        check("another base64: attribute kept, prefix given back", es.contains("base64:other=\"12.AB\"")
+              && !es.contains(PresetStateXML.maskedPrefix), es)
+        check("type read through the prefix", PresetStateXML.pluginType(ext) == "vst")
+        let liveExt = #"<PLUGIN type="vst" id="5" enabled="0" base64:layout="LIVE.LAYOUT"/>"#
+        let extFitted = (PresetStateXML.adapted(es, toLive: liveExt) ?? "").replacingOccurrences(of: "'", with: "\"")
+        check("adapted onto an external instance: its own layout, id, bypass", extFitted.contains("base64:layout=\"LIVE.LAYOUT\"")
+              && extFitted.contains("id=\"5\"") && extFitted.contains("enabled=\"0\"")
+              && !extFitted.contains(PresetStateXML.maskedPrefix), extFitted)
+        check("a value is never unmasked", PresetStateXML.unmasked(#"<PLUGIN a="x objekat_b64_y"/>"#)
+              == #"<PLUGIN a="x objekat_b64_y"/>"#)
+
         print("\n\(total - failures)/\(total) OK")
         exit(failures == 0 ? 0 : 1)
     }
