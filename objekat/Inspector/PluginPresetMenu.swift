@@ -84,7 +84,16 @@ struct PluginPresetMenu: View {
             }
             Button(L("preset.menu.delete", current)) { confirmDelete(current) }
         }
-        if def != nil {
+        Divider()
+        // One default per plugin type, the last chosen wins: a preset named above, or the state
+        // the plugin has right now, with no name.
+        Button(L("preset.menu.setCurrentDefault")) {
+            run { try viewModel.setCurrentStateAsDefault(pluginID: plugin) }
+        }
+        if viewModel.defaultKind(for: plugin) != .none {
+            Button(L("preset.menu.restoreDefault")) {
+                run { try viewModel.restoreDefaultState(pluginID: plugin) }
+            }
             Button(L("preset.menu.clearDefault")) {
                 run { try viewModel.setDefaultPreset(pluginID: plugin, name: nil) }
             }

@@ -217,6 +217,42 @@ with ObjekatClient(SOCK) as c:
     idle()
     check("no default once deleted: no status on a fresh insertion", cmd("preset.list", plugin=Z)["status"] is None)
 
+    # one default per type, named or anonymous: the last chosen wins
+    v3 = lo + 0.5 * (hi - lo)
+    cmd("plugin.set_param", plugin=P, index=k, value=v3)
+    d = cmd("preset.set_default", plugin=P, current=True)
+    check("the current state becomes the default, with no name", d["default_kind"] == "state" and d["default"] is None, d)
+    Y = cmd("plugin.add", host=B, identifier=ident, format="TracktionInternal")["plugin"]["id"]
+    idle()
+    check("a FRESH insertion starts on the anonymous default", near(value(Y), v3), value(Y))
+    check("...its status says Default", (cmd("preset.list", plugin=Y)["status"] or {}).get("name") == "Default",
+          cmd("preset.list", plugin=Y)["status"])
+    check("the anonymous default is not listed among the presets", cmd("preset.list", plugin=Y)["presets"] == [])
+    cmd("plugin.set_param", plugin=Y, index=k, value=v1)
+    r = cmd("preset.restore_default", plugin=Y)
+    idle()
+    check("restore_default lays the default back", near(value(Y), v3), value(Y))
+    check("...and names it", (r["status"] or {}).get("name") == "Default", r)
+    cmd("edit.undo")
+    idle()
+    check("restore_default is ONE undo point", near(value(Y), v1), value(Y))
+    check("name and current together are refused",
+          refused("preset.set_default", plugin=P, name="X", current=True) == "bad_params")
+    cmd("preset.save", plugin=P, name="Warm")
+    d = cmd("preset.set_default", plugin=P, name="Warm")
+    check("a named default replaces the anonymous one", d["default_kind"] == "named" and d["default"] == "Warm", d)
+    cmd("plugin.set_param", plugin=P, index=k, value=v2)
+    d = cmd("preset.set_default", plugin=P, current=True)
+    check("an anonymous default replaces the named one", d["default_kind"] == "state" and d["default"] is None, d)
+    W = cmd("plugin.add", host=B, identifier=ident, format="TracktionInternal")["plugin"]["id"]
+    idle()
+    check("...and is what a fresh insertion gets", near(value(W), v2), value(W))
+    d = cmd("preset.set_default", plugin=P)
+    check("forgetting the default", d["default_kind"] == "none" and d["default"] is None, d)
+    check("restore with no default is not_found", refused("preset.restore_default", plugin=P) == "not_found")
+    check("the named preset survives forgetting the default", cmd("preset.list", plugin=P)["presets"] == ["Warm"])
+    cmd("preset.delete", plugin=P, name="Warm")
+
 user_lib_after = os.path.exists(USER_LIB) and sorted(os.listdir(USER_LIB))
 check("the user's library was not touched", user_lib_before == user_lib_after)
 

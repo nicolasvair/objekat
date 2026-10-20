@@ -44,11 +44,19 @@ extension EditViewModel {
                              identifier: a.identifier, formatName: a.formatName)
         if let state = PluginPresetLibrary.shared.defaultState(for: key) {
             p.stateXML = state
-            if let name = PluginPresetLibrary.shared.defaultPresetName(for: key) {
-                pluginPresetStatus[p.id] = PluginPresetStatus(name: name)
-            }
+            pluginPresetStatus[p.id] = defaultStatus(for: key)
         }
         return p
+    }
+
+    /// What the title bar says once the type's default is laid: the preset's name, or "Default" for
+    /// an anonymous default state.
+    private func defaultStatus(for key: PluginPresetKey) -> PluginPresetStatus? {
+        switch PluginPresetLibrary.shared.defaultKind(for: key) {
+        case .none:            return nil
+        case .named(let n):    return PluginPresetStatus(name: n)
+        case .state:           return PluginPresetStatus(name: L("preset.status.default"))
+        }
     }
 
     /// Where a plugin lives: the host whose chain (or instrument slot, or send) carries it, and the
@@ -77,6 +85,12 @@ extension EditViewModel {
     func defaultPresetName(for pluginID: UUID) -> String? {
         guard let t = presetTarget(pluginID) else { return nil }
         return PluginPresetLibrary.shared.defaultPresetName(for: presetKey(of: t.plugin))
+    }
+
+    /// The default of this plugin's TYPE: none, a named preset, or an anonymous state.
+    func defaultKind(for pluginID: UUID) -> PluginPresetLibrary.DefaultKind {
+        guard let t = presetTarget(pluginID) else { return .none }
+        return PluginPresetLibrary.shared.defaultKind(for: presetKey(of: t.plugin))
     }
 
     /// The plugin's own programs ([] for a built-in, an instance still loading, a plugin with none).
@@ -117,7 +131,7 @@ extension EditViewModel {
         catch { throw PresetError.library(String(describing: error)) }
     }
 
-    /// Names (nil clears) the default preset of this plugin's TYPE.
+    /// Names the default preset of this plugin's TYPE (nil forgets the default, named or anonymous).
     func setDefaultPreset(pluginID: UUID, name: String?) throws {
         guard let t = presetTarget(pluginID) else { throw PresetError.unknownPlugin }
         do {
@@ -125,6 +139,33 @@ extension EditViewModel {
                                                       pluginName: t.plugin.name)
         } catch PluginPresetLibrary.LibraryError.notFound(let n) { throw PresetError.notFound(n) }
         catch { throw PresetError.library(String(describing: error)) }
+    }
+
+    /// Makes the plugin's LIVE state the default of its type, with no name. It replaces a named
+    /// default (one default per type, the last chosen wins). The project is not touched.
+    func setCurrentStateAsDefault(pluginID: UUID) throws {
+        guard let t = presetTarget(pluginID) else { throw PresetError.unknownPlugin }
+        guard let state = presetLiveState(pluginID) ?? t.plugin.stateXML.flatMap(PresetStateXML.stripped)
+        else { throw PresetError.noState }
+        do {
+            try PluginPresetLibrary.shared.setDefaultState(state, key: presetKey(of: t.plugin),
+                                                           pluginName: t.plugin.name)
+        } catch { throw PresetError.library(String(describing: error)) }
+    }
+
+    /// Lays the type's default (named or anonymous) on the plugin and on every instance actively
+    /// linked to it. ONE undo point. Throws `notFound` when the type has no default.
+    func restoreDefaultState(pluginID: UUID) throws {
+        guard let t = presetTarget(pluginID) else { throw PresetError.unknownPlugin }
+        let key = presetKey(of: t.plugin)
+        guard let state = PluginPresetLibrary.shared.defaultState(for: key),
+              let status = defaultStatus(for: key) else { throw PresetError.notFound("default") }
+        pushUndo()
+        for target in [t] + activeLinkedInstances(of: pluginID) {
+            layState(state, on: target.plugin.id, host: target.hostID)
+        }
+        setPresetStatus(status, on: pluginID, withLinked: true)
+        isDirty = true
     }
 
     // MARK: Laying a preset

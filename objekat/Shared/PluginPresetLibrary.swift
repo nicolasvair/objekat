@@ -27,6 +27,12 @@ nonisolated struct PluginPreset: Codable, Equatable, Sendable {
 ///
 ///     <root>/<format> - <plugin name> - <hash>/plugin.json
 ///     <root>/<format> - <plugin name> - <hash>/<preset name>.objpreset
+///     <root>/<format> - <plugin name> - <hash>/default.objstate      (an ANONYMOUS default, if any)
+///
+/// A type has ONE default at most, and the last one chosen wins: naming a preset as the default
+/// forgets an anonymous default state, and setting a state as the default (no name: "this sound, from
+/// now on") clears the named one. The anonymous state lives in its own file, under another extension,
+/// so it never shows among the presets.
 ///
 /// The folder name carries a hash of the identifier because two products can share a name and an
 /// identifier is not a file name (AU identifiers hold `/` and `:`); the readable part is there for a
@@ -62,6 +68,14 @@ nonisolated final class PluginPresetLibrary: @unchecked Sendable {
 
     static let fileExtension = "objpreset"
     private static let indexName = "plugin.json"
+    private static let anonymousDefaultName = "default.objstate"
+
+    /// What a type's default is: nothing, a named preset, or a state with no name.
+    enum DefaultKind: Equatable {
+        case none
+        case named(String)
+        case state
+    }
 
     enum LibraryError: Error, Equatable {
         case emptyName
@@ -147,18 +161,36 @@ nonisolated final class PluginPresetLibrary: @unchecked Sendable {
         return presets(for: key).first { Self.fileStem($0.name).lowercased() == stem }
     }
 
-    /// The name of this type's default preset, if it still exists.
+    /// The name of this type's default preset, if it still exists (nil when the default is an
+    /// anonymous state: @see defaultKind).
     func defaultPresetName(for key: PluginPresetKey) -> String? {
-        guard let dir = existingFolder(for: key),
+        guard anonymousDefaultState(for: key) == nil,
+              let dir = existingFolder(for: key),
               let data = try? Data(contentsOf: dir.appendingPathComponent(Self.indexName)),
               let idx = try? JSONDecoder().decode(Index.self, from: data),
               let name = idx.defaultPreset, preset(named: name, for: key) != nil else { return nil }
         return name
     }
 
+    /// The anonymous default state of this type, if one is set.
+    func anonymousDefaultState(for key: PluginPresetKey) -> String? {
+        guard let dir = existingFolder(for: key),
+              let data = try? Data(contentsOf: dir.appendingPathComponent(Self.anonymousDefaultName)),
+              let p = try? JSONDecoder().decode(PluginPreset.self, from: data),
+              p.identifier == key.identifier, p.formatName == key.formatName else { return nil }
+        return p.stateXML
+    }
+
+    func defaultKind(for key: PluginPresetKey) -> DefaultKind {
+        if anonymousDefaultState(for: key) != nil { return .state }
+        if let n = defaultPresetName(for: key) { return .named(n) }
+        return .none
+    }
+
     /// The state to lay on a plugin of this type freshly inserted, nil = none.
     func defaultState(for key: PluginPresetKey) -> String? {
-        defaultPresetName(for: key).flatMap { preset(named: $0, for: key)?.stateXML }
+        if let s = anonymousDefaultState(for: key) { return s }
+        return defaultPresetName(for: key).flatMap { preset(named: $0, for: key)?.stateXML }
     }
 
     // MARK: Writing
@@ -199,7 +231,8 @@ nonisolated final class PluginPresetLibrary: @unchecked Sendable {
         } catch { throw LibraryError.io(error.localizedDescription) }
     }
 
-    /// Names (or clears, with nil) this type's default preset. The preset must exist.
+    /// Names (or clears, with nil) this type's default preset. The preset must exist. Either way the
+    /// anonymous default state goes: the last default chosen wins, and nil forgets every default.
     func setDefault(name: String?, key: PluginPresetKey, pluginName: String) throws {
         if let name, preset(named: name, for: key) == nil { throw LibraryError.notFound(name) }
         let stored = name.flatMap { preset(named: $0, for: key)?.name }
@@ -207,8 +240,29 @@ nonisolated final class PluginPresetLibrary: @unchecked Sendable {
         let dir = folder(for: key, pluginName: pluginName)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try removeAnonymousDefault(dir)
             try writeIndex(dir: dir, key: key, pluginName: pluginName, defaultPreset: stored)
         } catch { throw LibraryError.io(error.localizedDescription) }
+    }
+
+    /// Makes `stateXML` this type's default, with no name ("this sound, from now on"). It replaces the
+    /// named default if there was one.
+    func setDefaultState(_ stateXML: String, key: PluginPresetKey, pluginName: String) throws {
+        let dir = folder(for: key, pluginName: pluginName)
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let p = PluginPreset(name: "", identifier: key.identifier, formatName: key.formatName,
+                                 pluginName: pluginName, stateXML: stateXML)
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            try enc.encode(p).write(to: dir.appendingPathComponent(Self.anonymousDefaultName), options: .atomic)
+            try writeIndex(dir: dir, key: key, pluginName: pluginName, defaultPreset: nil)
+        } catch { throw LibraryError.io(error.localizedDescription) }
+    }
+
+    private func removeAnonymousDefault(_ dir: URL) throws {
+        let url = dir.appendingPathComponent(Self.anonymousDefaultName)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 
     private func readDefaultRaw(_ dir: URL) -> String? {

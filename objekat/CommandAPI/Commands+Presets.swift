@@ -21,6 +21,14 @@ extension CommandRegistry {
         }
     }
 
+    private func defaultKindJSON(_ k: PluginPresetLibrary.DefaultKind) -> JSONValue {
+        switch k {
+        case .none:  return .string("none")
+        case .named: return .string("named")
+        case .state: return .string("state")
+        }
+    }
+
     private func presetStatusJSON(_ s: PluginPresetStatus?) -> JSONValue {
         guard let s else { return .null }
         return .object(["name": .string(s.name), "factory": .bool(s.isFactory), "modified": .bool(s.isModified)])
@@ -49,6 +57,7 @@ extension CommandRegistry {
                 "format": .string(t.plugin.formatName),
                 "presets": .array(vm.presets(for: id).map { .string($0.name) }),
                 "default": vm.defaultPresetName(for: id).map { .string($0) } ?? .null,
+                "default_kind": self.defaultKindJSON(vm.defaultKind(for: id)),
                 "factory": .array(vm.factoryPrograms(for: id).map { .string($0) }),
                 "status": self.presetStatusJSON(vm.pluginPresetStatus[id])
             ])
@@ -98,17 +107,39 @@ extension CommandRegistry {
         }
 
         register("preset.set_default",
-                 summary: "Names the default preset of the plugin's type (laid on every FRESH insertion of it); `name: null` clears it.",
+                 summary: "Sets the default of the plugin's type (laid on every FRESH insertion of it). ONE default per type, the last chosen wins: `name` a preset, `current: true` the plugin's live state with no name; neither (or `name: null`) forgets the default.",
                  params: [ParamSpec("plugin", "uuid", "A live plugin."),
-                          ParamSpec("name", "string|null", required: false, "The preset; absent or null clears.")],
+                          ParamSpec("name", "string|null", required: false, "The preset; absent or null clears."),
+                          ParamSpec("current", "bool", required: false, "true: the live state becomes the default, anonymous.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("plugin")
             var name: String? = nil
             if let v = p.raw["name"], v != .null { name = try p.string("name") }
-            do { try vm.setDefaultPreset(pluginID: id, name: name) }
+            do {
+                if p.raw["current"] == .bool(true) {
+                    guard name == nil else {
+                        throw CommandError(code: .bad_params, message: "`name` and `current` are exclusive")
+                    }
+                    try vm.setCurrentStateAsDefault(pluginID: id)
+                } else {
+                    try vm.setDefaultPreset(pluginID: id, name: name)
+                }
+            } catch let e as CommandError { throw e }
             catch { throw self.presetError(error) }
-            return .object(["default": vm.defaultPresetName(for: id).map { .string($0) } ?? .null])
+            return .object(["default": vm.defaultPresetName(for: id).map { .string($0) } ?? .null,
+                            "default_kind": self.defaultKindJSON(vm.defaultKind(for: id))])
+        }
+
+        register("preset.restore_default",
+                 summary: "Lays the default of the plugin's type (named or anonymous) on the plugin and on every instance actively linked to it. One undo point; not_found when the type has no default.",
+                 params: [ParamSpec("plugin", "uuid", "A live plugin.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("plugin")
+            do { try vm.restoreDefaultState(pluginID: id) }
+            catch { throw self.presetError(error) }
+            return .object(["status": self.presetStatusJSON(vm.pluginPresetStatus[id])])
         }
     }
 }

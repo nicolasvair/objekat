@@ -39,6 +39,24 @@ struct TestPluginPresetLibrary {
         try? lib.delete(name: "Slap", key: au)
         check("deleting the default clears it", lib.defaultPresetName(for: au) == nil && lib.presets(for: au).count == 2)
         check("deleting a missing preset throws", (try? lib.delete(name: "Slap", key: au)) == nil)
+
+        // One default per type, the last chosen wins (named or anonymous).
+        try? lib.setDefault(name: "Écho", key: au, pluginName: "AUDelay")
+        check("named default", lib.defaultKind(for: au) == .named("Écho"))
+        try? lib.setDefaultState("<PLUGIN anon=\"1\"/>", key: au, pluginName: "AUDelay")
+        check("an anonymous state replaces the named default", lib.defaultKind(for: au) == .state
+              && lib.defaultPresetName(for: au) == nil)
+        check("the anonymous state is what a fresh insertion gets", lib.defaultState(for: au) == "<PLUGIN anon=\"1\"/>")
+        check("the anonymous state is not a preset", lib.presets(for: au).count == 2, "\(lib.presets(for: au).map(\.name))")
+        try? lib.setDefault(name: "Écho", key: au, pluginName: "AUDelay")
+        check("a named default replaces the anonymous state", lib.defaultKind(for: au) == .named("Écho")
+              && lib.anonymousDefaultState(for: au) == nil)
+        try? lib.setDefaultState("<PLUGIN anon=\"2\"/>", key: au, pluginName: "AUDelay")
+        try? lib.setDefault(name: nil, key: au, pluginName: "AUDelay")
+        check("forgetting clears both", lib.defaultKind(for: au) == .none && lib.defaultState(for: au) == nil)
+        try? lib.setDefaultState("<PLUGIN anon=\"3\"/>", key: vst, pluginName: "Delay")
+        check("an anonymous default on a type with no folder yet", lib.defaultState(for: vst) == "<PLUGIN anon=\"3\"/>"
+              && lib.defaultState(for: au) == nil)
         check("a stable hash", PluginPresetLibrary.shortHash("abc") == PluginPresetLibrary.shortHash("abc")
               && PluginPresetLibrary.shortHash("abc") != PluginPresetLibrary.shortHash("abd"))
 
