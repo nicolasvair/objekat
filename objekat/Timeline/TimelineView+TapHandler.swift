@@ -4,6 +4,9 @@ import AppKit
 extension TimelineView {
 
     func handleCanvasTap(at point: CGPoint) {
+        // The FX tool's strip owns its clicks (its power buttons, its double click): nothing of the
+        // canvas answers a click that landed on it — not even the door below.
+        if viewModel.activeTool == .toolFX, fxStripStore.contains(point) { return }
         // A hand back in the timeline takes the keyboard back from the signal view: ⌫ ⌘C ⌘V ⌘D
         // stop aiming at plugin cards and aim at objects again. It is the OTHER half of the claim
         // made in `setPluginSelection`, and it lives at the door of the gesture rather than in the
@@ -131,6 +134,11 @@ extension TimelineView {
         }
         if viewModel.activeTool == .toolAux {
             handleSendTap(at: point)
+            return
+        }
+        // FX: the strip owns its clicks; a click on a block selects it, nothing else.
+        if viewModel.activeTool == .toolFX {
+            if let e = blockEntry(at: point) { viewModel.select(e.item.id, additive: false) }
             return
         }
         guard viewModel.activeTool == .toolSelection else { return }

@@ -138,6 +138,8 @@ struct TimelineHoverProbe {
     var cutHoverLocalX: Double?
     /// The tool-zone help line shown for the pointer (`toolZoneHelpText`).
     var helpText: String?
+    /// The object whose strip the FX tool shows (`FXStripHoverStore`).
+    var fxStripID: UUID? = nil
 }
 
 // MARK: - Snapshot for undo/redo
@@ -180,6 +182,9 @@ enum ActiveTool: Equatable {
     /// Assigning a stem "on the fly": the target stem is carried by `stemAssignIndex`.
     /// Armed by holding a digit (held) or with ⇧ (locked), like the other tools.
     case toolStemAssign
+    /// The "FX" tool (F): hovering an object shows its plugins as a strip of boxes — on/off and
+    /// the double click that opens a plugin's window (@see FXStripLayout).
+    case toolFX
 }
 
 // MARK: - The Send tool

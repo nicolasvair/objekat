@@ -1452,7 +1452,7 @@ extension TimelineView {
     /// object's BODY is still a copy of that object — what one grabs decides.
     private func followsScroll(startingAt start: CGPoint) -> Bool {
         switch viewModel.activeTool {
-        case .toolVolume, .toolPan, .toolAux: return false
+        case .toolVolume, .toolPan, .toolAux, .toolFX: return false
         default: break
         }
         return (!viewModel.soloKeyHeld || soloLetsDragThrough(startingAt: start))

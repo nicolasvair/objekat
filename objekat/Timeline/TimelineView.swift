@@ -395,6 +395,8 @@ struct TimelineView: View {
     /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
     /// (internal: a double click on a fade replays the hover from TimelineView+TapHandler)
     @State var hoverStore = TimelineHoverStore()
+    /// The FX tool's strip (which object, where): read by the strip alone (@see FXStripOverlayView).
+    @State var fxStripStore = FXStripHoverStore()
     var laneStep: Double { blockHeight + laneGap }
 
     /// Cached with `items` as well (@see contentEnd).
@@ -1057,6 +1059,11 @@ struct TimelineView: View {
                     .zIndex(2.95)
 
                 // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
+                // The FX tool's strip over the hovered object (@see FXStripLayout). It owns its
+                // clicks: the canvas steps aside over it (@see FXStripHoverStore.contains).
+                FXStripOverlayView(viewModel: viewModel, store: fxStripStore)
+                    .zIndex(2.95)
+
                 if let loc = viewModel.pluginLinkDropLocation {
                     // ABOVE the carried card, not beside the cursor: the drag image is drawn by the
                     // system over every window, so a badge under it is simply hidden — at +18/-18 it
@@ -1092,6 +1099,7 @@ struct TimelineView: View {
                         hoverState.position = nil
                         if toolHoveredID != nil { toolHoveredID = nil }
                         if sidechainPickHover != nil { sidechainPickHover = nil }
+                        fxStripStore.set(nil)
                         hoverStore.clearAll()
                     }
                 }
@@ -1236,7 +1244,8 @@ struct TimelineView: View {
                                    editZone: hoverStore.editZoneHover?.zone,
                                    cutHoverID: hoverStore.cutHover?.id,
                                    cutHoverLocalX: hoverStore.cutHover?.localX,
-                                   helpText: hoverStore.toolZoneHelpText)
+                                   helpText: hoverStore.toolZoneHelpText,
+                                   fxStripID: fxStripStore.shown?.objectID)
             }
         }
         .onDisappear { unregisterKeyMonitor() }
@@ -1464,6 +1473,8 @@ struct TimelineView: View {
             TimelineCursorKeeper.set(NSCursor.resizeUpDown)
         case .toolPan:
             TimelineCursorKeeper.set(NSCursor.resizeUpDown)   // pan is set vertically (see handlePanDrag)
+        case .toolFX:
+            TimelineCursorKeeper.set(NSCursor.arrow)          // the strip's boxes are buttons
         case .toolAux:
             if let hit = sendRowHit(at: pos), (pos.y - hit.by) >= blockHeight - sendToggleZoneHeight - 4 {
                 TimelineCursorKeeper.set(NSCursor.pointingHand)
@@ -1641,6 +1652,12 @@ struct TimelineView: View {
         }
         let help = toolZoneHelp(at: pos)
         hoverStore.setHelpText(help)
+        if viewModel.activeTool == .toolFX {
+            if toolHoveredID != nil { toolHoveredID = nil }
+            updateFXStripHover(at: pos)
+            return
+        }
+        fxStripStore.set(nil)
         // See updateCursor: under the ruler, no object is aimed at.
         if rulerBandContains(pos) {
             if toolHoveredID != nil { toolHoveredID = nil }
@@ -1664,6 +1681,36 @@ struct TimelineView: View {
         let entry = blockEntry(at: pos)
         let newID = entry?.item.id
         if toolHoveredID != newID { toolHoveredID = newID }
+    }
+
+    /// The FX tool's hover: the strip stays up while the pointer is on its block or on the strip
+    /// itself (@see FXStripLayout.keeps), and is laid anew on the block that comes under the pointer
+    /// otherwise — centred where the pointer came onto it. Only the store is written: the strip
+    /// redraws, the timeline does not.
+    private func updateFXStripHover(at pos: CGPoint) {
+        let visible = CGRect(x: scrollOffsetX, y: scrollOffsetY + rulerHeight,
+                             width: viewportWidth, height: max(0, viewportHeight - rulerHeight))
+        func place(_ id: UUID, block: CGRect, anchorX: CGFloat) -> FXStripHoverStore.Shown {
+            let size = FXStripLayout.layout(viewModel.fxStripModel(objectID: id)).size
+            return FXStripHoverStore.Shown(
+                objectID: id, block: block, anchorX: anchorX,
+                frame: FXStripLayout.placement(size: size, block: block, anchorX: anchorX, visible: visible))
+        }
+        if let s = fxStripStore.shown, let e = viewModel.laneEntry(forID: s.objectID) {
+            let block = clipRect(for: e)
+            if FXStripLayout.keeps(pos, overlay: s.frame, block: block) {
+                let again = place(s.objectID, block: block, anchorX: s.anchorX)
+                // Laid again only if the block moved or the strip changed size: never under the
+                // hand for nothing.
+                if again.block != s.block || again.frame.size != s.frame.size { fxStripStore.set(again) }
+                return
+            }
+        }
+        guard !rulerBandContains(pos), !markerBandContains(pos),
+              !openPianoRollBandContains(pos), !openAutomationBandContains(pos),
+              let e = blockEntry(at: pos)
+        else { fxStripStore.set(nil); return }
+        fxStripStore.set(place(e.item.id, block: clipRect(for: e), anchorX: pos.x))
     }
 
     // MARK: - Unified blocks
@@ -4521,6 +4568,7 @@ struct TimelineView: View {
         case .toolPan:       return "slider.horizontal.3"
         case .toolAux:      return FeatureIcons.auxSend
         case .toolStemAssign: return "paintbrush.pointed"
+        case .toolFX:        return "fx"
         }
     }
 
@@ -4532,6 +4580,7 @@ struct TimelineView: View {
         case .toolVolume:    return permanent ? "V⊙" : "V"
         case .toolPan:       return permanent ? "P⊙" : "P"
         case .toolAux:      return permanent ? "A⊙" : "A"
+        case .toolFX:       return permanent ? "F⊙" : "F"
         case .toolStemAssign:
             let n = viewModel.stemAssignIndex ?? 0
             return permanent ? "\(n)⊙" : "\(n)"

@@ -1496,6 +1496,75 @@
         }
       }
     },
+    "cheatsheet.fx.openEditor": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opens the plugin’s window"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abre la ventana del plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvre la fenêtre du plugin"
+          }
+        }
+      }
+    },
+    "cheatsheet.fx.strip": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows its plugins, in signal order"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muestra sus plugins, en el orden de la señal"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Montre ses plugins, dans l’ordre du signal"
+          }
+        }
+      }
+    },
+    "cheatsheet.fx.toggle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turns the plugin on / off"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa / desactiva el plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Active / coupe le plugin"
+          }
+        }
+      }
+    },
     "cheatsheet.group": {
       "extractionState": "manual",
       "localizations": {
@@ -1542,6 +1611,29 @@
         }
       }
     },
+    "cheatsheet.keys.clickPower": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "click ⏻"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "clic en ⏻"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "clic sur ⏻"
+          }
+        }
+      }
+    },
     "cheatsheet.keys.cmdHeld": {
       "extractionState": "manual",
       "localizations": {
@@ -1561,6 +1653,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌘ (maintenu)"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.doubleClickBox": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "double-click a plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "doble clic en un plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "double-clic sur un plugin"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.hoverObject": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "hover an object"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "pasar sobre un objeto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "survol d’un objet"
           }
         }
       }
@@ -6322,6 +6460,98 @@
           "stringUnit": {
             "state": "translated",
             "value": "Conversion en FLAC"
+          }
+        }
+      }
+    },
+    "fx.strip.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ningún plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun plugin"
+          }
+        }
+      }
+    },
+    "fx.strip.gainStage.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gain stage (no on / off)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Etapa de ganancia (sin encendido / apagado)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Étage de gain (sans marche / arrêt)"
+          }
+        }
+      }
+    },
+    "fx.strip.openEditor.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double-click: open the plugin’s window"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Doble clic: abrir la ventana del plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Double-clic : ouvrir la fenêtre du plugin"
+          }
+        }
+      }
+    },
+    "fx.strip.rack.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parallel block — set it in the signal view"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloque paralelo — se ajusta en la vista sinóptica"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bloc parallèle — à régler dans la vue synoptique"
           }
         }
       }
@@ -19731,6 +19961,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Edit (E)"
+          }
+        }
+      }
+    },
+    "tool.fx.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FX (F)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FX (F)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FX (F)"
           }
         }
       }

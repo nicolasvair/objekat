@@ -585,6 +585,7 @@ private struct ToolPickerButtons: View {
         ToolItem(key: "V", label: "Vol.", tool: .toolVolume,    help: L("tool.volume.help")),
         ToolItem(key: "P", label: "Pan",  tool: .toolPan,       help: L("tool.pan.help")),
         ToolItem(key: "A", label: "Aux",  tool: .toolAux,       help: L("tool.aux.help")),
+        ToolItem(key: "F", label: "FX",   tool: .toolFX,        help: L("tool.fx.help")),
         ToolItem(key: "C", label: "Cut",  tool: .toolCut,       help: L("tool.cut.help")),
     ]
 
