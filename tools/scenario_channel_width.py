@@ -368,6 +368,36 @@ try:
         check("nothing changed", layouts(obj, lp)["current"] == "stereo")
         check("once stopped it goes through", set_layout(obj, lp, "mono")["changed"] is True)
 
+        # ═══════════════════════════════════════════════════════════════ a plugin with a sidechain input
+        # FabFilter Pro-Q 3 (AU) refuses a mono main bus beside a STEREO sidechain bus: probing "mono" with
+        # the sidechain left as `enableAllBuses` set it greyed the variant for good (the 20 October 2026
+        # report). The sidechain now follows the main input's width. Third-party: skipped when absent.
+        section("a plugin with a sidechain input (FabFilter Pro-Q 3 AU, when installed)")
+        catalogue = send("plugin.list_available", {})["plugins"]
+        proq = [p for p in catalogue if p["format"] == "AudioUnit" and p["name"].lower() == "pro-q 3"]
+        if not proq:
+            print("       (skipped: Pro-Q 3 AU is not installed)")
+        else:
+            _, obj = fresh(name="sidechain_input")
+            pq = send("plugin.add", {"host": obj, "identifier": proq[0]["identifier"],
+                                     "format": "AudioUnit"})["plugin"]["id"]
+            r = wait_loaded(obj, pq)
+            check("Pro-Q 3: all three variants are offered", variants_of(r) ==
+                  {"mono": True, "mono_stereo": True, "stereo": True}, variants_of(r))
+
+            def side_bus():
+                ins = send("debug.plugin_buses", {"plugin": pq}).get("input_buses") or []
+                return [(b["channels"], b["enabled"]) for b in ins[1:]]
+
+            check("Pro-Q 3 has a sidechain input, stereo by default", side_bus() == [(2, True)], side_bus())
+            for variant, nin, nout, side in (("mono", 1, 1, 1), ("mono_stereo", 1, 2, 1), ("stereo", 2, 2, 2)):
+                res = set_layout(obj, pq, variant)
+                r = layouts(obj, pq)
+                check("Pro-Q 3 -> %s: applied, main bus %d -> %d" % (variant, nin, nout),
+                      r["current"] == variant and r["inputs"] == nin and r["outputs"] == nout, (res, r))
+                check("Pro-Q 3 -> %s: the sidechain follows the main input (%d ch, enabled)" % (variant, side),
+                      side_bus() == [(side, True)], side_bus())
+
         # ═══════════════════════════════════════════════════════════════ what the sound does
         section("the SOUND: a stereo file, L = 1 kHz, R = 3 kHz, through a plugin cutting both")
         exports = {"n": 0}

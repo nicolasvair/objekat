@@ -8393,20 +8393,54 @@ static std::set<std::string>& objLayoutRefusals() {
     return refusals;
 }
 
-static juce::AudioProcessor::BusesLayout objLayoutForVariant(juce::AudioProcessor& proc, int nin, int nout) {
-    auto layout = proc.getBusesLayout();
-    if (layout.inputBuses.size() > 0)  layout.inputBuses.getReference(0)  = juce::AudioChannelSet::canonicalChannelSet(nin);
-    if (layout.outputBuses.size() > 0) layout.outputBuses.getReference(0) = juce::AudioChannelSet::canonicalChannelSet(nout);
-    return layout;
+// The layout a variant asks for: the MAIN buses in the variant's widths, and the auxiliary INPUT buses (a
+// sidechain) in a width the plugin accepts WITH them. The auxiliary width is not free: FabFilter Pro-Q 3
+// (AU), for one, refuses a mono main bus beside a STEREO sidechain bus and takes it beside a mono one —
+// keeping the sidechain as it was (stereo, as `enableAllBuses` left it) greyed "mono" for good on any plugin
+// with a sidechain input (found 20 October 2026, the Pro-Q 3 report). The candidates, in order:
+//   1. the sidechain in the main input's width (mono beside mono, stereo beside stereo) — also what
+//      `objLayBridgeWires` expects: its table reads the TOTAL input count, and a 1 + 2 = 3-input plugin
+//      would wire the main's right channel into the key's left;
+//   2. the sidechain as it is now;
+//   3. the sidechain in the main OUTPUT's width;
+//   4. the sidechain disabled (the plugin loses its key input in that variant, but keeps the variant).
+// A plugin without an auxiliary input has one candidate. Empty = the variant is refused whatever the aux.
+static std::vector<juce::AudioProcessor::BusesLayout> objLayoutCandidates(juce::AudioProcessor& proc, int nin, int nout) {
+    auto base = proc.getBusesLayout();
+    if (base.inputBuses.size() > 0)  base.inputBuses.getReference(0)  = juce::AudioChannelSet::canonicalChannelSet(nin);
+    if (base.outputBuses.size() > 0) base.outputBuses.getReference(0) = juce::AudioChannelSet::canonicalChannelSet(nout);
+    std::vector<juce::AudioProcessor::BusesLayout> out;
+    auto push = [&](const juce::AudioProcessor::BusesLayout& l) {
+        if (std::find(out.begin(), out.end(), l) == out.end()) out.push_back(l);
+    };
+    if (base.inputBuses.size() < 2) { push(base); return out; }
+    auto withAux = [&](juce::AudioChannelSet set) {
+        auto l = base;
+        for (int i = 1; i < l.inputBuses.size(); ++i)
+            if (!l.inputBuses.getReference(i).isDisabled() || set.isDisabled())
+                l.inputBuses.getReference(i) = set;
+        return l;
+    };
+    push(withAux(juce::AudioChannelSet::canonicalChannelSet(nin)));
+    push(base);
+    push(withAux(juce::AudioChannelSet::canonicalChannelSet(nout)));
+    push(withAux(juce::AudioChannelSet::disabled()));
+    return out;
 }
 
-// L'instance accepte-t-elle cette variante ? AU : exact et sans initialisation (JUCE compare aux
-// layouts qu'elle a lus une fois pour toutes). VST3 : exact seulement tant qu'il n'est pas actif
-// (`isBusesLayoutSupported` essaie alors vraiment le layout puis revient) ; actif, JUCE répond « oui,
-// sauf discret » — d'où le drapeau `exact` rendu à l'appelant.
+// The first candidate the instance accepts (@see objLayoutCandidates). AU: exact and with no initialisation
+// (JUCE compares with the layouts the unit declared once). VST3: exact only while it is not active
+// (`isBusesLayoutSupported` then really tries the layout and comes back); active, JUCE answers "yes unless
+// discrete" — hence the `exact` flag handed to the caller.
+static std::optional<juce::AudioProcessor::BusesLayout> objLayoutForVariant(juce::AudioProcessor& proc, int nin, int nout) {
+    if (proc.getBusCount(true) < 1 || proc.getBusCount(false) < 1) return std::nullopt;
+    for (auto& l : objLayoutCandidates(proc, nin, nout))
+        if (proc.checkBusesLayoutSupported(l)) return l;
+    return std::nullopt;
+}
+
 static bool objVariantSupported(juce::AudioProcessor& proc, int nin, int nout) {
-    if (proc.getBusCount(true) < 1 || proc.getBusCount(false) < 1) return false;
-    return proc.checkBusesLayoutSupported(objLayoutForVariant(proc, nin, nout));
+    return objLayoutForVariant(proc, nin, nout).has_value();
 }
 
 // The probe's answer, kept per plugin key: a card's context menu is built with the view's body, so the
@@ -8534,7 +8568,8 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     if (objCanFlushPluginState(*ext)) ext->flushPluginStateToValueTree();
     const juce::var stateBefore = ext->state.getProperty(te::IDs::state);
 
-    if (!ext->setBusesLayout(objLayoutForVariant(*proc, nin, nout))) {
+    const auto wantedLayout = objLayoutForVariant(*proc, nin, nout);
+    if (!wantedLayout || !ext->setBusesLayout(*wantedLayout)) {
         objLayoutRefusals().insert(refusalKey);
         return fail(@"refused");
     }
