@@ -184,6 +184,19 @@ extension CommandRegistry {
             payload["loaded"] = .bool(loaded)
             payload["variants"] = .array([])
             payload["linked"] = .int(0)
+            // What a stereo signal is folded into for a ONE-input plugin (`MonoFold`): the model's choice
+            // (`left` for a plugin saved before format 28), and the engine's two service halves when laid.
+            if let plug = vm.hostedPlugin(pluginID, of: host) {
+                payload["mono_fold"] = .string(plug.effectiveMonoFold.rawValue)
+            }
+            for key in ["fold_in", "fold_out"] {
+                if let f = info[key] as? [String: Any] {
+                    payload[key] = .object(["active": .bool((f["active"] as? NSNumber)?.boolValue == true),
+                                            "mode": .stringOrNull(f["mode"] as? String)])
+                } else {
+                    payload[key] = .null
+                }
+            }
             guard external, loaded else { return .object(payload) }
             payload["inputs"] = .int((info["inputs"] as? NSNumber)?.intValue ?? 0)
             payload["outputs"] = .int((info["outputs"] as? NSNumber)?.intValue ?? 0)
@@ -262,6 +275,44 @@ extension CommandRegistry {
                             "variant": .string(raw),
                             "inputs": .int((info?["inputs"] as? NSNumber)?.intValue ?? variant.inputs),
                             "outputs": .int((info?["outputs"] as? NSNumber)?.intValue ?? variant.outputs)])
+        }
+
+        register("plugin.set_mono_fold",
+                 summary: """
+                 What a STEREO signal is folded into for a plugin with ONE main input: `left` (the left \
+                 channel only, the right one passing round a 1 → 1 plugin dry — what every project saved \
+                 before format 28 does), `right`, or `sum` = (L + R) / 2 (the default of a plugin inserted \
+                 since format 28). With `right` or `sum` the plugin's output replaces the pair (a 1 → 1 \
+                 plugin's mono result goes to both sides). Saved with the plugin, carried by copies, undone. \
+                 Applies to the plugin's whole link group (FX link mirrors, manual link peers) and to the FX \
+                 link's definition. Has no audible effect while the plugin is not mono-in or the signal is \
+                 mono (`plugin.channel_layouts` reports `mono_fold` and the engine's `fold_in` / `fold_out` \
+                 halves). One undo step; none when nothing changes. Answers `{ok, changed, instances, fold}`.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
+                          ParamSpec("plugin", "uuid", "Leaf plugin of the chain."),
+                          ParamSpec("fold", "string", "left | right | sum.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            let pluginID = try p.uuid("plugin")
+            try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
+            let raw = try p.string("fold")
+            guard let fold = MonoFold(rawValue: raw) else {
+                throw CommandError(code: .bad_params, message: "unknown fold '\(raw)' (left | right | sum)",
+                                   details: .object(["reason": .string("bad_fold")]))
+            }
+            var instances = 0
+            switch vm.setMonoFold(fold, pluginID: pluginID, host: host) {
+            case .applied(let n): instances = n
+            case .unchanged: break
+            case .refused(let reason):
+                throw CommandError(code: .bad_params,
+                                   message: "plugin \(pluginID.uuidString) takes no fold (\(reason))",
+                                   details: .object(["reason": .string(reason)]))
+            }
+            return .object(["ok": .bool(true), "changed": .bool(instances > 0), "instances": .int(instances),
+                            "fold": .string(raw)])
         }
 
         register("plugin.add",

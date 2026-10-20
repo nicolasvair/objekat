@@ -203,7 +203,7 @@ extension EditViewModel {
                    let adopted = Self.adoptingPluginStates(liveStem.plugins, stem.plugins) {
                     var probe = liveStem
                     probe.plugins = adopted
-                    if probe == stem {
+                    if probe == stem, Self.monoFolds(liveStem.plugins) == Self.monoFolds(stem.plugins) {
                         for change in Self.changedPluginStates(liveStem.plugins, stem.plugins) {
                             engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
                                                         forObjectID: stem.id.uuidString)
@@ -391,6 +391,10 @@ extension EditViewModel {
                 // bridge sync that follows every restore (EditViewModel+Bridge), so a key change
                 // must not rebuild the object — and reload its AU.
                 out[i].sidechain = new[i].sidechain
+                // The stereo → mono fold is two service plugins the compile lays around the plugin:
+                // no reload, so a change of it is patched too (`pushPatch` / the stem path compile
+                // again when `monoFolds` differ).
+                out[i].monoFold = new[i].monoFold
             case let (oldRack?, newRack?):
                 guard oldRack.voices.count == newRack.voices.count else { return nil }
                 var voices: [[ObjectPlugin]] = []
@@ -440,6 +444,25 @@ extension EditViewModel {
         return out
     }
 
+    /// Every leaf's stereo → mono fold in a chain (FX blocks and racks walked), as the engine reads it.
+    static func monoFolds(_ plugins: [ObjectPlugin]) -> [UUID: MonoFold] {
+        var out: [UUID: MonoFold] = [:]
+        func walk(_ series: [ObjectPlugin]) {
+            for p in series {
+                if p.isContainer { p.childSeries.forEach(walk) } else { out[p.id] = p.effectiveMonoFold }
+            }
+        }
+        walk(plugins)
+        return out
+    }
+
+    /// The folds of an object's trunk and of its sends' plugins (the roots a compile lays).
+    static func monoFolds(of object: SoundObject) -> [UUID: MonoFold] {
+        var out = monoFolds(object.plugins)
+        for send in object.sends { out.merge(monoFolds(send.plugins)) { a, _ in a } }
+        return out
+    }
+
     /// Pushes to the engine the differences of an object declared recoverable by `isPatchable`.
     /// Volume / pan / mute are not there: `refreshAudibility()` already recomposes them for the
     /// WHOLE project higher up in `applySnapshot`.
@@ -459,11 +482,15 @@ extension EditViewModel {
                                             forObjectID: object.id.uuidString)
             }
         }
+        // A stereo → mono fold that moved is compiled again the same way (the compile lays or removes
+        // its halves, every plugin instance kept; it also covers moved markers).
         // The send markers moved (a position undone or redone): the chain's order tells the engine
         // where to lay each send, so the chain is compiled again — the plugins are KEPT (the compile
         // finds every one in the engine's map), only the list order changes. The `tap` positions and
         // the send plugins themselves come with the bridge sync that closes `applySnapshot`.
-        if let live, ObjectPlugin.sendMarkerPlaces(in: live.plugins) != ObjectPlugin.sendMarkerPlaces(in: object.plugins) {
+        if let live, Self.monoFolds(of: live) != Self.monoFolds(of: object) {
+            compileRack(objectID: object.id)
+        } else if let live, ObjectPlugin.sendMarkerPlaces(in: live.plugins) != ObjectPlugin.sendMarkerPlaces(in: object.plugins) {
             recompileForSendMarker(object.id)
         }
         // The channel choice of a stereo clip (no-op for every other kind: the engine looks the

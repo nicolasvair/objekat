@@ -207,6 +207,63 @@ extension EditViewModel {
         return changed > 0 ? .applied(instances: changed) : .unchanged
     }
 
+    // MARK: Stereo → mono fold
+
+    /// What a stereo signal is folded into for a ONE-input plugin: `left` (as before), `right`, or the sum
+    /// (L + R) / 2 (@see `MonoFold`). The same members as the Channels menu — the plugin and its link group
+    /// (FX link mirrors, manual link peers), all together — and the FX link's definition, so a member
+    /// attached later is born with it. One undo step; none when nothing changes. Unlike a channel layout,
+    /// nothing is refused while playing: it is two service plugins laid or removed around the plugin.
+    @discardableResult
+    func setMonoFold(_ fold: MonoFold, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
+        guard let me = hostedPlugin(pluginID, of: host) else { return .refused(reason: "not_found") }
+        guard !me.isContainer, !isInstrument(pluginID, of: host) else { return .refused(reason: "not_leaf") }
+
+        let members = [(plugin: pluginID, host: host)] + channelGroupPeers(of: pluginID, on: host)
+        let moving = members.filter { hostedPlugin($0.plugin, of: $0.host)?.monoFold != fold }
+        let def = fxDefinition(ofInstance: pluginID, on: host)
+        let defMoves: Bool = {
+            guard let def, let l = fxLinks.first(where: { $0.id == def.linkID }) else { return false }
+            return Self.findPlugin(def.definitionID, in: l.plugins).map { $0.monoFold != fold } ?? false
+        }()
+        if moving.isEmpty && !defMoves { return .unchanged }
+
+        pushUndo()
+        for m in moving {
+            updateChainPlugins(m.host) { $0 = Self.settingMonoFold(m.plugin, fold, in: $0) }
+        }
+        if defMoves, let def, let i = fxLinks.firstIndex(where: { $0.id == def.linkID }) {
+            fxLinks[i].plugins = Self.settingMonoFold(def.definitionID, fold, in: fxLinks[i].plugins)
+        }
+        isDirty = true
+        // The engine lays (or removes) the fold's halves at the compile.
+        var compiled = Set<UUID>()
+        for m in moving where compiled.insert(m.host).inserted {
+            compileRack(objectID: m.host)
+        }
+        return .applied(instances: moving.count)
+    }
+
+    /// `plugins` with the leaf `id`'s fold set (recursive).
+    static func settingMonoFold(_ id: UUID, _ fold: MonoFold, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+        plugins.map { p in
+            if p.id == id { var np = p; np.monoFold = fold; return np }
+            if p.isContainer { return p.mappingChildSeries { settingMonoFold(id, fold, in: $0) } }
+            return p
+        }
+    }
+
+    /// The leaf `id` in `plugins` (recursive).
+    static func findPlugin(_ id: UUID, in plugins: [ObjectPlugin]) -> ObjectPlugin? {
+        for p in plugins {
+            if p.id == id { return p }
+            if p.isContainer {
+                for v in p.childSeries { if let f = findPlugin(id, in: v) { return f } }
+            }
+        }
+        return nil
+    }
+
     /// The hand's door onto `setChannelVariant`: a refusal is SAID (a dialogue, journalled when headless) rather
     /// than swallowed. The machine's door (`plugin.set_channel_layout`) answers with the reason instead.
     func setChannelVariantFromHand(_ variant: ChannelVariant, pluginID: UUID, host: UUID) {
