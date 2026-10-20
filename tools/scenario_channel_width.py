@@ -432,6 +432,9 @@ try:
 
         lp = add_plugin(obj, AU_LOWPASS)
         wait_loaded(obj, lp)
+        # What follows measures what the ENGINE does with a stereo signal into a mono input, the fold
+        # left at `left` (a plugin inserted since format 28 is `sum`: @see scenario_mono_fold.py).
+        send("plugin.set_mono_fold", {"host": obj, "plugin": lp, "fold": "left"})
         # a cutoff at the bottom of its range: whatever the plugin PROCESSES comes out far under the dry level.
         cut_ok = set_param_named(obj, lp, "cutoff", to_max=False)
         check("AULowpass: its cutoff parameter is found and lowered", cut_ok)
@@ -452,6 +455,7 @@ try:
         # a plugin that takes ONE channel in and gives TWO out: which of the two input sides does it read?
         rv = add_plugin(obj, AU_REVERB2)
         wait_loaded(obj, rv)
+        send("plugin.set_mono_fold", {"host": obj, "plugin": rv, "fold": "left"})
         send("plugin.toggle", {"host": obj, "plugin": lp})   # bypass the lowpass
         wet_ok = set_param_named(obj, rv, "dry/wet", to_max=True) or set_param_named(obj, rv, "mix", to_max=True)
         check("AUReverb2: its dry/wet is found and set to wet", wet_ok)

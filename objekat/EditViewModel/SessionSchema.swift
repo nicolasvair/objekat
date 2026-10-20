@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 26
+    static let formatVersion = 28
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -119,6 +119,14 @@ enum SessionSchema {
         "  (a nested marker is hoisted after its top-level ancestor, an orphan or a duplicate is dropped).",
         "  A build from before format 22 reads the entry as a plugin it cannot find and drops it: forward",
         "  incompatibility, the send then falls back to post-fader.",
+        "monoFold — on a leaf plugin: what a STEREO signal is folded into when the plugin has ONE main",
+        "  input: \"left\" (the left channel only; through a 1 → 1 plugin the right one passes round it",
+        "  dry), \"right\", or \"sum\" = (L + R) / 2. With \"right\" or \"sum\" the plugin's output replaces",
+        "  the pair (a 1 → 1 plugin's mono result on both sides). No effect on a plugin that is not",
+        "  mono-in, nor on a mono signal. NO KEY = \"left\": every plugin saved before format 28, which",
+        "  therefore sounds as it always did; a plugin inserted since is written \"sum\". A copy keeps the",
+        "  key of its original. Format 27 was never released (an unmerged branch took the number). A build",
+        "  from before format 28 ignores the key and plays \"left\"; saving from it drops the key.",
         "GAIN STAGES (format 25) — a plugin entry with formatName \"TracktionInternal\" and identifier",
         "  \"objGainStage\" (a gain) or \"objGainPanMute\" (gain + pan + mute) is a gain stage: an ordinary",
         "  leaf of a chain, whose stateXML <PLUGIN type=… gainDb=… pan=… muted=…/> holds its setting",
