@@ -317,10 +317,7 @@ extension EditViewModel {
             NSSound.beep()
             return
         }
-        let plug = ObjectPlugin(id: UUID(), name: available.name,
-                                manufacturer: available.manufacturer,
-                                identifier: available.identifier,
-                                formatName: available.formatName)
+        let plug = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         updateChainPlugins(objectID) { $0.append(plug) }
         if compileRack(objectID: objectID).contains(plug.id) {
@@ -372,10 +369,7 @@ extension EditViewModel {
     /// to the engine. No effect on an object that is not a MIDI clip.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
         guard let obj = find(id: objectID), obj.isMIDI, engine != nil else { return }
-        let inst = ObjectPlugin(id: UUID(), name: available.name,
-                                manufacturer: available.manufacturer,
-                                identifier: available.identifier,
-                                formatName: available.formatName)
+        let inst = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         update(id: objectID) { $0.instruments = [inst] }
         if let updated = find(id: objectID) { syncInstruments(updated) }
@@ -553,6 +547,7 @@ extension EditViewModel {
         if let pid = pluginParamInfos(pluginID).first(where: { $0.value.index == index })?.key {
             recordPluginParamTouch(pluginKey: pluginID, paramID: pid)
         }
+        notePresetParamTouched(pluginID)
         isDirty = true
     }
 

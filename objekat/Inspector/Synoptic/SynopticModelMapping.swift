@@ -138,10 +138,8 @@ extension EditViewModel {
         }
     }
 
-    private func makeObjectPlugin(_ a: AvailablePlugin) -> ObjectPlugin {
-        ObjectPlugin(id: UUID(), name: a.name, manufacturer: a.manufacturer,
-                     identifier: a.identifier, formatName: a.formatName)
-    }
+    /// A FRESH insertion: it starts on its type's default preset, if one is set (@see freshPlugin).
+    private func makeObjectPlugin(_ a: AvailablePlugin) -> ObjectPlugin { freshPlugin(a) }
 
     /// The signal view's '+': inserts a new plugin into the target series, at the given index.
     func synopticInsert(objectID: UUID, available: AvailablePlugin,
@@ -152,7 +150,7 @@ extension EditViewModel {
         if case .block(let blockID) = location,
            let block = Self.findBlock(blockID, in: plugins), let fb = block.fxBlock, !fb.isDetached {
             let template = makeObjectPlugin(available)
-            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, at: index) else {
+            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, state: template.stateXML, at: index) else {
                 availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
                 return
             }

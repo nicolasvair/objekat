@@ -242,6 +242,7 @@ final class CommandRegistry {
         registerGainStageCommands()
         registerARACommands()
         registerFXLinkCommands()
+        registerPresetCommands()
         registerAuxCommands()
         registerMIDICommands()
         registerConsolidateCommands()

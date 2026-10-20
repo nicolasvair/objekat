@@ -42,6 +42,15 @@ final class BuiltInPluginEditorWindowController: NSWindowController, NSWindowDel
         window.setContentSize(initialFrame.size)
         window.contentMinSize = NSSize(width: 300, height: 200)
 
+        // The preset menu, at the right of the native title bar (the JUCE window lays the same one).
+        let presets = NSTitlebarAccessoryViewController()
+        let menu = NSHostingView(rootView: PluginPresetMenu(viewModel: viewModel, plugin: plug.id)
+            .padding(.trailing, 8))
+        menu.frame = NSRect(x: 0, y: 0, width: PluginPresetMenu.width + 8, height: 28)
+        presets.view = menu
+        presets.layoutAttribute = .trailing
+        window.addTitlebarAccessoryViewController(presets)
+
         super.init(window: window)
         window.delegate = self
     }

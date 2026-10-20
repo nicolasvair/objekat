@@ -453,6 +453,13 @@
 // le projet et à repasser à addPlugin:toObjectID:stateXML: à l'ouverture.
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey;
 
+// A plugin's OWN programs (its factory presets) — an external instance only, loaded; [] for a
+// built-in, an instance still loading, or a plugin with no programs. `setPluginProgram:` lays one
+// (NO if out of range or not loaded); the state it lays is the instance's from then on.
+- (NSArray<NSString*>*)pluginProgramNames:(NSString*)pluginKey;
+- (int)pluginCurrentProgram:(NSString*)pluginKey;
+- (BOOL)setPluginProgram:(NSString*)pluginKey index:(int)index;
+
 // applyPluginStateXML:forPlugin: — ré-applique un état à l'instance VIVANTE, sans la détruire
 // ni la recharger. C'est la contrepartie de getPluginStateXML: pour une annulation, et ce que
 // `restorePluginStateFromValueTree` sait faire depuis toujours (le timer de ré-affirmation s'en
@@ -699,6 +706,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Le bloc rend nil pour « pas de bande » ; la vue rendue garde sa hauteur (`frame.size.height`) et
 // prend la largeur de l'éditeur. nil = jamais de bande.
 - (void)setPluginEditorAccessoryProvider:(NSView* _Nullable (^ _Nullable)(NSString* _Nonnull pluginKey))provider;
+
+// A view Swift lays at the RIGHT of a native editor's title bar (the preset menu), asked for when
+// the window is created; its `frame.size.width` is the width it takes. nil = none.
+- (void)setPluginEditorTitleAccessoryProvider:(NSView* _Nullable (^ _Nullable)(NSString* _Nonnull pluginKey))provider;
 
 // Ferme l'éditeur natif du plugin (si ouvert).
 - (void)closePluginEditor:(NSString*)pluginKey;

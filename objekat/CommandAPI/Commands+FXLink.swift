@@ -253,11 +253,8 @@ extension CommandRegistry {
                                        state: vm.fxLiveState(of: source), at: index)
             } else {
                 let available = try CommandAdapters.resolvePlugin(p, in: vm)
-                let template = ObjectPlugin(id: UUID(), name: available.name,
-                                            manufacturer: available.manufacturer,
-                                            identifier: available.identifier,
-                                            formatName: available.formatName)
-                defID = vm.fxAddPlugin(linkID: link.id, template: template, at: index)
+                let template = vm.freshPlugin(available)   // its type's default preset, if one is set
+                defID = vm.fxAddPlugin(linkID: link.id, template: template, state: template.stateXML, at: index)
             }
             guard let defID else {
                 throw CommandError(code: .engine_error, message: "the engine could not instantiate that plugin")

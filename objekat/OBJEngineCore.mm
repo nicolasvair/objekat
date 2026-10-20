@@ -676,6 +676,9 @@ static BOOL (^gPluginKeyFallback)(NSEvent*) = nil;
 // La bande posée sous un éditeur natif (@see -setPluginEditorAccessoryProvider:). Global comme le
 // relais clavier : un seul fournisseur, l'app.
 static NSView* (^gPluginEditorAccessoryProvider)(NSString*) = nil;
+// La vue posée à DROITE de la barre de titre d'un éditeur natif (le menu des presets, @see
+// -setPluginEditorTitleAccessoryProvider:). Même régime : un seul fournisseur, l'app.
+static NSView* (^gPluginEditorTitleAccessoryProvider)(NSString*) = nil;
 
 struct OBJPluginEditorWindow : public juce::DocumentWindow {
     std::function<void()> onClose;
@@ -700,9 +703,25 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
         return gPluginKeyFallback(e) ? true : false;
     }
 
+    // Le menu des presets, à droite de la barre de titre (dessinée par JUCE : c'est un enfant de
+    // la fenêtre, recalé à chaque `resized`). La largeur est celle que la vue a demandée.
+    std::unique_ptr<juce::NSViewComponent> titleAccessory;
+    int titleAccessoryWidth = 0;
+
+    void resized() override {
+        juce::DocumentWindow::resized();
+        if (!titleAccessory) return;
+        auto bar = getTitleBarArea();
+        const int h = juce::jmin(bar.getHeight() - 2, 22);
+        const int w = juce::jmin(titleAccessoryWidth, juce::jmax(0, bar.getWidth() / 2 - 8));
+        titleAccessory->setBounds(bar.getRight() - w - 6, bar.getY() + (bar.getHeight() - h) / 2, w, h);
+        titleAccessory->setVisible(w >= 60);
+    }
+
     OBJPluginEditorWindow(const juce::String& name,
                           juce::AudioProcessorEditor* editor,
                           NSView* accessory,
+                          NSView* titleView,
                           std::function<void()> closeCb,
                           bool floating,
                           juce::Colour accent)
@@ -722,6 +741,12 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
         // La fenêtre possède le wrapper (qui possède l'éditeur) ; resizeToFit=true pour
         // que les redimensionnements asynchrones du plugin remontent à la fenêtre.
         setContentOwned(new OBJEditorHolder(editor, accessory), true);
+        if (titleView) {
+            titleAccessoryWidth = juce::jmax(60, (int) titleView.frame.size.width);
+            titleAccessory = std::make_unique<juce::NSViewComponent>();
+            Component::addAndMakeVisible(*titleAccessory);
+            titleAccessory->setView(titleView);
+        }
         setResizable(resizable, false);
         centreWithSize(juce::jmax(400, getWidth()),
                        juce::jmax(200, getHeight()));
@@ -732,6 +757,7 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
     }
 
     ~OBJPluginEditorWindow() override {
+        if (titleAccessory) titleAccessory->setView(nullptr);
         // Le LookAndFeel dédié se détruit avant le sous-objet Component (ordre C++ : membres
         // avant bases) — le détacher ici évite que Component ne garde un pointeur pendouillant
         // pendant sa propre destruction.
@@ -2029,6 +2055,11 @@ static BOOL gOBJAudioDisabled = NO;
 - (void)setPluginEditorAccessoryProvider:(NSView* (^)(NSString*))provider {
     if (gPluginEditorAccessoryProvider) [gPluginEditorAccessoryProvider release];
     gPluginEditorAccessoryProvider = [provider copy];
+}
+
+- (void)setPluginEditorTitleAccessoryProvider:(NSView* (^)(NSString*))provider {
+    if (gPluginEditorTitleAccessoryProvider) [gPluginEditorTitleAccessoryProvider release];
+    gPluginEditorTitleAccessoryProvider = [provider copy];
 }
 
 // App passée à l'arrière-plan : on masque les éditeurs visibles et on retient lesquels, pour ne
@@ -7272,6 +7303,50 @@ static void objStripBridgeState(juce::ValueTree& tree) {
         tree.removeProperty(te::IDs::sidechainTrigger, nullptr);
 }
 
+// MARK: - A plugin's own programs (its factory presets)
+
+// The external instance behind a key, loaded — nil for a built-in, an unknown key, or an instance
+// still loading.
+- (juce::AudioPluginInstance*)loadedExternalInstance:(NSString*)pluginKey {
+    if (!pluginKey) return nullptr;
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it == _pluginMap.end() || !it->second) return nullptr;
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(it->second.get());
+    return ext ? ext->getAudioPluginInstance() : nullptr;
+}
+
+- (NSArray<NSString*>*)pluginProgramNames:(NSString*)pluginKey {
+    NSMutableArray<NSString*>* out = [NSMutableArray array];
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    if (!pi) return out;
+    const int n = pi->getNumPrograms();
+    // A plugin with no programs answers ONE nameless program (JUCE's convention): that is no list.
+    if (n <= 1 && pi->getProgramName(0).trim().isEmpty()) return out;
+    for (int i = 0; i < n; ++i) {
+        juce::String name = pi->getProgramName(i);   // local nommé → toRawUTF8 sûr
+        if (name.trim().isEmpty()) name = juce::String(i + 1);
+        [out addObject:[NSString stringWithUTF8String:name.toRawUTF8()]];
+    }
+    return out;
+}
+
+- (int)pluginCurrentProgram:(NSString*)pluginKey {
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    return pi ? pi->getCurrentProgram() : -1;
+}
+
+- (BOOL)setPluginProgram:(NSString*)pluginKey index:(int)index {
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    if (!pi || index < 0 || index >= pi->getNumPrograms()) return NO;
+    pi->setCurrentProgram(index);
+    // The instance's tree catches up with the chunk the program laid (a save or an undo point
+    // taken next reads the tree through getPluginStateXML:, which flushes anyway).
+    auto it = _pluginMap.find(std::string([pluginKey UTF8String]));
+    if (it != _pluginMap.end() && it->second && objCanFlushPluginState(*it->second))
+        it->second->flushPluginStateToValueTree();
+    return YES;
+}
+
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey {
     std::string pk([pluginKey UTF8String]);
     auto it = _pluginMap.find(pk);
@@ -8810,7 +8885,10 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
                         (juce::uint8)(colorHex & 0xFF));
     // La bande Sidechain (ou rien) : demandée MAINTENANT, l'instance étant chargée.
     NSView* accessory = gPluginEditorAccessoryProvider ? gPluginEditorAccessoryProvider(pluginKey) : nil;
-    auto* win = new OBJPluginEditorWindow(title, editor, accessory, [rawSelf, pk, isARA] {
+    // Le menu des presets (pas pour une source ARA : Melodyne n'est pas un réglage qu'on range).
+    NSView* titleView = (!isARA && gPluginEditorTitleAccessoryProvider)
+        ? gPluginEditorTitleAccessoryProvider(pluginKey) : nil;
+    auto* win = new OBJPluginEditorWindow(title, editor, accessory, titleView, [rawSelf, pk, isARA] {
         // « delete this » indirect (erase détruit la fenêtre + ce lambda + pk) :
         // on sort tout ce dont on a besoin sur la pile AVANT l'erase.
         OBJEngineCore* engineRef = rawSelf;
