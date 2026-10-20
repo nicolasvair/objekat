@@ -1793,6 +1793,29 @@ The on/off SWITCH is deliberately outside all this. Cutting a send is an explici
 silence and keeps the last word over any curve, so `send.enable` answers under automation exactly
 as it does without.
 
+### Automation curves (`automation.*`)
+
+The first doors onto an object's curves: before them nothing headless could lay a point. A
+parameter (`param`) is `"volume"`, `"pan"`, `"send:<aux uuid>"`, `"plugin:<plugin uuid>:<paramID>"`,
+or the session file's own object form. Points are addressed by their STORAGE index (the band's own
+addressing), `t` in seconds RELATIVE to the object's start, `c` the curvature of the segment the
+point STARTS (−1…1, 0 = straight).
+
+| Command | What it does |
+|---|---|
+| `automation.list` | `id` → `lanes: [{param, points: [{index, t, v, c}]}]`, storage order |
+| `automation.set_points` | `id`, `param`, `points: [{t, v, c?}]` → replaces that curve (an empty list removes it). Values clamped to the parameter's range, `c` to −1…1. Drops the point selection. One undo step (bus) |
+| `automation.select_points` | `id`, `param`, `indices` → the POINT selection (what clicks in a band pick); drops the time selection. No undo |
+| `automation.straighten` | `id`, `param`, `index?` → c = 0 on that segment's left point (no `index`: every segment of the curve); or `selection: true` → every segment whose TWO ends are selected, on every object. What ⌥ + double click on a segment does. ONE undo point, none when nothing was bent. Answers `straightened` (how many were bent) and `segments` (how many were named) |
+| `automation.wheel_curvature` | `id`, `param`, `index`, `steps` (notches, + = the curve rises), `new_gesture` (default true: opens an undo point, as a pause in the wheel does) → the ⌥-wheel over a segment, through its straight-line detent |
+
+**The straight-line detent.** The ⌥-wheel counts it in NOTCHES: the notch that reaches or crosses
+straight lands EXACTLY on it, the next one in the same direction is held there, the one after leaves
+by one notch — whatever phase the knob started on. The state is carried from call to call for as long
+as the curve is the one the wheel last laid on that segment; `new_gesture` opens an undo point, not a
+new detent. The ⌥-DRAG has the same detent in hand travel (about 12 px held when crossing, 6 px to
+leave straight); it is not reachable from the API.
+
 ### Sliding the time selection
 
 `timesel.step_lane` (`by`: -1 one row up, +1 one row down, any step) moves **THE TRACED PASSAGE and

@@ -238,6 +238,7 @@ final class CommandRegistry {
         registerGroupCommands()
         registerStemCommands()
         registerSoloCommands()
+        registerAutomationCommands()
         registerPluginCommands()
         registerGainStageCommands()
         registerARACommands()
