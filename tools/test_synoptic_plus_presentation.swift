@@ -13,6 +13,7 @@ import Foundation
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
+//         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift test_synoptic_plus_presentation.swift \
 //         && /tmp/t_plus_pres
