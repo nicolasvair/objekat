@@ -18999,25 +18999,94 @@
         }
       }
     },
+    "synoptic.wire.fold.left": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Left channel only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo canal izquierdo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canal gauche seul"
+          }
+        }
+      }
+    },
+    "synoptic.wire.fold.right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Right channel only"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo canal derecho"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canal droit seul"
+          }
+        }
+      }
+    },
+    "synoptic.wire.fold.sum": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sum (L + R) / 2"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suma (I + D) / 2"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Somme (G + D) / 2"
+          }
+        }
+      }
+    },
     "synoptic.wire.merge.dryRight": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stereo into a mono input: the two channels are NOT summed. The plugin processes the left one only; the right one goes round it, unprocessed. Right click the card, then Channels, to change it."
+            "value": "Stereo into a mono input, set to Left: the plugin processes the left channel only; the right one goes round it, unprocessed. Right click this wire to choose Left, Right or Sum."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Estéreo hacia una entrada mono: los dos canales NO se suman. El plugin solo procesa el izquierdo; el derecho pasa por fuera, sin procesar. Clic derecho en la tarjeta, luego Canales, para cambiarlo."
+            "value": "Estéreo hacia una entrada mono, ajustado en Izquierda: el plugin solo procesa el canal izquierdo; el derecho pasa por fuera, sin procesar. Clic derecho en este cable para elegir Izquierda, Derecha o Suma."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stéréo vers une entrée mono : les deux canaux ne sont PAS sommés. Le plugin ne traite que le gauche ; le droit passe à côté, sans traitement. Clic droit sur la carte, puis Canaux, pour le changer."
+            "value": "Stéréo vers une entrée mono, réglé sur Gauche : le plugin ne traite que le canal gauche ; le droit passe à côté, sans traitement. Clic droit sur ce câble pour choisir Gauche, Droite ou Somme."
           }
         }
       }
@@ -19028,19 +19097,65 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stereo into a mono input: the two channels are NOT summed. The plugin reads the left one only and builds its stereo output from it; the right one is not heard after it. Right click the card, then Channels, to change it."
+            "value": "Stereo into a mono input, set to Left: the plugin reads the left channel only and builds its stereo output from it; the right one is not heard after it. Right click this wire to choose Left, Right or Sum."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Estéreo hacia una entrada mono: los dos canales NO se suman. El plugin solo lee el izquierdo y construye su salida estéreo a partir de él; el derecho deja de oírse después de él. Clic derecho en la tarjeta, luego Canales, para cambiarlo."
+            "value": "Estéreo hacia una entrada mono, ajustado en Izquierda: el plugin solo lee el canal izquierdo y construye su salida estéreo a partir de él; el derecho deja de oírse después de él. Clic derecho en este cable para elegir Izquierda, Derecha o Suma."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stéréo vers une entrée mono : les deux canaux ne sont PAS sommés. Le plugin ne lit que le gauche et construit sa sortie stéréo à partir de lui ; le droit n’est plus entendu après lui. Clic droit sur la carte, puis Canaux, pour le changer."
+            "value": "Stéréo vers une entrée mono, réglé sur Gauche : le plugin ne lit que le canal gauche et construit sa sortie stéréo à partir de lui ; le droit n’est plus entendu après lui. Clic droit sur ce câble pour choisir Gauche, Droite ou Somme."
+          }
+        }
+      }
+    },
+    "synoptic.wire.merge.right": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stereo into a mono input, set to Right: the plugin reads the right channel only, and its output replaces the pair. Right click this wire to choose Left, Right or Sum."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estéreo hacia una entrada mono, ajustado en Derecha: el plugin solo lee el canal derecho, y su salida reemplaza el par. Clic derecho en este cable para elegir Izquierda, Derecha o Suma."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stéréo vers une entrée mono, réglé sur Droite : le plugin ne lit que le canal droit, et sa sortie remplace la paire. Clic droit sur ce câble pour choisir Gauche, Droite ou Somme."
+          }
+        }
+      }
+    },
+    "synoptic.wire.merge.sum": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stereo into a mono input, set to Sum: the plugin is fed (L + R) / 2, half of each channel, so a centred sound keeps its level; its output replaces the pair. Right click this wire to choose Left, Right or Sum."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estéreo hacia una entrada mono, ajustado en Suma: el plugin recibe (I + D) / 2, la mitad de cada canal, así que un sonido centrado conserva su nivel; su salida reemplaza el par. Clic derecho en este cable para elegir Izquierda, Derecha o Suma."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stéréo vers une entrée mono, réglé sur Somme : le plugin reçoit (G + D) / 2, la moitié de chaque canal, donc un son centré garde son niveau ; sa sortie remplace la paire. Clic droit sur ce câble pour choisir Gauche, Droite ou Somme."
           }
         }
       }

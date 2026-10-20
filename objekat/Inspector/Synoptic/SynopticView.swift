@@ -81,6 +81,9 @@ struct SynopticView: View {
     private struct HoveredWire: Equatable {
         let text: String
         let anchor: CGPoint
+        /// A MERGING wire: the plugin it feeds, and what it is fed (the right-click menu).
+        var plugin: UUID? = nil
+        var fold: MonoFold? = nil
     }
 
     private struct PlusDrag: Equatable {
@@ -380,7 +383,24 @@ struct SynopticView: View {
         })
         .contentShape(Rectangle())
         .gesture(marqueeGesture(cards: d.placement.cards, blockers: marqueeBlockers(d)))
-        .contextMenu { fxLinkMenu(ids: Array(selection)) }
+        .contextMenu {
+            // On an orange merging wire, and only there: what the one-input plugin is fed.
+            if let w = hoveredWire, let id = w.plugin, let current = w.fold, let set = actions.onSetMonoFold {
+                monoFoldMenu(plugin: id, current: current, set: set)
+            } else {
+                fxLinkMenu(ids: Array(selection))
+            }
+        }
+    }
+
+    /// Left / Right / Sum, the current one ticked.
+    @ViewBuilder
+    private func monoFoldMenu(plugin id: UUID, current: MonoFold,
+                              set: @escaping (UUID, MonoFold) -> Void) -> some View {
+        ForEach(MonoFold.allCases, id: \.self) { f in
+            Toggle(Self.foldLabel(f),
+                   isOn: Binding(get: { current == f }, set: { _ in if current != f { set(id, f) } }))
+        }
     }
 
     // MARK: - The '+' (§B.2, §B.3)
@@ -882,11 +902,21 @@ struct SynopticView: View {
         }
     }
 
+    private static func foldLabel(_ f: MonoFold) -> String {
+        switch f {
+        case .left:  return L("synoptic.wire.fold.left")
+        case .right: return L("synoptic.wire.fold.right")
+        case .sum:   return L("synoptic.wire.fold.sum")
+        }
+    }
+
     /// The tooltip of an orange wire: what the engine really does there.
     private static func wireHelp(_ a: WireAdaptation) -> String {
         switch a {
-        case .merge(let dry): return L(dry ? "synoptic.wire.merge.dryRight" : "synoptic.wire.merge.leftOnly")
-        case .split:          return L("synoptic.wire.split")
+        case .merge(.left, let dry): return L(dry ? "synoptic.wire.merge.dryRight" : "synoptic.wire.merge.leftOnly")
+        case .merge(.right, _):      return L("synoptic.wire.merge.right")
+        case .merge(.sum, _):        return L("synoptic.wire.merge.sum")
+        case .split:                 return L("synoptic.wire.split")
         }
     }
 
@@ -899,7 +929,12 @@ struct SynopticView: View {
             let f = cable.from, t = cable.to
             let minY = min(f.y, t.y) - 2, maxY = max(f.y, t.y) + 2
             guard p.y >= minY, p.y <= maxY, abs(p.x - (f.x + t.x) / 2) <= 6 else { continue }
-            return HoveredWire(text: Self.wireHelp(a), anchor: CGPoint(x: t.x, y: (f.y + t.y) / 2))
+            var w = HoveredWire(text: Self.wireHelp(a), anchor: CGPoint(x: t.x, y: (f.y + t.y) / 2))
+            if case .merge(let fold, _) = a, case .into(let node)? = cable.carries {
+                w.plugin = widthFlow.mergePlugin[node]
+                w.fold = fold
+            }
+            return w
         }
         return nil
     }

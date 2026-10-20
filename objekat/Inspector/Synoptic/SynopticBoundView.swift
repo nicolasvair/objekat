@@ -88,7 +88,14 @@ struct SynopticBoundView: View {
         // The width the chain is fed with (an audio clip's file; a stereo pair for everything else), and what
         // becomes of it along the chain — derived from the polled bus counts, so it follows the chain.
         let sourceWidth = viewModel.sourceChannelWidth(hostID: objectID)
-        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, channels: channelCounts)
+        // Each plugin's stereo → mono fold (a merging wire says, and offers, which one).
+        let folds: [UUID: MonoFold] = {
+            var f = EditViewModel.monoFolds(viewModel.chainPlugins(objectID) ?? [])
+            if let obj { f.merge(EditViewModel.monoFolds(of: obj)) { a, _ in a } }
+            return f
+        }()
+        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, channels: channelCounts,
+                                                  folds: folds)
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -286,6 +293,7 @@ struct SynopticBoundView: View {
             sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
             channelMenu: { viewModel.channelMenuState(pluginID: $0, host: objectID) },
             onSetChannelVariant: { viewModel.setChannelVariantFromHand($1, pluginID: $0, host: objectID) },
+            onSetMonoFold: { viewModel.setMonoFold($1, pluginID: $0, host: objectID) },
             dragProvider: { dragProvider($0) },
             dropOutcome: { target, flags in
                 // A send card in the hand is answered by the send table (a plugin never is one).

@@ -72,6 +72,9 @@ struct SynopticActions {
     // beeps). @see EditViewModel.channelMenuState / setChannelVariant.
     var channelMenu: ((UUID) -> ChannelMenuState?)? = nil
     var onSetChannelVariant: ((_ plugin: UUID, _ variant: ChannelVariant) -> Void)? = nil
+    /// The right click on an orange MERGING wire (stereo into a one-input plugin): what the plugin is fed
+    /// (@see MonoFold). nil = no menu on the wire.
+    var onSetMonoFold: ((_ plugin: UUID, _ fold: MonoFold) -> Void)? = nil
 
     // Dragging a card (towards the timeline = move/copy/link; towards a '+' = reorder).
     var dragProvider: ((UUID) -> NSItemProvider)? = nil
