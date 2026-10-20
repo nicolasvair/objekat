@@ -75,15 +75,15 @@ struct SynopticView: View {
     @State private var hoveredPlus: SynopticStablePlus? = nil
     /// The drag in flight out of a '+': which one, and how far the hand has gone.
     @State private var plusDrag: PlusDrag? = nil
-    /// The orange wire under the pointer and what to say about it (@see hoveredAdaptation).
+    /// The wire under the pointer that has a channel menu of its own (@see hoveredChannelWire): read by the
+    /// canvas' right click. Nothing is written over it (request of 20 October 2026: the tooltip hid everything).
     @State private var hoveredWire: HoveredWire? = nil
 
-    private struct HoveredWire: Equatable {
-        let text: String
-        let anchor: CGPoint
-        /// A MERGING wire: the plugin it feeds, and what it is fed (the right-click menu).
-        var plugin: UUID? = nil
-        var fold: MonoFold? = nil
+    private enum HoveredWire: Equatable {
+        /// A MERGING wire into a one-input plugin: the plugin, and the fold it was given (nil = none chosen).
+        case fold(plugin: UUID, current: MonoFold?)
+        /// The wire that leaves a stereo audio file: its channel choice.
+        case source(current: SourceChannelChoice)
     }
 
     private struct PlusDrag: Equatable {
@@ -229,16 +229,7 @@ struct SynopticView: View {
                 SynopticPlusButton(active: plusDrag?.key == sk,
                                    onChanged: { plusMoved(sk, $0) },
                                    onEnded: { plusReleased(sk, $0) })
-                    .help(plusHelp(z))
-                    // On the TRUNK's own insert points (not a branch's): right click = take a send right here,
-                    // at the slot this '+' stands for (head ≡ input, tail ≡ pre-fader, between ≡ chain(i)).
-                    .contextMenu {
-                        if z.role == .trunk, actions.sendTargetSections != nil {
-                            Button(L("send.menu.sendHere")) {
-                                actions.presentSendMenu(slot: z.sendSlot ?? .chain(z.insertIndex))
-                            }
-                        }
-                    }
+                    .help(plusHelp)
                     .opacity(shown ? 1 : 0)
                     .allowsHitTesting(shown)
                     .position(z.center)
@@ -308,7 +299,7 @@ struct SynopticView: View {
                     SynopticPlusButton(active: plusDrag?.key == sk,
                                        onChanged: { plusMoved(sk, $0) },
                                        onEnded: { plusReleased(sk, $0) })
-                        .help(plusHelp(z))
+                        .help(plusHelp)
                         .opacity(shown ? 1 : 0)
                         .allowsHitTesting(shown)
                         .position(z.center)
@@ -351,16 +342,6 @@ struct SynopticView: View {
                     .allowsHitTesting(false)
             }
 
-            // The tooltip of an orange wire (a merge or a split), beside it. Deaf to the mouse: the wire runs
-            // under '+'s and drop zones, so a `.help` view laid on it would take their clicks and drops.
-            if let w = hoveredWire {
-                WireTooltipView(text: w.text)
-                    .position(x: min(w.anchor.x + 12 + WireTooltipView.width / 2,
-                                     max(WireTooltipView.width / 2, d.canvasSize.width - WireTooltipView.width / 2)),
-                              y: w.anchor.y)
-                    .allowsHitTesting(false)
-            }
-
             // The marquee under the hand. Drawn last and deaf to the mouse: it is a report of
             // what the gesture is taking, never a surface one can catch.
             if let r = marqueeRect {
@@ -378,28 +359,43 @@ struct SynopticView: View {
         .overlay(SynopticHoverTracker { point in
             let k = point.flatMap { d.plusTarget(at: $0) }.map { stablePlus($0, names: names) }
             if hoveredPlus != k { hoveredPlus = k }
-            let w = point.flatMap { hoveredAdaptation(at: $0, in: d) }
+            let w = point.flatMap { hoveredChannelWire(at: $0, in: d) }
             if hoveredWire != w { hoveredWire = w }
         })
         .contentShape(Rectangle())
         .gesture(marqueeGesture(cards: d.placement.cards, blockers: marqueeBlockers(d)))
         .contextMenu {
-            // On an orange merging wire, and only there: what the one-input plugin is fed.
-            if let w = hoveredWire, let id = w.plugin, let current = w.fold, let set = actions.onSetMonoFold {
-                monoFoldMenu(plugin: id, current: current, set: set)
-            } else {
+            // On a wire that carries a channel choice, and only there: what the one-input plugin is fed, or
+            // which channels of the audio file the chain gets.
+            switch hoveredWire {
+            case .fold(let id, let current)?:
+                if let set = actions.onSetMonoFold { monoFoldMenu(plugin: id, current: current, set: set) }
+            case .source(let current)?:
+                if let set = actions.onSetSourceChannels { sourceChannelMenu(current: current, set: set) }
+            case nil:
                 fxLinkMenu(ids: Array(selection))
             }
         }
     }
 
-    /// Left / Right / Sum, the current one ticked.
+    /// Left / Right / Sum, the current one ticked (none for a plugin that never had a choice: it reads the
+    /// left channel and lets the right one pass round it, which none of the three is).
     @ViewBuilder
-    private func monoFoldMenu(plugin id: UUID, current: MonoFold,
+    private func monoFoldMenu(plugin id: UUID, current: MonoFold?,
                               set: @escaping (UUID, MonoFold) -> Void) -> some View {
         ForEach(MonoFold.allCases, id: \.self) { f in
             Toggle(Self.foldLabel(f),
                    isOn: Binding(get: { current == f }, set: { _ in if current != f { set(id, f) } }))
+        }
+    }
+
+    /// Both / Left / Right / Sum for the audio file, the current one ticked.
+    @ViewBuilder
+    private func sourceChannelMenu(current: SourceChannelChoice,
+                                   set: @escaping (SourceChannelChoice) -> Void) -> some View {
+        ForEach([SourceChannelChoice.both, .left, .right, .sum], id: \.self) { c in
+            Toggle(Self.sourceChoiceLabel(c),
+                   isOn: Binding(get: { current == c }, set: { _ in if current != c { set(c) } }))
         }
     }
 
@@ -503,7 +499,6 @@ struct SynopticView: View {
     private var currentDiagram: SynopticLayout.Diagram {
         SynopticLayout.diagram(for: root,
                                midi: isMIDI, audioFile: audioFile != nil,
-                               audioStereo: audioFile?.channelMode != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                stems: stems != nil || groupRouting != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
@@ -514,27 +509,10 @@ struct SynopticView: View {
                                clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
     }
 
-    /// A '+''s tooltip: the click, then each direction that does something here, as the user's map says — one
-    /// line per direction, its far slot (when it does something here) on the same line ("…, further: …").
-    private func plusHelp(_ z: SynopticLayout.InsertZone) -> String {
-        let a = availability
-        let entries = SynopticPlusPresentation.helpEntries(allowed: z.allowedGestures, key: z.key, a, map: plusMap)
-        func describe(_ action: PlusAction) -> String {
-            PlusShortcutText.helpDescription(action, missing: action.pluginRef.map(a.missingPlugins.contains) ?? false)
-        }
-        var lines: [String] = []
-        for d in PlusDirection.allCases {
-            let near = entries.first { $0.slot == PlusSlot(d, .near) }?.action
-            let far = entries.first { $0.slot == PlusSlot(d, .far) }?.action
-            let label = PlusShortcutText.directionLabel(d)
-            switch (near, far) {
-            case let (n?, f?): lines.append(L("synoptic.plus.help.dragFar", label, describe(n), describe(f)))
-            case let (n?, nil): lines.append(L("synoptic.plus.help.drag", label, describe(n)))
-            case let (nil, f?): lines.append(L("synoptic.plus.help.dragFarOnly", label, describe(f)))
-            case (nil, nil): break
-            }
-        }
-        return ([L("synoptic.addPluginSeries")] + lines).joined(separator: "\n")
+    /// A '+''s tooltip: the click alone, and where the channels are chosen (request of 20 October 2026: the
+    /// list of every drag direction hid the chain). The drags themselves are unchanged.
+    private var plusHelp: String {
+        L("synoptic.plus.help.click") + "\n" + L("synoptic.plus.help.rightClick")
     }
 
     /// The post-fader '+''s tooltip: a click, or a drag in the direction (and at the level) the map gives the
@@ -858,14 +836,26 @@ struct SynopticView: View {
 
     // MARK: Canvas drawing (backing areas, cables, split/merge nodes)
 
-    /// Half the distance between the two wires of a stereo signal, and the length of a merge / split.
-    private static let wirePairHalfGap: CGFloat = 1.8
-    private static let wireJoinLength: CGFloat = 12
+    /// Half the distance between the two wires of a stereo signal (wide enough to read two wires, request of
+    /// 20 October 2026), and the size of the cross that ends a channel left out.
+    private static let wirePairHalfGap: CGFloat = 4.5
+    private static let wireCrossHalf: CGFloat = 2.6
 
-    /// The wires of one cable: one path per wire, mono = one, stereo = two side by side; a merge brings the
-    /// two together at the cable's END (the plugin's entry), a split parts the one there. Only a STRAIGHT
-    /// cable (connector / plain) merges or splits — the one that runs into a card always is.
-    private static func wirePaths(_ cable: SynopticLayout.Cable, look: WireLook?) -> [Path] {
+    /// What one cable is drawn with: one path per wire, the crosses ending a channel left out, the dots where
+    /// two channels are summed, and where its arrowheads go (one per wire arriving).
+    private struct WireStrokes {
+        var paths: [Path] = []
+        var crosses: [CGPoint] = []
+        var dots: [CGPoint] = []
+        var arrowXs: [CGFloat] = []
+    }
+
+    /// The wires of one cable: mono = one, stereo = two side by side. Only a STRAIGHT cable (connector / plain)
+    /// changes width along its length — the one that runs into a card or leaves the file always is: the two
+    /// wires of a SUM bend together and go on as one (a dot where they meet); a PICK takes one of them on as
+    /// one wire while the other stops short with a small cross; a SPLIT parts one wire into two. The change
+    /// sits in the middle third of the cable, so the end that reaches a card is already the new width.
+    private static func wireStrokes(_ cable: SynopticLayout.Cable, look: WireLook?) -> WireStrokes {
         let a = cable.from, b = cable.to
         let straight = cable.style == .connector || cable.style == .plain
         func line(_ pts: [CGPoint]) -> Path {
@@ -888,18 +878,47 @@ struct SynopticView: View {
             return p
         }
         let g = wirePairHalfGap
-        guard let look else { return [curve(dx: 0)] }
-        switch look.shape {
-        case .merge where straight:
-            let j = max(a.y, b.y - min(wireJoinLength, (b.y - a.y) * 0.6))
-            return [-g, g].map { dx in line([CGPoint(x: a.x + dx, y: a.y), CGPoint(x: b.x + dx, y: j), b]) }
-        case .split where straight:
-            let j = max(a.y, b.y - min(wireJoinLength, (b.y - a.y) * 0.6))
-            let stem = CGPoint(x: b.x, y: j)
-            return [-g, g].map { dx in line([a, stem, CGPoint(x: b.x + dx, y: b.y)]) }
-        default:
-            return look.count >= 2 ? [curve(dx: -g), curve(dx: g)] : [curve(dx: 0)]
+        var out = WireStrokes()
+        guard let look else {
+            out.paths = [curve(dx: 0)]; out.arrowXs = [b.x]
+            return out
         }
+        let len = b.y - a.y
+        let j0 = a.y + len * 0.3, j1 = a.y + len * 0.65    // the bend starts / the width has changed
+        let changes = straight && len > 8
+        switch look.shape {
+        case .sum where changes:
+            for dx in [-g, g] {
+                out.paths.append(line([CGPoint(x: a.x + dx, y: a.y), CGPoint(x: a.x + dx, y: j0), CGPoint(x: b.x, y: j1)]))
+            }
+            out.paths.append(line([CGPoint(x: b.x, y: j1), b]))
+            out.dots = [CGPoint(x: b.x, y: j1)]
+            out.arrowXs = [b.x]
+        case .pick(let keep) where changes:
+            let kept: CGFloat = keep == .left ? -g : g
+            out.paths.append(line([CGPoint(x: a.x + kept, y: a.y), CGPoint(x: a.x + kept, y: j0),
+                                   CGPoint(x: b.x, y: j1), b]))
+            let cut = CGPoint(x: a.x - kept, y: j0)
+            out.paths.append(line([CGPoint(x: a.x - kept, y: a.y), cut]))
+            out.crosses = [cut]
+            out.arrowXs = [b.x]
+        case .split where changes:
+            out.paths.append(line([a, CGPoint(x: a.x, y: j0)]))
+            for dx in [-g, g] {
+                out.paths.append(line([CGPoint(x: a.x, y: j0), CGPoint(x: b.x + dx, y: j1), CGPoint(x: b.x + dx, y: b.y)]))
+            }
+            out.dots = [CGPoint(x: a.x, y: j0)]
+            out.arrowXs = [b.x - g, b.x + g]
+        default:
+            if look.count >= 2 {
+                out.paths = [curve(dx: -g), curve(dx: g)]
+                out.arrowXs = [b.x - g, b.x + g]
+            } else {
+                out.paths = [curve(dx: 0)]
+                out.arrowXs = [b.x]
+            }
+        }
+        return out
     }
 
     private static func foldLabel(_ f: MonoFold) -> String {
@@ -910,31 +929,30 @@ struct SynopticView: View {
         }
     }
 
-    /// The tooltip of an orange wire: what the engine really does there.
-    private static func wireHelp(_ a: WireAdaptation) -> String {
-        switch a {
-        case .merge(.left, let dry): return L(dry ? "synoptic.wire.merge.dryRight" : "synoptic.wire.merge.leftOnly")
-        case .merge(.right, _):      return L("synoptic.wire.merge.right")
-        case .merge(.sum, _):        return L("synoptic.wire.merge.sum")
-        case .split:                 return L("synoptic.wire.split")
+    private static func sourceChoiceLabel(_ c: SourceChannelChoice) -> String {
+        switch c {
+        case .both:  return L("synoptic.wire.source.both")
+        case .left:  return L("synoptic.wire.fold.left")
+        case .right: return L("synoptic.wire.fold.right")
+        case .sum:   return L("synoptic.wire.fold.sum")
         }
     }
 
-    /// The orange wire under the pointer, if any (the ONE hover tracker reports the point): the cable's
-    /// segment within 6 pt of it. Only the cables that merge or split are looked at.
-    private func hoveredAdaptation(at p: CGPoint, in d: SynopticLayout.Diagram) -> HoveredWire? {
-        guard !widthFlow.adaptations.isEmpty else { return nil }
+    /// The wire under the pointer that has a channel menu (the ONE hover tracker reports the point): a wire
+    /// merging into a one-input plugin, or the one leaving a stereo audio file — within 9 pt of its axis (the
+    /// two wires of a pair are 9 pt apart).
+    private func hoveredChannelWire(at p: CGPoint, in d: SynopticLayout.Diagram) -> HoveredWire? {
+        guard !widthFlow.isEmpty else { return nil }
         for cable in d.placement.cables {
-            guard let look = widthFlow.look(cable.carries), let a = look.adaptation else { continue }
+            guard let look = widthFlow.look(cable.carries) else { continue }
             let f = cable.from, t = cable.to
             let minY = min(f.y, t.y) - 2, maxY = max(f.y, t.y) + 2
-            guard p.y >= minY, p.y <= maxY, abs(p.x - (f.x + t.x) / 2) <= 6 else { continue }
-            var w = HoveredWire(text: Self.wireHelp(a), anchor: CGPoint(x: t.x, y: (f.y + t.y) / 2))
-            if case .merge(let fold, _) = a, case .into(let node)? = cable.carries {
-                w.plugin = widthFlow.mergePlugin[node]
-                w.fold = fold
+            guard p.y >= minY, p.y <= maxY, abs(p.x - (f.x + t.x) / 2) <= 9 else { continue }
+            if let c = look.sourceChoice { return .source(current: c) }
+            if case .merge(let fold, _)? = look.adaptation, case .into(let node)? = cable.carries,
+               let plugin = widthFlow.mergePlugin[node] {
+                return .fold(plugin: plugin, current: fold)
             }
-            return w
         }
         return nil
     }
@@ -967,26 +985,39 @@ struct SynopticView: View {
 
         for cable in d.placement.cables {
             let isGhost = cable.style == .ghost
-            // Mono = one wire, stereo = two; a stereo signal into a mono input MERGES at the plugin's entry and
-            // a mono one into a stereo input SPLITS there, both in orange (their tooltip says what the engine
-            // does). A cable whose width is not known here keeps the single neutral line.
+            // Mono = one wire, stereo = two well apart; a sum JOINS the two into one, a channel left out STOPS
+            // short with a cross, a mono signal into a stereo input SPLITS — all three in orange. A cable whose
+            // width is not known here keeps the single neutral line.
             let look = isGhost ? nil : widthFlow.look(cable.carries)
-            let warns = look?.warns ?? false
-            let color = (warns ? Color.orange : Color.secondary).opacity(isGhost ? 0.4 : (warns ? 0.95 : 0.7))
+            let orange = look?.isOrange ?? false
+            let color = (orange ? Color.orange : Color.secondary).opacity(isGhost ? 0.4 : (orange ? 0.95 : 0.7))
             let width: CGFloat = isGhost ? 1 : (look == nil ? 1.5 : 1.2)
-            for path in Self.wirePaths(cable, look: look) {
-                ctx.stroke(path, with: .color(color),
-                           style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round,
-                                              dash: isGhost ? [3, 3] : []))
+            let strokes = Self.wireStrokes(cable, look: look)
+            let style = StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round, dash: isGhost ? [3, 3] : [])
+            for path in strokes.paths { ctx.stroke(path, with: .color(color), style: style) }
+            for c in strokes.crosses {
+                let h = Self.wireCrossHalf
+                var x = Path()
+                x.move(to: CGPoint(x: c.x - h, y: c.y - h)); x.addLine(to: CGPoint(x: c.x + h, y: c.y + h))
+                x.move(to: CGPoint(x: c.x + h, y: c.y - h)); x.addLine(to: CGPoint(x: c.x - h, y: c.y + h))
+                ctx.stroke(x, with: .color(color), style: StrokeStyle(lineWidth: 1.3, lineCap: .round))
+            }
+            for p in strokes.dots {
+                ctx.fill(Path(ellipseIn: CGRect(x: p.x - 2, y: p.y - 2, width: 4, height: 4)), with: .color(color))
             }
             if cable.style == .connector || cable.style == .fork {
-                // An arrowhead pointing DOWN (the vertical direction of the signal).
-                var head = Path()
-                head.move(to: CGPoint(x: cable.to.x - 4, y: cable.to.y - 6))
-                head.addLine(to: cable.to)
-                head.addLine(to: CGPoint(x: cable.to.x + 4, y: cable.to.y - 6))
-                ctx.stroke(head, with: .color(Color.secondary.opacity(0.7)),
-                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                // An arrowhead pointing DOWN (the vertical direction of the signal), one per wire arriving: two
+                // narrower ones for a stereo pair.
+                let pair = strokes.arrowXs.count > 1
+                let hw: CGFloat = pair ? 3 : 4, hh: CGFloat = pair ? 5 : 6
+                for x in strokes.arrowXs {
+                    var head = Path()
+                    head.move(to: CGPoint(x: x - hw, y: cable.to.y - hh))
+                    head.addLine(to: CGPoint(x: x, y: cable.to.y))
+                    head.addLine(to: CGPoint(x: x + hw, y: cable.to.y - hh))
+                    ctx.stroke(head, with: .color((orange ? Color.orange : Color.secondary).opacity(orange ? 0.95 : 0.7)),
+                               style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                }
             }
         }
 
@@ -1112,28 +1143,6 @@ private struct SynopticPlusGhostView: View {
         case .pluginMissing(let name): return L("synoptic.plus.ghost.pluginMissing", name)
         case .notHere:                 return L("synoptic.plus.ghost.notHere")
         }
-    }
-}
-
-// MARK: - The tooltip of an orange wire
-
-/// What a merging or splitting wire means, written beside it while the pointer is on it. A view of its own
-/// (not `.help`): the wire lies under '+'s and drop zones, which must keep their clicks and drops.
-private struct WireTooltipView: View {
-    static let width: CGFloat = 240
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.primary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .frame(width: Self.width, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .windowBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.orange.opacity(0.8), lineWidth: 1))
-            .shadow(color: .black.opacity(0.25), radius: 4, y: 1)
     }
 }
 

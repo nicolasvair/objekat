@@ -94,8 +94,14 @@ struct SynopticBoundView: View {
             if let obj { f.merge(EditViewModel.monoFolds(of: obj)) { a, _ in a } }
             return f
         }()
-        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, channels: channelCounts,
-                                                  folds: folds)
+        // The audio file's own channel choice, read on the wire that leaves it (right click = LR / L / R / Sum):
+        // a stereo audio clip only (@see canChooseChannelMode).
+        let sourceChoice: SourceChannelChoice? = obj.flatMap {
+            ($0.isClip && !($0.isConsolidateInstance) && viewModel.canChooseChannelMode($0))
+                ? Self.sourceChoice($0.channelMode) : nil
+        }
+        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, sourceChoice: sourceChoice,
+                                                  channels: channelCounts, folds: folds)
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -345,7 +351,7 @@ struct SynopticBoundView: View {
                 let loop = !(obj?.loopEnabled ?? false)
                 viewModel.edit { viewModel.updateLoopEnabled(id: objectID, enabled: loop) }
             },
-            onSetChannelMode: { viewModel.setChannelMode(id: objectID, mode: $0) },
+            onSetSourceChannels: { viewModel.setChannelMode(id: objectID, mode: Self.channelMode($0)) },
             onBeginSpeedEdit: { viewModel.pushUndo() },
             // Touching a control: it names the 'future automation' row, without changing anything. An
             // aux lists the sends it RECEIVES, so the send row belongs to the SENDER — the same
@@ -974,4 +980,25 @@ struct SynopticSheet: View {
 
 #Preview {
     SynopticSheet(title: "Demo")
+}
+
+extension SynopticBoundView {
+    /// The audio file's `ChannelMode` as the signal view's wire reads it, and back.
+    static func sourceChoice(_ mode: ChannelMode) -> SourceChannelChoice {
+        switch mode {
+        case .lr: return .both
+        case .l:  return .left
+        case .r:  return .right
+        case .c:  return .sum
+        }
+    }
+
+    static func channelMode(_ choice: SourceChannelChoice) -> ChannelMode {
+        switch choice {
+        case .both:  return .lr
+        case .left:  return .l
+        case .right: return .r
+        case .sum:   return .c
+        }
+    }
 }

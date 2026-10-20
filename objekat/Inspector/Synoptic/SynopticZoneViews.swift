@@ -372,32 +372,6 @@ struct AudioFileZoneView: View {
                 titleRow
 
                 if !isFolded {
-                    // LR / L / R / C — stereo files only; the zone is taller by one row then (@see
-                    // SynopticLayout.audioZoneStereoExtraH).
-                    if let current = file.channelMode {
-                        HStack(spacing: 4) {
-                            Text(L("inspector.channelMode.title"))
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1).fixedSize()
-                            ForEach(ChannelMode.allCases, id: \.self) { mode in
-                                Button { actions.onSetChannelMode?(mode) } label: {
-                                    Text(channelModeLabel(mode))
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(current == mode ? Color.white : Color.secondary)
-                                        .padding(.horizontal, 6).frame(height: 16)
-                                        .background(RoundedRectangle(cornerRadius: 4)
-                                            .fill(current == mode ? Color.accentColor : Color.secondary.opacity(0.18)))
-                                        .overlay(RoundedRectangle(cornerRadius: 4)
-                                            .strokeBorder(Color.secondary.opacity(0.35)))
-                                }
-                                .buttonStyle(.plain)
-                                .help(channelModeHelp(mode))
-                            }
-                            Spacer(minLength: 0)
-                        }
-                    }
-
                     optionsRow
                 }
             }
@@ -494,9 +468,6 @@ struct AudioFileZoneView: View {
         case .tempo(let bpm):
             text = SynopticZonePills.tempoText(targetBPM: bpm)
             help = L("synoptic.audioFile.pill.tempo", TempoText.display(TempoText.rounded(bpm)))
-        case .channel(let mode):
-            text = channelModeLabel(mode)
-            help = channelModeHelp(mode)
         }
         return Text(verbatim: text)
             .font(.system(size: 9, weight: .medium)).monospacedDigit()
@@ -589,25 +560,6 @@ struct AudioFileZoneView: View {
         // An ARA source needs speed 1: the speed / semitone / bpm boxes only show it then.
         .allowsHitTesting(file.ara == nil)
         .opacity(file.ara == nil ? 1 : 0.45)
-    }
-
-    // One literal key per case, on purpose: `orphans` reads the code for key-shaped strings.
-    private func channelModeLabel(_ mode: ChannelMode) -> String {
-        switch mode {
-        case .lr: return L("inspector.channelMode.lr")
-        case .l:  return L("inspector.channelMode.l")
-        case .r:  return L("inspector.channelMode.r")
-        case .c:  return L("inspector.channelMode.c")
-        }
-    }
-
-    private func channelModeHelp(_ mode: ChannelMode) -> String {
-        switch mode {
-        case .lr: return L("inspector.channelMode.lr.help")
-        case .l:  return L("inspector.channelMode.l.help")
-        case .r:  return L("inspector.channelMode.r.help")
-        case .c:  return L("inspector.channelMode.c.help")
-        }
     }
 
     private func syncBaseText() {

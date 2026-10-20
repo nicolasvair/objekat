@@ -55,7 +55,7 @@ struct Main {
                     sends: [SynopticSend] = [], expanded: Bool = true, frame: Bool = true,
                     mix: Bool = true, infinite: Bool = false,
                     received: Int = 0) -> SynopticLayout.Diagram {
-            SynopticLayout.diagram(for: root, midi: midi, audioFile: audio && !midi, audioStereo: true,
+            SynopticLayout.diagram(for: root, midi: midi, audioFile: audio && !midi,
                                    araCardWidth: ara ? SynopticLayout.araCardWidth(name: "Melodyne") : nil,
                                    mix: mix, stems: true, sends: sends, sendsEnabled: true,
                                    receivedRows: received, infiniteOption: infinite,
@@ -174,8 +174,8 @@ struct Main {
         // MARK: the audio zone folds to one row
         let unf = object(trunk, expanded: true), fol = object(trunk, expanded: false)
         check(near(fol.audioZone!.height, SynopticLayout.audioZoneFoldedH) && fol.audioZoneFolded, "folded: one row")
-        check(near(unf.audioZone!.height, SynopticLayout.audioZoneH + SynopticLayout.audioZoneStereoExtraH) && !unf.audioZoneFolded,
-              "unfolded: the zone and its stereo row")
+        check(near(unf.audioZone!.height, SynopticLayout.audioZoneH) && !unf.audioZoneFolded,
+              "unfolded: the zone (no stereo row: the channels are chosen on the wire)")
         check(near(unf.placement.cards[0].frame.minY - fol.placement.cards[0].frame.minY,
                    unf.audioZone!.height - fol.audioZone!.height), "folding moves the chain up by the difference")
         check(object(trunk, midi: true, expanded: false).audioZone == nil, "a MIDI clip has no audio zone to fold")

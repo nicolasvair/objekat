@@ -820,9 +820,6 @@ enum SynopticLayout {
     /// The 'audio file' zone FOLDED: one row — title, loop, reverse, chevron, and the pill of a hidden
     /// setting that is not neutral (§B.7).
     static let audioZoneFoldedH: CGFloat = 30
-    /// One more row (a 16 pt pill plus the zone's 7 pt spacing) when the file is stereo: the
-    /// LR / L / R / C selector (unfolded only).
-    static let audioZoneStereoExtraH: CGFloat = 23
     /// The ARA source (Melodyne) is a CARD, the first one out of the 'audio file' frame: this is the wire
     /// between the frame's foot and the card's top (room for the "ARA" tag hanging above the card's corner).
     static let araCardGap: CGFloat = 30
@@ -930,7 +927,7 @@ enum SynopticLayout {
     ///     stem / the Main.
     ///   - clipOptionsExpanded: the audio zone is unfolded (@see SynopticUIState.clipOptionsExpanded).
     static func diagram(for root: SynopticNode,
-                        midi: Bool = false, audioFile: Bool = false, audioStereo: Bool = false, araCardWidth: CGFloat? = nil,
+                        midi: Bool = false, audioFile: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         stems: Bool = false,
                         sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
@@ -941,7 +938,7 @@ enum SynopticLayout {
         // option and/or the list of sends received.
         let busHead = !midi && !audioFile && (infiniteOption || receivedRows > 0)
         let busHeadH = pillH + (receivedRows > 0 ? CGFloat(receivedRows) * sendRowH + zonePadV : 0)
-        let audioH = clipOptionsExpanded ? audioZoneH + (audioStereo ? audioZoneStereoExtraH : 0) : audioZoneFoldedH
+        let audioH = clipOptionsExpanded ? audioZoneH : audioZoneFoldedH
         let leadW = midi ? midiZoneW : (audioFile ? audioZoneW : (busHead ? sendsZoneW : sourceW))
         let leadH = midi ? midiZoneH : (audioFile ? audioH : (busHead ? busHeadH : pillH))
         let clipW = clipZoneW
@@ -998,10 +995,11 @@ enum SynopticLayout {
             Cable(from: CGPoint(x: centerX, y: headBottomY), to: placement.entry, style: .plain,
                   carries: .source), at: 0)
         if let r = araCard {
-            // frame → card (the arrow arrives at the card, as it does at any card)
+            // frame → card (the arrow arrives at the card, as it does at any card). The ARA source reads the
+            // FILE: the channel choice is made on the wire after it, at the chain's head.
             placement.cables.insert(
                 Cable(from: CGPoint(x: centerX, y: leadRect.maxY),
-                      to: CGPoint(x: centerX, y: r.minY), style: .connector, carries: .source), at: 0)
+                      to: CGPoint(x: centerX, y: r.minY), style: .connector, carries: .file), at: 0)
         }
 
         // trunk → [clip zone] → [post-fader '+'] → foot

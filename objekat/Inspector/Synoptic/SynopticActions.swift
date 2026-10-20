@@ -108,7 +108,9 @@ struct SynopticActions {
     var onSetBaseBPM: ((Double?) -> Void)? = nil       // the base bpm (nil = clear)
     var onToggleReverse: (() -> Void)? = nil
     var onToggleLoop: (() -> Void)? = nil
-    var onSetChannelMode: ((ChannelMode) -> Void)? = nil   // stereo files only (LR / L / R / C)
+    /// The right click on the wire that leaves a stereo audio file: which of its channels the chain gets
+    /// (both, left, right, their sum — the file's `ChannelMode`). nil = no menu on that wire.
+    var onSetSourceChannels: ((SourceChannelChoice) -> Void)? = nil
     var onBeginSpeedEdit: (() -> Void)? = nil          // push an undo point before a drag
 
     /// A parameter control has just been TOUCHED — clicked, taken in a drag, or received from the
@@ -281,9 +283,9 @@ struct SynopticAudioFile: Equatable {
     var isReversed: Bool
     /// True ⇒ the content repeats for as long as the object's window exceeds its source range.
     var isLooping: Bool
-    /// Non-nil ⇒ the source is a STEREO file (exactly two channels) and the zone carries the
-    /// LR / L / R / C selector, holding the current choice. nil for a mono file (or one that cannot
-    /// be read): no selector, and the zone keeps its original height.
+    /// Non-nil ⇒ the source is a STEREO file (exactly two channels) whose channels can be chosen: the
+    /// current choice, chosen by a right click on the wire that leaves the file (request of 20 October 2026:
+    /// the zone's LR / L / R / C selector is gone). nil for a mono file (or one that cannot be read).
     var channelMode: ChannelMode? = nil
     /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
     /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
@@ -297,8 +299,6 @@ enum SynopticHiddenSetting: Equatable {
     case pitch(semitones: Double, ratio: Double)
     /// A base tempo is set and the speed is not 1: the object is stretched to `targetBPM` (`→ 120`).
     case tempo(targetBPM: Double)
-    /// A stereo file played other than LR (`L`, `R`, `C`).
-    case channel(ChannelMode)
 }
 
 extension SynopticAudioFile {
@@ -313,7 +313,6 @@ extension SynopticAudioFile {
                 out.append(.pitch(semitones: 12 * log2(max(1e-6, ratio)), ratio: ratio))
             }
         }
-        if let mode = channelMode, mode != .lr { out.append(.channel(mode)) }
         return out
     }
 }
