@@ -87,23 +87,40 @@ extension CommandRegistry {
         }
 
         register("tool.fx_strip",
-                 summary: "What the FX tool's strip shows for an object (hovering it under F): "
-                        + "`entries` in the order drawn, left to right — {id, kind: instrument | "
-                        + "plugin | gain_stage | rack, name, enabled, toggle (has a power button), "
-                        + "editor (a double click opens a window), bin (index into `bins`, or null), "
-                        + "branches (a rack)} — `bins` [{id, name, detached}] (the FX link blocks, "
-                        + "framed), and the strip's `size` {w, h} in points. A read: the strip's "
-                        + "power button is `plugin.toggle` / the instrument's toggle, its double "
+                 summary: "What the FX tool's mini signal view shows for an object (hovering it under "
+                        + "F, drawn INSIDE its block): `entries` — {id, kind: instrument | plugin | "
+                        + "gain_stage | rack, name, enabled, toggle (has a power button), editor (a "
+                        + "double click opens a window), bin (index into `bins`, or null), branches "
+                        + "(a rack), rack (for a plugin inside a parallel block: the index of its "
+                        + "rack's entry, else null), branch (its 0-based branch, else null)} in chain "
+                        + "order, a rack's plugins right after it; `tree` — the chain as nested "
+                        + "lists: an entry index, or {rack: index, branches: [[…], …]}; `bins` [{id, "
+                        + "name, detached}] (the FX link blocks, framed); `size` {w, h}: the smallest "
+                        + "room (points) the labeled reading needs. With `w` and `h`: `layout` — how "
+                        + "it is drawn in a block area of that size: {detail: labeled | dots | "
+                        + "folded_dots | count | empty | none, boxes: [{entry, x, y, w, h, power "
+                        + "(has a power zone), folded}], wires (count), bins (frame count)}. A read: "
+                        + "the power button is `plugin.toggle` / the instrument's toggle, the double "
                         + "click the editor (no window without an interface).",
-                 params: [ParamSpec("id", "uuid", "The object.")]) { p in
+                 params: [ParamSpec("id", "uuid", "The object."),
+                          ParamSpec("w", "number", required: false, "The area's width, points (with `h`)."),
+                          ParamSpec("h", "number", required: false, "The area's height, points (with `w`).")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
             guard vm.find(id: id) != nil else {
                 throw CommandError(code: .not_found, message: "no object \(id.uuidString)")
             }
             let m = vm.fxStripModel(objectID: id)
-            let size = FXStripLayout.layout(m).size
-            return .object([
+            let size = FXStripLayout.labeledSize(m)
+            func node(_ n: FXStripNode) -> JSONValue {
+                switch n {
+                case .leaf(let i): return .number(Double(i))
+                case .rack(let c, let branches):
+                    return .object(["rack": .number(Double(c)),
+                                    "branches": .array(branches.map { .array($0.map(node)) })])
+                }
+            }
+            var out: [String: JSONValue] = [
                 "entries": .array(m.entries.map { e in
                     var kind = "plugin"
                     var branches = JSONValue.null
@@ -118,14 +135,41 @@ extension CommandRegistry {
                         "enabled": .bool(e.isEnabled), "toggle": .bool(e.hasToggle),
                         "editor": .bool(e.opensEditor),
                         "bin": e.bin.map { JSONValue.int($0) } ?? .null, "branches": branches,
+                        "rack": e.rack.map { JSONValue.int($0) } ?? .null,
+                        "branch": e.branch.map { JSONValue.int($0) } ?? .null,
                     ])
                 }),
+                "tree": .array(m.root.map(node)),
                 "bins": .array(m.bins.map { b in
                     .object(["id": .string(b.id.uuidString), "name": .string(b.name),
                              "detached": .bool(b.isDetached)])
                 }),
                 "size": .object(["w": .number(Double(size.width)), "h": .number(Double(size.height))]),
-            ])
+            ]
+            if let w = try p.optionalDouble("w"), let h = try p.optionalDouble("h") {
+                let lay = FXStripLayout.layout(m, in: CGRect(x: 0, y: 0, width: w, height: h))
+                let detail: String
+                switch lay.detail {
+                case .labeled: detail = "labeled"
+                case .dots: detail = "dots"
+                case .foldedDots: detail = "folded_dots"
+                case .count: detail = "count"
+                case .empty: detail = "empty"
+                case .none: detail = "none"
+                }
+                out["layout"] = .object([
+                    "detail": .string(detail),
+                    "boxes": .array(lay.boxes.map { b in
+                        .object(["entry": .int(b.entry),
+                                 "x": .number(Double(b.rect.minX)), "y": .number(Double(b.rect.minY)),
+                                 "w": .number(Double(b.rect.width)), "h": .number(Double(b.rect.height)),
+                                 "power": .bool(b.power != nil), "folded": .bool(b.folded)])
+                    }),
+                    "wires": .int(lay.wires.count),
+                    "bins": .int(lay.bins.count),
+                ])
+            }
+            return .object(out)
         }
     }
 }

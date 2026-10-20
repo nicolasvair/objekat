@@ -395,7 +395,7 @@ struct TimelineView: View {
     /// pointer moving from zone to zone re-evaluates no part of this body. @see TimelineHoverStore
     /// (internal: a double click on a fade replays the hover from TimelineView+TapHandler)
     @State var hoverStore = TimelineHoverStore()
-    /// The FX tool's strip (which object, where): read by the strip alone (@see FXStripOverlayView).
+    /// The FX tool's hover (which object, where, which box): read by its overlay alone (@see FXStripOverlayView).
     @State var fxStripStore = FXStripHoverStore()
     var laneStep: Double { blockHeight + laneGap }
 
@@ -1058,12 +1058,12 @@ struct TimelineView: View {
                     .allowsHitTesting(false)
                     .zIndex(2.95)
 
-                // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
-                // The FX tool's strip over the hovered object (@see FXStripLayout). It owns its
-                // clicks: the canvas steps aside over it (@see FXStripHoverStore.contains).
+                // The FX tool's mini signal view, inside the hovered block (@see FXStripLayout).
+                // Pure drawing: the canvas resolves its clicks (@see handleFXTap).
                 FXStripOverlayView(viewModel: viewModel, store: fxStripStore)
                     .zIndex(2.95)
 
+                // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
                 if let loc = viewModel.pluginLinkDropLocation {
                     // ABOVE the carried card, not beside the cursor: the drag image is drawn by the
                     // system over every window, so a badge under it is simply hidden — at +18/-18 it
@@ -1474,7 +1474,7 @@ struct TimelineView: View {
         case .toolPan:
             TimelineCursorKeeper.set(NSCursor.resizeUpDown)   // pan is set vertically (see handlePanDrag)
         case .toolFX:
-            TimelineCursorKeeper.set(NSCursor.arrow)          // the strip's boxes are buttons
+            TimelineCursorKeeper.set(NSCursor.arrow)          // the mini signal view's boxes are buttons
         case .toolAux:
             if let hit = sendRowHit(at: pos), (pos.y - hit.by) >= blockHeight - sendToggleZoneHeight - 4 {
                 TimelineCursorKeeper.set(NSCursor.pointingHand)
@@ -1683,34 +1683,53 @@ struct TimelineView: View {
         if toolHoveredID != newID { toolHoveredID = newID }
     }
 
-    /// The FX tool's hover: the strip stays up while the pointer is on its block or on the strip
-    /// itself (@see FXStripLayout.keeps), and is laid anew on the block that comes under the pointer
-    /// otherwise — centred where the pointer came onto it. Only the store is written: the strip
-    /// redraws, the timeline does not.
+    /// The FX tool's hover: the hovered block shows its mini signal view inside itself
+    /// (@see FXStripLayout), and the box under the pointer says what it is through the help line.
+    /// Only the store is written: the overlay redraws, the timeline does not.
     private func updateFXStripHover(at pos: CGPoint) {
-        let visible = CGRect(x: scrollOffsetX, y: scrollOffsetY + rulerHeight,
-                             width: viewportWidth, height: max(0, viewportHeight - rulerHeight))
-        func place(_ id: UUID, block: CGRect, anchorX: CGFloat) -> FXStripHoverStore.Shown {
-            let size = FXStripLayout.layout(viewModel.fxStripModel(objectID: id)).size
-            return FXStripHoverStore.Shown(
-                objectID: id, block: block, anchorX: anchorX,
-                frame: FXStripLayout.placement(size: size, block: block, anchorX: anchorX, visible: visible))
-        }
-        if let s = fxStripStore.shown, let e = viewModel.laneEntry(forID: s.objectID) {
-            let block = clipRect(for: e)
-            if FXStripLayout.keeps(pos, overlay: s.frame, block: block) {
-                let again = place(s.objectID, block: block, anchorX: s.anchorX)
-                // Laid again only if the block moved or the strip changed size: never under the
-                // hand for nothing.
-                if again.block != s.block || again.frame.size != s.frame.size { fxStripStore.set(again) }
-                return
-            }
-        }
         guard !rulerBandContains(pos), !markerBandContains(pos),
               !openPianoRollBandContains(pos), !openAutomationBandContains(pos),
               let e = blockEntry(at: pos)
         else { fxStripStore.set(nil); return }
-        fxStripStore.set(place(e.item.id, block: clipRect(for: e), anchorX: pos.x))
+        let (area, model, lay) = fxStripPlacement(for: e)
+        let hit = FXStripLayout.hit(pos, in: lay)
+        fxStripStore.set(FXStripHoverStore.Shown(objectID: e.item.id, area: area, hover: hit))
+        hoverStore.setHelpText(fxStripHelp(model: model, layout: lay, hit: hit))
+    }
+
+    /// Where an object's mini signal view is laid (content coordinates): its block's VISIBLE span,
+    /// under the name line when the block is tall enough to keep it, and its layout there. The
+    /// hover and the click read this one function, so what is drawn is what answers the hand.
+    func fxStripPlacement(for e: LaneEntry) -> (area: CGRect, model: FXStripModel, layout: FXStripLayout.Result) {
+        let block = clipRect(for: e)
+        let minX = max(block.minX, scrollOffsetX), maxX = min(block.maxX, scrollOffsetX + viewportWidth)
+        let header: CGFloat = block.height >= 40 ? 17 : (block.height >= 28 ? 14 : 0)
+        let area = CGRect(x: minX + 1, y: block.minY + header,
+                          width: max(0, maxX - minX - 2), height: max(0, block.height - header - 1))
+        let model = viewModel.fxStripModel(objectID: e.item.id)
+        return (area, model, FXStripLayout.layout(model, in: area))
+    }
+
+    /// The help line over the mini signal view: the box's name and what a click does there.
+    private func fxStripHelp(model: FXStripModel, layout: FXStripLayout.Result,
+                             hit: FXStripLayout.Hit?) -> String? {
+        if layout.detail == .count {
+            return model.entries.filter { !$0.isRack }.map(\.name).joined(separator: " › ")
+        }
+        guard let hit, hit.entry < model.entries.count else { return nil }
+        let e = model.entries[hit.entry]
+        var lines: [String] = []
+        if let b = e.bin, b < model.bins.count { lines.append("\(model.bins[b].name) ›") }
+        switch e.kind {
+        case .rack:
+            lines.append(([L("fx.strip.rack.help")] + e.detail).joined(separator: "\n"))
+        case .gainStage:
+            lines.append(e.name); lines.append(L("fx.strip.gainStage.help"))
+        case .instrument, .plugin:
+            lines.append(e.name)
+            lines.append(hit.onPower ? L("synoptic.bypass") : L("fx.strip.openEditor.help"))
+        }
+        return lines.joined(separator: " ")
     }
 
     // MARK: - Unified blocks

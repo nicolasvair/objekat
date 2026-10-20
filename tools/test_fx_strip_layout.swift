@@ -1,6 +1,7 @@
-// The FX tool's strip, its geometry alone (objekat/Timeline/FXStripLayout.swift): the boxes in one
-// row in chain order, a bin's frame around its boxes, where the strip goes against its block, and
-// the rule that keeps it up while the pointer travels from the block onto it.
+// The FX tool's mini signal view, its geometry alone (objekat/Timeline/FXStripLayout.swift): boxes
+// left to right in chain order joined by wires, a parallel block's branches stacked, an FX link's
+// frame, the degradation with the room (labeled → dots → folded dots → "n FX" → nothing), and the
+// hit-test the canvas reads (the power zone, the box).
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/Timeline/FXStripLayout.swift test_fx_strip_layout.swift \
@@ -19,122 +20,124 @@ func check(_ label: String, _ ok: Bool, _ detail: String = "") {
     if ok { passed += 1; print("ok    \(label)") } else { failed.append(label); print("FAIL  \(label)  \(detail)") }
 }
 
-func entry(_ kind: FXStripEntry.Kind = .plugin, bin: Int? = nil, on: Bool = true) -> FXStripEntry {
-    FXStripEntry(id: UUID(), kind: kind, name: "x", isEnabled: on, bin: bin)
+func entry(_ kind: FXStripEntry.Kind = .plugin, bin: Int? = nil, on: Bool = true,
+           rack: Int? = nil, branch: Int? = nil) -> FXStripEntry {
+    FXStripEntry(id: UUID(), kind: kind, name: "Plugin name", isEnabled: on, bin: bin,
+                 rack: rack, branch: branch)
 }
 
-func testRow() {
-    let m = FXStripModel(entries: [entry(.instrument), entry(), entry(.gainStage), entry(.rack(branches: 2))])
-    let r = L.layout(m)
-    check("one box per entry", r.boxes.count == 4)
-    check("boxes in chain order, left to right",
-          zip(r.boxes, r.boxes.dropFirst()).allSatisfy { $0.rect.maxX < $1.rect.minX && $0.entry < $1.entry })
-    check("one row: every box at the same y", Set(r.boxes.map { $0.rect.minY }).count == 1)
-    check("the gap between two boxes", r.boxes[1].rect.minX - r.boxes[0].rect.maxX == L.gap)
-    check("no bin = no frame and no header band", r.bins.isEmpty && r.boxes[0].rect.minY == L.padding)
-    check("the size wraps the boxes with the padding",
-          r.size.width == r.boxes.last!.rect.maxX + L.padding
-          && r.size.height == L.boxHeight + 2 * L.padding, "\(r.size)")
-    check("toggle on instrument and plugin only",
-          m.entries.map { $0.hasToggle } == [true, true, false, false])
-    check("editor on instrument and plugin only",
-          m.entries.map { $0.opensEditor } == [true, true, false, false])
+/// instrument, plugin, gain stage — a plain series.
+func plainModel() -> FXStripModel {
+    FXStripModel(entries: [entry(.instrument), entry(), entry(.gainStage)], bins: [],
+                 root: [.leaf(0), .leaf(1), .leaf(2)])
 }
 
-func testBins() {
-    // trunk, bin 0 (two boxes), bin 1 (one box), trunk
-    let m = FXStripModel(entries: [entry(), entry(bin: 0), entry(bin: 0), entry(bin: 1), entry()],
-                         bins: [FXStripBin(id: UUID(), name: "A", isDetached: false),
-                                FXStripBin(id: UUID(), name: "B", isDetached: true)])
-    let r = L.layout(m)
-    check("one frame per run of a bin", r.bins.map { $0.bin } == [0, 1])
-    let f0 = r.bins[0].rect, f1 = r.bins[1].rect
-    check("a frame holds its boxes with binPad",
-          f0.minX == r.boxes[1].rect.minX - L.binPad && f0.maxX == r.boxes[2].rect.maxX + L.binPad,
-          "\(f0) \(r.boxes[1].rect) \(r.boxes[2].rect)")
-    check("a frame holds its boxes vertically, with a header band above",
-          f0.minY == L.padding && f0.maxY == r.boxes[1].rect.maxY + L.binPad
-          && r.boxes[1].rect.minY - f0.minY == L.binHeader + L.binPad)
-    check("frames do not touch each other nor the trunk boxes",
-          r.boxes[0].rect.maxX < f0.minX && f0.maxX < f1.minX && f1.maxX < r.boxes[4].rect.minX)
-    check("frame to box gap = gap", f0.minX - r.boxes[0].rect.maxX == L.gap
-          && r.boxes[4].rect.minX - f1.maxX == L.gap)
-    check("with a bin every box shares the header band's y", Set(r.boxes.map { $0.rect.minY }).count == 1)
-    check("the strip wraps the frames",
-          r.size.width == r.boxes[4].rect.maxX + L.padding && r.size.height == f0.maxY + L.padding, "\(r.size)")
-    let only = L.layout(FXStripModel(entries: [entry(bin: 0)], bins: m.bins))
-    check("a strip that is one bin starts its frame at the padding",
-          only.bins.first?.rect.minX == L.padding && only.size.width == only.bins[0].rect.maxX + L.padding)
-    // Two adjacent different bins.
-    let two = L.layout(FXStripModel(entries: [entry(bin: 0), entry(bin: 1)], bins: m.bins))
-    check("two adjacent bins = two frames, a gap apart",
-          two.bins.count == 2 && two.bins[1].rect.minX - two.bins[0].rect.maxX == L.gap)
+/// plugin, rack[ [A, B], [C], [] ], plugin
+func rackModel() -> FXStripModel {
+    var e: [FXStripEntry] = [entry()]
+    e.append(entry(.rack(branches: 3)))                    // 1
+    e.append(entry(rack: 1, branch: 0))                    // 2 A
+    e.append(entry(rack: 1, branch: 0))                    // 3 B
+    e.append(entry(rack: 1, branch: 1))                    // 4 C
+    e.append(entry())                                      // 5
+    return FXStripModel(entries: e, bins: [],
+                        root: [.leaf(0), .rack(1, [[.leaf(2), .leaf(3)], [.leaf(4)], []]), .leaf(5)])
 }
 
-func testEmpty() {
-    let r = L.layout(FXStripModel())
-    check("empty strip: no box, one box's room", r.boxes.isEmpty && r.size.width == L.emptyWidth + 2 * L.padding)
+func inside(_ r: CGRect, _ area: CGRect) -> Bool { area.insetBy(dx: -0.5, dy: -0.5).contains(r) }
+
+func testPlain() {
+    let area = CGRect(x: 100, y: 50, width: 600, height: 60)
+    let r = L.layout(plainModel(), in: area)
+    check("plain: labeled with room", r.detail == .labeled, "\(r.detail)")
+    check("plain: one box per entry, in chain order",
+          r.boxes.map(\.entry) == [0, 1, 2] && zip(r.boxes, r.boxes.dropFirst()).allSatisfy { $0.rect.maxX < $1.rect.minX })
+    check("plain: all inside the area", r.boxes.allSatisfy { inside($0.rect, area) } && inside(r.bounds, area))
+    check("plain: one row (same centre)", Set(r.boxes.map { $0.rect.midY }).count == 1)
+    check("plain: power on instrument and plugin, none on the gain stage",
+          r.boxes[0].power != nil && r.boxes[1].power != nil && r.boxes[2].power == nil)
+    check("plain: a wire before each box and one after", r.wires.count == 4, "\(r.wires.count)")
+    check("plain: boxes capped at the max width", r.boxes.allSatisfy { $0.rect.width <= L.labeledMetrics.maxBox })
+    check("plain: centred", abs(r.bounds.midX - area.midX) <= 1)
+    // Hit-test.
+    let b1 = r.boxes[1]
+    let onPower = L.hit(CGPoint(x: b1.power!.midX, y: b1.rect.midY), in: r)
+    check("hit: power zone", onPower == L.Hit(entry: 1, onPower: true), "\(String(describing: onPower))")
+    let onBody = L.hit(CGPoint(x: b1.rect.maxX - 2, y: b1.rect.midY), in: r)
+    check("hit: box body", onBody == L.Hit(entry: 1, onPower: false))
+    check("hit: between boxes, nothing",
+          L.hit(CGPoint(x: (r.boxes[0].rect.maxX + r.boxes[1].rect.minX) / 2, y: b1.rect.midY), in: r) == nil)
 }
 
-func testPlacement() {
-    let visible = CGRect(x: 0, y: 30, width: 1000, height: 500)
-    let size = CGSize(width: 200, height: 34)
-    let block = CGRect(x: 100, y: 200, width: 600, height: 60)
-    let p = L.placement(size: size, block: block, anchorX: 400, visible: visible)
-    check("above the block, overlapping its top by `overlap`",
-          p.maxY == block.minY + L.overlap && p.size == size, "\(p)")
-    check("centred on the anchor", p.midX == 400)
-    let left = L.placement(size: size, block: block, anchorX: 90, visible: visible)
-    check("kept inside the block on the left", left.minX == block.minX)
-    let right = L.placement(size: size, block: block, anchorX: 690, visible: visible)
-    check("kept inside the block on the right", right.maxX == block.maxX)
-    let narrow = CGRect(x: 100, y: 200, width: 50, height: 60)
-    let n = L.placement(size: size, block: narrow, anchorX: 120, visible: visible)
-    check("a block narrower than the strip: the strip starts at its left edge", n.minX == narrow.minX)
-    let edge = CGRect(x: 900, y: 200, width: 50, height: 60)
-    let e = L.placement(size: size, block: edge, anchorX: 920, visible: visible)
-    check("…but never past the visible right edge", e.maxX == visible.maxX, "\(e)")
-    let scrolled = CGRect(x: -300, y: 200, width: 400, height: 60)
-    let s = L.placement(size: size, block: scrolled, anchorX: -250, visible: visible)
-    check("never before the visible left edge", s.minX == visible.minX, "\(s)")
-    let top = CGRect(x: 100, y: 40, width: 600, height: 60)
-    let t = L.placement(size: size, block: top, anchorX: 400, visible: visible)
-    check("no room above: below the block, overlapping its bottom by `overlap`",
-          t.minY == top.maxY - L.overlap, "\(t)")
-    let exact = CGRect(x: 100, y: visible.minY + size.height - L.overlap, width: 600, height: 60)
-    check("exactly enough room above: above",
-          L.placement(size: size, block: exact, anchorX: 400, visible: visible).minY == visible.minY)
+func testRack() {
+    let area = CGRect(x: 0, y: 0, width: 700, height: 80)
+    let r = L.layout(rackModel(), in: area)
+    check("rack: labeled with room", r.detail == .labeled, "\(r.detail)")
+    let by = Dictionary(uniqueKeysWithValues: r.boxes.map { ($0.entry, $0.rect) })
+    check("rack: the carrier is not a box", by[1] == nil)
+    check("rack: its plugins are boxes", by[2] != nil && by[3] != nil && by[4] != nil)
+    check("rack: a branch's plugins on ONE row", by[2]!.midY == by[3]!.midY && by[2]!.maxX < by[3]!.minX)
+    check("rack: branches STACKED", by[4]!.minY >= by[2]!.maxY)
+    check("rack: before and after the block on the trunk's centre",
+          by[0]!.midY == by[5]!.midY && by[0]!.maxX < by[2]!.minX && by[5]!.minX > by[3]!.maxX)
+    check("rack: everything inside", r.boxes.allSatisfy { inside($0.rect, area) })
+    let verticals = r.wires.filter { $0.count == 2 && $0[0].x == $0[1].x && $0[0].y != $0[1].y }
+    check("rack: a split and a join (vertical wires)", verticals.count == 2, "\(verticals.count)")
+    check("rack: leaves of a rack carry power", r.boxes.first { $0.entry == 4 }?.power != nil)
 }
 
-func testKeep() {
-    let block = CGRect(x: 100, y: 200, width: 600, height: 60)
-    let strip = L.placement(size: CGSize(width: 200, height: 34), block: block, anchorX: 400,
-                            visible: CGRect(x: 0, y: 0, width: 1000, height: 600))
-    check("on the block: kept", L.keeps(CGPoint(x: 150, y: 250), overlay: strip, block: block))
-    check("on the strip: kept", L.keeps(CGPoint(x: strip.midX, y: strip.minY + 2), overlay: strip, block: block))
-    check("just outside the strip, within the margin: kept",
-          L.keeps(CGPoint(x: strip.maxX + L.keepMargin - 0.5, y: strip.midY), overlay: strip, block: block))
-    check("past the margin: let go",
-          !L.keeps(CGPoint(x: strip.maxX + L.keepMargin + 1, y: strip.minY + 1), overlay: strip, block: block))
-    // The path from the block straight up onto the strip never leaves both.
-    var continuous = true
-    for y in stride(from: block.midY, through: strip.minY + 1, by: -0.5)
-    where !L.keeps(CGPoint(x: strip.midX, y: y), overlay: strip, block: block) { continuous = false }
-    check("the way up from the block onto the strip never leaves both", continuous)
-    check("elsewhere: let go", !L.keeps(CGPoint(x: 900, y: 500), overlay: strip, block: block))
+func testDegradation() {
+    let m = rackModel()
+    // Tall enough for dots with stacked branches but not labels.
+    let dots = L.layout(m, in: CGRect(x: 0, y: 0, width: 400, height: 28))
+    check("degrade: short → dots, branches still stacked", dots.detail == .dots, "\(dots.detail)")
+    check("degrade: dots have no power zone", dots.boxes.allSatisfy { $0.power == nil })
+    // Too short for stacked rows: folded.
+    let folded = L.layout(m, in: CGRect(x: 0, y: 0, width: 400, height: 12))
+    check("degrade: very short → racks folded", folded.detail == .foldedDots, "\(folded.detail)")
+    check("degrade: the folded rack is one box", folded.boxes.contains { $0.entry == 1 && $0.folded }
+          && !folded.boxes.contains { $0.entry == 2 })
+    // Too narrow for dots: count.
+    let count = L.layout(m, in: CGRect(x: 0, y: 0, width: 30, height: 20))
+    check("degrade: narrow → n FX", count.detail == .count && count.textRect != nil, "\(count.detail)")
+    check("degrade: nothing at all in a sliver", L.layout(m, in: CGRect(x: 0, y: 0, width: 10, height: 4)).detail == .none)
+    check("count: every box but the carrier", m.plugInCount == 5)
+    // Wide but short: labels in a single-row chain.
+    let one = L.layout(plainModel(), in: CGRect(x: 0, y: 0, width: 400, height: 20))
+    check("degrade: a single-row chain keeps labels at 20 px", one.detail == .labeled, "\(one.detail)")
+    // Narrow single row: dots.
+    let narrow = L.layout(plainModel(), in: CGRect(x: 0, y: 0, width: 80, height: 30))
+    check("degrade: narrow single row → dots", narrow.detail == .dots, "\(narrow.detail)")
+    check("degrade: dots inside", narrow.boxes.allSatisfy { inside($0.rect, CGRect(x: 0, y: 0, width: 80, height: 30)) })
 }
 
-func testBoxHit() {
-    let r = L.layout(FXStripModel(entries: [entry(), entry()]))
-    check("a point in a box finds it", L.box(at: CGPoint(x: r.boxes[1].rect.midX, y: r.boxes[1].rect.midY), in: r)?.entry == 1)
-    check("the gap finds nothing", L.box(at: CGPoint(x: r.boxes[0].rect.maxX + L.gap / 2, y: r.boxes[0].rect.midY), in: r) == nil)
+func testEmptyAndBins() {
+    let e = L.layout(FXStripModel(), in: CGRect(x: 0, y: 0, width: 200, height: 30))
+    check("empty: the 'no plugins' line", e.detail == .empty && e.textRect != nil)
+    check("empty: nothing in a sliver", L.layout(FXStripModel(), in: CGRect(x: 0, y: 0, width: 200, height: 5)).detail == .none)
+    let m = FXStripModel(entries: [entry(), entry(bin: 0), entry(bin: 0), entry()],
+                         bins: [FXStripBin(id: UUID(), name: "Bin", isDetached: false)],
+                         root: [.leaf(0), .leaf(1), .leaf(2), .leaf(3)])
+    let r = L.layout(m, in: CGRect(x: 0, y: 0, width: 600, height: 40))
+    check("bins: ONE frame around the two boxes of the bin", r.bins.count == 1)
+    if let f = r.bins.first {
+        check("bins: the frame holds its boxes and not the others",
+              f.rect.contains(r.boxes[1].rect) && f.rect.contains(r.boxes[2].rect)
+              && !f.rect.intersects(r.boxes[0].rect) && !f.rect.intersects(r.boxes[3].rect))
+    }
+    let size = L.labeledSize(m)
+    let atSize = L.layout(m, in: CGRect(origin: .zero, size: size))
+    check("labeledSize: the labeled reading fits exactly there", atSize.detail == .labeled, "\(size) \(atSize.detail)")
 }
 
 @main
 struct Main {
     static func main() {
-        testRow(); testBins(); testEmpty(); testPlacement(); testKeep(); testBoxHit()
-        print("\n\(passed)/\(passed + failed.count) passed")
-        if !failed.isEmpty { print("FAILED: \(failed)"); exit(1) }
+        testPlain()
+        testRack()
+        testDegradation()
+        testEmptyAndBins()
+        print(failed.isEmpty ? "\nALL PASS (\(passed))" : "\n\(failed.count) FAILED, \(passed) passed")
+        exit(failed.isEmpty ? 0 : 1)
     }
 }

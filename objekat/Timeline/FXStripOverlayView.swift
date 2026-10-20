@@ -1,138 +1,168 @@
 import AppKit
 import SwiftUI
 
-/// The FX tool's hover: WHICH object shows its strip, and where. A store of its own, written by
-/// the canvas's hover handler and read by the strip alone — so a hover under the FX tool redraws
-/// one small view, never the timeline (@see TimelineHoverStore for the same reasoning).
+/// The FX tool's hover: WHICH object shows its mini signal view, in which part of its block, and
+/// what the hand is on. A store of its own, written by the canvas's hover handler and read by the
+/// overlay alone — so a hover under the FX tool redraws one small Canvas, never the timeline
+/// (@see TimelineHoverStore for the same reasoning).
 @MainActor @Observable
 final class FXStripHoverStore {
     struct Shown: Equatable {
         let objectID: UUID
-        /// The block's rectangle, content coordinates.
-        var block: CGRect
-        /// Where the pointer came onto the block: the strip is centred there.
-        let anchorX: CGFloat
-        /// The strip's rectangle, content coordinates (@see FXStripLayout.placement).
-        var frame: CGRect
+        /// The part of the block the drawing is laid in, content coordinates: the block's visible
+        /// span, under its name (@see TimelineView.fxStripArea).
+        var area: CGRect
+        /// The box under the pointer, if any.
+        var hover: FXStripLayout.Hit?
     }
     private(set) var shown: Shown?
 
     func set(_ s: Shown?) { if shown != s { shown = s } }
-
-    /// The strip's rectangle while it is up, for the canvas's guards.
-    func contains(_ p: CGPoint) -> Bool { shown.map { $0.frame.contains(p) } ?? false }
 }
 
-/// The strip itself: one row of boxes, left to right in the chain's order (@see FXStripLayout).
-/// Laid in the canvas at `store.shown.frame`; it owns its clicks — the canvas steps aside over it.
+/// The mini signal view, drawn INSIDE the hovered block (@see FXStripLayout): the content veiled,
+/// then wires, boxes, the FX link frames. Pure drawing — the canvas resolves the hover and the
+/// clicks on the same `FXStripLayout.layout` (@see TimelineView+TapHandler, `handleFXTap`).
 struct FXStripOverlayView: View {
     let viewModel: EditViewModel
     let store: FXStripHoverStore
 
+    /// The block's content shows through at about a quarter.
+    static let veilOpacity: Double = 0.75
+
     var body: some View {
-        if viewModel.activeTool == .toolFX, let s = store.shown {
+        if viewModel.activeTool == .toolFX, let s = store.shown, s.area.width > 0, s.area.height > 0 {
             let model = viewModel.fxStripModel(objectID: s.objectID)
-            let lay = FXStripLayout.layout(model)
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
-                    .shadow(color: .black.opacity(0.35), radius: 4, y: 1)
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.primary.opacity(0.18), lineWidth: 1)
-                if model.isEmpty {
-                    Text(L("fx.strip.empty"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .frame(width: lay.size.width, height: lay.size.height)
-                }
-                ForEach(lay.bins, id: \.bin) { f in
-                    binFrame(model.bins[f.bin], rect: f.rect)
-                }
-                ForEach(lay.boxes, id: \.entry) { b in
-                    FXStripBoxView(entry: model.entries[b.entry],
-                                   onToggle: { viewModel.toggleFXStripEntry(objectID: s.objectID, entry: $0) },
-                                   onOpen: { viewModel.openFXStripEditor(objectID: s.objectID, entryID: $0) })
-                        .frame(width: b.rect.width, height: b.rect.height)
-                        .offset(x: b.rect.minX, y: b.rect.minY)
-                }
+            let area = s.area
+            Canvas { ctx, _ in
+                ctx.translateBy(x: -area.minX, y: -area.minY)
+                Self.draw(&ctx, model: model, area: area, hover: s.hover)
             }
-            .frame(width: lay.size.width, height: lay.size.height, alignment: .topLeading)
-            .offset(x: s.frame.minX, y: s.frame.minY)
+            .frame(width: area.width, height: area.height)
+            .offset(x: area.minX, y: area.minY)
+            .allowsHitTesting(false)
         }
     }
 
-    private func binFrame(_ bin: FXStripBin, rect: CGRect) -> some View {
-        ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(Color.accentColor.opacity(0.7),
-                              style: StrokeStyle(lineWidth: 1, dash: bin.isDetached ? [3, 2] : []))
-            Text(verbatim: bin.name)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .padding(.leading, 4)
-                .padding(.top, 1)
-                .frame(width: rect.width, alignment: .leading)
+    static func draw(_ ctx: inout GraphicsContext, model: FXStripModel, area: CGRect,
+                     hover: FXStripLayout.Hit?) {
+        ctx.fill(Path(roundedRect: area, cornerRadius: 3), with: .color(.black.opacity(veilOpacity)))
+        let lay = FXStripLayout.layout(model, in: area)
+        let ink = Color.white
+
+        switch lay.detail {
+        case .none:
+            return
+        case .empty, .count:
+            guard let r = lay.textRect else { return }
+            let s = lay.detail == .empty ? L("fx.tool.noPlugins") : "\(model.plugInCount) FX"
+            drawFitted(&ctx, s, in: r, size: 10, color: ink.opacity(lay.detail == .empty ? 0.55 : 0.85),
+                       centred: true)
+            return
+        case .labeled, .dots, .foldedDots:
+            break
         }
-        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-        .offset(x: rect.minX, y: rect.minY)
-        .allowsHitTesting(false)
-    }
-}
 
-/// One box: the plugin's name, a power button (a plugin and an instrument only), the double click
-/// that opens its window. No VU, no ✕: removing a plugin stays the signal view's gesture.
-private struct FXStripBoxView: View {
-    let entry: FXStripEntry
-    let onToggle: (FXStripEntry) -> Void
-    let onOpen: (UUID) -> Void
+        // Wires.
+        var wires = Path()
+        for w in lay.wires {
+            guard let first = w.first else { continue }
+            wires.move(to: first)
+            for p in w.dropFirst() { wires.addLine(to: p) }
+        }
+        ctx.stroke(wires, with: .color(ink.opacity(0.55)), lineWidth: 1)
 
-    var body: some View {
-        let dim = entry.hasToggle && !entry.isEnabled
-        HStack(spacing: 3) {
-            if entry.hasToggle {
-                Button { onToggle(entry) } label: {
-                    Image(systemName: "power")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(entry.isEnabled ? Color.green : Color.secondary)
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
+        // FX link frames.
+        for f in lay.bins where f.bin < model.bins.count {
+            let detached = model.bins[f.bin].isDetached
+            ctx.stroke(Path(roundedRect: f.rect, cornerRadius: 3), with: .color(.accentColor.opacity(0.85)),
+                       style: StrokeStyle(lineWidth: 1, dash: detached ? [3, 2] : []))
+        }
+
+        // Boxes.
+        for b in lay.boxes {
+            let e = model.entries[b.entry]
+            let hovered = hover?.entry == b.entry
+            let off = e.hasToggle && !e.isEnabled
+            let rect = b.rect
+            if lay.detail == .labeled {
+                let shape = Path(roundedRect: rect, cornerRadius: 3)
+                ctx.fill(shape, with: .color(Color(white: off ? 0.16 : 0.24).opacity(0.95)))
+                ctx.stroke(shape, with: .color(ink.opacity(hovered ? 0.7 : 0.28)), lineWidth: 1)
+                var textX = rect.minX + 4
+                if let p = b.power {
+                    let onPower = hovered && hover?.onPower == true
+                    if onPower {
+                        ctx.fill(Path(roundedRect: p.insetBy(dx: 1, dy: 1), cornerRadius: 2),
+                                 with: .color(ink.opacity(0.18)))
+                    }
+                    var glyph = ctx.resolve(Image(systemName: "power"))
+                    glyph.shading = .color(e.isEnabled ? .green : Color(white: 0.55))
+                    let gs = min(p.height - 4, 10)
+                    ctx.draw(glyph, in: CGRect(x: p.midX - gs / 2, y: p.midY - gs / 2, width: gs, height: gs))
+                    textX = p.maxX + 1
+                } else if e.kind == .gainStage {
+                    let gs = min(rect.height - 4, 10)
+                    var glyph = ctx.resolve(Image(systemName: "dial.low"))
+                    glyph.shading = .color(ink.opacity(0.6))
+                    ctx.draw(glyph, in: CGRect(x: rect.minX + 3, y: rect.midY - gs / 2, width: gs, height: gs))
+                    textX = rect.minX + 4 + gs
                 }
-                .buttonStyle(.plain)
-                .help(L("synoptic.bypass"))
-            } else if case .rack(let n) = entry.kind {
-                Text(verbatim: "∥ \(n)")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
+                let label = b.folded ? "∥ \(e.detail.count)" : e.name
+                let tr = CGRect(x: textX, y: rect.minY, width: max(0, rect.maxX - 3 - textX), height: rect.height)
+                drawFitted(&ctx, label, in: tr, size: 9.5,
+                           color: ink.opacity(off ? 0.4 : 0.9), centred: false)
             } else {
-                Image(systemName: "dial.low")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14, height: 14)
+                let shape = Path(roundedRect: rect, cornerRadius: min(rect.height, rect.width) / 2)
+                if e.kind == .gainStage {
+                    ctx.fill(shape, with: .color(ink.opacity(0.3)))
+                } else if b.folded {
+                    ctx.stroke(shape, with: .color(ink.opacity(0.8)), lineWidth: 1)
+                    let inner = rect.insetBy(dx: 1.5, dy: 1.5)
+                    if inner.width > 1, inner.height > 1 {
+                        ctx.stroke(Path(roundedRect: inner, cornerRadius: min(inner.height, inner.width) / 2),
+                                   with: .color(ink.opacity(0.5)), lineWidth: 0.75)
+                    }
+                } else if off {
+                    ctx.fill(shape, with: .color(.black))
+                    ctx.stroke(shape, with: .color(ink.opacity(0.55)), lineWidth: 1)
+                } else {
+                    ctx.fill(shape, with: .color(ink.opacity(0.85)))
+                }
+                if hovered {
+                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1.5, dy: -1.5),
+                                    cornerRadius: min(rect.height, rect.width) / 2 + 1.5),
+                               with: .color(.accentColor), lineWidth: 1)
+                }
             }
-            Text(verbatim: entry.name)
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(dim ? Color.secondary : Color.primary)
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color.primary.opacity(dim ? 0.04 : 0.10))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { if entry.opensEditor { onOpen(entry.id) } }
-        .help(helpText)
     }
 
-    private var helpText: String {
-        switch entry.kind {
-        case .instrument, .plugin: return L("fx.strip.openEditor.help")
-        case .gainStage:           return L("fx.strip.gainStage.help")
-        case .rack:                return ([L("fx.strip.rack.help")] + entry.detail).joined(separator: "\n")
+    /// `s` on one line inside `r`, cut with an ellipsis to fit (measured, not guessed).
+    private static func drawFitted(_ ctx: inout GraphicsContext, _ s: String, in r: CGRect,
+                                   size: CGFloat, color: Color, centred: Bool) {
+        guard r.width > 4, r.height > 6, !s.isEmpty else { return }
+        func resolved(_ t: String) -> GraphicsContext.ResolvedText {
+            ctx.resolve(Text(verbatim: t).font(.system(size: size, weight: .medium)).foregroundColor(color))
+        }
+        let unbounded = CGSize(width: CGFloat.greatestFiniteMagnitude, height: r.height)
+        var text = resolved(s)
+        if text.measure(in: unbounded).width > r.width {
+            let chars = Array(s)
+            var lo = 0, hi = chars.count
+            while lo < hi {
+                let mid = (lo + hi + 1) / 2
+                if resolved(String(chars[0..<mid]) + "…").measure(in: unbounded).width <= r.width { lo = mid } else { hi = mid - 1 }
+            }
+            guard lo > 0 else { return }
+            text = resolved(String(chars[0..<lo]) + "…")
+        }
+        var c = ctx
+        c.clip(to: Path(r))
+        if centred {
+            c.draw(text, at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
+        } else {
+            c.draw(text, at: CGPoint(x: r.minX, y: r.midY), anchor: .leading)
         }
     }
 }

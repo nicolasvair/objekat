@@ -4,9 +4,6 @@ import AppKit
 extension TimelineView {
 
     func handleCanvasTap(at point: CGPoint) {
-        // The FX tool's strip owns its clicks (its power buttons, its double click): nothing of the
-        // canvas answers a click that landed on it — not even the door below.
-        if viewModel.activeTool == .toolFX, fxStripStore.contains(point) { return }
         // A hand back in the timeline takes the keyboard back from the signal view: ⌫ ⌘C ⌘V ⌘D
         // stop aiming at plugin cards and aim at objects again. It is the OTHER half of the claim
         // made in `setPluginSelection`, and it lives at the door of the gesture rather than in the
@@ -136,9 +133,10 @@ extension TimelineView {
             handleSendTap(at: point)
             return
         }
-        // FX: the strip owns its clicks; a click on a block selects it, nothing else.
+        // FX: the mini signal view drawn inside the block (@see FXStripLayout) — its power buttons
+        // and the double click that opens a plugin's window; anywhere else a click selects the block.
         if viewModel.activeTool == .toolFX {
-            if let e = blockEntry(at: point) { viewModel.select(e.item.id, additive: false) }
+            handleFXTap(at: point, isDoubleTap: isDoubleTap)
             return
         }
         guard viewModel.activeTool == .toolSelection else { return }
@@ -500,5 +498,26 @@ extension TimelineView {
                                               shift: shift, command: cmd) {
             moveCursorFromRuler(atX: point.x)
         }
+    }
+
+    /// A click under the FX tool, resolved on the SAME layout the overlay draws
+    /// (@see fxStripPlacement): a power button toggles its plugin (the signal view's own function,
+    /// same undo point), a double click on a box opens its window, any other click selects the block.
+    func handleFXTap(at point: CGPoint, isDoubleTap: Bool) {
+        guard let e = blockEntry(at: point) else { return }
+        let id = e.item.id
+        let (_, model, lay) = fxStripPlacement(for: e)
+        if let hit = FXStripLayout.hit(point, in: lay), hit.entry < model.entries.count {
+            let entry = model.entries[hit.entry]
+            if hit.onPower {
+                viewModel.toggleFXStripEntry(objectID: id, entry: entry)
+                return
+            }
+            if isDoubleTap, entry.opensEditor {
+                viewModel.openFXStripEditor(objectID: id, entryID: entry.id)
+                return
+            }
+        }
+        viewModel.select(id, additive: false)
     }
 }

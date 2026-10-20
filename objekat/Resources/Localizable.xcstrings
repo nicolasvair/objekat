@@ -6809,29 +6809,6 @@
         }
       }
     },
-    "fx.strip.empty": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No plugin"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ningún plugin"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun plugin"
-          }
-        }
-      }
-    },
     "fx.strip.gainStage.help": {
       "extractionState": "manual",
       "localizations": {
@@ -6897,6 +6874,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bloc parallèle — à régler dans la vue synoptique"
+          }
+        }
+      }
+    },
+    "fx.tool.noPlugins": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No plugins"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin plugins"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas de plugins"
           }
         }
       }

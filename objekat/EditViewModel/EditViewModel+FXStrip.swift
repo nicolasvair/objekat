@@ -4,42 +4,50 @@ import Foundation
 
 extension EditViewModel {
 
-    /// What the FX tool's strip shows for one object (@see FXStripLayout): the instruments first,
-    /// then the chain's top level in order — a plugin as a box, a gain stage as a box with no
-    /// power button, a parallel block as ONE box naming its branch count, an FX link's block as a
-    /// framed group of its own plugins. A send's place on the trunk is not a plugin: it is skipped.
-    /// Read only for the hovered object, so its cost is one walk of one chain.
+    /// What the FX tool's mini signal view shows for one object (@see FXStripLayout): the
+    /// instruments first, then the chain as a tree — a plugin and a gain stage as leaves, a
+    /// parallel block as its carrier plus one series per branch (its plugins are leaves of their
+    /// own), an FX link's block as a run of its plugins sharing a `bin`. A send's place on the
+    /// trunk is not a plugin: it is skipped. Read only for the hovered object, so its cost is one
+    /// walk of one chain.
     func fxStripModel(objectID: UUID) -> FXStripModel {
         guard let obj = find(id: objectID) else { return FXStripModel() }
         var m = FXStripModel()
         for inst in obj.instruments {
+            m.root.append(.leaf(m.entries.count))
             m.entries.append(FXStripEntry(id: inst.id, kind: .instrument, name: inst.name,
                                           isEnabled: inst.isEnabled, bin: nil))
         }
-        func leaf(_ p: ObjectPlugin, bin: Int?) -> FXStripEntry? {
-            if p.isSendMarker { return nil }
-            if let rack = p.rack {
-                // Named by what its branches hold (a rack's own name is a glyph, "//"): the box
-                // says "∥ 2" already; the names say which.
-                let names = rack.voices.map { v in Self.flattenLeaves(v).map(\.name).joined(separator: " › ") }
-                return FXStripEntry(id: p.id, kind: .rack(branches: rack.voices.count),
-                                    name: names.filter { !$0.isEmpty }.joined(separator: " ∥ "),
-                                    isEnabled: p.isEnabled, bin: bin, detail: names)
+        func series(_ plugins: [ObjectPlugin], bin: Int?, rack: Int?, branch: Int?) -> [FXStripNode] {
+            var out: [FXStripNode] = []
+            for p in plugins {
+                if p.isSendMarker { continue }
+                if let block = p.fxBlock {
+                    let index = m.bins.count
+                    m.bins.append(FXStripBin(id: p.id, name: fxLink(block.linkID)?.name ?? p.name,
+                                             isDetached: block.isDetached))
+                    out += series(block.plugins, bin: index, rack: rack, branch: branch)
+                } else if let r = p.rack {
+                    let names = r.voices.map { v in Self.flattenLeaves(v).map(\.name).joined(separator: " › ") }
+                    let c = m.entries.count
+                    m.entries.append(FXStripEntry(id: p.id, kind: .rack(branches: r.voices.count),
+                                                  name: names.filter { !$0.isEmpty }.joined(separator: " ∥ "),
+                                                  isEnabled: p.isEnabled, bin: bin, detail: names,
+                                                  rack: rack, branch: branch))
+                    let branches = r.voices.enumerated().map { series($0.element, bin: bin, rack: c, branch: $0.offset) }
+                    out.append(.rack(c, branches))
+                } else if p.isContainer {
+                    continue
+                } else {
+                    out.append(.leaf(m.entries.count))
+                    m.entries.append(FXStripEntry(id: p.id, kind: p.isGainStage ? .gainStage : .plugin,
+                                                  name: p.name, isEnabled: p.isEnabled, bin: bin,
+                                                  rack: rack, branch: branch))
+                }
             }
-            if p.isContainer { return nil }
-            return FXStripEntry(id: p.id, kind: p.isGainStage ? .gainStage : .plugin, name: p.name,
-                                isEnabled: p.isEnabled, bin: bin)
+            return out
         }
-        for p in obj.plugins {
-            if let block = p.fxBlock {
-                let index = m.bins.count
-                m.bins.append(FXStripBin(id: p.id, name: fxLink(block.linkID)?.name ?? p.name,
-                                         isDetached: block.isDetached))
-                for q in block.plugins { if let e = leaf(q, bin: index) { m.entries.append(e) } }
-            } else if let e = leaf(p, bin: nil) {
-                m.entries.append(e)
-            }
-        }
+        m.root += series(obj.plugins, bin: nil, rack: nil, branch: nil)
         return m
     }
 
