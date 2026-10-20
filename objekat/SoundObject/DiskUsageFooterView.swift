@@ -54,6 +54,10 @@ struct DiskUsageFooterView: View {
     }
 
     private var footerText: String {
+        // A conversion under way speaks first: the popover may be closed while it runs.
+        if let p = viewModel.flacArchiveProgress {
+            return L(p.dryRun ? "flacArchive.footer.check" : "flacArchive.footer.convert", p.done, p.total)
+        }
         guard let usage = viewModel.diskUsage else {
             return viewModel.isComputingDiskUsage ? L("diskUsage.footer.computing") : L("diskUsage.footer.unknown")
         }
@@ -126,22 +130,45 @@ struct DiskUsagePopoverView: View {
             // For filing or sending the project: its WAVs become FLACs, with no loss.
             HStack(spacing: 6) {
                 Button(L("flacArchive.button")) { convertToFlac() }
-                    .disabled(blockedKey != nil || isCleaning || isConverting || viewModel.isComputingDiskUsage)
+                    .disabled(blockedKey != nil || isCleaning || converting || viewModel.isComputingDiskUsage)
                     .help(L("flacArchive.help"))
-                if isConverting { ProgressView().controlSize(.small) }
+                if converting && viewModel.flacArchiveProgress == nil { ProgressView().controlSize(.small) }
                 Spacer(minLength: 0)
             }
+            if let p = viewModel.flacArchiveProgress { flacProgress(p) }
             HStack {
                 Button(L("export.reveal")) { reveal() }
                     .disabled(result == nil)
                 Spacer()
                 Button(trashTitle) { moveToTrash() }
-                    .disabled(ticked.isEmpty || blockedKey != nil || isCleaning || isConverting
+                    .disabled(ticked.isEmpty || blockedKey != nil || isCleaning || converting
                               || viewModel.isComputingDiskUsage)
             }
         }
         .padding(12)
         .frame(width: 380)
+    }
+
+    /// The conversion runs in the view model, so a popover reopened mid-way still knows.
+    private var converting: Bool { isConverting || viewModel.isArchivingToFlac }
+
+    /// The conversion's bar: files done out of the total, and the one being read.
+    private func flacProgress(_ p: FlacArchiveProgress) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ProgressView(value: Double(p.done), total: Double(max(p.total, 1)))
+                .progressViewStyle(.linear)
+            HStack(spacing: 6) {
+                Text(L(p.dryRun ? "flacArchive.progress.check" : "flacArchive.progress.convert", p.done, p.total))
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if let name = p.current {
+                    Text(verbatim: name)
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     // MARK: Content
@@ -171,7 +198,7 @@ struct DiskUsagePopoverView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 220)
+                .frame(maxHeight: 440)
             }
         } else {
             note(L("diskUsage.unreadable", result.unreadableVersions.joined(separator: ", ")),
@@ -201,7 +228,7 @@ struct DiskUsagePopoverView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 110)
+                .frame(maxHeight: 220)
             } else {
                 Text(L("diskUsage.held.title")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
                 ScrollView {
@@ -214,7 +241,7 @@ struct DiskUsagePopoverView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 80)
+                .frame(maxHeight: 160)
             }
         }
         if result.report.protectedBytes > 0 {

@@ -103,9 +103,16 @@ nonisolated enum ProjectFileUsage {
         var seen = Set<UUID>()
         var queue: [UUID] = []
 
-        func walk(_ ref: Ref) {
+        // `inSidecar`: the ref comes from a definition's content, not from the session. An instance
+        // there names the wave its definition had WHEN THE CONTENT WAS BAKED, and sidecars are never
+        // rewritten — a re-bake or a FLAC archive of the inner definition leaves that path stale. It
+        // is not read: opening the content re-aims the instance onto its definition's CURRENT wave,
+        // which the definition itself marks (`waves`). So such a path counts only when the definition
+        // is unknown here (the path is then the only clue there is). Counting it always kept the
+        // inner WAV "used" for ever after the archive (bug of 20 October 2026).
+        func walk(_ ref: Ref, inSidecar: Bool) {
             if let id = ref.consolidateID {
-                if let path = ref.filePath { result.instancePaths.insert(path) }
+                if let path = ref.filePath, !inSidecar || defs[id] == nil { result.instancePaths.insert(path) }
                 if seen.insert(id).inserted {
                     queue.append(id)
                     result.visitedDefinitions.append(id)
@@ -113,10 +120,10 @@ nonisolated enum ProjectFileUsage {
                 return
             }
             if let path = ref.filePath { result.sourcePaths.insert(path) }
-            ref.children.forEach(walk)
+            ref.children.forEach { walk($0, inSidecar: inSidecar) }
         }
 
-        items.forEach(walk)
+        items.forEach { walk($0, inSidecar: false) }
         var i = 0
         while i < queue.count {
             let id = queue[i]
@@ -127,7 +134,7 @@ nonisolated enum ProjectFileUsage {
             }
             result.waves.insert(def.wave)
             if let sub = readSidecar(def) {
-                walk(sub)
+                walk(sub, inSidecar: true)
             } else {
                 result.problems.append(.sidecarUnavailable(id))
             }
@@ -273,6 +280,11 @@ nonisolated enum ProjectFileUsage {
         case waveformCache
         /// A sidecar whose wave is gone.
         case strayFile
+        /// A WAV elsewhere in the project folder (outside the folders above) with a FLAC of the same
+        /// name beside it: the original the FLAC archive left behind (@see `EditViewModel+FlacArchive`,
+        /// which converts any WAV of the project folder the project reads). Without this kind it was
+        /// never offered, however unread (bug of 20 October 2026).
+        case archivedOriginal
     }
 
     /// A unit that is kept or trashed AS ONE: a wave with its sidecar and its `.wfc` cache.
@@ -293,7 +305,8 @@ nonisolated enum ProjectFileUsage {
     /// The candidates in `listing` — and only them. Everything else is OUT of the universe and can
     /// never be offered: files at the root of `samples/`, in deeper sub-folders, anything of the
     /// project folder that is not `samples/{consolidate,objects,sources}/` or `waveforms/*.wfc`,
-    /// dot files (`.DS_Store`).
+    /// dot files (`.DS_Store`) — with ONE exception: a `.wav` anywhere else in the folder that has a
+    /// `.flac` of the same name beside it (`archivedOriginal`, what the FLAC archive leaves behind).
     static func universe(listing: [Listed]) -> [Candidate] {
         var byFolder: [String: [String: Int64]] = [:]    // folder → file name → size
         for item in listing {
@@ -306,6 +319,28 @@ nonisolated enum ProjectFileUsage {
             default: continue
             }
             byFolder[folder, default: [:]][name] = item.size
+        }
+        // The WAVs of the rest of the folder that have a FLAC twin (archived originals).
+        var archived: [(rel: String, name: String, folder: String, size: Int64)] = []
+        do {
+            var byDir: [String: [String: Int64]] = [:]
+            for item in listing {
+                let comps = item.rel.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+                guard let name = comps.last, !name.hasPrefix("."),
+                      !comps.dropLast().contains(where: { $0.hasPrefix(".") }) else { continue }
+                let folder = comps.dropLast().joined(separator: "/")
+                if [consolidateRel, legacyRel, sourcesRel, waveformsRel].contains(folder) { continue }
+                byDir[folder, default: [:]][name] = item.size
+            }
+            for (folder, files) in byDir {
+                let flacBases = Set(files.keys.filter { ($0 as NSString).pathExtension.lowercased() == "flac" }
+                                        .map { ($0 as NSString).deletingPathExtension })
+                for (name, size) in files where (name as NSString).pathExtension.lowercased() == "wav"
+                    && flacBases.contains((name as NSString).deletingPathExtension) {
+                    archived.append((folder.isEmpty ? name : "\(folder)/\(name)", name, folder, size))
+                }
+            }
+            archived.sort { $0.rel < $1.rel }
         }
         var wfc = byFolder[waveformsRel] ?? [:]
         var out: [Candidate] = []
@@ -352,6 +387,16 @@ nonisolated enum ProjectFileUsage {
                 out.append(Candidate(id: rel, kind: .strayFile, name: sidecar, folder: folder,
                                      files: [rel], size: files[sidecar] ?? 0))
             }
+        }
+        for a in archived {
+            var rels = [a.rel]
+            var size = a.size
+            if let cache = attachedCache(of: a.name) {
+                rels.append(cache.rel)
+                size += cache.size
+            }
+            out.append(Candidate(id: a.rel, kind: .archivedOriginal, name: a.name, folder: a.folder,
+                                 files: rels, size: size))
         }
         for name in wfc.keys.sorted() {
             let rel = "\(waveformsRel)/\(name)"
@@ -428,7 +473,7 @@ nonisolated enum ProjectFileUsage {
         switch candidate.kind {
         case .waveformCache:
             return usage.names.contains(String(candidate.name.dropLast(".wfc".count)))
-        case .consolidatedWave, .legacyWave, .embeddedSource, .strayFile:
+        case .consolidatedWave, .legacyWave, .embeddedSource, .strayFile, .archivedOriginal:
             return candidate.files.contains { usage.rel.contains($0) }
         }
     }

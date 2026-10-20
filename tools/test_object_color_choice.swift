@@ -7,7 +7,7 @@
 // band drawn at the shared opacity. The last block is the MODEL's half: the Codable of
 // `SoundObject.colorHex` against an old session that only has `colorIndex` (so it pulls in
 // `SoundObject.swift`'s dependency chain, the same list as `test_cross_project_import.swift`), and
-// the added-colours list (`UserObjectColors`, ephemeral under `--no-recent`).
+// the editable palette (`UserObjectColors`, ephemeral under `--no-recent`).
 //
 //     swiftc -parse-as-library \
 //         ../objekat/Shared/ObjectColorChoice.swift \
@@ -192,14 +192,39 @@ enum ObjectColorChoiceTest {
     guard UserObjectColors.isEphemeral else {
         print("\nFAILED: re-run as `/tmp/occ --no-recent`"); exit(1)
     }
+    // MARK: - The editable palette (pure)
+
+    check("the default palette is the base row", C.defaultPalette() == C.baseHex)
+    check("the default palette appends the first version's added colours, each once",
+          C.defaultPalette(custom: [0x123456, 0xFFFFFF, 0x123456]) == C.baseHex + [0x123456])
+    check("appending a new colour puts it last", C.palette([0x111111], appending: 0x222222) == [0x111111, 0x222222])
+    check("appending a colour already there changes nothing", C.palette([0x111111], appending: 0x111111) == nil)
+    check("a base colour removed can be appended again",
+          C.palette(C.baseHex.filter { $0 != 0xFF2D2D }, appending: 0xFF2D2D)?.last == 0xFF2D2D)
+    check("removing a base colour works", C.palette(C.baseHex, removing: 0x000000) == Array(C.baseHex.dropFirst()))
+    check("removing an absent colour changes nothing", C.palette([0x111111], removing: 0x222222) == nil)
+    check("removing masks to 24 bits", C.palette([0x111111], removing: 0xFF111111) == [])
+    let emptyRow = C.swatchLayout(base: [], custom: [])
+    check("an empty palette still shows the \"+\" alone", emptyRow.cells.count == 1 && emptyRow.plusCell.kind == .plus && emptyRow.rowCount == 1)
+
+    // MARK: - The store (ephemeral)
+
     UserObjectColors.reset()
-    check("(ephemeral store) starts empty", UserObjectColors.load().isEmpty)
-    check("(ephemeral store) add returns true and keeps the order",
-          UserObjectColors.add(0x123456) && UserObjectColors.add(0x654321) && UserObjectColors.load() == [0x123456, 0x654321])
-    check("(ephemeral store) a repeat or a base colour is refused",
-          !UserObjectColors.add(0x123456) && !UserObjectColors.add(0x000000) && UserObjectColors.load().count == 2)
-    UserObjectColors.reset()
-    check("(ephemeral store) reset empties it", UserObjectColors.load().isEmpty)
+    check("(ephemeral store) starts as the base row", UserObjectColors.load() == C.baseHex && UserObjectColors.isDefault)
+    check("(ephemeral store) add returns true and appends in order",
+          UserObjectColors.add(0x123456) && UserObjectColors.add(0x654321)
+          && UserObjectColors.load() == C.baseHex + [0x123456, 0x654321] && !UserObjectColors.isDefault)
+    check("(ephemeral store) a repeat is refused", !UserObjectColors.add(0x123456) && UserObjectColors.load().count == 9)
+    check("(ephemeral store) a BASE colour can be removed",
+          UserObjectColors.remove(0xFF2D2D) && !UserObjectColors.load().contains(0xFF2D2D))
+    check("(ephemeral store) removing it again is refused", !UserObjectColors.remove(0xFF2D2D))
+    check("(ephemeral store) it comes back at the end through \"+\"",
+          UserObjectColors.add(0xFF2D2D) && UserObjectColors.load().last == 0xFF2D2D)
+    for v in UserObjectColors.load() { UserObjectColors.remove(v) }
+    check("(ephemeral store) every colour can go: an empty palette stays empty", UserObjectColors.load().isEmpty)
+    UserObjectColors.resetToDefault()
+    check("(ephemeral store) restoring the default gives the base row back",
+          UserObjectColors.load() == C.baseHex && UserObjectColors.isDefault)
     // MARK: - SoundObject: Codable and colour resolution
 
     func clip(colorIndex: Int? = nil, colorHex: Int? = nil) -> SoundObject {
@@ -264,6 +289,17 @@ enum ObjectColorChoiceTest {
     check("derivedCopy keeps the free colour",
           clip(colorHex: 0xFF8A00).derivedCopy(startTime: 0, duration: 1, lane: 0, fadeIn: 0, fadeOut: 0,
                                                plugins: [], kind: clip().kind).colorHex == 0xFF8A00)
+    // THE invariant of the editable palette: editing it never recolours an object. An object stores its
+    // own 0xRRGGBB, or an index into the FIXED pastel table — neither reads the menu's list.
+    let painted = clip(colorHex: 0x00C8FF), pastel = clip(colorIndex: 4)
+    let before = (painted.customColorRGB, pastel.customColorRGB)
+    UserObjectColors.resetToDefault()
+    UserObjectColors.remove(0x00C8FF); UserObjectColors.add(0xABCDEF)
+    for v in UserObjectColors.load() { UserObjectColors.remove(v) }
+    check("emptying / reordering the palette changes no object's colour (free colour and old pastel)",
+          painted.customColorRGB == before.0 && pastel.customColorRGB == before.1
+          && before.0 == 0x00C8FF && before.1 == ObjekatPalette.objectHex(4))
+    UserObjectColors.resetToDefault()
     check("the session format moved to 24 for it (25 since the gain stages)", SessionSchema.formatVersion >= 24)
     check("the notice describes colorHex", SessionSchema.note.contains { $0.hasPrefix("colorHex") })
 

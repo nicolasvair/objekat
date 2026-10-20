@@ -77,6 +77,27 @@ enum ProjectFileUsageTest {
         check("nested: inner wave marked", u.rel.contains("samples/consolidate/A_11111111.wav"))
     }
 
+    // 2b. A nested instance's path inside a sidecar is STALE once the inner definition moved on (a
+    //     re-bake, the FLAC archive): it is not counted — the definition's current wave is.
+    do {
+        let a = id(1), b = id(2)
+        let defs = [Def(id: a, wave: "A_11111111.flac"), Def(id: b, wave: "B_22222222.wav")]
+        let (c, u) = usage([Ref(consolidateID: b, filePath: "samples/consolidate/B_22222222.wav")], defs,
+                           [b: Ref(children: [Ref(consolidateID: a, filePath: "/Users/n/Projects/P/samples/consolidate/A_11111111.wav")]),
+                            a: Ref(filePath: "/ext/a.wav")])
+        check("stale nested path: the inner WAV the sidecar names is NOT marked",
+              !u.rel.contains("samples/consolidate/A_11111111.wav"), "\(u.rel)")
+        check("stale nested path: the inner definition's current FLAC is",
+              u.rel.contains("samples/consolidate/A_11111111.flac"))
+        check("stale nested path: the session's own instance path is still recorded",
+              c.instancePaths == ["samples/consolidate/B_22222222.wav"], "\(c.instancePaths)")
+        // An unknown inner definition: the path is the only clue, it counts.
+        let (c2, _) = usage([Ref(consolidateID: b)], [Def(id: b, wave: "B_22222222.wav")],
+                            [b: Ref(children: [Ref(consolidateID: a, filePath: "samples/consolidate/A_11111111.wav")])])
+        check("unknown inner definition: its instance path still counts",
+              c2.instancePaths == ["samples/consolidate/A_11111111.wav"], "\(c2.instancePaths)")
+    }
+
     // 3. Orphan definition: in the registry, named by nobody.
     do {
         let a = id(1), orphan = id(9)
@@ -209,6 +230,26 @@ enum ProjectFileUsageTest {
     let stray = U.universe(listing: listed([("samples/consolidate/Lost_cccccccc_objectstate.json", 3)]))
     check("universe: a sidecar whose wave is gone is a stray file",
           stray.count == 1 && stray[0].kind == .strayFile && stray[0].size == 3)
+
+    // Archived originals: a WAV outside the managed folders with a FLAC twin beside it.
+    do {
+        let l = listed([("Audio/s2.wav", 100), ("Audio/s2.flac", 60), ("Audio/lone.wav", 50),
+                        ("take.wav", 10), ("take.flac", 6), ("waveforms/s2.wav.wfc", 4),
+                        (".hidden/x.wav", 1), (".hidden/x.flac", 1), ("Audio/S3.WAV", 9), ("Audio/S3.flac", 5)])
+        let uni = U.universe(listing: l)
+        let arch = uni.filter { $0.kind == .archivedOriginal }
+        check("archived: the WAVs with a FLAC twin are candidates (root and sub-folder, any case)",
+              ids(arch) == ["Audio/s2.wav", "take.wav", "Audio/S3.WAV"], "\(ids(arch))")
+        check("archived: a WAV with no FLAC twin, a FLAC, a hidden folder stay out",
+              !ids(uni).contains("Audio/lone.wav") && !ids(uni).contains("Audio/s2.flac") && !ids(uni).contains(".hidden/x.wav"))
+        check("archived: its .wfc travels with it",
+              arch.first { $0.id == "Audio/s2.wav" }?.files == ["Audio/s2.wav", "waveforms/s2.wav.wfc"]
+              && arch.first { $0.id == "Audio/s2.wav" }?.size == 104)
+        var read = U.Usage(); read.rel = ["Audio/s2.flac", "take.wav"]
+        let r = U.classify(universe: uni, session: read, protected: U.Usage(), others: [])
+        check("archived: unused when only the FLAC is read", ids(r.unused).contains("Audio/s2.wav"))
+        check("archived: used while a clip still reads the WAV", ids(r.used).contains("take.wav"))
+    }
 
     // MARK: - classify: the scenarios of the brief
 

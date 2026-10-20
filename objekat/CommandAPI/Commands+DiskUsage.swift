@@ -184,6 +184,24 @@ extension CommandRegistry {
                 "rebound": .int(outcome.rebound),
             ])
         }
+
+        register("project.flac_progress",
+                 summary: "Where the running `project.convert_to_flac` stands (what the clean-up popover's "
+                        + "bar and the footer show): `running`, and `progress` {dry_run, done, total, "
+                        + "current} or null. `last` is the final state of the last pass that ended "
+                        + "(done == total), null before any. Read-only; poll it from ANOTHER connection "
+                        + "while the conversion runs on the first.",
+                 params: [], undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            @MainActor func json(_ p: FlacArchiveProgress?) -> JSONValue {
+                guard let p else { return .null }
+                return .object(["dry_run": .bool(p.dryRun), "done": .int(p.done), "total": .int(p.total),
+                                "current": p.current.map { .string($0) } ?? .null])
+            }
+            return .object(["running": .bool(vm.isArchivingToFlac),
+                            "progress": json(vm.flacArchiveProgress),
+                            "last": json(vm.lastFlacArchiveProgress)])
+        }
     }
 
     private static func diskScope(_ p: CommandParams) throws -> DiskCleanScope {

@@ -6096,6 +6096,52 @@
         }
       }
     },
+    "flacArchive.footer.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: checking %1$lld/%2$lld…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: examinando %1$lld/%2$lld…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC : examen %1$lld/%2$lld…"
+          }
+        }
+      }
+    },
+    "flacArchive.footer.convert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: converting %1$lld/%2$lld…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: convirtiendo %1$lld/%2$lld…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC : conversion %1$lld/%2$lld…"
+          }
+        }
+      }
+    },
     "flacArchive.help": {
       "extractionState": "manual",
       "localizations": {
@@ -6230,6 +6276,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld fichier(s) WAV hors du dossier du projet n'ont pas été touchés."
+          }
+        }
+      }
+    },
+    "flacArchive.progress.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking files: %1$lld of %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Examinando archivos: %1$lld de %2$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Examen des fichiers : %1$lld sur %2$lld"
+          }
+        }
+      }
+    },
+    "flacArchive.progress.convert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Converting to FLAC: %1$lld of %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convirtiendo a FLAC: %1$lld de %2$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversion en FLAC : %1$lld sur %2$lld"
           }
         }
       }
@@ -9730,6 +9822,29 @@
         }
       }
     },
+    "library.slot.add.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a slot: choose a folder"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir un espacio: elegir una carpeta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un emplacement : choisir un dossier"
+          }
+        }
+      }
+    },
     "library.slot.clear": {
       "extractionState": "manual",
       "localizations": {
@@ -9772,6 +9887,121 @@
           "stringUnit": {
             "state": "translated",
             "value": "Emplacement vide : cliquer pour choisir un dossier"
+          }
+        }
+      }
+    },
+    "library.slot.full.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nDrag to move · ⌥-click to remove · double-click to fold everything"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nArrastrar para mover · ⌥-clic para quitar · doble clic para plegarlo todo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nGlisser pour déplacer · ⌥-clic pour retirer · double-clic pour tout replier"
+          }
+        }
+      }
+    },
+    "library.slot.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove slot"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar el espacio"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer l’emplacement"
+          }
+        }
+      }
+    },
+    "library.slot.remove.confirm.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It leads to the folder “%1$@” (%2$@). The folder itself is not touched: only the shortcut goes."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lleva a la carpeta «%1$@» (%2$@). La carpeta no se toca: solo desaparece el acceso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elle mène au dossier « %1$@ » (%2$@). Le dossier lui-même n’est pas touché : seul le raccourci disparaît."
+          }
+        }
+      }
+    },
+    "library.slot.remove.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this colour?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Quitar este color?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer cette couleur ?"
+          }
+        }
+      }
+    },
+    "library.slot.remove.confirm.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer"
           }
         }
       }
@@ -10048,6 +10278,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ajouter une couleur"
+          }
+        }
+      }
+    },
+    "menu.context.color.remove.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-click to remove this colour from the palette (objects keep their colour)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-clic para quitar este color de la paleta (los objetos conservan su color)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-clic pour retirer cette couleur de la palette (les objets gardent leur couleur)"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the default colours"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer los colores predeterminados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir les couleurs par défaut"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The palette goes back to the seven base colours; the colours added are forgotten. No object changes colour."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La paleta vuelve a los siete colores básicos; los colores añadidos se olvidan. Ningún objeto cambia de color."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La palette revient aux sept couleurs de base ; les couleurs ajoutées sont oubliées. Aucun objet ne change de couleur."
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the default colours?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Restablecer los colores predeterminados?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir les couleurs par défaut ?"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Go back to the seven base colours. No object changes colour."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a los siete colores básicos. Ningún objeto cambia de color."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revenir aux sept couleurs de base. Aucun objet ne change de couleur."
           }
         }
       }
