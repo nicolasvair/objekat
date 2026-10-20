@@ -16,7 +16,10 @@ FLAC lives at two doors only, both lossless by construction:
      past 0 dBFS as a WAV and says why, never touches a file outside the project folder, never deletes
      an original, marks the project modified, re-aims the clips AND the consolidated definition, plays
      the same mix afterwards (export compared sample for sample), survives a save and a reopening, and
-     leaves the old WAVs to the existing clean-up.
+     leaves the old WAVs to the existing clean-up;
+  D  after convert + save + reopen, the clean-up offers EVERY original the project no longer reads —
+     a WAV outside samples/ and a consolidated object nested in another included (bug of 20 October
+     2026) — and `project.flac_progress` reports the conversion while it runs.
 
     objekat.app/Contents/MacOS/objekat --headless --api --no-audio --no-recent --language=en --socket=/tmp/f.sock
     ./scenario_flac_archive.py /tmp/f.sock
@@ -400,6 +403,7 @@ def main(c):
     unused = sorted(u["path"] for u in du["cleanable"])
     print("info  C6 cleanable after the save: %s" % unused)
     check("C6 the clean-up offers the original source WAV", "samples/sources/tone24.wav" in unused, unused)
+    check("C6 it offers the quiet render's original WAV too", ("samples/consolidate/" + dq["wave"]) in unused, unused)
     check("C6 it does not offer the loud render (still read)", ("samples/consolidate/" + dl["wave"]) not in unused, unused)
 
     # a re-bake of a definition whose wave is a FLAC writes a WAV revision beside it
@@ -418,6 +422,129 @@ def main(c):
     check("C7 the FLAC revision 0 is left in place (no migration, no GC)", os.path.isfile(fq))
     check("C7 the new revision holds the -6 dB content (peak ~ 0.275)", near(peak(read_wav(nw)), 0.549 * 10 ** (-6 / 20.0), 0.02),
           peak(read_wav(nw)))
+
+    # ═══ D — after the archive, EVERY original the project no longer reads is offered ════════
+    # The bug of 20 October 2026: « when I turn a session into FLAC, the WAVs are not considered
+    # unused, even after closing and reopening ». Two kinds of original were never offered:
+    #   • a WAV of the project folder OUTSIDE samples/{consolidate,objects,sources} (the archive
+    #     converts any WAV of the folder the project reads — it was out of the clean-up's universe);
+    #   • the wave of a consolidated object NESTED in another one: the outer definition's sidecar
+    #     still names the inner instance's old WAV path (sidecars are never rewritten), and that
+    #     stale path kept the WAV "used" for ever.
+    section("D — the originals left by the archive are offered (outside folders, nested consolidations)")
+    P2 = os.path.join(ROOT, "proj2")
+    os.makedirs(P2)
+    S1 = os.path.join(P2, "samples", "sources", "s1.wav")
+    S2 = os.path.join(P2, "Audio", "s2.wav")          # inside the project folder, outside samples/
+    LONE = os.path.join(P2, "Audio", "lone.wav")      # never read, no FLAC: must stay out of it
+    write_tone(S1, 24, 48000, 0.5, 0.3)
+    write_tone(S2, 16, 44100, 0.5, 0.3)
+    write_tone(LONE, 16, 44100, 0.2, 0.3)
+    cmd("project.new")
+    cmd("object.add", path=S1, lane=0, start=0.0)
+    cmd("object.add", path=S2, lane=1, start=0.0)
+    q2 = cmd("object.add", path=BIP, lane=2, start=1.0)["id"]
+    m2 = os.path.join(P2, "proj2.objekat")
+    cmd("project.save_as", path=m2)
+    idle()
+    wait(cmd("consolidate.make", id=q2))                # A, the inner one
+    idle()
+    inner = next(o["id"] for o in cmd("object.list")["objects"] if o.get("definition"))
+    e2 = cmd("object.add", path=BIP, lane=3, start=1.0)["id"]
+    cmd("object.set_gain", ids=[e2], db=-12)            # the outer render stays under 0 dBFS
+    cmd("group.create", ids=[inner, e2])
+    idle()
+    gid = next(o["id"] for o in cmd("object.list")["objects"] if o["kind"] == "group")
+    wait(cmd("consolidate.make", id=gid))               # B, holding an instance of A
+    idle()
+    cmd("project.save")
+    idle()
+    defs2 = {d["id"]: d for d in cmd("consolidate.list")["definitions"]}
+    da = next(d for d in defs2.values() if not d["placements"])
+    db = next(d for d in defs2.values() if d["placements"])
+    cons2 = "samples/consolidate/"
+    check("D0 a nested consolidation: B is placed, A only lives in B's content", da and db, defs2)
+
+    # the conversion, with its progress polled from a SECOND connection while it runs
+    seen_progress = []
+    stop = []
+
+    def poll():
+        try:
+            with ObjekatClient(SOCK, timeout=60) as c2:
+                while not stop:
+                    st = c2.send("project.flac_progress", None)
+                    if st.get("progress"):
+                        seen_progress.append(st["progress"])
+                    time.sleep(0.005)
+        except Exception as exc:              # noqa: BLE001 — reported by the assertions below
+            seen_progress.append({"error": str(exc)})
+    import threading
+    th = threading.Thread(target=poll)
+    th.start()
+    real2 = cmd("project.convert_to_flac", dry_run=False)
+    stop.append(True)
+    th.join()
+    conv = sorted(x["path"] for x in real2["converted"])
+    print("info  D1 converted %s, kept %s" % (conv, [x["path"] for x in real2["kept"]]))
+    check("D1 the archive converts the outside-folder WAV, the source and BOTH consolidated waves",
+          conv == sorted(["Audio/s2.wav", "samples/sources/s1.wav", cons2 + da["wave"], cons2 + db["wave"]]), conv)
+    fp = cmd("project.flac_progress")
+    print("info  D2 %d progress samples seen while it ran; last %s" % (len(seen_progress), fp.get("last")))
+    check("D2 flac_progress: not running any more, no progress left", fp["running"] is False and fp["progress"] is None, fp)
+    check("D2 flac_progress: the last pass ended done == total == 4, real run",
+          fp["last"] and fp["last"]["done"] == fp["last"]["total"] == 4 and fp["last"]["dry_run"] is False, fp)
+    errs = [x for x in seen_progress if "error" in x]
+    check("D2 the poller never failed", not errs, errs)
+    ok_shape = all(0 <= x["done"] <= x["total"] for x in seen_progress if "done" in x)
+    mono = all(b["done"] >= a["done"] for a, b in zip(seen_progress, seen_progress[1:]) if a.get("total") == b.get("total"))
+    check("D2 every progress seen is 0 <= done <= total, and never goes back", ok_shape and mono, seen_progress[:8])
+
+    cmd("project.save")
+    idle()
+    cmd("project.new")
+    idle()
+    cmd("project.open", path=m2)
+    idle()
+    du2 = cmd("project.disk_usage", scope="session", refresh=True)
+    unused2 = sorted(u["path"] for u in du2["cleanable"])
+    print("info  D3 cleanable after convert + save + reopen: %s" % unused2)
+    check("D3 the outside-folder original WAV is offered", "Audio/s2.wav" in unused2, unused2)
+    check("D3 the nested consolidated object's original WAV is offered", cons2 + da["wave"] in unused2, unused2)
+    check("D3 the outer consolidated object's original WAV is offered", cons2 + db["wave"] in unused2, unused2)
+    check("D3 the source's original WAV is offered", "samples/sources/s1.wav" in unused2, unused2)
+    check("D3 a WAV with no FLAC beside it is never offered (outside the universe)", "Audio/lone.wav" not in unused2, unused2)
+    check("D3 no FLAC and no sidecar is offered",
+          not [x for x in unused2 if x.endswith(".flac") or x.endswith("_objectstate.json")], unused2)
+    # Opening B's content: the nested instance plays its definition's FLAC, not the WAV its sidecar names.
+    cmd("consolidate.edit_begin", placement=db["placements"][0])
+    idle()
+    nested = [o for o in cmd("object.list")["objects"] if o.get("definition") == da["id"]]
+    check("D4 inside the opened content, the nested instance reads A's FLAC (the WAV is truly unread)",
+          len(nested) == 1 and nested[0]["file"].endswith(".flac"), nested)
+    cmd("consolidate.edit_cancel")
+    idle()
+    # Removing those files leaves nothing missing, even after reopening. (Moved out of the folder by
+    # hand rather than through `project.clean_unused`, which would put test files in the user's Trash;
+    # the dry run says it WOULD move exactly them.)
+    gone = ["Audio/s2.wav", cons2 + da["wave"], cons2 + db["wave"], "samples/sources/s1.wav"]
+    cl = cmd("project.clean_unused", scope="session", paths=gone)
+    print("info  D5 clean_unused dry run: %s" % cl)
+    out_dir = os.path.join(ROOT, "gone")
+    os.makedirs(out_dir)
+    for i, rel in enumerate(gone):
+        shutil.move(os.path.join(P2, rel), os.path.join(out_dir, "%d_%s" % (i, os.path.basename(rel))))
+    cmd("project.new")
+    idle()
+    cmd("project.open", path=m2)
+    idle()
+    check("D5 the originals removed: nothing is missing after reopening",
+          cmd("project.missing_files")["path_count"] == 0, cmd("project.missing_files"))
+    cmd("consolidate.edit_begin", placement=db["placements"][0])
+    idle()
+    check("D5 …nor inside B's content", cmd("project.missing_files")["path_count"] == 0, cmd("project.missing_files"))
+    cmd("consolidate.edit_cancel")
+    idle()
 
 
 if __name__ == "__main__":

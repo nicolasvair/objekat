@@ -1558,6 +1558,13 @@ final class EditViewModel {
     /// True while the WAVs of the project folder are being converted to FLAC
     /// (@see `EditViewModel+FlacArchive`): the clean-up refuses to run meanwhile.
     var isArchivingToFlac = false
+    /// Where the running conversion stands (nil when none runs): the popover's bar and the
+    /// footer's count read it. @see `FlacArchiveProgress`.
+    var flacArchiveProgress: FlacArchiveProgress? = nil
+    /// The last pass's final state (for a script: `project.flac_progress`).
+    var lastFlacArchiveProgress: FlacArchiveProgress? = nil
+    /// The run the progress belongs to: a late report of an older run is dropped.
+    @ObservationIgnored var flacArchiveRunID: UUID? = nil
     /// What stopped the last scan from being computed (an i18n key), nil if it was. Read by the
     /// popover so the figures on display are never mistaken for current ones.
     var diskUsageBlockedKey: String? = nil

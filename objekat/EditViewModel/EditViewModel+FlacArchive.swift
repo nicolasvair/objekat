@@ -152,13 +152,18 @@ nonisolated enum FlacArchive {
     // MARK: Running
 
     /// Looks at (`dryRun`) or converts each candidate. Blocking: off the main thread.
-    static func run(_ candidates: [Candidate], dryRun: Bool, isCancelled: () -> Bool = { false }) -> [Entry] {
+    /// `progress(done, total, name)` is called before each file (with the file about to be read)
+    /// and once at the end (`done == total`, no name), on the calling thread.
+    static func run(_ candidates: [Candidate], dryRun: Bool, isCancelled: () -> Bool = { false },
+                    progress: (Int, Int, String?) -> Void = { _, _, _ in }) -> [Entry] {
         let fm = FileManager.default
         func size(_ u: URL) -> Int64 {
             ((try? fm.attributesOfItem(atPath: u.path))?[.size] as? NSNumber)?.int64Value ?? 0
         }
         var out: [Entry] = []
-        for c in candidates {
+        defer { progress(candidates.count, candidates.count, nil) }
+        for (i, c) in candidates.enumerated() {
+            progress(i, candidates.count, c.rel)
             if let forced = c.forced { out.append(Entry(candidate: c, verdict: .keep(forced))); continue }
             if dryRun {
                 switch FlacConverter.plan(of: c.url, isCancelled: isCancelled) {
@@ -178,6 +183,20 @@ nonisolated enum FlacArchive {
         }
         return out
     }
+}
+
+// MARK: - The progress (what the popover and the footer show while it runs)
+
+/// Where a running conversion stands: `done` of `total` files, the one being read now. The DRY run
+/// (the look that decides each file) and the real one are two passes, each counted from zero.
+struct FlacArchiveProgress: Equatable, Sendable {
+    var dryRun: Bool
+    var done: Int
+    var total: Int
+    /// The file being read (relative to the project folder), nil once the pass is over.
+    var current: String?
+
+    var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
 }
 
 // MARK: - The outcome
@@ -271,13 +290,37 @@ extension EditViewModel {
 
         let token = projectLoadToken
         let url = projectURL
+        let run = UUID()
         isArchivingToFlac = true
-        defer { isArchivingToFlac = false }
+        flacArchiveRunID = run
+        flacArchiveProgress = FlacArchiveProgress(dryRun: dryRun, done: 0, total: 0, current: nil)
+        defer {
+            isArchivingToFlac = false
+            if flacArchiveRunID == run {
+                lastFlacArchiveProgress = flacArchiveProgress
+                flacArchiveProgress = nil
+                flacArchiveRunID = nil
+            }
+        }
 
+        // The worker reports each file; the main actor keeps only what moves FORWARD for THIS run
+        // (two hops may arrive out of order, and a late one must not outlive the run).
+        let report: @Sendable (Int, Int, String?) -> Void = { done, total, name in
+            Task { @MainActor in
+                guard self.flacArchiveRunID == run else { return }
+                if let p = self.flacArchiveProgress, p.total == total, p.done > done { return }
+                self.flacArchiveProgress = FlacArchiveProgress(dryRun: dryRun, done: done, total: total, current: name)
+            }
+        }
         let (entries, outside) = await Task.detached(priority: .utility) { () -> ([FlacArchive.Entry], Int) in
             let gathered = FlacArchive.gather(input)
-            return (FlacArchive.run(gathered.candidates, dryRun: dryRun), gathered.outside)
+            return (FlacArchive.run(gathered.candidates, dryRun: dryRun, progress: report), gathered.outside)
         }.value
+        // The last hop of the worker may still be queued: the pass is over, say so.
+        if let p = flacArchiveProgress, flacArchiveRunID == run {
+            flacArchiveProgress = FlacArchiveProgress(dryRun: dryRun, done: max(p.done, entries.count),
+                                                      total: max(p.total, entries.count), current: nil)
+        }
         outcome.entries = entries
         outcome.outside = outside
         guard !dryRun else { return outcome }

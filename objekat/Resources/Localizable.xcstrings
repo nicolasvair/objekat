@@ -5912,6 +5912,52 @@
         }
       }
     },
+    "flacArchive.footer.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: checking %1$lld/%2$lld…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: examinando %1$lld/%2$lld…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC : examen %1$lld/%2$lld…"
+          }
+        }
+      }
+    },
+    "flacArchive.footer.convert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: converting %1$lld/%2$lld…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC: convirtiendo %1$lld/%2$lld…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "FLAC : conversion %1$lld/%2$lld…"
+          }
+        }
+      }
+    },
     "flacArchive.help": {
       "extractionState": "manual",
       "localizations": {
@@ -6046,6 +6092,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld fichier(s) WAV hors du dossier du projet n'ont pas été touchés."
+          }
+        }
+      }
+    },
+    "flacArchive.progress.check": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking files: %1$lld of %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Examinando archivos: %1$lld de %2$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Examen des fichiers : %1$lld sur %2$lld"
+          }
+        }
+      }
+    },
+    "flacArchive.progress.convert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Converting to FLAC: %1$lld of %2$lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Convirtiendo a FLAC: %1$lld de %2$lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conversion en FLAC : %1$lld sur %2$lld"
           }
         }
       }
