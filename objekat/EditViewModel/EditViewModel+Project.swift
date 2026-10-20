@@ -548,6 +548,8 @@ extension EditViewModel {
     /// exists to prevent.
     func resetTransientSessionState(preservingClipboard: Bool = false) {
         selectedAnnotation = nil
+        pluginPresetStatus = [:]          // a preset's name is this document's history
+        presetTouchQuietUntil = [:]
         resetScriptSessionState()
         clearAutomationPointSelection()
         if !preservingClipboard {

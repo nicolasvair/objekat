@@ -62,7 +62,7 @@ extension EditViewModel {
                                      identifier: leaf.identifier, formatName: leaf.formatName,
                                      isEnabled: leaf.isEnabled, stateXML: states[leaf.id] ?? nil,
                                      colorIndex: leaf.colorIndex, sidechain: leaf.sidechain,
-                                     monoFold: leaf.monoFold)
+                                     monoFold: leaf.monoFold).withTrims(of: leaf)
                 defs.append(d)
                 defByLeaf[leaf.id] = d.id
             }
@@ -80,7 +80,7 @@ extension EditViewModel {
                                 isEnabled: d.isEnabled, stateXML: states[leaf.id] ?? nil,
                                 linkGroupID: defID, colorIndex: leaf.colorIndex,
                                 sidechain: leaf.sidechain,
-                                monoFold: leaf.monoFold)
+                                monoFold: leaf.monoFold).withTrims(of: leaf)
         }
         return FXLink.blockEntry(linkID: link.id, name: link.name, instances: instances)
     }

@@ -109,7 +109,8 @@ enum SynopticMapping {
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
                        color: p.color,
-                       gainStage: synopticFace(of: p))
+                       gainStage: synopticFace(of: p),
+                       trimInDb: p.trims.input, trimOutDb: p.trims.output)
     }
 
     /// A gain stage's face as the signal view names it (nil = not a stage).
@@ -138,10 +139,8 @@ extension EditViewModel {
         }
     }
 
-    private func makeObjectPlugin(_ a: AvailablePlugin) -> ObjectPlugin {
-        ObjectPlugin(id: UUID(), name: a.name, manufacturer: a.manufacturer,
-                     identifier: a.identifier, formatName: a.formatName)
-    }
+    /// A FRESH insertion: it starts on its type's default preset, if one is set (@see freshPlugin).
+    private func makeObjectPlugin(_ a: AvailablePlugin) -> ObjectPlugin { freshPlugin(a) }
 
     /// The signal view's '+': inserts a new plugin into the target series, at the given index.
     func synopticInsert(objectID: UUID, available: AvailablePlugin,
@@ -152,7 +151,7 @@ extension EditViewModel {
         if case .block(let blockID) = location,
            let block = Self.findBlock(blockID, in: plugins), let fb = block.fxBlock, !fb.isDetached {
             let template = makeObjectPlugin(available)
-            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, at: index) else {
+            guard let defID = fxAddPlugin(linkID: fb.linkID, template: template, state: template.stateXML, at: index) else {
                 availablePlugins.removeAll { $0.identifier == available.identifier && $0.formatName == available.formatName }
                 return
             }
@@ -361,7 +360,7 @@ extension EditViewModel {
                                 identifier: plug.identifier, formatName: plug.formatName,
                                 isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil,
                                 sidechain: plug.sidechain,
-                                monoFold: plug.monoFold)
+                                monoFold: plug.monoFold).withTrims(of: plug)
         pushUndo()
         updateChainPlugins(objectID) {
             $0 = Self.simplifyTree(Self.inserting(copy, into: location, at: index, plugins: plugins))

@@ -219,6 +219,17 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// on the left. Meaningless for a plugin with two inputs: kept, never read.
     var monoFold: MonoFold? = .sum
 
+    /// The TRIMS around the plugin, in dB (nil = 0, neutral): a gain before it and a gain after it,
+    /// which the editor bar's coupled gesture moves together (+n in, −n out) and the gain match sets
+    /// (the output only). Not automatable; bypassed with the plugin. Session format 29.
+    /// @see EditViewModel+Trims, OBJPluginProbe.h (engine patch 0045)
+    var inputTrimDb: Float? = nil
+    var outputTrimDb: Float? = nil
+
+    /// The trims as numbers (0 = neutral).
+    var trims: (input: Float, output: Float) { (inputTrimDb ?? 0, outputTrimDb ?? 0) }
+    var hasTrims: Bool { (inputTrimDb ?? 0) != 0 || (outputTrimDb ?? 0) != 0 }
+
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
          linkGroupID: UUID? = nil, detachedLinkGroupID: UUID? = nil,
@@ -248,6 +259,15 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// The fold the engine plays (@see monoFold): no key = the left channel.
     var effectiveMonoFold: MonoFold { monoFold ?? .left }
 
+    /// This entry wearing `other`'s trims — the copies that rebuild a plugin field by field call it,
+    /// so a copy, a paste, a link or a bake keeps what the editor bar set.
+    func withTrims(of other: ObjectPlugin) -> ObjectPlugin {
+        var p = self
+        p.inputTrimDb = other.inputTrimDb
+        p.outputTrimDb = other.outputTrimDb
+        return p
+    }
+
     /// True if this entry represents a parallel block (and not a plain plugin).
     var isRack: Bool { rack != nil }
 
@@ -271,7 +291,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker, monoFold
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker, monoFold,
+             inputTrimDb, outputTrimDb
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -295,6 +316,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         // No key = written before format 28 (or by a plugin that never had one): the LEFT channel, what
         // it sounded like — never the new default (@see monoFold).
         monoFold = try c.decodeIfPresent(MonoFold.self, forKey: .monoFold)
+        inputTrimDb = try c.decodeIfPresent(Float.self, forKey: .inputTrimDb).flatMap { $0 == 0 ? nil : $0 }
+        outputTrimDb = try c.decodeIfPresent(Float.self, forKey: .outputTrimDb).flatMap { $0 == 0 ? nil : $0 }
     }
 }
 

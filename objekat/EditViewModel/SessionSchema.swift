@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 28
+    static let formatVersion = 29
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -140,6 +140,10 @@ enum SessionSchema {
         "  and every attached member) — its curve moved onto the stage's \"gain\". A file written",
         "  since never carries those keys. A build from before format 25 does not know the stages:",
         "  it drops them (forward incompatibility).",
+        "inputTrimDb / outputTrimDb (format 29) — on a plugin entry, the gains in dB applied just before",
+        "  and just after that plugin (the editor bar's trims and its gain match, -24..+24 dB). Absent =",
+        "  0, neutral. Not automatable; a bypassed plugin bypasses its trims too. A build from before",
+        "  format 29 drops them (forward incompatibility: the plugin is then heard untrimmed).",
         "sidechain — on a plugin entry, { sourceID }: the object or stem whose sound feeds that plugin's",
         "  sidechain input, tapped after its fader and its window (what is heard of it). The source must",
         "  not contain the plugin's host, and no chain of keys may loop. A key whose source is gone or out",

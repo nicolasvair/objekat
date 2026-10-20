@@ -456,11 +456,20 @@ final class EditViewModel {
             // snapshot and save, so the flag is all there is to set.
             // The Sidechain strip under a native editor: asked for when its window is created, the
             // instance being loaded by then (which is what `pluginCanSidechain` needs).
+            // The preset menu at the right of a native editor's title bar (@see PluginPresetMenu).
+            engine?.setPluginEditorTitleAccessoryProvider { [weak self] key in
+                MainActor.assumeIsolated {
+                    guard let self, let plugin = UUID(uuidString: key),
+                          self.nativeEditorHosts[plugin] != nil else { return nil }
+                    return PluginPresetMenu.titleBarView(viewModel: self, plugin: plugin)
+                }
+            }
             engine?.setPluginEditorAccessoryProvider { [weak self] key in
                 MainActor.assumeIsolated {
                     guard let self, let plugin = UUID(uuidString: key),
                           let host = self.nativeEditorHosts[plugin] else { return nil }
-                    return self.sidechainStripView(host: host, plugin: plugin)
+                    // The Sidechain strip (if any) above the expert bar (@see PluginExpertBar).
+                    return self.editorBottomBandView(host: host, plugin: plugin)
                 }
             }
             engine?.onLinkedPluginStateSynced = { [weak self] _, _ in
@@ -478,6 +487,7 @@ final class EditViewModel {
                     self.pluginParamValues[.plugin(pluginKey: pluginKey, paramID: paramID)] =
                         value.clamped(to: 0...1)
                     self.recordPluginParamTouch(pluginKey: pluginKey, paramID: paramID)
+                    self.notePresetParamTouched(pluginKey)
                 }
             }
         }
@@ -512,6 +522,15 @@ final class EditViewModel {
     /// to come" row must follow the knob being turned. It is never written from
     /// a render — only from the bridge or an `onChange` — so no invalidation loop.
     var pluginParamValues: [ParamRef: Float] = [:]
+
+    /// What each plugin editor's title bar says about its preset (@see EditViewModel+Presets).
+    /// Transient: not saved, not in the undo snapshot.
+    var pluginPresetStatus: [UUID: PluginPresetStatus] = [:]
+    /// Until when a plugin's parameter touches are a preset being laid, not the hand.
+    @ObservationIgnored var presetTouchQuietUntil: [UUID: Date] = [:]
+    /// Bumped each time a state is laid on a plugin from outside its editor (a preset, a program):
+    /// what a built-in's SwiftUI editor watches to re-read its parameters.
+    var pluginStateRevision: [UUID: Int] = [:]
 
     /// What the CURVES of the selected objects are worth at the playback position — the value
     /// the engine is playing right now, per object then per parameter. Refreshed by the playhead

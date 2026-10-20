@@ -302,7 +302,7 @@ extension EditViewModel {
                                     linkGroupID: p.linkGroupID,
                                     detachedLinkGroupID: p.detachedLinkGroupID,
                                     colorIndex: p.colorIndex, sidechain: p.sidechain,
-                                    monoFold: p.monoFold)
+                                    monoFold: p.monoFold).withTrims(of: p)
             case .copy:
                 // No colour carried over: an independent copy draws its own, which is what makes
                 // it recognisable as a second plugin and not the same one seen twice.
@@ -310,14 +310,14 @@ extension EditViewModel {
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: stateXML, linkGroupID: nil,
                                     sidechain: p.sidechain,
-                                    monoFold: p.monoFold)
+                                    monoFold: p.monoFold).withTrims(of: p)
             case .link:
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: stateXML,
                                     linkGroupID: groups[p.id], colorIndex: p.colorIndex,
                                     sidechain: p.sidechain,
-                                    monoFold: p.monoFold)
+                                    monoFold: p.monoFold).withTrims(of: p)
             }
         }
 
@@ -379,6 +379,6 @@ extension EditViewModel {
                      identifier: p.identifier, formatName: p.formatName,
                      isEnabled: p.isEnabled, stateXML: liveStateXML(of: p), linkGroupID: nil,
                      sidechain: p.sidechain,
-                     monoFold: p.monoFold)
+                     monoFold: p.monoFold).withTrims(of: p)
     }
 }

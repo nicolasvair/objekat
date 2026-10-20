@@ -1010,6 +1010,56 @@ measured unless a view registered the plugin; no node is added to the graph.
   `not_found` for an unknown host or plugin. A gain stage and an instrument are plugins like the others.
   Tested by `tools/scenario_plugin_meters.py` (a live audio device is required: not `--no-audio`).
 
+### Plugin presets (`preset.*`)
+
+OBJEKAT's own presets, per plugin TYPE (format + identifier), in ONE global library (a `--no-recent` process
+uses a temporary one, never the user's). The plugin's own factory programs are offered read-only beside them.
+A type's DEFAULT preset is laid on a FRESH insertion only (a copy, a duplicate, a paste keep their state). A
+load lays the state on the live instance (same id, no rebuild) and on every instance ACTIVELY linked to it,
+as ONE undo point, and keeps the instance's own bypass. The current preset's name is transient (not saved);
+a state changed through the plugin's own chunk only is not seen as "modified".
+
+- `preset.library` → `{root}`.
+- `preset.list {plugin}` → `{plugin, host, identifier, format, presets, default, factory, status}` —
+  `status` `{name, factory, modified}` or `null`.
+- `preset.save {plugin, name}` → `{name, status}` (overwrites a preset of that name).
+- `preset.load {plugin, name? | factory?}` → `{status}` (`factory` = an index into `preset.list`'s `factory`).
+- `preset.delete {plugin, name}` (takes the default with it if it was the default).
+- `preset.set_default {plugin, name?}` → `{default}`; `null` / absent clears.
+Tested by `tools/scenario_presets.py`.
+
+### The editor's expert bar: gain reduction, trims, gain match (session format 29, engine patch `0045`)
+
+A bar at the bottom of every plugin editor (under the Sidechain strip when there is one).
+
+**Gain reduction** — read ONLY from a read-only parameter the plugin publishes (nothing is measured by
+OBJEKAT). The bar picks the one whose name says gain reduction unless the hand chose, the choice remembered
+per plugin TYPE; the dB are parsed from the plugin's own text. A built-in publishes none.
+- `plugin.gain_reduction {plugin}` → `{candidates: [{index, id, name}], chosen, text, db}`.
+- `plugin.choose_gain_reduction {plugin, id?}` — `null` / absent = show nothing (also remembered).
+
+**Trims** — an input gain before the plugin and an output gain after it (`ObjectPlugin.inputTrimDb` /
+`outputTrimDb`, absent when 0), ±24 dB, applied by the probe patch `0045` puts around the plugin, live AND in
+every render, ramped over one block, and BYPASSED with the plugin. Not automatable. Carried by undo (patched,
+never a rebuild), the session file, copies, duplicates, a manual link and an FX link's active members (a set
+on one moves every instance actively linked to it). `plugin.list` carries `trims {input_db, output_db}` on a
+plugin whose trims are not neutral.
+- `plugin.trims {plugin}` → `{plugin, input_db, output_db}`.
+- `plugin.set_trims {plugin, input?, output?}` — an absent one is kept; one undo point.
+- `plugin.nudge_trims {plugin, delta}` — the coupled gesture: +delta in, −delta out, cut so neither leaves
+  ±24; one undo point.
+
+**Gain match** — sets the OUTPUT trim so that what leaves the plugin (before its output trim) is as loud,
+K-weighted (BS.1770, gated at −70 LUFS), as what enters it (before its input trim), over the last 5 s
+PLAYED. The input trim is untouched; a later coupled gesture adds to it. The measurement runs only while
+asked (the bar asks for it while shown) and never during an offline render.
+- `plugin.measure_loudness {plugin, on}`.
+- `plugin.loudness {plugin, seconds?}` → `{blocks, input_lufs, output_lufs}` (100 ms sub-blocks above the gate; a LUFS is `null` when nothing was read).
+- `plugin.gain_match {plugin}` → the trims laid (as `plugin.trims`); `invalid_state` when the transport is stopped or when fewer
+  than 10 sub-blocks (1 s) above the gate were read. One undo point.
+Tested by `tools/scenario_plugin_expert.py` (an instance WITH audio: not `--no-audio`) and
+`tools/test_gain_reduction_reading.swift`.
+
 ### A selection of plugin cards
 
 The signal view picks several cards at once — a rectangle drawn on the canvas, ⇧ for the box that

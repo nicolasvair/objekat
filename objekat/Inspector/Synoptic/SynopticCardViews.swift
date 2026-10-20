@@ -119,6 +119,22 @@ struct SynopticCardView: View {
         // (with no descendant source) received drops but the axis did not. The background steals no
         // click from the buttons (bypass / ✕ / link), which stay above it.
         .background(dropLayer)
+        // The trims, OUTSIDE the card: a tag under its bottom-left corner, only when one is not neutral.
+        .overlay(alignment: .bottomLeading) {
+            if plugin.trimInDb != 0 || plugin.trimOutDb != 0 {
+                Text(verbatim: PluginExpertBar.dbText(plugin.trimInDb) + " / " + PluginExpertBar.dbText(plugin.trimOutDb))
+                    .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(plugin.color)
+                    .padding(.horizontal, 5)
+                    .frame(height: 12)
+                    .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(Capsule().strokeBorder(plugin.color.opacity(0.6), lineWidth: 1))
+                    .fixedSize()
+                    .offset(x: 4, y: 14)
+                    .help(L("synoptic.card.trims.help", PluginExpertBar.dbText(plugin.trimInDb),
+                            PluginExpertBar.dbText(plugin.trimOutDb)))
+            }
+        }
         // The sidechain key, OUTSIDE the card: a small tag hanging above its top-left corner, in the
         // gap of the series (the wire arrives at the card's centre). Orange when the key is refused.
         .overlay(alignment: .topLeading) {

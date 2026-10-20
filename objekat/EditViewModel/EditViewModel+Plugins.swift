@@ -322,10 +322,7 @@ extension EditViewModel {
             NSSound.beep()
             return
         }
-        let plug = ObjectPlugin(id: UUID(), name: available.name,
-                                manufacturer: available.manufacturer,
-                                identifier: available.identifier,
-                                formatName: available.formatName)
+        let plug = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         updateChainPlugins(objectID) { $0.append(plug) }
         if compileRack(objectID: objectID).contains(plug.id) {
@@ -377,10 +374,7 @@ extension EditViewModel {
     /// to the engine. No effect on an object that is not a MIDI clip.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
         guard let obj = find(id: objectID), obj.isMIDI, engine != nil else { return }
-        let inst = ObjectPlugin(id: UUID(), name: available.name,
-                                manufacturer: available.manufacturer,
-                                identifier: available.identifier,
-                                formatName: available.formatName)
+        let inst = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         update(id: objectID) { $0.instruments = [inst] }
         if let updated = find(id: objectID) { syncInstruments(updated) }
@@ -464,7 +458,7 @@ extension EditViewModel {
                                   isEnabled: inst.isEnabled, stateXML: stateXML,
                                   linkGroupID: gid, detachedLinkGroupID: detached,
                                   colorIndex: inst.colorIndex, sidechain: inst.sidechain,
-                                  monoFold: inst.monoFold)
+                                  monoFold: inst.monoFold).withTrims(of: inst)
         pushUndo()
         if copy && linked, let gid, inst.linkGroupID == nil {
             // The source was not linked yet: it enters the group with the copy.
@@ -559,6 +553,7 @@ extension EditViewModel {
         if let pid = pluginParamInfos(pluginID).first(where: { $0.value.index == index })?.key {
             recordPluginParamTouch(pluginKey: pluginID, paramID: pid)
         }
+        notePresetParamTouched(pluginID)
         isDirty = true
     }
 
@@ -761,7 +756,7 @@ extension EditViewModel {
                                 isEnabled: inst.isEnabled,
                                 stateXML: (live?.isEmpty == false) ? live : inst.stateXML,
                                 sidechain: inst.sidechain,
-                                monoFold: inst.monoFold)
+                                monoFold: inst.monoFold).withTrims(of: inst)
         }
     }
 
@@ -798,7 +793,7 @@ extension EditViewModel {
                          isEnabled: p.isEnabled, stateXML: liveState(p),
                          linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
                          sidechain: p.sidechain,
-                         monoFold: p.monoFold)
+                         monoFold: p.monoFold).withTrims(of: p)
         }
         /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
         /// block gives a detached copy, with its own output section).
@@ -840,7 +835,7 @@ extension EditViewModel {
                                             rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
                                                              wetDb: rack.wetDb,
                                                              voiceMutes: rack.voiceMutes),
-                                                             monoFold: p.monoFold))
+                                                             monoFold: p.monoFold).withTrims(of: p))
                 } else {
                     out.append(copyLeaf(p))
                 }
@@ -937,6 +932,8 @@ extension EditViewModel {
                 }
             }
         }
+        // The instances are (re)made: their trims follow them (@see EditViewModel+Trims).
+        syncAllPluginTrims()
     }
 
     /// Every (objectID, plugin) instance in the project, flattened (recursively).

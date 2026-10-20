@@ -309,7 +309,7 @@ extension EditViewModel {
                                  identifier: leaf.identifier, formatName: leaf.formatName,
                                  isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
                                  sidechain: leaf.sidechain,
-                                 monoFold: leaf.monoFold)
+                                 monoFold: leaf.monoFold).withTrims(of: leaf)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state
@@ -607,7 +607,7 @@ extension EditViewModel {
                              isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
                              linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
                              colorIndex: inst.colorIndex, sidechain: inst.sidechain,
-                             monoFold: inst.monoFold)
+                             monoFold: inst.monoFold).withTrims(of: inst)
             }
             var entry = FXLink.blockEntry(linkID: fb.linkID, name: block.name, instances: instances)
             entry.fxBlock?.isDetached = true
@@ -659,7 +659,7 @@ extension EditViewModel {
                                  identifier: leaf.identifier, formatName: leaf.formatName,
                                  isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
                                  sidechain: leaf.sidechain,
-                                 monoFold: leaf.monoFold)
+                                 monoFold: leaf.monoFold).withTrims(of: leaf)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state
@@ -747,7 +747,7 @@ extension EditViewModel {
             let template = ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                         identifier: p.identifier, formatName: p.formatName,
                                         isEnabled: p.isEnabled,
-                                        monoFold: p.monoFold)
+                                        monoFold: p.monoFold).withTrims(of: p)
             if let d = fxAddPlugin(linkID: linkID, template: template, state: fxLiveState(of: p),
                                    at: index.map { $0 + k }, undo: false) {
                 added.append(d)

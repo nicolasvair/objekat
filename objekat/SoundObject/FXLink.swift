@@ -157,7 +157,7 @@ struct FXLink: Identifiable, Codable, Equatable {
                                 linkGroupID: attached ? d.id : nil,
                                 detachedLinkGroupID: attached ? nil : d.id,
                                 colorIndex: d.colorIndex, sidechain: d.sidechain,
-                                monoFold: d.monoFold)
+                                monoFold: d.monoFold).withTrims(of: d)
         }
     }
 

@@ -120,17 +120,6 @@ extension EditViewModel {
         return walk(items) ?? stems.first { holds($0.id) }?.id
     }
 
-    /// The strip as an AppKit view, for an editor window this app does not draw (JUCE's). nil = this
-    /// plugin gets no strip. The JUCE window is dark whatever the app's appearance: the strip is too.
-    func sidechainStripView(host: UUID, plugin: UUID) -> NSView? {
-        guard showsSidechainStrip(host: host, plugin: plugin) else { return nil }
-        let view = NSHostingView(rootView: SidechainStripView(viewModel: self, host: host, plugin: plugin)
-            .environment(\.colorScheme, .dark))
-        view.appearance = NSAppearance(named: .darkAqua)
-        view.frame = NSRect(x: 0, y: 0, width: 400, height: SidechainStripView.height)
-        return view
-    }
-
     // MARK: - "Choose object"
 
     /// Arms the pick and brings the document window forward, so that the very next click lands on

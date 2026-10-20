@@ -497,7 +497,16 @@ Checked as still biting: `develop` still had the linear `std::find`.
   the live Edit's temp directory). Limit: a clone made before the live Edit has finished that render still
   reads the original. Branch `objekat-reverse-render-0044`
   (published on the fork 19 October 2026, `objekat-patches-3.5` fast-forwarded onto it, `dc3d5198809`), commit on top of
-  `objekat-proxy-wavenode-0043`. File: `tracktion_AudioClipBase.cpp`. The next number is `0045`.
+  `objekat-proxy-wavenode-0043`. File: `tracktion_AudioClipBase.cpp`.
+- `0045` — **a probe around a plugin.** `te::Plugin::ObjProbe`, installed once per instance by the host
+  (`objInstallProbe`), is called by `PluginNode::process` just before and just after the plugin, with the
+  plugin's buffer, the sample rate and `isRendering`, and ONLY while the plugin really processes
+  (`shouldProcessPlugin && isEnabled`): a bypass bypasses the probe with it. The input call comes after the
+  input has been copied for the bypass / latency path, so a bypass replays the untouched signal. OBJEKAT
+  uses it for the editor bar's input / output trims and the gain match's K-weighted measurement
+  (`OBJPluginProbe.h`). Branch `objekat-probe-0045` (`8a8b5b453c0`, NOT published on the fork), commit on top
+  of `objekat-reverse-render-0044`. Files: `tracktion_Plugin.h`, `tracktion_PluginNode.cpp`. The next
+  number is `0046`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

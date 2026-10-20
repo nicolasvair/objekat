@@ -2641,6 +2641,34 @@ What has landed since mid-August, in order:
   drag gestures and their thresholds under a hand, and BY EAR an old project with trims and FX outputs
   opened in the new build (the null test proves the export, not the live graph).
 
+- **The plugin editor's expert functions: presets, gain reduction, trims, gain match** (19-20 October 2026,
+  branch `feat/plugin-expert`, NOT merged, nothing pushed; engine patch **`0045`** on the local engine branch
+  `objekat-probe-0045`, `8a8b5b453c0`, **NOT published on the fork** — `engine-patches/3.5/0045-*.patch` is its
+  only backup until `tools/publish-engine-forks.sh` is run; the next free number is `0046`). The decisions:
+  `architecture_decisions.md` ("The plugin editor's expert functions"); the API: `command_api.md`.
+  **Presets** in the editor's title bar: OBJEKAT's own, per plugin TYPE, one global library (temporary under
+  `--no-recent`), factory programs read-only beside them, a type's default laid on a FRESH insertion only, a
+  load propagated to the actively linked instances (`preset.*`). **A bar at the bottom of every editor**
+  (`Inspector/PluginExpertBar.swift`, under the Sidechain strip): the GAIN REDUCTION the plugin PUBLISHES (a
+  read-only parameter chosen by name, remembered per type; dB parsed from the plugin's text), the TRIMS (input
+  before the plugin, output after it, ±24 dB, moved by ONE coupled drag: +n in / −n out, double click = 0), and
+  the GAIN MATCH (one click while playing: the output trim that makes the K-weighted output as loud as the
+  input over the last 5 s played). A card whose trims are not neutral carries a small badge.
+  **Session format 29** (`ObjectPlugin.inputTrimDb` / `outputTrimDb`, absent when 0 — written as 27 on its branch,
+  renumbered 29 at the merge because `main` had reached 28 with the mono fold). **PERMANENT POINT**: a walker that rebuilds an `ObjectPlugin` field by field must carry the trims
+  (`withTrims(of:)`), as it carries the sidechain and the link.
+  The probe (`OBJPluginProbe.h`): patch `0045` calls it only while the plugin really processes, so a BYPASS
+  bypasses the trims; one `OBJProbeState` per plugin KEY survives an instance rebuilt; a render clone gets a
+  probe on a COPY of the gains, found by `EditItemID`; the measurement only while the bar is shown, never in an
+  offline render.
+  Verified with no screen: Debug build; `tools/test_gain_reduction_reading.swift` 27; the new
+  `tools/scenario_plugin_expert.py` 35/35 against an instance WITH audio (trims heard to 0.05 dB live and on a
+  copy, bypass, ±24, undo patched, link both ways, duplicate, save / reopen in format 29, gain match refused
+  stopped and bringing the export back to the dry level within 0.5 dB); the non-regression suites (see the
+  branch's commit). **Not seen, not heard, not felt**: the bar itself, the GR meter on a real compressor, the
+  coupled drag and its detents, the badge on the card, the preset menu in the title bar, and the gain match by
+  ear on real material.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

@@ -94,7 +94,7 @@ extension EditViewModel {
                                                               stateXML: inst.stateXML,
                                                               colorIndex: inst.colorIndex,
                                                               sidechain: freshSidechain(inst.sidechain),
-                                                              monoFold: inst.monoFold)
+                                                              monoFold: inst.monoFold).withTrims(of: inst)
                                       })
                     link.output = out
                     // The naming rule travels (plan_synoptic_rework B.0.6): a name typed by hand stays the
@@ -135,7 +135,7 @@ extension EditViewModel {
                                         rack: PluginRack(voices: rack.voices.map { freshPlugins($0) },
                                                          wetDb: rack.wetDb,
                                                          voiceMutes: rack.voiceMutes),
-                                                         monoFold: p.monoFold)
+                                                         monoFold: p.monoFold).withTrims(of: p)
                 }
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
@@ -146,7 +146,7 @@ extension EditViewModel {
                                     detachedLinkGroupID: freshLink(p.detachedLinkGroupID),
                                     colorIndex: p.colorIndex,
                                     sidechain: freshSidechain(p.sidechain),
-                                    monoFold: p.monoFold)
+                                    monoFold: p.monoFold).withTrims(of: p)
             }
         }
 

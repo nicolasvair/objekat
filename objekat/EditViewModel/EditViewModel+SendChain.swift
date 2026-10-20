@@ -151,7 +151,7 @@ extension EditViewModel {
                                     isEnabled: p.isEnabled, stateXML: xml ?? p.stateXML,
                                     linkGroupID: nil, colorIndex: p.colorIndex,
                                     sidechain: p.sidechain,
-                                    monoFold: p.monoFold)
+                                    monoFold: p.monoFold).withTrims(of: p)
             }
         }
         if !captured.isEmpty {
