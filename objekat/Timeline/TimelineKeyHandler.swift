@@ -128,7 +128,8 @@ extension TimelineView {
                     DispatchQueue.main.async {
                         if newGesture { vm.beginAutomationEdit() }
                         vm.adjustAutomationCurvature(objectID: hit.objectID, param: hit.param,
-                                                     at: hit.pointIndex, steps: steps)
+                                                     at: hit.pointIndex, steps: steps,
+                                                     newGesture: newGesture)
                     }
                 }
                 return nil

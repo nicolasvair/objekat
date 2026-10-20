@@ -188,6 +188,125 @@ func testKnob() {
           abs(S.adjusted(1, knobDelta: -0.05)) < 0.99)
 }
 
+// MARK: - The detent at the straight line (⌥-wheel and ⌥-drag)
+
+func testDetent() {
+    let d = S.knobDetentDrag
+    let n = S.knobStepPerNotch
+    // No detent = the plain sum.
+    check("no dead zone = plain travel", S.knob(throughDetentFrom: 0.3, travel: -0.1, deadZone: 0) == 0.3 - 0.1)
+    // Far from the centre the detent changes nothing: the live travel is never rescaled.
+    check("detent leaves a travel away from the centre untouched",
+          near(S.knob(throughDetentFrom: 0.4, travel: 0.2, deadZone: d), 0.6, 1e-12))
+    check("detent leaves a travel that stops short of the centre untouched",
+          near(S.knob(throughDetentFrom: 0.4, travel: -0.3, deadZone: d), 0.1, 1e-12))
+    // Landing on and holding the centre.
+    check("a travel that just reaches the centre lands EXACTLY on it",
+          S.knob(throughDetentFrom: 0.4, travel: -0.4, deadZone: d) == 0)
+    check("past the centre by less than 2·dz: still straight",
+          S.knob(throughDetentFrom: 0.4, travel: -0.4 - 2 * d + 1e-9, deadZone: d) == 0)
+    check("past the centre by more than 2·dz: bends the other way by the excess",
+          near(S.knob(throughDetentFrom: 0.4, travel: -0.4 - 2 * d - 0.05, deadZone: d), -0.05, 1e-12))
+    // Leaving straight costs dz.
+    check("from straight, a travel ≤ dz stays straight",
+          S.knob(throughDetentFrom: 0, travel: d, deadZone: d) == 0
+          && S.knob(throughDetentFrom: 0, travel: -d, deadZone: d) == 0)
+    check("from straight, a travel > dz bends by the excess",
+          near(S.knob(throughDetentFrom: 0, travel: d + 0.07, deadZone: d), 0.07, 1e-12))
+    // Antisymmetric.
+    var anti = true
+    for o in stride(from: -0.9, through: 0.9, by: 0.1) {
+        for t in stride(from: -1.5, through: 1.5, by: 0.05) {
+            let a = S.knob(throughDetentFrom: o, travel: t, deadZone: d)
+            let b = S.knob(throughDetentFrom: -o, travel: -t, deadZone: d)
+            if !near(a, -b, 1e-12) { anti = false }
+        }
+    }
+    check("detent is antisymmetric", anti)
+    // Monotonic in the travel (a hand going one way never makes the knob come back).
+    var mono = true
+    for o in stride(from: -0.9, through: 0.9, by: 0.15) {
+        var prev = -Double.infinity
+        for k in -300...300 {
+            let b = S.knob(throughDetentFrom: o, travel: Double(k) / 100, deadZone: d)
+            if b < prev - 1e-12 { mono = false }
+            prev = b
+        }
+    }
+    check("detent is monotonic in the travel", mono)
+    // Zero travel gives the origin back (to rounding), whatever it is.
+    var back = true
+    for o in [-0.8, -0.3, -0.01, 0, 0.01, 0.3, 0.8]
+    where !near(S.knob(throughDetentFrom: o, travel: 0, deadZone: d), o, 1e-12) { back = false }
+    check("zero travel = the origin, whatever it is", back)
+
+    // The WHEEL, in notches (what the view-model does: one state carried notch after notch).
+    func wheel(from knob: Double, notches: [Int]) -> [Double] {
+        var st = S.WheelDetent(knob: knob)
+        return notches.map { k in st = S.wheelStep(st, notches: k); return st.knob }
+    }
+    let down = wheel(from: 3 * n, notches: Array(repeating: -1, count: 6))
+    check("wheel: crossing straight lands on it and holds it one extra notch (2 notches at 0)",
+          down.filter { $0 == 0 }.count == 2, "\(down)")
+    check("wheel: before reaching straight the notches are the plain ones",
+          near(down[0], 2 * n, 1e-12) && near(down[1], n, 1e-12), "\(down)")
+    check("wheel: then leaves straight on the other side, one notch at a time",
+          near(down[4], -n, 1e-12) && near(down[5], -2 * n, 1e-12), "\(down)")
+    // Phase independence: a knob OFF the notch grid (left there by a drag) holds just the same.
+    var phaseOK = true
+    for k0 in stride(from: 0.012, through: 0.4, by: 0.0137) {
+        let run = wheel(from: k0, notches: Array(repeating: -1, count: 20))
+        let z = run.filter { $0 == 0 }.count
+        if z != 2 { phaseOK = false }
+    }
+    check("wheel: every crossing holds exactly 2 notches, whatever the starting phase", phaseOK)
+    let up = wheel(from: 0, notches: [1, 1, 1])
+    check("wheel: from straight, the first notch bends by a full notch",
+          near(up[0], n, 1e-12) && near(up[2], 3 * n, 1e-12), "\(up)")
+    check("wheel: turning back right after landing leaves at once (the hold is directional)",
+          wheel(from: n, notches: [-1, 1]) == [0, n])
+    check("wheel: a multi-notch event = the same notches one by one",
+          S.wheelStep(S.WheelDetent(knob: 3 * n), notches: -6) == {
+              var st = S.WheelDetent(knob: 3 * n)
+              for _ in 0..<6 { st = S.wheelStep(st, notches: -1) }
+              return st }())
+    check("wheel: the knob stays within its travel",
+          wheel(from: 0.98, notches: [1, 1]).allSatisfy { $0 <= 1 }
+          && wheel(from: -0.98, notches: [-1, -1]).allSatisfy { $0 >= -1 })
+    check("wheel: zero notches change nothing",
+          S.wheelStep(S.WheelDetent(knob: 0, hold: 1), notches: 0) == S.WheelDetent(knob: 0, hold: 1))
+    check("detented: a straight result is EXACTLY 0",
+          S.detented(Float(S.curvature(forKnob: 0.3)), knobTravel: -0.3 - d, deadZone: d) == 0)
+
+    // The DRAG, in pixels: 60 px per knob unit (AutomationBandView.curveDragTravel = 120, dk = dy·2/120).
+    let pxPerKnob = 60.0
+    func drag(_ c: Float, px: Double) -> Float { S.detented(c, knobTravel: px / pxPerKnob, deadZone: d) }
+    let bent = Float(S.curvature(forKnob: 0.5))       // 30 px from straight
+    var held = 0
+    for px in stride(from: -60.0, through: 0, by: 1) where drag(bent, px: px) == 0 { held += 1 }
+    check("drag: passing through straight holds it for about 12 px (11…13)", (11...13).contains(held), "\(held)")
+    check("drag: 30 px back lands exactly straight", drag(bent, px: -30) == 0)
+    check("drag: 6 px from straight do not bend it yet", drag(0, px: 6) == 0 && drag(0, px: -6) == 0)
+    check("drag: 7 px from straight do", drag(0, px: 7) != 0 && drag(0, px: -7) != 0)
+}
+
+// MARK: - The segments a selection holds
+
+func testSegmentOwners() {
+    // Storage order deliberately not time order.
+    let pts = [AutomationPoint(t: 2, v: 1, c: 0.5), AutomationPoint(t: 0, v: 0, c: 0.3),
+               AutomationPoint(t: 1, v: 3, c: -0.2), AutomationPoint(t: 3, v: 0, c: 0.4)]
+    check("all selected → every segment, left owner, in time order",
+          S.segmentOwners(of: pts, selected: [0, 1, 2, 3]) == [1, 2, 0])
+    check("a hole in the selection breaks the segment on both sides",
+          S.segmentOwners(of: pts, selected: [1, 0, 3]) == [0])
+    check("one point holds no segment", S.segmentOwners(of: pts, selected: [2]).isEmpty)
+    check("nothing selected, nothing held", S.segmentOwners(of: pts, selected: []).isEmpty)
+    check("empty curve", S.segmentOwners(of: [], selected: [0]).isEmpty)
+    let same = [AutomationPoint(t: 1, v: 0), AutomationPoint(t: 1, v: 2)]
+    check("two points at the same instant hold no segment", S.segmentOwners(of: same, selected: [0, 1]).isEmpty)
+}
+
 // MARK: - The engine's sampling
 
 func testSampling() {
@@ -229,7 +348,7 @@ func testSampling() {
 @main
 struct CurveShapeTests {
     static func main() {
-        testFamily(); testCompat(); testRestriction(); testKnob(); testSampling()
+        testFamily(); testCompat(); testRestriction(); testKnob(); testDetent(); testSegmentOwners(); testSampling()
         print("\n\(total - fails.count)/\(total) passed")
         if !fails.isEmpty { print("FAILED: \(fails)"); exit(1) }
     }

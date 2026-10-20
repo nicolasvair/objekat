@@ -266,19 +266,75 @@ extension EditViewModel {
     /// a rising segment but bulges a falling one. It is compensated so that the gesture keeps
     /// a single promise — the curve rises when you go up (@see AutomationBandView.curveDelta,
     /// which applies the same rule to the drag, with the mouse's inverted vertical axis).
-    func adjustAutomationCurvature(objectID: UUID, param: ParamRef, at index: Int, steps: Int) {
+    ///
+    /// The notches go through the straight-line DETENT, counted in notches (@see
+    /// AutomationCurveShape.wheelStep): the notch that reaches or crosses straight lands on it,
+    /// the next one the same way is held there. The detent's state is carried from notch to notch
+    /// (`automationCurveWheelAnchor`) for as long as the curve is the one the wheel last laid on
+    /// that segment — a pause in the wheel opens a new undo point (`newGesture`), not a new
+    /// detent; anything else that moved the curve meanwhile re-reads it.
+    func adjustAutomationCurvature(objectID: UUID, param: ParamRef, at index: Int, steps: Int,
+                                   newGesture: Bool = true) {
         let pts = automationPoints(objectID, param)
         guard pts.indices.contains(index) else { return }
         // The segment's right-hand end = the next point in TIME, not in storage.
         guard let right = pts.filter({ $0.t > pts[index].t }).min(by: { $0.t < $1.t }) else { return }
-        let sign: Double = right.v > pts[index].v ? -1 : 1
+        let sign = right.v > pts[index].v ? -1 : 1
+        let current = pts[index].c
+        var a: AutomationCurveWheelAnchor
+        if let old = automationCurveWheelAnchor, old.objectID == objectID, old.param == param,
+           old.index == index, old.written == current {
+            a = old
+        } else {
+            a = AutomationCurveWheelAnchor(
+                objectID: objectID, param: param, index: index,
+                detent: AutomationCurveShape.WheelDetent(
+                    knob: AutomationCurveShape.knob(forCurvature: Double(current))),
+                written: current)
+        }
         // A notch moves the KNOB, not `c` (@see AutomationCurveShape.knob): even steps to the
         // eye, fine near the straight line, the near-step only at the end of the travel.
-        let delta = Double(steps) * Self.automationCurveScrollStep * sign
+        a.detent = AutomationCurveShape.wheelStep(a.detent, notches: steps * sign,
+                                                  step: Self.automationCurveScrollStep)
+        let raw = a.detent.knob == 0 ? 0 : AutomationCurveShape.curvature(forKnob: a.detent.knob)
+        let c: Float = abs(raw) < 1e-6 ? 0 : Float(raw)
         updateAutomationPoints(objectID: objectID, param: param) { p in
             guard p.indices.contains(index) else { return }
-            p[index].c = AutomationCurveShape.adjusted(p[index].c, knobDelta: delta)
+            p[index].c = c
         }
+        let after = automationPoints(objectID, param)
+        a.written = after.indices.contains(index) ? after[index].c : c
+        automationCurveWheelAnchor = a
+    }
+
+    // MARK: - Straightening
+
+    /// Brings segments back to a STRAIGHT line (c = 0 on each one's left point) — the ⌥ + double
+    /// click on a segment, and `automation.straighten`. Each ref names the curvature's OWNER, the
+    /// left point of its segment (@see AutomationCurveShape.segmentOwners). ONE undo point for the
+    /// whole lot, and none at all when every segment named was already straight (an empty entry
+    /// would be one ⌘Z spent on nothing). Indices do not move — no point is added or removed —
+    /// so the point selection is kept. Returns how many segments were actually bent.
+    @discardableResult
+    func straightenAutomationSegments(_ refs: [AutomationPointRef]) -> Int {
+        var byObject: [UUID: [ParamRef: Set<Int>]] = [:]
+        var bent = 0
+        for r in refs {
+            let pts = automationPoints(r.objectID, r.param)
+            guard pts.indices.contains(r.index), pts[r.index].c != 0 else { continue }
+            if byObject[r.objectID, default: [:]][r.param, default: []].insert(r.index).inserted { bent += 1 }
+        }
+        guard bent > 0 else { return 0 }
+        pushUndo()
+        for (objectID, rows) in byObject {
+            updateAutomationRows(objectID: objectID) { lanes in
+                for li in lanes.indices {
+                    guard let idx = rows[lanes[li].param] else { continue }
+                    for i in idx where lanes[li].points.indices.contains(i) { lanes[li].points[i].c = 0 }
+                }
+            }
+        }
+        return bent
     }
 
     /// The KNOB travel per wheel notch: 20 notches from the straight line to the near-step.

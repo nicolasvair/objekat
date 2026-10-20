@@ -261,6 +261,17 @@ struct AutomationPointRef: Hashable {
     }
 }
 
+/// The ⌥-wheel's curvature gesture under way (@see EditViewModel.automationCurveWheelAnchor).
+struct AutomationCurveWheelAnchor: Equatable {
+    let objectID: UUID
+    let param: ParamRef
+    let index: Int
+    /// The knob and the hold owed by the straight-line detent (@see AutomationCurveShape.wheelStep).
+    var detent: AutomationCurveShape.WheelDetent
+    /// The last curvature the gesture laid: a curve changed by anything else since re-anchors.
+    var written: Float
+}
+
 // MARK: - Transformations of a curve under the editing gestures
 //
 // Storing time RELATIVE to the start of the object (@see AutomationPoint) makes moving, changing
