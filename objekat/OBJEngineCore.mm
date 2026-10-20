@@ -18,6 +18,7 @@
 #include "OBJKeyProbePlugin.h"
 #include "OBJGainTesterPlugin.h"
 #include "OBJAudioProbe.h"
+#include "OBJPluginProbe.h"     // trims + gain match around a plugin (engine patch 0045)
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include <unordered_map>
@@ -1440,6 +1441,8 @@ struct OBJExportLoadScope {
 - (void)tickPluginStateReasserts;
 // Idem, mais en synchrone, sur le clone d'Edit d'un rendu offline (pas le temps d'attendre).
 - (void)forcePluginStatesForRenderClone:(te::Edit&)clone;
+- (void)installTrimProbesOnRenderClone:(te::Edit&)clone;
+- (void)attachProbeIfWanted:(const std::string&)key plugin:(const te::Plugin::Ptr&)plugin;
 // Consigne de plugins : garde vivant un plugin retiré, le temps d'un aller-retour. @see
 // OBJParkedPlugin pour le pourquoi et les limites.
 - (void)syncPluginMeters;   // VU par plugin : aligne les enregistrements sur l'union et sur _pluginMap
@@ -1710,6 +1713,9 @@ struct OBJExportLoadScope {
     std::unordered_set<std::string>                                              _meteredKeyUnion;
     // pluginKey (ObjectPlugin.id) → Plugin::Ptr
     std::unordered_map<std::string, te::Plugin::Ptr>          _pluginMap;
+    // pluginKey → the state of its probe (trims + gain-match measurement, patch 0045). Kept across
+    // instances of the same key: a rebuilt plugin gets a new probe on the SAME state. @see OBJPluginProbe.h
+    std::unordered_map<std::string, std::shared_ptr<OBJProbeState>>  _probeStates;
     // pluginKey → fenêtre éditeur ouverte (nullptr = fermée)
     std::unordered_map<std::string, std::unique_ptr<OBJPluginEditorWindow>> _editorWindows;
     // Les éditeurs flottent-ils au-dessus du reste de l'app ? Vrai par défaut, abaissé le temps
@@ -3215,6 +3221,7 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     NSString* pluginKey = pluginInfo[@"pluginKey"];
     std::string pk = pluginKey ? std::string([pluginKey UTF8String]) : (key + ":instr");
     _pluginMap[pk] = ptr;
+    [self attachProbeIfWanted:pk plugin:ptr];
     NSLog(@"[OBJ] setInstrument: %@ ← %@ (index 0)", uuid, pluginInfo[@"name"]);
     return [NSString stringWithUTF8String:pk.c_str()];
 }
@@ -4118,6 +4125,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // live, mais sans délai d'attente possible : on force l'état AVANT de lancer le rendu, sinon
     // un AU récalcitrant serait baké à ses réglages d'usine.
     [self forcePluginStatesForRenderClone:*clone];
+    [self installTrimProbesOnRenderClone:*clone];
     const double tForce = juce::Time::getMillisecondCounterHiRes();
 
     // « chargés / déclarés » mesure directement l'effet du filtre : tout AU déclaré mais non
@@ -4762,6 +4770,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         objUpgradeResamplingForRender(*clone);   // sincBest sur la copie ; le rendu DIRECT garde sincMedium
 
         [self forcePluginStatesForRenderClone:*clone];
+        [self installTrimProbesOnRenderClone:*clone];
         const double tForce = juce::Time::getMillisecondCounterHiRes();
 
         const auto auCount = objCountExternalPlugins(*clone);
@@ -7220,6 +7229,7 @@ static void objClearARAState(te::WaveAudioClip& clip) {
 
     std::string pk([pluginKey UTF8String]);
     _pluginMap[pk] = ptr;
+    [self attachProbeIfWanted:pk plugin:ptr];
 
     // Log état initial — l'instance se charge souvent en asynchrone
     auto* ext = dynamic_cast<te::ExternalPlugin*>(ptr.get());
@@ -7345,6 +7355,163 @@ static void objStripBridgeState(juce::ValueTree& tree) {
     if (it != _pluginMap.end() && it->second && objCanFlushPluginState(*it->second))
         it->second->flushPluginStateToValueTree();
     return YES;
+}
+
+// MARK: - A plugin's READ-ONLY parameters (what it shows as meters: a gain reduction above all)
+
+// Read-only is the plugin's own declaration: an AU's parameter info flags (MeterReadOnly, or not
+// IsWritable — JUCE's host does not filter them), a VST3's `kCanAutomate` missing (JUCE maps
+// `isAutomatable` onto it; a read-only parameter never carries it). The index is JUCE's
+// `getParameters()` order, NOT Tracktion's automatable list (which leaves those out): this list and
+// `pluginParameterReading:index:` share it, and nothing else does.
+// MARK: Trims and gain match around a plugin (engine patch 0045, @see OBJPluginProbe.h)
+
+static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0); }
+
+- (std::shared_ptr<OBJProbeState>)probeStateForKey:(const std::string&)key create:(BOOL)create {
+    auto it = _probeStates.find(key);
+    if (it != _probeStates.end()) return it->second;
+    if (!create) return nullptr;
+    auto st = std::make_shared<OBJProbeState>();
+    _probeStates[key] = st;
+    return st;
+}
+
+// A probe is installed ONCE on an instance (the patch refuses a second one). Only when the key has a
+// state — trims set or a measurement asked for —: a plugin nobody trims carries nothing.
+- (void)attachProbeIfWanted:(const std::string&)key plugin:(const te::Plugin::Ptr&)plugin {
+    if (!plugin) return;
+    auto st = [self probeStateForKey:key create:NO];
+    if (!st || plugin->objGetProbe() != nullptr) return;
+    plugin->objInstallProbe(std::make_unique<OBJPluginProbe>(st, true));
+}
+
+- (void)attachProbeForKey:(const std::string&)key {
+    auto it = _pluginMap.find(key);
+    if (it != _pluginMap.end()) [self attachProbeIfWanted:key plugin:it->second];
+}
+
+- (void)setPluginTrims:(NSString*)pluginKey inputDb:(double)inputDb outputDb:(double)outputDb {
+    if (!pluginKey) return;
+    const std::string key([pluginKey UTF8String]);
+    const bool neutral = inputDb == 0.0 && outputDb == 0.0;
+    auto st = [self probeStateForKey:key create:!neutral];
+    if (!st) return;                      // neutral and never trimmed: nothing to carry
+    st->inGain.store(objDbToLinear(inputDb));
+    st->outGain.store(objDbToLinear(outputDb));
+    [self attachProbeForKey:key];
+}
+
+- (void)setPluginLoudnessMeasuring:(NSString*)pluginKey enabled:(BOOL)enabled {
+    if (!pluginKey) return;
+    const std::string key([pluginKey UTF8String]);
+    auto st = [self probeStateForKey:key create:enabled];
+    if (!st) return;
+    if (enabled && !st->measuring.load()) st->resetGeneration.fetch_add(1);
+    st->measuring.store(enabled);
+    if (enabled) [self attachProbeForKey:key];
+}
+
+// The K-weighted loudness of the last `seconds` of measurement: what entered the plugin (before its
+// input trim) and what left it (before its output trim), over the sub-blocks whose INPUT is above the
+// absolute gate of BS.1770 (−70 LUFS) — silence says nothing about a gain. nil = nothing measured.
+- (NSDictionary<NSString*, NSNumber*>* _Nullable)pluginLoudnessReading:(NSString*)pluginKey seconds:(double)seconds {
+    if (!pluginKey) return nil;
+    auto st = [self probeStateForKey:std::string([pluginKey UTF8String]) create:NO];
+    if (!st) return nil;
+    const uint64_t written = st->written.load(std::memory_order_acquire);
+    const int want = std::clamp((int) std::lround(seconds / OBJLOUD_SUBBLOCK_SECONDS), 1, OBJProbeState::ringSize - 8);
+    const uint64_t first = written > (uint64_t) want ? written - (uint64_t) want : 0;
+    const double gate = std::pow(10.0, (-70.0 + 0.691) / 10.0);
+    double sumIn = 0, sumOut = 0; int kept = 0;
+    for (uint64_t i = first; i < written; ++i) {
+        const int slot = (int) (i % OBJProbeState::ringSize);
+        const double ei = st->energyIn[slot].load(std::memory_order_relaxed);
+        const double eo = st->energyOut[slot].load(std::memory_order_relaxed);
+        if (ei <= gate) continue;
+        sumIn += ei; sumOut += eo; ++kept;
+    }
+    return @{ @"blocks": @(kept),
+              @"total": @((long long) written),
+              @"input_lufs":  kept > 0 ? @(objloud_lufs(sumIn / kept))  : @(-INFINITY),
+              @"output_lufs": kept > 0 ? @(objloud_lufs(sumOut / kept)) : @(-INFINITY) };
+}
+
+// A render clone recreates its plugins from the tree: they carry no probe. Each one whose live twin
+// (same EditItemID) has trims gets a probe on a COPY of the gains, which measures nothing.
+- (void)installTrimProbesOnRenderClone:(te::Edit&)clone {
+    std::map<te::EditItemID, std::shared_ptr<OBJProbeState>> wanted;
+    for (auto& [key, st] : _probeStates) {
+        if (!st || st->isNeutral()) continue;
+        auto it = _pluginMap.find(key);
+        if (it == _pluginMap.end() || !it->second) continue;
+        auto copy = std::make_shared<OBJProbeState>();
+        copy->inGain.store(st->inGain.load());
+        copy->outGain.store(st->outGain.load());
+        wanted[it->second->itemID] = copy;
+    }
+    if (wanted.empty()) return;
+    int installed = 0;
+    for (auto* p : objAllPluginsDeep(clone)) {
+        if (!p || p->objGetProbe() != nullptr) continue;
+        auto w = wanted.find(p->itemID);
+        if (w == wanted.end()) continue;
+        if (p->objInstallProbe(std::make_unique<OBJPluginProbe>(w->second, false))) ++installed;
+    }
+    NSLog(@"[TRIM] rendu : %d plugin(s) avec trims sur le clone", installed);
+}
+
+- (NSArray<NSDictionary*>*)pluginMeterParameters:(NSString*)pluginKey {
+    NSMutableArray<NSDictionary*>* out = [NSMutableArray array];
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    if (!pi) return out;
+    AudioUnit au = nullptr;
+    if (auto* c = pi->getAudioUnitClient()) au = c->getAudioUnitHandle();
+    const auto& params = pi->getParameters();
+    for (int i = 0; i < params.size(); ++i) {
+        auto* prm = params[i];
+        if (!prm) continue;
+        juce::String pid;
+        if (auto* hosted = dynamic_cast<juce::HostedAudioProcessorParameter*>(prm)) pid = hosted->getParameterID();
+        bool readOnly = false;
+        if (au) {
+            AudioUnitParameterInfo info {};
+            UInt32 size = sizeof(info);
+            if (AudioUnitGetProperty(au, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global,
+                                     (AudioUnitElement) pid.getLargeIntValue(), &info, &size) == noErr) {
+                readOnly = (info.flags & kAudioUnitParameterFlag_MeterReadOnly) != 0
+                        || (info.flags & kAudioUnitParameterFlag_IsWritable) == 0;
+                if (info.flags & kAudioUnitParameterFlag_CFNameRelease) {
+                    if (info.cfNameString) CFRelease(info.cfNameString);
+                }
+            }
+        } else {
+            readOnly = !prm->isAutomatable();
+        }
+        if (!readOnly) continue;
+        juce::String name = prm->getName(64);
+        juce::String idStr = pid.isNotEmpty() ? pid : juce::String(i);
+        [out addObject:@{ @"index": @(i),
+                          @"id":    [NSString stringWithUTF8String:idStr.toRawUTF8()],
+                          @"name":  [NSString stringWithUTF8String:name.toRawUTF8()] }];
+    }
+    return out;
+}
+
+// A parameter's current value (normalised 0…1) and the text the plugin gives for it. nil if the
+// instance is not loaded or the index is out of range. Cheap: polled by the editor's bar (~30 Hz).
+- (NSDictionary* _Nullable)pluginParameterReading:(NSString*)pluginKey index:(int)index {
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    if (!pi) return nil;
+    const auto& params = pi->getParameters();
+    if (index < 0 || index >= params.size() || !params[index]) return nil;
+    auto* prm = params[index];
+    const float v = prm->getValue();
+    juce::String text = prm->getText(v, 32);
+    juce::String label = prm->getLabel();
+    return @{ @"value": @(v),
+              @"text":  [NSString stringWithUTF8String:text.toRawUTF8()],
+              @"label": [NSString stringWithUTF8String:label.toRawUTF8()] };
 }
 
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey {
@@ -9374,6 +9541,7 @@ static void objDumpPluginList(te::PluginList& pl,
                 continue;
             }
             _pluginMap[pk] = p;
+            [self attachProbeIfWanted:pk plugin:p];
             // Certains AU refusent leur état tant qu'ils ne sont pas préparés → on revérifie plus tard.
             // (Une instance reprise de la consigne l'a déjà fait dans reassertWantedState:.)
             if (!fromParking) [self schedulePluginStateReassert:p fromTree:vt];

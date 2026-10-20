@@ -308,7 +308,7 @@ extension EditViewModel {
             let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                  identifier: leaf.identifier, formatName: leaf.formatName,
                                  isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
-                                 sidechain: leaf.sidechain)
+                                 sidechain: leaf.sidechain).withTrims(of: leaf)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state
@@ -605,7 +605,7 @@ extension EditViewModel {
                              identifier: inst.identifier, formatName: inst.formatName,
                              isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
                              linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
-                             colorIndex: inst.colorIndex, sidechain: inst.sidechain)
+                             colorIndex: inst.colorIndex, sidechain: inst.sidechain).withTrims(of: inst)
             }
             var entry = FXLink.blockEntry(linkID: fb.linkID, name: block.name, instances: instances)
             entry.fxBlock?.isDetached = true
@@ -656,7 +656,7 @@ extension EditViewModel {
             let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                  identifier: leaf.identifier, formatName: leaf.formatName,
                                  isEnabled: leaf.isEnabled, stateXML: state, colorIndex: leaf.colorIndex,
-                                 sidechain: leaf.sidechain)
+                                 sidechain: leaf.sidechain).withTrims(of: leaf)
             definition.append(d)
             var inst = leaf
             inst.stateXML = state
@@ -743,7 +743,7 @@ extension EditViewModel {
             // No colour carried over: the copy draws its own, as every independent copy does.
             let template = ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                         identifier: p.identifier, formatName: p.formatName,
-                                        isEnabled: p.isEnabled)
+                                        isEnabled: p.isEnabled).withTrims(of: p)
             if let d = fxAddPlugin(linkID: linkID, template: template, state: fxLiveState(of: p),
                                    at: index.map { $0 + k }, undo: false) {
                 added.append(d)

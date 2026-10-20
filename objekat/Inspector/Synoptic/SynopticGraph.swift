@@ -69,6 +69,10 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// the card shows that face instead of a plugin's (no power button, no editor), and is laid at that
     /// face's width (@see SynopticLayout.cardWidth).
     var gainStage: SynopticGainStageFace? = nil
+    /// The trims around the plugin (dB, 0 = neutral, @see EditViewModel+Trims): a small tag under the
+    /// card says them as soon as one of them is not neutral.
+    var trimInDb: Float = 0
+    var trimOutDb: Float = 0
 
     /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
     var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
@@ -80,7 +84,10 @@ struct SynopticPlugin: Identifiable, Equatable {
          isBuiltIn: Bool = false, formatLabel: String = "",
          isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
          inFXBlock: Bool = false, greyedByBlock: Bool = false,
-         gainStage: SynopticGainStageFace? = nil) {
+         gainStage: SynopticGainStageFace? = nil,
+         trimInDb: Float = 0, trimOutDb: Float = 0) {
+        self.trimInDb = trimInDb
+        self.trimOutDb = trimOutDb
         self.id = id
         self.name = name
         self.category = category

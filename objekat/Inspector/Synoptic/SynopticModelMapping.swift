@@ -109,7 +109,8 @@ enum SynopticMapping {
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
                        color: p.color,
-                       gainStage: synopticFace(of: p))
+                       gainStage: synopticFace(of: p),
+                       trimInDb: p.trims.input, trimOutDb: p.trims.output)
     }
 
     /// A gain stage's face as the signal view names it (nil = not a stage).
@@ -358,7 +359,7 @@ extension EditViewModel {
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
                                 identifier: plug.identifier, formatName: plug.formatName,
                                 isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil,
-                                sidechain: plug.sidechain)
+                                sidechain: plug.sidechain).withTrims(of: plug)
         pushUndo()
         updateChainPlugins(objectID) {
             $0 = Self.simplifyTree(Self.inserting(copy, into: location, at: index, plugins: plugins))

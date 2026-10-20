@@ -468,7 +468,8 @@ final class EditViewModel {
                 MainActor.assumeIsolated {
                     guard let self, let plugin = UUID(uuidString: key),
                           let host = self.nativeEditorHosts[plugin] else { return nil }
-                    return self.sidechainStripView(host: host, plugin: plugin)
+                    // The Sidechain strip (if any) above the expert bar (@see PluginExpertBar).
+                    return self.editorBottomBandView(host: host, plugin: plugin)
                 }
             }
             engine?.onLinkedPluginStateSynced = { [weak self] _, _ in

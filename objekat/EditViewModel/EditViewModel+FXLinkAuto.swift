@@ -61,7 +61,7 @@ extension EditViewModel {
                 let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                      identifier: leaf.identifier, formatName: leaf.formatName,
                                      isEnabled: leaf.isEnabled, stateXML: states[leaf.id] ?? nil,
-                                     colorIndex: leaf.colorIndex, sidechain: leaf.sidechain)
+                                     colorIndex: leaf.colorIndex, sidechain: leaf.sidechain).withTrims(of: leaf)
                 defs.append(d)
                 defByLeaf[leaf.id] = d.id
             }
@@ -78,7 +78,7 @@ extension EditViewModel {
                                 identifier: leaf.identifier, formatName: leaf.formatName,
                                 isEnabled: d.isEnabled, stateXML: states[leaf.id] ?? nil,
                                 linkGroupID: defID, colorIndex: leaf.colorIndex,
-                                sidechain: leaf.sidechain)
+                                sidechain: leaf.sidechain).withTrims(of: leaf)
         }
         return FXLink.blockEntry(linkID: link.id, name: link.name, instances: instances)
     }

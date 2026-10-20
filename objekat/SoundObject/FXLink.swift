@@ -156,7 +156,7 @@ struct FXLink: Identifiable, Codable, Equatable {
                                 isEnabled: d.isEnabled, stateXML: stateForNew(d),
                                 linkGroupID: attached ? d.id : nil,
                                 detachedLinkGroupID: attached ? nil : d.id,
-                                colorIndex: d.colorIndex, sidechain: d.sidechain)
+                                colorIndex: d.colorIndex, sidechain: d.sidechain).withTrims(of: d)
         }
     }
 

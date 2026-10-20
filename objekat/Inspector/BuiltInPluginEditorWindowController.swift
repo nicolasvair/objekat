@@ -16,6 +16,7 @@ final class BuiltInPluginEditorWindowController: NSWindowController, NSWindowDel
         let content = VStack(spacing: 0) {
             BuiltInPluginEditorView(viewModel: viewModel, plug: plug)
             SidechainStripIfAny(viewModel: viewModel, plugin: plug.id)
+            PluginExpertBar(viewModel: viewModel, plugin: plug.id)
         }
             .padding(2)
             .background(

@@ -165,7 +165,7 @@ extension EditViewModel {
     }
 
     /// The instances sharing the plugin's ACTIVE link group (a detached member keeps its own sound).
-    private func activeLinkedInstances(of pluginID: UUID) -> [(hostID: UUID, plugin: ObjectPlugin)] {
+    func activeLinkedInstances(of pluginID: UUID) -> [(hostID: UUID, plugin: ObjectPlugin)] {
         guard let g = presetTarget(pluginID)?.plugin.linkGroupID else { return [] }
         return allPluginRefs()
             .filter { $0.plugin.linkGroupID == g && $0.plugin.id != pluginID }

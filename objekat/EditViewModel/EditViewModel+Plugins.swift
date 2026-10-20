@@ -452,7 +452,7 @@ extension EditViewModel {
                                   identifier: inst.identifier, formatName: inst.formatName,
                                   isEnabled: inst.isEnabled, stateXML: stateXML,
                                   linkGroupID: gid, detachedLinkGroupID: detached,
-                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain)
+                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain).withTrims(of: inst)
         pushUndo()
         if copy && linked, let gid, inst.linkGroupID == nil {
             // The source was not linked yet: it enters the group with the copy.
@@ -749,7 +749,7 @@ extension EditViewModel {
                                 identifier: inst.identifier, formatName: inst.formatName,
                                 isEnabled: inst.isEnabled,
                                 stateXML: (live?.isEmpty == false) ? live : inst.stateXML,
-                                sidechain: inst.sidechain)
+                                sidechain: inst.sidechain).withTrims(of: inst)
         }
     }
 
@@ -785,7 +785,7 @@ extension EditViewModel {
                          identifier: p.identifier, formatName: p.formatName,
                          isEnabled: p.isEnabled, stateXML: liveState(p),
                          linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
-                         sidechain: p.sidechain)
+                         sidechain: p.sidechain).withTrims(of: p)
         }
         /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
         /// block gives a detached copy, with its own output section).
@@ -826,7 +826,7 @@ extension EditViewModel {
                                             isEnabled: p.isEnabled,
                                             rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
                                                              wetDb: rack.wetDb,
-                                                             voiceMutes: rack.voiceMutes)))
+                                                             voiceMutes: rack.voiceMutes)).withTrims(of: p))
                 } else {
                     out.append(copyLeaf(p))
                 }
@@ -923,6 +923,8 @@ extension EditViewModel {
                 }
             }
         }
+        // The instances are (re)made: their trims follow them (@see EditViewModel+Trims).
+        syncAllPluginTrims()
     }
 
     /// Every (objectID, plugin) instance in the project, flattened (recursively).

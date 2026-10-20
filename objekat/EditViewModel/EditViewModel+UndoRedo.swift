@@ -245,6 +245,7 @@ extension EditViewModel {
         // one. `resyncAllSends` (the bridge sync) retargets it onto the new clip (`ensureBridgeSend`).
         resyncAllSends()   // every aux now exists → rewire the sends
         pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
+        syncAllPluginTrims()      // a patched chain keeps its instances: only its trims move
 
         let rebuilt = items.count - kept.count
         NSLog("[UNDO] restored in %.0f ms — top-level: %d rebuilt, %d patched, %d untouched",
@@ -391,6 +392,10 @@ extension EditViewModel {
                 // bridge sync that follows every restore (EditViewModel+Bridge), so a key change
                 // must not rebuild the object — and reload its AU.
                 out[i].sidechain = new[i].sidechain
+                // The trims are two gains the probe reads at every block (@see EditViewModel+Trims):
+                // undoing one is a number pushed, never a rebuild.
+                out[i].inputTrimDb = new[i].inputTrimDb
+                out[i].outputTrimDb = new[i].outputTrimDb
             case let (oldRack?, newRack?):
                 guard oldRack.voices.count == newRack.voices.count else { return nil }
                 var voices: [[ObjectPlugin]] = []
