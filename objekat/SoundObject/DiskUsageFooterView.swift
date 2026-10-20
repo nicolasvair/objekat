@@ -161,18 +161,23 @@ struct DiskUsagePopoverView: View {
                 Text(L(p.dryRun ? "flacArchive.progress.check" : "flacArchive.progress.convert", p.done, p.total))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let name = p.current {
-                    Text(verbatim: name)
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-                Spacer(minLength: 0)
+                    .fixedSize()
+                // The file name takes what is left, cut in its MIDDLE (its start and its extension
+                // are what tell two files apart), never more: a long path must not push the line.
+                Text(verbatim: p.current ?? "")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .help(p.current ?? "")
             }
         }
     }
 
     // MARK: Content
 
+    /// ONE list, scrolled as a whole: the orphans, then the files another version reads, each under
+    /// a header that stays pinned at the top while its rows go by. Two scroll areas stacked in one
+    /// popover made two thumbs, two wheels and a second list that could be scrolled out of sight.
     @ViewBuilder
     private func content(_ result: DiskUsageResult) -> some View {
         let orphans = result.report.unused
@@ -181,68 +186,71 @@ struct DiskUsagePopoverView: View {
             if list.isEmpty {
                 Text(L("diskUsage.empty")).font(.system(size: 11)).foregroundStyle(.secondary)
             }
-            if !orphans.isEmpty {
-                HStack {
-                    Toggle(isOn: allOrphansTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
-                        .toggleStyle(.checkbox)
-                    Spacer()
-                    Text(Ln("diskUsage.count", orphans.count, orphans.count, DiskUsageFormat.bytes(result.report.unusedBytes)))
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(orphans) { unit in
-                            Toggle(isOn: tickBinding(unit.id)) { row(unit.name, unit.folder, unit.size, nil) }
-                                .toggleStyle(.checkbox)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 440)
-            }
         } else {
             note(L("diskUsage.unreadable", result.unreadableVersions.joined(separator: ", ")),
                  systemImage: "exclamationmark.triangle")
         }
-
-        if !elsewhere.isEmpty {
-            if scope == .session {
-                // OFFERED, but unticked: cleaning them makes the OTHER versions miss their files.
-                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
-                    Text(L("diskUsage.elsewhere.title")).font(.system(size: 10, weight: .semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundStyle(.orange)
-                Toggle(isOn: allElsewhereTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
-                    .toggleStyle(.checkbox)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(elsewhere) { unit in
-                            Toggle(isOn: tickBinding(unit.id)) {
-                                row(unit.candidate.name, unit.candidate.folder, unit.candidate.size,
-                                    L("diskUsage.held.by", unit.usedBy.joined(separator: ", ")), warn: true)
+        let showOrphans = cleanable != nil && !orphans.isEmpty
+        if showOrphans || !elsewhere.isEmpty {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 3, pinnedViews: [.sectionHeaders]) {
+                    if showOrphans {
+                        Section {
+                            ForEach(orphans) { unit in
+                                row(unit.name, unit.folder, unit.size, nil, tick: tickBinding(unit.id))
                             }
-                            .toggleStyle(.checkbox)
+                        } header: {
+                            sectionHeader {
+                                Toggle(isOn: allOrphansTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
+                                    .toggleStyle(.checkbox)
+                                Spacer(minLength: 6)
+                                Text(Ln("diskUsage.count", orphans.count, orphans.count,
+                                        DiskUsageFormat.bytes(result.report.unusedBytes)))
+                                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 220)
-            } else {
-                Text(L("diskUsage.held.title")).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(elsewhere) { unit in
-                            row(unit.candidate.name, unit.candidate.folder, unit.candidate.size,
-                                L("diskUsage.held.by", unit.usedBy.joined(separator: ", ")))
-                                .opacity(0.55)
+                    if !elsewhere.isEmpty {
+                        Section {
+                            ForEach(elsewhere) { unit in
+                                let detail = L("diskUsage.held.by", unit.usedBy.joined(separator: ", "))
+                                if scope == .session {
+                                    // OFFERED, but unticked: cleaning them makes the OTHER versions miss their files.
+                                    row(unit.candidate.name, unit.candidate.folder, unit.candidate.size, detail,
+                                        warn: true, tick: tickBinding(unit.id))
+                                } else {
+                                    row(unit.candidate.name, unit.candidate.folder, unit.candidate.size, detail,
+                                        tick: nil)
+                                        .opacity(0.55)
+                                }
+                            }
+                        } header: {
+                            sectionHeader {
+                                if scope == .session {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9))
+                                            Text(L("diskUsage.elsewhere.title")).font(.system(size: 10, weight: .semibold))
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                        .foregroundStyle(.orange)
+                                        Toggle(isOn: allElsewhereTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
+                                            .toggleStyle(.checkbox)
+                                    }
+                                } else {
+                                    Text(L("diskUsage.held.title")).font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 160)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            // The two lists used to reach 440 + 220 pt together; one list keeps about that room.
+            .frame(maxHeight: 560)
         }
         if result.report.protectedBytes > 0 {
             note(L("diskUsage.protected", DiskUsageFormat.bytes(result.report.protectedBytes)), systemImage: "lock")
@@ -254,18 +262,46 @@ struct DiskUsagePopoverView: View {
         note(L("diskUsage.outside"), systemImage: "info.circle")
     }
 
+    /// A section's header, opaque so the rows scrolling under it while it is pinned stay hidden.
+    private func sectionHeader<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(alignment: .center, spacing: 6) { content() }
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar)
+    }
+
+    /// One file. Three columns that a long name cannot push: the checkbox (or its empty place, so
+    /// the rows of both sections line up), the name over its folder — each on ONE line, cut in the
+    /// middle, taking only the width left — and the size, a fixed column on the right. The whole
+    /// path is in the tooltip. The checkbox is no longer the row's LABEL: a macOS checkbox sizes
+    /// itself on its label's full text, which is what pushed the size out of the popover.
     private func row(_ name: String, _ folder: String, _ size: Int64, _ detail: String?,
-                     warn: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                     warn: Bool = false, tick: Binding<Bool>?) -> some View {
+        let path = folder.isEmpty ? name : "\(folder)/\(name)"
+        return HStack(alignment: .center, spacing: 6) {
+            Group {
+                if let tick {
+                    Toggle(noLabel, isOn: tick).toggleStyle(.checkbox).labelsHidden()
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(width: 16)
             VStack(alignment: .leading, spacing: 0) {
-                Text(verbatim: name).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                Text(verbatim: name).font(.system(size: 11))
+                    .lineLimit(1).truncationMode(.middle)
                 Text(verbatim: detail.map { "\(folder) · \($0)" } ?? folder)
                     .font(.system(size: 9)).foregroundStyle(warn ? Color.orange : .secondary)
                     .lineLimit(1).truncationMode(.middle)
             }
-            Spacer(minLength: 4)
+            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Text(verbatim: DiskUsageFormat.bytes(size)).font(.system(size: 10)).foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 64, alignment: .trailing)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { tick?.wrappedValue.toggle() }
+        .help(detail.map { "\(path)\n\($0)" } ?? path)
     }
 
     private func note(_ text: String, systemImage: String) -> some View {
