@@ -901,6 +901,47 @@ INDEX 0 / the end, so a marker keeps its side of each former trim — the same s
 audit reports `segmentStart` / `segmentEnd` instead of the trims. The engine bug this exposed (a mono chain
 doubled once the first `ObjGain` was gone: `ChannelRemappingNode` adding into its own input) is patch `0041`.
 
+## The plugin editor's expert functions: presets, gain reduction, trims, gain match (October 2026)
+
+Branch `feat/plugin-expert` (session format **27**, engine patch `0045` on the local engine branch
+`objekat-probe-0045`). Authority for the requests and the answers: the side-session note
+`plugins-expert-plan.md`; the API in `command_api.md` ("Plugin presets", "The editor's expert bar").
+
+### Decision: presets are OBJEKAT's, per plugin TYPE, in one global library
+
+A preset is the plugin's state XML stored under its type (format + identifier), so it works for every
+format, a built-in included, without asking the plugin's own preset system. The plugin's factory programs
+are offered beside them, read-only. A type's default is laid on a FRESH insertion only (an insertion that
+carries a state — copy, duplicate, paste, link — keeps it). A load is a state change on the live instance
+(the patched-undo path, no rebuild) propagated to every instance ACTIVELY linked to it.
+
+### Decision: the gain reduction is what the plugin PUBLISHES, never ours
+
+The bar reads one of the plugin's read-only parameters, chosen by name (`GainReductionReading`, pure) unless
+the hand chose, the choice remembered per plugin type. No delta in/out of our own (asked: "only the parameter
+the plugin exposes, we will see later"). A plugin that publishes nothing shows nothing.
+
+### Decision: trims are a PROBE around the plugin, inside its node (option A)
+
+Two gains per plugin, applied by `te::Plugin::ObjProbe` (patch `0045`), which `PluginNode::process` calls
+just before and just after the plugin and only while the plugin really processes — so a bypass bypasses the
+trims for free, and they are heard live and in every render with no extra node in the graph (the
+alternative, two `ObjGain` leaves around every plugin, would have doubled the engine list's 20 entries and
+every walker's work). The engine keeps one `OBJProbeState` per plugin KEY, shared by whatever instance
+carries the key now: a rebuilt instance gets a new probe on the same state, so its trims hold; a render clone
+gets a probe on a COPY of the gains (found by `EditItemID`), measuring nothing. In the model they are two
+optional fields of `ObjectPlugin` (absent when 0): every copy that rebuilds a plugin field by field carries
+them through `withTrims(of:)`; an undo that differs only by trims is patched. Not automatable (asked).
+
+### Decision: the gain match measures what was PLAYED, K-weighted, and moves the OUTPUT only
+
+The same probe accumulates the K-weighted energy (BS.1770, the coefficients of `OBJLoudness.h`) of what enters
+the plugin before its input trim and what leaves it before its output trim, in 100 ms sub-blocks into a
+lock-free ring, only while the editor bar is shown and never in an offline render. The match is one click
+during playback: output = Lin − Lout over the last 5 s (gated at −70 LUFS, at least 1 s of signal), the input
+untouched, so a coupled gesture made afterwards adds to it. Measuring what was played rather than rendering
+offline keeps it instant and honest about the material the hand is actually listening to.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
