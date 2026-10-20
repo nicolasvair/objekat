@@ -128,12 +128,115 @@ enum AutomationCurveShape {
         return c > 0 ? min(b, 1) : -min(b, 1)
     }
 
-    /// `c` moved by `knobDelta` on the knob — the one door the wheel and the ⌥-drag go through.
+    /// `c` moved by `knobDelta` on the knob, with no detent.
     static func adjusted(_ c: Float, knobDelta: Double) -> Float {
         let b = knob(forCurvature: Double(c)) + knobDelta
         let out = curvature(forKnob: b)
         // Coming back to the centre lands EXACTLY on a straight segment, not on 1e-17.
         return abs(out) < 1e-6 ? 0 : Float(out)
+    }
+
+    // MARK: - The detent at the straight line
+
+    // The straight line is the one curvature the hand wants to land on EXACTLY, and a continuous
+    // knob gives it no reason to stop there: passing through it is one frame, and coming back to
+    // it by hand meant aiming at a zero nobody can see. So the knob has a DETENT there — a small
+    // dead zone of HAND travel inside which the segment stays straight.
+    //
+    // The model is a second axis, the hand's: H = b + dz·sign(b) away from the centre, and the
+    // whole interval |H| ≤ dz maps onto b = 0 (the ⌥-DRAG's model; the wheel's is in notches, below).
+    // Travelling through the centre therefore costs 2·dz
+    // of extra travel spent on a straight segment (the detent), and starting FROM straight costs
+    // dz before the segment bends at all. Everywhere else the knob moves exactly as it did, by the
+    // same travel — the detent adds dead travel, it never rescales the live one.
+    //
+    // The DRAG applies it from an ANCHOR (the knob the gesture started on) and the gesture's TOTAL
+    // travel since, never frame by frame: a relative step from inside the dead zone would read
+    // "b = 0" back and lose how deep in the zone the hand already was, so the segment would stay
+    // straight for ever (the same compounding the pan's detent had to be rid of — @see
+    // EditViewModel+Pan).
+    //
+    // The WHEEL counts in NOTCHES, and a dead zone measured in knob units would hold one notch or
+    // two depending on where the gesture started on the notch grid — a detent that is not the same
+    // twice. So its rule is written in notches (@see wheelStep): the notch that reaches or crosses
+    // straight LANDS on it, the next one in the same direction is held there, and the one after
+    // leaves by one notch. Every crossing holds the same, whatever the phase.
+
+    /// The wheel's detent state: the knob, and whether the notch that just landed on straight
+    /// still owes a hold (+1 / −1: the direction it came in; 0: none owed).
+    struct WheelDetent: Equatable {
+        var knob: Double
+        var hold: Int = 0
+    }
+
+    /// `notches` wheel notches (signed, in KNOB direction) applied one by one to `state`, each one
+    /// `step` of knob (@see knobStepPerNotch), through the straight-line detent. The knob stays in
+    /// [−1, 1], as it did when each notch re-read it off a clamped curvature.
+    static func wheelStep(_ state: WheelDetent, notches: Int,
+                          step: Double = knobStepPerNotch) -> WheelDetent {
+        var s = state
+        guard notches != 0 else { return s }
+        let d = notches > 0 ? 1 : -1
+        for _ in 0..<abs(notches) {
+            if s.knob == 0 {
+                if s.hold == d { s.hold = 0; continue }       // the held notch
+                s.hold = 0
+                s.knob = Double(d) * step
+                continue
+            }
+            let next = s.knob + Double(d) * step
+            // `abs(next) < tiny`: notches summed in floating point miss zero by 1e-17.
+            if abs(next) < step * 1e-6 || (next > 0) != (s.knob > 0) {
+                s.knob = 0                                     // lands on straight…
+                s.hold = d                                     // …and owes one held notch
+            } else {
+                s.knob = min(max(next, -1), 1)
+            }
+        }
+        return s
+    }
+
+    /// The detent's half-width on the ⌥-DRAG, in knob units: 0.1 = 6 px at the drag's 60 px per
+    /// knob unit (@see AutomationBandView.curveDragTravel), so passing through straight holds it
+    /// for some 12 px of hand travel. A first guess.
+    static let knobDetentDrag: Double = 0.1
+
+    /// The knob reached from `origin` after `travel` of hand travel, through the detent of
+    /// half-width `deadZone` at 0 (no detent when `deadZone` ≤ 0). Not clamped: `curvature(forKnob:)`
+    /// clamps.
+    static func knob(throughDetentFrom origin: Double, travel: Double, deadZone dz: Double) -> Double {
+        guard dz > 0 else { return origin + travel }
+        let h0 = origin == 0 ? 0 : origin + (origin > 0 ? dz : -dz)
+        let h = h0 + travel
+        if abs(h) <= dz { return 0 }
+        return h > 0 ? h - dz : h + dz
+    }
+
+    /// `c` moved by `knobTravel` (the gesture's TOTAL hand travel on the knob, from the curvature
+    /// `origin` it started on) through the straight-line detent — the ⌥-drag's door.
+    static func detented(_ origin: Float, knobTravel: Double, deadZone: Double) -> Float {
+        let b = knob(throughDetentFrom: knob(forCurvature: Double(origin)),
+                     travel: knobTravel, deadZone: deadZone)
+        if b == 0 { return 0 }
+        let out = curvature(forKnob: b)
+        return abs(out) < 1e-6 ? 0 : Float(out)
+    }
+
+    // MARK: - Straightening
+
+    /// The segments a SELECTION of points holds: for each pair of points consecutive in TIME whose
+    /// two ends are both selected, the storage index of the left one (the point carrying the
+    /// segment's curvature, @see AutomationPoint.c). Sorted by time. Two points at the same
+    /// instant hold no segment.
+    static func segmentOwners(of points: [AutomationPoint], selected: Set<Int>) -> [Int] {
+        let order = points.indices.sorted { points[$0].t != points[$1].t
+                                            ? points[$0].t < points[$1].t : $0 < $1 }
+        var out: [Int] = []
+        for k in 0..<max(0, order.count - 1) {
+            let a = order[k], b = order[k + 1]
+            if selected.contains(a), selected.contains(b), points[a].t < points[b].t { out.append(a) }
+        }
+        return out
     }
 
     // MARK: - Sampling for the engine

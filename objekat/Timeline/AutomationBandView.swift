@@ -129,6 +129,11 @@ struct AutomationBandView: View {
     private static let readoutHeightGuess: Double = 12
 
     @State private var lastTap: (time: Date, loc: CGPoint) = (.distantPast, .zero)
+    /// What was selected when the PREVIOUS tap came in — before its own click logic ran. The first
+    /// click of a double click drops the selection (a plain click lets go of everything, @see
+    /// handleTap), so a ⌥ + double click that must straighten "every segment of the selection" has
+    /// to read the selection as it stood before that first click.
+    @State private var selectionBeforeLastTap: (time: TimeSelection?, points: Set<AutomationPointRef>) = (nil, [])
     @State private var drag: BandDrag? = nil
     /// The value shown during a gesture — and, with no gesture, that of the point HOVERED (@see
     /// showPointValue): on a row some fifteen pixels tall, the eye reads no precision at all, and
@@ -915,6 +920,16 @@ struct AutomationBandView: View {
         let isDouble = now.timeIntervalSince(lastTap.time) < 0.35
             && hypot(p.x - lastTap.loc.x, p.y - lastTap.loc.y) < 18
         lastTap = (now, p)
+        let before = selectionBeforeLastTap
+        selectionBeforeLastTap = (viewModel.timeSelection, viewModel.selectedAutomationPoints)
+
+        // ⌥ + double click ON a segment's line: back to a straight line — the one gesture that
+        // undoes a bend without aiming at the zero by hand (@see straightenOnDoubleClick). On a
+        // point it is still the point's double click (delete); off the line, the band's own.
+        if isDouble, NSEvent.modifierFlags.contains(.option), let row = geo.rowIndex(atY: p.y),
+           straightenOnDoubleClick(at: p, row: row, before: before) {
+            return
+        }
 
         if isDouble, let row = geo.rowIndex(atY: p.y) {
             let ref = rows[row]
@@ -1004,6 +1019,48 @@ struct AutomationBandView: View {
         // to create it on) and falls through to here: the band is a stretch of the timeline all the
         // way across, and one part of it answering while the next does not is the hole again.
         onSeekToTime(bandStartTime + p.x / pixelsPerSecond)
+    }
+
+    /// ⌥ + double click on a segment: c = 0 on its left point, ONE undo point. When the click lands
+    /// INSIDE the selection — the time selection's frame (its rows and its stretch of time), or, for
+    /// points picked one by one, on one of the segments they hold — every segment of that selection
+    /// is straightened with it: a segment belongs to the selection when BOTH its ends are selected
+    /// (@see AutomationCurveShape.segmentOwners), and the clicked one always comes along. The
+    /// selection, dropped by the first click, is put back. Answers false (nothing done) off a line,
+    /// on a point, or on a plateau, which has no curvature to clear.
+    private func straightenOnDoubleClick(at p: CGPoint, row: Int,
+                                         before: (time: TimeSelection?, points: Set<AutomationPointRef>)) -> Bool {
+        let ref = rows[row]
+        let pts = points(ref)
+        guard geo.pointHit(at: p, row: row, ref: ref, points: pts) == nil,
+              let lineY = geo.curveY(atX: p.x, ref: ref, row: row, points: pts),
+              geo.nearLine(p, lineY: lineY),
+              let owner = geo.segment(atX: p.x, points: pts)?.curveOwner else { return false }
+        let clicked = AutomationPointRef(objectID: object.id, param: ref, index: owner)
+
+        // The segments the selection held, row by row.
+        var held: [AutomationPointRef] = []
+        var byRow: [EditViewModel.RowKey: Set<Int>] = [:]
+        for r in before.points { byRow[EditViewModel.RowKey(r.objectID, r.param), default: []].insert(r.index) }
+        for (key, idx) in byRow {
+            for i in AutomationCurveShape.segmentOwners(of: viewModel.automationPoints(key.objectID, key.param),
+                                                        selected: idx) {
+                held.append(AutomationPointRef(objectID: key.objectID, param: key.param, index: i))
+            }
+        }
+        let t = bandStartTime + Double(p.x) / pixelsPerSecond
+        let insideFrame = before.time.map { $0.lanes.contains(bandTopLane + row) && $0.timeRange.contains(t) } ?? false
+        let insidePoints = before.time == nil && held.contains(clicked)
+        let targets = (insideFrame || insidePoints) ? held + [clicked] : [clicked]
+
+        viewModel.straightenAutomationSegments(targets)
+        if insideFrame {
+            viewModel.timeSelection = before.time          // its didSet lays the points back
+        } else if insidePoints {
+            viewModel.setAutomationPointSelection(before.points)
+        }
+        viewModel.select(object.id, additive: false)
+        return true
     }
 
     /// ⇧+click GROWS the selection to the box holding what was already taken plus the point aimed
@@ -1096,8 +1153,11 @@ struct AutomationBandView: View {
             guard d.origPoints.indices.contains(i) else { return }
             // The drag moves the KNOB from the curvature the gesture started on, never `c` itself
             // (@see AutomationCurveShape.knob): even steps to the eye, the near-step only at the end.
+            // Through the straight-line DETENT: passing through straight holds it for a few pixels,
+            // so it can be found by hand (@see AutomationCurveShape.detented).
             let dk = curveDelta(dy: dy, leftIndex: i, points: d.origPoints)
-            let c  = AutomationCurveShape.adjusted(d.origPoints[i].c, knobDelta: dk)
+            let c  = AutomationCurveShape.detented(d.origPoints[i].c, knobTravel: dk,
+                                                   deadZone: AutomationCurveShape.knobDetentDrag)
             viewModel.updateAutomationPoints(objectID: object.id, param: ref) { pts in
                 guard pts.indices.contains(i) else { return }
                 pts[i].c = c

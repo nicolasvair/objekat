@@ -72,6 +72,8 @@ extension CommandRegistry {
                 }
             case .toolAux:
                 toolHovered = nil; hovered = nil
+            case .toolFX:
+                toolHovered = probe.fxStripID; hovered = toolHovered
             }
             return .object([
                 "position": Self.pointJSON(probe.position),

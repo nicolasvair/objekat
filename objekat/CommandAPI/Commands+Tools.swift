@@ -22,6 +22,7 @@ extension CommandRegistry {
     private static let toolNames: [(name: String, tool: ActiveTool)] = [
         ("selection", .toolSelection), ("cut", .toolCut), ("volume", .toolVolume),
         ("pan", .toolPan), ("aux", .toolAux), ("stem", .toolStemAssign),
+        ("fx", .toolFX),
     ]
 
     /// The script's name for a tool (`view.state.hover` reports it too).
@@ -46,7 +47,7 @@ extension CommandRegistry {
     func registerToolCommands() {
 
         register("tool.get",
-                 summary: "The active tool: selection | cut | volume | pan | aux | stem, whether it is "
+                 summary: "The active tool: selection | cut | volume | pan | aux | stem | fx, whether it is "
                         + "locked (armed as ⇧ + the key arms it) or held by a key, and for the stem "
                         + "tool its target (a 1-based index: 1 = Main, 2 = the 2nd stem…).") { _ in
             self.toolJSON(try CommandContext.shared.requireViewModel())
@@ -54,10 +55,10 @@ extension CommandRegistry {
 
         register("tool.set",
                  summary: "Arms a tool, LOCKED, exactly as ⇧ + its key does (a script holds no key): "
-                        + "selection (E) | cut (C) | volume (V) | pan (P) | aux (A) | stem (a digit). "
+                        + "selection (E) | cut (C) | volume (V) | pan (P) | aux (A) | fx (F) | stem (a digit). "
                         + "It stays armed until another tool.set — `selection` is how the tool is "
                         + "'released' — or Esc. Session state: no undo point, never saved.",
-                 params: [ParamSpec("tool", "string", "selection | cut | volume | pan | aux | stem."),
+                 params: [ParamSpec("tool", "string", "selection | cut | volume | pan | aux | fx | stem."),
                           ParamSpec("stem", "int", required: false,
                                     "With `stem`: the target, a 1-based index (1 = Main, 2 = the 2nd "
                                   + "stem…). Default 1.")]) { p in
@@ -83,6 +84,48 @@ extension CommandRegistry {
             vm.isToolPermanent = true
             vm.heldToolKeyCode = nil
             return self.toolJSON(vm)
+        }
+
+        register("tool.fx_strip",
+                 summary: "What the FX tool's strip shows for an object (hovering it under F): "
+                        + "`entries` in the order drawn, left to right — {id, kind: instrument | "
+                        + "plugin | gain_stage | rack, name, enabled, toggle (has a power button), "
+                        + "editor (a double click opens a window), bin (index into `bins`, or null), "
+                        + "branches (a rack)} — `bins` [{id, name, detached}] (the FX link blocks, "
+                        + "framed), and the strip's `size` {w, h} in points. A read: the strip's "
+                        + "power button is `plugin.toggle` / the instrument's toggle, its double "
+                        + "click the editor (no window without an interface).",
+                 params: [ParamSpec("id", "uuid", "The object.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "no object \(id.uuidString)")
+            }
+            let m = vm.fxStripModel(objectID: id)
+            let size = FXStripLayout.layout(m).size
+            return .object([
+                "entries": .array(m.entries.map { e in
+                    var kind = "plugin"
+                    var branches = JSONValue.null
+                    switch e.kind {
+                    case .instrument: kind = "instrument"
+                    case .plugin: kind = "plugin"
+                    case .gainStage: kind = "gain_stage"
+                    case .rack(let n): kind = "rack"; branches = .int(n)
+                    }
+                    return .object([
+                        "id": .string(e.id.uuidString), "kind": .string(kind), "name": .string(e.name),
+                        "enabled": .bool(e.isEnabled), "toggle": .bool(e.hasToggle),
+                        "editor": .bool(e.opensEditor),
+                        "bin": e.bin.map { JSONValue.int($0) } ?? .null, "branches": branches,
+                    ])
+                }),
+                "bins": .array(m.bins.map { b in
+                    .object(["id": .string(b.id.uuidString), "name": .string(b.name),
+                             "detached": .bool(b.isDetached)])
+                }),
+                "size": .object(["w": .number(Double(size.width)), "h": .number(Double(size.height))]),
+            ])
         }
     }
 }

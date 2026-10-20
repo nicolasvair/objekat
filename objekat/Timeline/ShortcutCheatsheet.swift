@@ -54,6 +54,7 @@ enum ShortcutCheatsheet {
         case .toolPan:        return L("tool.pan.help")
         case .toolAux:        return L("tool.aux.help")
         case .toolStemAssign: return L("tool.stem.name")
+        case .toolFX:         return L("tool.fx.help")
         }
     }
 
@@ -113,6 +114,15 @@ enum ShortcutCheatsheet {
         // CheatsheetPanel).
         case .toolStemAssign:
             return []
+        // FX: the mouse only, and the strip says it on its boxes (their tooltips).
+        case .toolFX:
+            return [
+                ShortcutSection(title: L("cheatsheet.section.mouse"), rows: [
+                    ShortcutRow(keys: L("cheatsheet.keys.hoverObject"), label: L("cheatsheet.fx.strip")),
+                    ShortcutRow(keys: L("cheatsheet.keys.clickPower"), label: L("cheatsheet.fx.toggle")),
+                    ShortcutRow(keys: L("cheatsheet.keys.doubleClickBox"), label: L("cheatsheet.fx.openEditor")),
+                ]),
+            ]
         }
     }
 
@@ -171,6 +181,8 @@ enum ShortcutCheatsheet {
                             label: L("cheatsheet.crossfade.sCurve")),
                 ShortcutRow(keys: L("cheatsheet.keys.optClickRuler"),
                             label: L("cheatsheet.playheadJump")),
+                ShortcutRow(keys: L("cheatsheet.keys.optDoubleClickCurve"),
+                            label: L("cheatsheet.automation.straighten")),
             ])]
         }
         // Any other combination: nothing to say. We do NOT put up a 'no shortcut' panel — an empty

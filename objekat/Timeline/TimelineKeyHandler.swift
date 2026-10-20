@@ -128,7 +128,8 @@ extension TimelineView {
                     DispatchQueue.main.async {
                         if newGesture { vm.beginAutomationEdit() }
                         vm.adjustAutomationCurvature(objectID: hit.objectID, param: hit.param,
-                                                     at: hit.pointIndex, steps: steps)
+                                                     at: hit.pointIndex, steps: steps,
+                                                     newGesture: newGesture)
                     }
                 }
                 return nil
@@ -910,6 +911,18 @@ extension TimelineView {
                         vm.heldToolKeyCode = permanent ? nil : event.keyCode
                     }
                     cheat.schedule(.tool(.toolVolume), in: vm)
+                    return nil
+                case "f":
+                    // 'F' = the FX tool: hovering an object shows its plugins (@see FXStripLayout).
+                    if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) { break }
+                    guard !event.isARepeat else { return nil }
+                    let permanent = flags.contains(.shift)
+                    DispatchQueue.main.async {
+                        vm.activeTool = .toolFX
+                        vm.isToolPermanent = permanent
+                        vm.heldToolKeyCode = permanent ? nil : event.keyCode
+                    }
+                    cheat.schedule(.tool(.toolFX), in: vm)
                     return nil
                 case "p", "<", ">":
                     guard !event.isARepeat else { return nil }

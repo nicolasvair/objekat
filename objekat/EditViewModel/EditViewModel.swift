@@ -528,6 +528,13 @@ final class EditViewModel {
     /// timer. @see wheelShiftAutomationLine
     var automationLineWheelReadout: (objectID: UUID, param: ParamRef, value: Float)? = nil
 
+    /// The ⌥-wheel's curvature gesture under way: the segment, the curvature it STARTED on and
+    /// the knob travel since — the wheel goes through the straight-line detent from this anchor,
+    /// never notch by notch (@see adjustAutomationCurvature, AutomationCurveShape.detented).
+    /// `written` is the last curvature it laid: anything else found there (an undo, another
+    /// gesture) re-anchors. Outside observation: nothing draws it.
+    @ObservationIgnored var automationCurveWheelAnchor: AutomationCurveWheelAnchor? = nil
+
     /// The PLUGIN PARAMETER curves already pushed to the engine, per object. A session memory, outside
     /// observation: it serves only to know what to ERASE when a row disappears from the model
     /// (@see pushAutomation, which explains why those targets are not swept on every
