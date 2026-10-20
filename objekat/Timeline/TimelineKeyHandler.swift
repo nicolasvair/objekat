@@ -1450,6 +1450,12 @@ final class ColorSwatchGridView: NSView {
     private var onPickHex: ((Int) -> Void)?
     private var plusToolTip: NSView.ToolTipTag?
     private var swatchToolTips: [NSView.ToolTipTag] = []
+    /// Object mode only: the colour cell under the pointer, which shows a small trash in its corner (a
+    /// click on it removes the colour — the same path as ⌥ + click).
+    private var hoveredCell: Int?
+    /// Whether the pointer is on that trash (it turns red).
+    private var trashHot = false
+    private var hoverArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
 
@@ -1519,7 +1525,77 @@ final class ColorSwatchGridView: NSView {
         let o = geometry.origin(column: plus.column, row: plus.row)
         plusToolTip = addToolTip(NSRect(x: o.x, y: o.y, width: geometry.swatch, height: geometry.swatch),
                                  owner: self, userData: nil)
+        updateHover(at: window.map { convert($0.mouseLocationOutsideOfEventStream, from: nil) })
         needsDisplay = true
+    }
+
+    // MARK: Hover trash (object mode)
+
+    /// The trash badge of a colour cell: a small circle straddling the swatch's top-right corner, in
+    /// the gap between swatches (it never covers a neighbour's hit zone, @see `Geometry.hit`'s slop).
+    private func trashRect(of cell: Cell) -> NSRect {
+        let r = rect(of: cell), d: CGFloat = 11
+        return NSRect(x: r.maxX - d + 3.5, y: r.minY - 3.5, width: d, height: d)
+    }
+
+    /// Only the object palette's colours can be removed; the "+" and the fixed palettes never show it.
+    private var canRemove: Bool { onRemove != nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        hoverArea = nil
+        guard canRemove else { return }
+        // `.activeAlways`: the view lives in a menu, which tracks in its own run-loop mode.
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseEntered(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseExited(with event: NSEvent) { updateHover(at: nil) }
+
+    /// The cell whose swatch OR whose trash is under `p` (the trash overhangs the swatch, so the hover
+    /// must hold while the pointer travels onto it).
+    private func updateHover(at p: NSPoint?) {
+        var cellIndex: Int? = nil, hot = false
+        if canRemove, let p {
+            for (i, cell) in cells.enumerated() where cell.fill != nil && objectColors.indices.contains(i) {
+                if trashRect(of: cell).contains(p) { cellIndex = i; hot = true; break }
+                if rect(of: cell).insetBy(dx: -2, dy: -2).contains(p) { cellIndex = i; break }
+            }
+        }
+        guard cellIndex != hoveredCell || hot != trashHot else { return }
+        hoveredCell = cellIndex
+        trashHot = hot
+        needsDisplay = true
+    }
+
+    private static let trashImage: NSImage? = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: 7, weight: .semibold))
+
+    private func drawTrash(for cell: Cell) {
+        let b = trashRect(of: cell)
+        NSColor.windowBackgroundColor.setFill()
+        NSBezierPath(ovalIn: b).fill()
+        NSColor.labelColor.withAlphaComponent(0.35).setStroke()
+        let edge = NSBezierPath(ovalIn: b.insetBy(dx: 0.25, dy: 0.25))
+        edge.lineWidth = 0.5
+        edge.stroke()
+        guard let image = Self.trashImage else { return }
+        let tint: NSColor = trashHot ? .systemRed : .secondaryLabelColor
+        let tinted = NSImage(size: image.size, flipped: false) { r in
+            image.draw(in: r)
+            tint.set()
+            r.fill(using: .sourceAtop)
+            return true
+        }
+        let s = image.size
+        tinted.draw(in: NSRect(x: b.midX - s.width / 2, y: b.midY - s.height / 2, width: s.width, height: s.height),
+                    from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -1567,10 +1643,21 @@ final class ColorSwatchGridView: NSView {
                 cross.stroke()
             }
         }
+        // Drawn last, above every swatch (it overhangs into the gap).
+        if canRemove, let h = hoveredCell, cells.indices.contains(h), cells[h].fill != nil {
+            drawTrash(for: cells[h])
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        // The hovered colour's trash first: it overhangs its swatch, and a click on it removes the
+        // colour (the ⌥ + click path), never picks it; the menu stays open.
+        if canRemove, let h = hoveredCell, cells.indices.contains(h), cells[h].fill != nil,
+           trashRect(of: cells[h]).contains(p), let onRemove, objectColors.indices.contains(h) {
+            rebuildObjectCells(palette: onRemove(objectColors[h]))
+            return
+        }
         for (i, cell) in cells.enumerated() where rect(of: cell).insetBy(dx: -2, dy: -2).contains(p) {
             // ⌥ + click on a colour of the OBJECT palette removes it from the palette; the menu stays
             // open, redrawn without it (the object keeps its colour whatever happens here).
