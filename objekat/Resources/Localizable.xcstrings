@@ -9454,6 +9454,29 @@
         }
       }
     },
+    "library.slot.add.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a slot: choose a folder"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir un espacio: elegir una carpeta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un emplacement : choisir un dossier"
+          }
+        }
+      }
+    },
     "library.slot.clear": {
       "extractionState": "manual",
       "localizations": {
@@ -9496,6 +9519,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Emplacement vide : cliquer pour choisir un dossier"
+          }
+        }
+      }
+    },
+    "library.slot.full.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nDrag to move · ⌥-click to remove · double-click to fold everything"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nArrastrar para mover · ⌥-clic para quitar · doble clic para plegarlo todo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@\nGlisser pour déplacer · ⌥-clic pour retirer · double-clic pour tout replier"
+          }
+        }
+      }
+    },
+    "library.slot.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove slot"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar el espacio"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer l’emplacement"
           }
         }
       }

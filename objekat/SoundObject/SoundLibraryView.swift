@@ -226,41 +226,118 @@ final class SoundLibraryViewModel {
     /// sets the folder the Finder opens on when no slot has been used.
     func openFolderPanel() {
         guard let url = pickFolder() else { return }
-        if let slot = slots.activeSlot {
-            slots.setPath(url.path, forSlot: slot)
+        if let slot = slots.activeID {
+            slots.setPath(url.path, for: slot)
+            slotLocations[slot] = nil
         } else {
             ObjekatPreferences.shared.soundLibraryFolder = url.path
         }
         show(url)
     }
 
-    /// A click on a colour: shows that slot's folder. An empty slot (or one whose folder has gone)
-    /// asks for a folder instead. A click on the slot already shown changes nothing: it must not
-    /// fold back what was unfolded.
-    func chooseSlot(_ slot: Int) {
-        if slots.activeSlot == slot, baseURL != nil { return }
-        guard let url = Self.existingFolder(slots.path(forSlot: slot)) else { assignSlot(slot); return }
-        slots.setActive(slot)
-        show(url)
+    // MARK: The colour slots
+
+    /// Where each slot was left (the folder the hand had gone down into), for the session: coming
+    /// back to a slot puts the Finder back THERE, not at the slot's root. Keyed by slot id.
+    @ObservationIgnored private var slotLocations: [String: URL] = [:]
+    /// The slot a click has just made current, and when — so that the second click of a double
+    /// click on a slot that was NOT current does not read as "fold everything back".
+    @ObservationIgnored private var lastSlotActivation: (id: String, at: TimeInterval)? = nil
+
+    /// A click on a colour, as the bar hands it over: ⌥ removes the slot, a double click on the slot
+    /// ALREADY shown folds its tree back, a plain click shows the slot.
+    func clickSlot(_ id: String, clickCount: Int, option: Bool) {
+        if option { removeSlot(id); return }
+        if clickCount >= 2 {
+            if let last = lastSlotActivation, last.id == id,
+               ProcessInfo.processInfo.systemUptime - last.at <= NSEvent.doubleClickInterval {
+                return   // the first click of this double click is what made it current
+            }
+            if slots.activeID == id, baseURL != nil { collapseAll(); return }
+        }
+        chooseSlot(id)
+    }
+
+    /// Shows that slot's folder — where it was left, with what was unfolded unfolded. An empty slot (or
+    /// one whose folder has gone) asks for a folder instead. A click on the slot already shown changes
+    /// nothing: it must not fold back what was unfolded (a DOUBLE click does, @see `clickSlot`).
+    func chooseSlot(_ id: String) {
+        if slots.activeID == id, baseURL != nil { return }
+        guard let root = Self.existingFolder(slots.path(of: id)) else { assignSlot(id); return }
+        rememberSlotLocation()
+        slots.setActive(id)
+        lastSlotActivation = (id, ProcessInfo.processInfo.systemUptime)
+        show(root, at: slotLocations[id])
     }
 
     /// "Choose a folder…": gives the slot a folder and shows it.
-    func assignSlot(_ slot: Int) {
+    func assignSlot(_ id: String) {
         guard let url = pickFolder() else { return }
-        slots.setPath(url.path, forSlot: slot)
-        slots.setActive(slot)
+        rememberSlotLocation()
+        slots.setPath(url.path, for: id)
+        slots.setActive(id)
+        slotLocations[id] = nil
         show(url)
     }
 
     /// "Empty": the slot forgets its folder. What is on screen stays.
-    func clearSlot(_ slot: Int) {
-        slots.setPath(nil, forSlot: slot)
+    func clearSlot(_ id: String) {
+        slots.setPath(nil, for: id)
+        slotLocations[id] = nil
     }
 
-    private func show(_ url: URL) {
+    /// ⌥ + click: the slot leaves the row (its folder is only forgotten). What is on screen stays.
+    func removeSlot(_ id: String) {
+        slots.removeSlot(id)
+        slotLocations[id] = nil
+    }
+
+    /// The "+" at the end of the row: asks for a folder and, unless the panel is cancelled, adds a
+    /// slot in the next colour holding it, and shows it.
+    func addSlot() {
+        guard let url = pickFolder() else { return }
+        rememberSlotLocation()
+        let slot = slots.addSlot()
+        slots.setPath(url.path, for: slot.id)
+        slots.setActive(slot.id)
+        show(url)
+    }
+
+    /// The drag of the row: `id` lands where `target` is.
+    func moveSlot(_ id: String, onto target: String) {
+        guard id != target, let to = slots.slots.firstIndex(where: { $0.id == target }) else { return }
+        slots.moveSlot(id, to: to)
+    }
+
+    /// The double click on the slot shown: back at its root, every folder under it folded.
+    func collapseAll() {
+        guard let base = baseURL else { return }
+        let root = Self.key(base)
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        expandedPaths = expandedPaths.filter { $0 != root && !$0.hasPrefix(prefix) }
+        if let id = slots.activeID { slotLocations[id] = nil }
         searchText = ""
-        baseURL = url
-        navigate(to: url)
+        navigate(to: base)
+    }
+
+    private func rememberSlotLocation() {
+        if let id = slots.activeID, let cur = currentURL { slotLocations[id] = cur }
+    }
+
+    /// Shows `root` as the base folder, opened on `location` when it still exists and lies under it.
+    private func show(_ root: URL, at location: URL? = nil) {
+        searchText = ""
+        baseURL = root
+        if let location, Self.existingFolder(location.path) != nil, Self.isInside(location, root) {
+            navigate(to: location)
+        } else {
+            navigate(to: root)
+        }
+    }
+
+    private static func isInside(_ url: URL, _ root: URL) -> Bool {
+        let r = key(root), u = key(url)
+        return u == r || u.hasPrefix(r.hasSuffix("/") ? r : r + "/")
     }
 
     private static func existingFolder(_ path: String?) -> URL? {
@@ -275,8 +352,8 @@ final class SoundLibraryViewModel {
     /// the hand navigated to is not to be replaced by the one it started from.
     func restoreFolder() {
         guard baseURL == nil else { return }
-        if let slot = slots.activeSlot {
-            if let url = Self.existingFolder(slots.path(forSlot: slot)) {
+        if let slot = slots.activeID {
+            if let url = Self.existingFolder(slots.path(of: slot)) {
                 baseURL = url
                 navigate(to: url)
                 return
@@ -312,6 +389,7 @@ final class SoundLibraryViewModel {
         scrollTopID = nil
         currentURL = url
         rootNodes = makeNodes(for: url, depth: 0)
+        restoreExpansion(rootNodes)
         applySearch()
         ensureMedia(for: rootNodes)
     }
@@ -430,6 +508,30 @@ final class SoundLibraryViewModel {
             ensureMedia(for: node.children)
         }
         node.isExpanded.toggle()
+        if node.isExpanded { expandedPaths.insert(Self.key(node.url)) }
+        else { expandedPaths.remove(Self.key(node.url)) }
+    }
+
+    /// The folders the hand unfolded, by path, for the session: the tree is rebuilt at every change of
+    /// folder (a slot, ⌘↑, a double click into a folder), and what was unfolded comes back unfolded —
+    /// switching from one colour to another must not fold everything. Only the double click on the
+    /// slot shown forgets them (@see `collapseAll`).
+    @ObservationIgnored private var expandedPaths: Set<String> = []
+
+    private static func key(_ url: URL) -> String { url.standardizedFileURL.path }
+
+    /// Unfolds again, in a freshly built tree, the folders `expandedPaths` names (loading them).
+    private func restoreExpansion(_ nodes: [SoundLibraryNode]) {
+        guard !expandedPaths.isEmpty else { return }
+        for node in nodes where node.isDirectory && expandedPaths.contains(Self.key(node.url)) {
+            if !node.didLoadChildren {
+                node.children = makeNodes(for: node.url, depth: node.depth + 1)
+                node.didLoadChildren = true
+                ensureMedia(for: node.children)
+            }
+            node.isExpanded = true
+            restoreExpansion(node.children)
+        }
     }
 
     /// A flat list of the visible nodes (allowing for the unfolded folders).
@@ -859,19 +961,25 @@ struct SoundLibraryView: View {
 
 // MARK: - The colour slots (Finder tab)
 
-/// The row of six colours under the tab switcher: each one remembers a folder, a click shows it.
-/// Same capsules and same colours as the plugin browser's tab bar (@see `capsuleTab`,
+/// The row of colours under the tab switcher: each one remembers a folder, a click shows it. Same
+/// capsules and same colours as the plugin browser's tab bar (@see `capsuleTab`,
 /// `PluginCategoryPalette.base`). An empty slot is an outlined circle: a click asks for a folder; a
-/// right click offers "Choose a folder…" / "Empty" on any of them.
+/// right click offers "Choose a folder…" / "Empty" / "Remove" on any of them.
+/// The hand edits the row itself: a slot is DRAGGED to another place, ⌥ + click removes it (no
+/// question: it only forgets a path), the "+" at the end adds one in the next colour, and a DOUBLE
+/// click on the slot already shown folds its whole tree back.
 private struct FinderSlotsBar: View {
     var vm: SoundLibraryViewModel
     private var slots: FinderSlotStore { vm.slots }
+    /// The slot being dragged, while the drag lasts (the row reorders live under it).
+    @State private var draggingID: String? = nil
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(0..<FinderSlotStore.slotCount, id: \.self) { slot in
+            ForEach(slots.slots) { slot in
                 slotCapsule(slot)
             }
+            addCapsule
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -880,9 +988,19 @@ private struct FinderSlotsBar: View {
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 
-    private func slotCapsule(_ slot: Int) -> some View {
-        let path = slots.path(forSlot: slot)
-        let colour = ObjekatPalette.pluginCategory(FinderSlotStore.colourIndex(forSlot: slot))
+    private var addCapsule: some View {
+        Image(systemName: "plus")
+            .font(.system(size: 9, weight: .semibold))
+            .frame(width: 9, height: 9)
+            .capsuleTab(active: false)
+            .onTapGesture { vm.addSlot() }
+            .accessibilityAddTraits(.isButton)
+            .help(L("library.slot.add.help"))
+    }
+
+    private func slotCapsule(_ slot: FinderSlot) -> some View {
+        let path = slot.isEmpty ? nil : slot.path
+        let colour = ObjekatPalette.pluginCategory(slot.colour)
         return Group {
             if path != nil {
                 Circle().fill(colour).frame(width: 9, height: 9)
@@ -890,15 +1008,50 @@ private struct FinderSlotsBar: View {
                 Circle().strokeBorder(colour.opacity(0.6), lineWidth: 1).frame(width: 9, height: 9)
             }
         }
-        .capsuleTab(active: slots.activeSlot == slot)
-        .onTapGesture { vm.chooseSlot(slot) }
-        .accessibilityAddTraits(.isButton)
-        .help(path ?? L("library.slot.empty.help"))
-        .contextMenu {
-            Button(L("library.chooseFolder")) { vm.assignSlot(slot) }
-            Button(L("library.slot.clear")) { vm.clearSlot(slot) }
-                .disabled(path == nil)
+        .capsuleTab(active: slots.activeID == slot.id)
+        .onTapGesture {
+            draggingID = nil
+            vm.clickSlot(slot.id, clickCount: NSApp.currentEvent?.clickCount ?? 1,
+                         option: NSEvent.modifierFlags.contains(.option))
         }
+        .onDrag {
+            draggingID = slot.id
+            return NSItemProvider(object: slot.id as NSString)
+        }
+        .onDrop(of: [.text], delegate: SlotDropDelegate(target: slot.id, vm: vm, draggingID: $draggingID))
+        .accessibilityAddTraits(.isButton)
+        .help(path.map { L("library.slot.full.help", $0) } ?? L("library.slot.empty.help"))
+        .contextMenu {
+            Button(L("library.chooseFolder")) { vm.assignSlot(slot.id) }
+            Button(L("library.slot.clear")) { vm.clearSlot(slot.id) }
+                .disabled(path == nil)
+            Divider()
+            Button(L("library.slot.remove")) { vm.removeSlot(slot.id) }
+        }
+    }
+}
+
+/// The reorder of the colour row: the dragged slot takes the place of the one it passes over, live,
+/// so the row says where it will land before the hand lets go. Only a slot of THIS row is taken (the
+/// drag's own state says which), never a text dropped from elsewhere.
+private struct SlotDropDelegate: DropDelegate {
+    let target: String
+    let vm: SoundLibraryViewModel
+    @Binding var draggingID: String?
+
+    func validateDrop(info: DropInfo) -> Bool { draggingID != nil }
+
+    func dropEntered(info: DropInfo) {
+        guard let id = draggingID, id != target else { return }
+        withAnimation(.easeInOut(duration: 0.12)) { vm.moveSlot(id, onto: target) }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? { DropProposal(operation: .move) }
+
+    func performDrop(info: DropInfo) -> Bool {
+        let ok = draggingID != nil
+        draggingID = nil
+        return ok
     }
 }
 
