@@ -5,11 +5,13 @@
 //  What a plugin with ONE input is fed when the signal reaching it is stereo (`MonoFold`, Swift; request
 //  of 20 October 2026). Left alone, the engine's graph builder reads the first channel only: through a
 //  1 → 1 plugin the right channel passes round it dry, after a 1 → 2 plugin it is not heard
-//  (tracktion_EditNodeBuilder.cpp, createNodeForPlugin). That is `left`, and for `left` NOTHING is laid —
-//  an old project keeps its graph, sample for sample.
+//  (tracktion_EditNodeBuilder.cpp, createNodeForPlugin). That is what a plugin with NO fold chosen (an
+//  old file, no `monoFold` key) gets: NOTHING is laid — an old project keeps its graph, sample for sample.
 //
-//  For `right` and `sum` the compile (@see OBJEngineCore compileSeries:) lays one or two of these around
-//  the plugin, as service plugins with no card (like ObjGain or ObjChannelMode):
+//  For a CHOSEN fold — `left` included, which lays only the OUT half: the plugin reads channel 0 by itself,
+//  what changes is that the right channel is cut instead of passing round it dry — the compile (@see
+//  OBJEngineCore compileSeries:) lays one or two of these around the plugin, as service plugins with no
+//  card (like ObjGain or ObjChannelMode):
 //
 //    • the IN half, just BEFORE it: channel 0 becomes the right channel, or (L + R) / 2 — half of each,
 //      so a centred sound keeps its level and two full-scale channels cannot clip. Channel 1 is left as
@@ -40,7 +42,7 @@ class ObjMonoFoldPlugin  : public Plugin
 {
 public:
     /// Codes written in the plugin's state — never renumber.
-    enum Mode { right = 1, sum = 2 };
+    enum Mode { right = 1, sum = 2, left = 3 };
     enum Half { inHalf = 0, outHalf = 1 };
 
     ObjMonoFoldPlugin (PluginCreationInfo info)
@@ -135,7 +137,11 @@ public:
             return;
         }
 
-        if (modeAtomic.load() == right)
+        if (modeAtomic.load() == left)
+        {
+            return;                                         // the plugin reads channel 0 by itself
+        }
+        else if (modeAtomic.load() == right)
         {
             juce::FloatVectorOperations::copy (l, r, n);
         }
@@ -153,7 +159,7 @@ public:
     }
 
 private:
-    static int clampMode (int m)                            { return m == right ? (int) right : (int) sum; }
+    static int clampMode (int m)                            { return (m == right || m == left) ? m : (int) sum; }
 
     juce::CachedValue<int> modeValue, halfValue;
     std::atomic<int>       modeAtomic { (int) sum };

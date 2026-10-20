@@ -55,7 +55,10 @@ struct WidthFlowTest {
         check(SynopticWidthFlow.output(incoming: 1, through: monoStereo) == 2, "mono through 1->2 becomes stereo")
         check(SynopticWidthFlow.output(incoming: 1, through: stereo) == 2, "mono through stereo is widened")
         // stereo signal
-        check(SynopticWidthFlow.output(incoming: 2, through: mono) == 2, "stereo through mono stays 2 wide (right goes dry)")
+        check(SynopticWidthFlow.output(incoming: 2, through: mono) == 2, "stereo through mono, no fold (legacy graph): 2 wide (right goes dry)")
+        check(SynopticWidthFlow.output(incoming: 2, through: mono, fold: .sum) == 1, "stereo through mono summed: ONE wire out")
+        check(SynopticWidthFlow.output(incoming: 2, through: mono, fold: .left) == 1, "stereo through mono, left chosen: ONE wire out")
+        check(SynopticWidthFlow.output(incoming: 2, through: monoStereo, fold: .sum) == 2, "stereo through 1->2 summed: two wires out")
         check(SynopticWidthFlow.output(incoming: 2, through: monoStereo) == 2, "stereo through 1->2 is 2 wide")
         check(SynopticWidthFlow.output(incoming: 2, through: stereo) == 2, "stereo through stereo")
 
@@ -63,10 +66,12 @@ struct WidthFlowTest {
         check(SynopticWidthFlow.adaptation(incoming: 1, through: mono) == nil, "mono into mono: nothing to say")
         check(SynopticWidthFlow.adaptation(incoming: 1, through: monoStereo) == nil, "mono into 1->2: nothing to say")
         check(SynopticWidthFlow.adaptation(incoming: 2, through: stereo) == nil, "stereo into stereo: nothing to say")
-        check(SynopticWidthFlow.adaptation(incoming: 2, through: mono) == .merge(fold: .left, rightPassesDry: true),
-              "stereo into 1->1: merge, the right channel passes dry")
-        check(SynopticWidthFlow.adaptation(incoming: 2, through: monoStereo) == .merge(fold: .left, rightPassesDry: false),
-              "stereo into 1->2: merge, the right channel is not heard after it")
+        check(SynopticWidthFlow.adaptation(incoming: 2, through: mono) == .merge(fold: nil, rightPassesDry: true),
+              "stereo into 1->1, no fold: merge, the right channel passes dry")
+        check(SynopticWidthFlow.adaptation(incoming: 2, through: monoStereo) == .merge(fold: nil, rightPassesDry: false),
+              "stereo into 1->2, no fold: merge, the right channel is not heard after it")
+        check(SynopticWidthFlow.adaptation(incoming: 2, through: mono, fold: .left) == .merge(fold: .left, rightPassesDry: false),
+              "stereo into 1->1, left chosen: the right channel is cut, not dry")
         check(SynopticWidthFlow.adaptation(incoming: 2, through: mono, fold: .sum) == .merge(fold: .sum, rightPassesDry: false),
               "stereo into 1->1 summed: nothing passes dry")
         check(SynopticWidthFlow.adaptation(incoming: 2, through: monoStereo, fold: .right) == .merge(fold: .right, rightPassesDry: false),
@@ -74,6 +79,22 @@ struct WidthFlowTest {
         check(SynopticWidthFlow.adaptation(incoming: 1, through: mono, fold: .sum) == nil, "mono into mono: the fold says nothing")
         check(SynopticWidthFlow.adaptation(incoming: 1, through: stereo, fold: .sum) == .split, "a fold does not touch a split")
         check(MonoFold(rawValue: "sum") == .sum && MonoFold.allCases.count == 3, "three folds, API ids")
+        // THE switch for a plugin with no stored fold (decision of 21 October 2026: the sum).
+        check(MonoFold.whenUnset == .sum, "a plugin saved before the choice plays the sum")
+        check(MonoFold.played(nil) == .sum && MonoFold.played(.left) == .left && MonoFold.played(.right) == .right,
+              "played: a stored fold wins, none = whenUnset")
+
+        // --- how a merge is drawn ------------------------------------------------------------------
+        check(WireLook.merge(.merge(fold: .sum, rightPassesDry: false)).shape == .sum, "sum: two wires joining")
+        check(WireLook.merge(.merge(fold: .left, rightPassesDry: false)).shape == .pick(.left), "left: R stops with a cross")
+        check(WireLook.merge(.merge(fold: .right, rightPassesDry: false)).shape == .pick(.right), "right: L stops with a cross")
+        check(WireLook.merge(.merge(fold: nil, rightPassesDry: true)).shape == .parallel, "legacy 1->1: two wires on")
+        check(WireLook.merge(.merge(fold: nil, rightPassesDry: false)).shape == .pick(.left), "legacy 1->2: R not heard")
+        check(WireLook.merge(.split) == WireLook(count: 1, shape: .split, adaptation: .split), "split: one wire in two")
+        for a in [WireAdaptation.merge(fold: .sum, rightPassesDry: false), .merge(fold: nil, rightPassesDry: true), .split] {
+            check(WireLook.merge(a).isOrange, "every adaptation is orange: \(a)")
+        }
+        check(!WireLook(count: 2).isOrange && !WireLook(count: 1).isOrange, "plain wires are not orange")
         check(SynopticWidthFlow.adaptation(incoming: 1, through: stereo) == .split, "mono into stereo: split")
         check(SynopticWidthFlow.adaptation(incoming: 1, through: fold) == .split, "mono into 2->1: split")
         check(SynopticWidthFlow.adaptation(incoming: 2, through: fold) == nil, "stereo into 2->1: the input agrees")
@@ -100,12 +121,13 @@ struct WidthFlowTest {
             check(f.look(.into(a.id)) == WireLook(count: 1), "into the 1->2: one wire, not orange")
             check(f.look(.after(a.id)) == WireLook(count: 2), "out of the 1->2: two wires")
             check(f.look(.into(b.id)) == WireLook(count: 2), "into the stereo plugin: two wires")
-            check(f.look(.into(c.id)) == WireLook(count: 2, shape: .merge, adaptation: .merge(fold: .left, rightPassesDry: true)),
-                  "into the mono plugin: two wires merging, orange")
-            check(f.look(.into(c.id))?.warns == true, "the merge warns")
+            check(f.look(.into(c.id)) == WireLook(count: 2, shape: .parallel, adaptation: .merge(fold: nil, rightPassesDry: true)),
+                  "into the mono plugin with no fold: two wires, orange (the legacy graph)")
+            check(f.look(.into(c.id))?.isOrange == true, "the merge is orange")
             check(f.look(.into(nc.id)) == f.look(.into(c.id)), "the node id and the plugin id read the same")
             check(f.look(.after(c.id)) == WireLook(count: 2), "after a 1->1 fed stereo: still two wires (R dry)")
             check(f.look(.trunk) == WireLook(count: 2), "the trunk ends stereo")
+            check(f.look(.file) == WireLook(count: 1), "the file wire (into an ARA card) reads the file")
             check(f.look(.bus) == WireLook(count: 2), "after the mixer: a stereo pair")
             check(f.look(.after(root.id)) == WireLook(count: 2), "the series' output")
             check(f.look(.into(UUID())) == nil && f.look(.after(UUID())) == nil, "an unknown id: neutral")
@@ -121,13 +143,29 @@ struct WidthFlowTest {
 
             // stereo into a 1->2: merge, the right channel not heard after it
             let h = SynopticWidthFlow.compute(root: .series([.plugin(a)]), sourceWidth: 2, channels: [a.id: monoStereo])
-            check(h.look(.into(a.id))?.adaptation == .merge(fold: .left, rightPassesDry: false), "stereo into 1->2: R not heard")
+            check(h.look(.into(a.id))?.adaptation == .merge(fold: nil, rightPassesDry: false), "stereo into 1->2: R not heard")
 
-            // a fold is read per plugin id, absent = left
-            let k = SynopticWidthFlow.compute(root: .series([.plugin(c), .plugin(a)]), sourceWidth: 2,
-                                              channels: [c.id: mono, a.id: monoStereo], folds: [c.id: .sum])
-            check(k.look(.into(c.id))?.adaptation == .merge(fold: .sum, rightPassesDry: false), "the fold of c is read")
-            check(k.look(.into(a.id))?.adaptation == .merge(fold: .left, rightPassesDry: false), "a has no fold: left")
+            // a fold is read per plugin id: a SUMMED mono plugin puts out ONE wire, which the stereo plugin
+            // after it splits again (orange); no fold in the map = the legacy graph
+            let k = SynopticWidthFlow.compute(root: .series([.plugin(c), .plugin(b)]), sourceWidth: 2,
+                                              channels: [c.id: mono, b.id: stereo], folds: [c.id: .sum])
+            check(k.look(.into(c.id)) == WireLook(count: 2, shape: .sum, adaptation: .merge(fold: .sum, rightPassesDry: false)),
+                  "stereo into the summed mono plugin: a V, orange")
+            check(k.look(.after(c.id)) == WireLook(count: 1), "out of it: ONE wire")
+            check(k.look(.into(b.id)) == WireLook(count: 1, shape: .split, adaptation: .split),
+                  "into the stereo plugin after it: the wire splits, orange")
+            check(k.trunkOut == 2 && k.look(.trunk) == WireLook(count: 2), "the trunk is stereo again")
+            check(k.mergePlugin[c.id] == c.id, "the merge names its plugin (the fold menu)")
+            // a summed mono plugin LAST: the copy back to stereo is drawn at the mixer
+            let m = SynopticWidthFlow.compute(root: .series([.plugin(c)]), sourceWidth: 2,
+                                              channels: [c.id: mono], folds: [c.id: .left])
+            check(m.look(.into(c.id))?.shape == .pick(.left), "left chosen: the right wire stops with a cross")
+            check(m.trunkOut == 1 && m.look(.trunk) == WireLook(count: 1, shape: .split),
+                  "a stereo source made mono: the trunk splits back into two, orange")
+            check(m.look(.trunk)?.isOrange == true, "and that split is orange")
+            // a mono FILE through a mono chain stays a plain single trunk
+            let n = SynopticWidthFlow.compute(root: .series([.plugin(c)]), sourceWidth: 1, channels: [c.id: mono])
+            check(n.look(.trunk) == WireLook(count: 1), "a mono file's mono trunk is not orange")
 
             // the demo / nothing computed
             let empty = SynopticWidthFlow()
@@ -150,7 +188,7 @@ struct WidthFlowTest {
             // stereo file through a mono plugin in the middle
             let g = SynopticWidthFlow.compute(root: root, sourceWidth: 2,
                                               channels: [a.id: stereo, b.id: mono, c.id: monoStereo])
-            check(g.adaptations[b.id] == .merge(fold: .left, rightPassesDry: true) && g.adaptations[c.id] == .merge(fold: .left, rightPassesDry: false)
+            check(g.adaptations[b.id] == .merge(fold: nil, rightPassesDry: true) && g.adaptations[c.id] == .merge(fold: nil, rightPassesDry: false)
                   && g.adaptations[a.id] == nil, "stereo chain: the mono plugin and the mono input merge")
             check(g.trunkOut == 2, "stereo chain ends stereo")
 
@@ -191,9 +229,30 @@ struct WidthFlowTest {
             block.fxLink?.isEnabled = true
             let g = SynopticWidthFlow.compute(root: .series([block, .plugin(b)]), sourceWidth: 2,
                                               channels: [a.id: mono, b.id: stereo])
-            check(g.adaptations[a.id] == .merge(fold: .left, rightPassesDry: true) && g.adaptations[b.id] == nil,
+            check(g.adaptations[a.id] == .merge(fold: nil, rightPassesDry: true) && g.adaptations[b.id] == nil,
                   "the same bin ON merges into its mono plugin")
             check(g.look(.into(block.id)) == WireLook(count: 2), "into the bin itself: two plain wires")
+        }
+
+        // --- the audio file's channel choice (on the wire that leaves it) --------------------------
+        do {
+            let s = plugin("s")
+            let root = SynopticNode.series([.plugin(s)])
+            let both = SynopticWidthFlow.compute(root: root, sourceWidth: 2, sourceChoice: .both, channels: [s.id: stereo])
+            check(both.look(.source) == WireLook(count: 2, sourceChoice: .both), "both: two plain wires, the menu on them")
+            check(both.look(.source)?.isOrange == false, "both is not orange")
+            check(both.chainInput == 2 && both.adaptations.isEmpty, "both: the chain is fed stereo")
+            let sum = SynopticWidthFlow.compute(root: root, sourceWidth: 2, sourceChoice: .sum, channels: [s.id: stereo])
+            check(sum.look(.source) == WireLook(count: 2, shape: .sum, sourceChoice: .sum), "sum: the two wires join, orange")
+            check(sum.chainInput == 1 && sum.adaptations[s.id] == .split, "then one wire, split again into the stereo plugin")
+            let r = SynopticWidthFlow.compute(root: root, sourceWidth: 2, sourceChoice: .right, channels: [s.id: stereo])
+            check(r.look(.source) == WireLook(count: 2, shape: .pick(.right), sourceChoice: .right), "right: L stops with a cross")
+            let l = SynopticWidthFlow.compute(root: .series([]), sourceWidth: 2, sourceChoice: .left, channels: [:])
+            check(l.look(.source)?.shape == .pick(.left) && l.trunkOut == 1 && l.look(.trunk)?.shape == .split,
+                  "left on an empty chain: the trunk splits back at the mixer")
+            check(l.look(.file) == WireLook(count: 2), "the file itself stays two wires")
+            let monoFile = SynopticWidthFlow.compute(root: root, sourceWidth: 1, sourceChoice: .left, channels: [s.id: stereo])
+            check(monoFile.sourceChoice == nil && monoFile.look(.source) == WireLook(count: 1), "a mono file has no choice")
         }
 
         // --- parallel -----------------------------------------------------------------------------

@@ -446,11 +446,11 @@ try:
         set_layout(obj, lp, "mono")
         mo = render("lowpass_mono")
         print("       mono (1 -> 1):       " + fmt(mo))
-        left_processed = mo["L", 1000.0] < ref["L", 1000.0] - 30
-        right_dry = abs(mo["R", 3000.0] - ref["R", 3000.0]) < 1.0
-        check("mono plugin on a stereo file: the LEFT side is processed", left_processed, fmt(mo))
-        check("mono plugin on a stereo file: the RIGHT side goes through UNPROCESSED", right_dry, fmt(mo))
-        MONO_STEREO_RIGHT_DRY = right_dry
+        # Since 20 October 2026 the fold's output replaces the pair whatever the side read: with
+        # `left`, R's own 3 kHz is CUT (it used to pass round the plugin dry).
+        check("mono plugin on a stereo file: the LEFT side is processed", mo["L", 1000.0] < ref["L", 1000.0] - 30, fmt(mo))
+        check("mono plugin on a stereo file: nothing passes round it (R's 3 kHz cut, no dry right side)",
+              mo["R", 3000.0] < ref["R", 3000.0] - 30 and mo["L", 3000.0] < ref["R", 3000.0] - 30, fmt(mo))
 
         # a plugin that takes ONE channel in and gives TWO out: which of the two input sides does it read?
         rv = add_plugin(obj, AU_REVERB2)

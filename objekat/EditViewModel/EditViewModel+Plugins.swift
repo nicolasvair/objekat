@@ -229,11 +229,12 @@ extension EditViewModel {
                 "enabled":    p.isEnabled
             ]
             if let s = p.stateXML, !s.isEmpty { d["stateXML"] = s }
-            // What a one-input plugin is fed from a stereo signal (@see MonoFold). `left` is what the engine
-            // does by itself and is NOT sent: nothing is laid for it, so an old project's graph is the same
-            // graph, sample for sample. The engine lays its service plugins only where the plugin really has
-            // one input (it reads the live bus), so the key can travel for every leaf.
-            if p.effectiveMonoFold != .left { d["fold"] = p.effectiveMonoFold.rawValue }
+            // What a one-input plugin is fed from a stereo signal (@see MonoFold). A plugin with NO choice (a
+            // file written before it existed) plays `MonoFold.whenUnset` (the sum, since 21 October 2026); were
+            // that switch nil it would send nothing and the engine would keep the legacy graph. A CHOSEN fold travels, `left` included (its output then
+            // replaces the pair, the right channel cut). The engine lays its service plugins only where the
+            // plugin really has one input (it reads the live bus), so the key can travel for every leaf.
+            if let f = MonoFold.played(p.monoFold) { d["fold"] = f.rawValue }
             return d
         }
     }

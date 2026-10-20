@@ -185,9 +185,11 @@ extension CommandRegistry {
             payload["variants"] = .array([])
             payload["linked"] = .int(0)
             // What a stereo signal is folded into for a ONE-input plugin (`MonoFold`): the model's choice
-            // (`left` for a plugin saved before format 28), and the engine's two service halves when laid.
+            // (a plugin saved before format 28 has no key and plays `MonoFold.whenUnset`, the sum), whether it
+            // was CHOSEN (false = no key), and the engine's two service halves when laid.
             if let plug = vm.hostedPlugin(pluginID, of: host) {
                 payload["mono_fold"] = .string(plug.effectiveMonoFold.rawValue)
+                payload["mono_fold_chosen"] = .bool(plug.monoFold != nil)
             }
             for key in ["fold_in", "fold_out"] {
                 if let f = info[key] as? [String: Any] {
@@ -280,10 +282,11 @@ extension CommandRegistry {
         register("plugin.set_mono_fold",
                  summary: """
                  What a STEREO signal is folded into for a plugin with ONE main input: `left` (the left \
-                 channel only, the right one passing round a 1 → 1 plugin dry — what every project saved \
-                 before format 28 does), `right`, or `sum` = (L + R) / 2 (the default of a plugin inserted \
-                 since format 28). With `right` or `sum` the plugin's output replaces the pair (a 1 → 1 \
-                 plugin's mono result goes to both sides). Saved with the plugin, carried by copies, undone. \
+                 channel only), `right`, or `sum` = (L + R) / 2 (the default of a plugin inserted since \
+                 format 28). Whichever is chosen, the plugin's output replaces the pair (a 1 → 1 plugin's \
+                 mono result goes to both sides, the channel not taken is cut). A plugin saved before \
+                 format 28 has no choice (`mono_fold_chosen` false in `plugin.channel_layouts`) and plays \
+                 `sum`. Saved with the plugin, carried by copies, undone. \
                  Applies to the plugin's whole link group (FX link mirrors, manual link peers) and to the FX \
                  link's definition. Has no audible effect while the plugin is not mono-in or the signal is \
                  mono (`plugin.channel_layouts` reports `mono_fold` and the engine's `fold_in` / `fold_out` \

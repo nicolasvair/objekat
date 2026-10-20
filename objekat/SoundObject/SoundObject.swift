@@ -212,11 +212,10 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// format 22. @see SendMarker, SoundObject.sendPosition(auxID:)
     var sendMarker: SendMarker? = nil
     /// What this plugin is fed when its input is ONE channel and the signal reaching it is stereo
-    /// (@see MonoFold). Session format 28. THE RULE: a plugin record that carries no key keeps what
-    /// every plugin did before the choice existed — the LEFT channel (`effectiveMonoFold`) — so an old
-    /// project sounds as it did; a plugin MADE by this build is born `sum` (the `init`'s default), and
-    /// every copy carries its source's value (copy sites pass `monoFold:`), so a copied old plugin stays
-    /// on the left. Meaningless for a plugin with two inputs: kept, never read.
+    /// (@see MonoFold). Session format 28. A plugin record that carries no key (saved before the choice
+    /// existed) plays `MonoFold.whenUnset` — the SUM since 21 October 2026, the one switch; a plugin MADE
+    /// by this build is born `sum` (the `init`'s default), and every copy carries its source's value (copy
+    /// sites pass `monoFold:`). Meaningless for a plugin with two inputs: kept, never read.
     var monoFold: MonoFold? = .sum
 
     /// The TRIMS around the plugin, in dB (nil = 0, neutral): a gain before it and a gain after it,
@@ -256,8 +255,9 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.monoFold = monoFold
     }
 
-    /// The fold the engine plays (@see monoFold): no key = the left channel.
-    var effectiveMonoFold: MonoFold { monoFold ?? .left }
+    /// The fold the engine plays (@see monoFold): no key = `MonoFold.whenUnset` (and, were that switch put
+    /// back to the legacy graph, the left channel).
+    var effectiveMonoFold: MonoFold { MonoFold.played(monoFold) ?? .left }
 
     /// This entry wearing `other`'s trims — the copies that rebuild a plugin field by field call it,
     /// so a copy, a paste, a link or a bake keeps what the editor bar set.

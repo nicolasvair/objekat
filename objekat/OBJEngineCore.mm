@@ -588,8 +588,9 @@ static CompileNode parseCompileNode(NSDictionary* d) {
         n.info    = d;
         NSString* fold = d[@"fold"];
         if ([fold isKindOfClass:[NSString class]]) {
-            if ([fold isEqualToString:@"right"])    n.fold = (int)te::ObjMonoFoldPlugin::right;
-            else if ([fold isEqualToString:@"sum"]) n.fold = (int)te::ObjMonoFoldPlugin::sum;
+            if ([fold isEqualToString:@"right"])     n.fold = (int)te::ObjMonoFoldPlugin::right;
+            else if ([fold isEqualToString:@"sum"])  n.fold = (int)te::ObjMonoFoldPlugin::sum;
+            else if ([fold isEqualToString:@"left"]) n.fold = (int)te::ObjMonoFoldPlugin::left;
         }
     }
     return n;
@@ -624,8 +625,10 @@ static std::string monoFoldKey(const std::string& pluginKey, int half) {
 
 // Whether a fold half has anything to do beside `plugin`: an external plugin, loaded, whose main bus
 // takes ONE input (and, for the OUT half, gives at most one output). Nothing is laid anywhere else, so a
-// stereo plugin or a built-in costs no slot of the plugin list (20 at most, @see OBJEngineBehaviour).
-static bool objMonoFoldHalfFits(te::Plugin& plugin, int half) {
+// stereo plugin or a built-in costs no slot of the plugin list (20 at most, @see OBJEngineBehaviour). An
+// explicit `left` has no IN half (the plugin reads channel 0 by itself), only the OUT half that cuts R.
+static bool objMonoFoldHalfFits(te::Plugin& plugin, int half, int mode) {
+    if (mode == (int)te::ObjMonoFoldPlugin::left && half == (int)te::ObjMonoFoldPlugin::inHalf) return false;
     auto* ext = dynamic_cast<te::ExternalPlugin*>(&plugin);
     if (!ext || ext->isInitialisingAsync()) return false;
     auto* proc = ext->getAudioPluginInstance();
@@ -8757,7 +8760,8 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
             if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit->second.get())) {
                 NSString* k = half == (int)te::ObjMonoFoldPlugin::inHalf ? @"fold_in" : @"fold_out";
                 info[k] = @{ @"active": @(f->isActive()),
-                             @"mode": f->getMode() == (int)te::ObjMonoFoldPlugin::right ? @"right" : @"sum" };
+                             @"mode": f->getMode() == (int)te::ObjMonoFoldPlugin::right ? @"right"
+                                    : (f->getMode() == (int)te::ObjMonoFoldPlugin::left ? @"left" : @"sum") };
             }
 
     if (!external) {
@@ -9653,7 +9657,7 @@ static void objDumpPluginList(te::PluginList& pl,
             for (const auto& [fk, half] : { std::make_pair(inKey, (int)te::ObjMonoFoldPlugin::inHalf),
                                             std::make_pair(outKey, (int)te::ObjMonoFoldPlugin::outHalf) }) {
                 auto fit = _pluginMap.find(fk);
-                if (loaded && !(target && objMonoFoldHalfFits(*target, half))) {
+                if (loaded && !(target && objMonoFoldHalfFits(*target, half, n.fold))) {
                     if (fit != _pluginMap.end()) {
                         if (fit->second) fit->second->deleteFromParent();
                         _pluginOwnerHost.erase(fk);
@@ -9733,7 +9737,7 @@ static void objDumpPluginList(te::PluginList& pl,
     for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf }) {
         const std::string fk = monoFoldKey(pk, half);
         auto fit = _pluginMap.find(fk);
-        const bool need = mode != 0 && objMonoFoldHalfFits(target, half);
+        const bool need = mode != 0 && objMonoFoldHalfFits(target, half, mode);
         if (!need) {
             if (fit != _pluginMap.end()) {
                 if (fit->second) fit->second->deleteFromParent();

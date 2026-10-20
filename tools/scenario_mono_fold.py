@@ -3,10 +3,12 @@
 """The STEREO -> MONO FOLD of a plugin with one main input, driven through the API.
 
 A stereo signal entering a plugin whose main bus has ONE input is folded by a per-plugin choice
-(`ObjectPlugin.monoFold`, session format 28): `left` (what the engine always did: the left channel
-only; through a 1 -> 1 plugin the right channel passes round it dry), `right`, or `sum` = (L + R) / 2.
-With `right` / `sum` the plugin's output replaces the pair. A plugin INSERTED by this build is `sum`;
-a plugin read from a file without the key (every project before format 28) is `left`.
+(`ObjectPlugin.monoFold`, session format 28): `left`, `right`, or `sum` = (L + R) / 2. Whichever is
+chosen, the plugin's output replaces the pair: a 1 -> 1 plugin's mono result goes to both sides and the
+channel not taken is CUT (since 20 October 2026: an explicit `left` used to let R pass round it dry). A
+plugin INSERTED by this build is `sum`; a plugin read from a file without the key (every project before
+format 28) plays `MonoFold.whenUnset` = `sum` too (decision of 21 October 2026: such a project used to
+read the left channel and let R pass dry; it now sums, on purpose).
 
 What is asserted, with Apple's own AudioUnits (installed with macOS):
 
@@ -14,13 +16,15 @@ What is asserted, with Apple's own AudioUnits (installed with macOS):
     `sum` and it is written in the file;
   * the SOUND, on 24-bit exports of a stereo file whose sides carry two different tones (L 1 kHz,
     R 3 kHz, -20 dBFS each), through AULowpass in mono (1 -> 1): left / right / sum, with the filter
-    open (levels: sum = each tone at -26 dBFS on BOTH sides) and closed (the plugin really processes
-    what it is fed); through AUReverb2 in mono -> stereo (1 -> 2), right and sum;
-  * the engine halves (`fold_in` / `fold_out`): laid and active only for right / sum on a mono-in
-    plugin; laid but INACTIVE on a stereo plugin, whose export is then bit-exact with `left`;
-  * an OLD-FORMAT file (no `monoFold` key, version 26): reads `left`, lays nothing, and its export is
-    bit-exact with the same project set to `left` through the API, its right channel bit-exact with the
-    source file's right channel (dry);
+    open (levels: sum = each tone at -26 dBFS on BOTH sides; left = 1 kHz on both sides, 3 kHz cut)
+    and closed (the plugin really processes what it is fed, nothing passes round it); through AUReverb2
+    in mono -> stereo (1 -> 2), left, right and sum;
+  * the engine halves (`fold_in` / `fold_out`): IN + OUT for right / sum on a 1 -> 1 plugin, OUT only
+    for left, IN only (right / sum) on a 1 -> 2; nothing on a stereo plugin, whose export is then
+    bit-exact whatever the fold;
+  * an OLD-FORMAT file (no `monoFold` key, version 26): reads `sum` (not chosen), lays both halves,
+    nothing passes round the plugin, and its export is bit-exact with the same project set to `sum`
+    through the API;
   * undo / redo, save / reopen, plugin.copy, object.duplicate, a manual link (both change together)
     and an FX link bin (members and definition: a member attached afterwards is born with the fold);
   * no window opens on the headless instance.
@@ -292,25 +296,21 @@ try:
             res[f] = render("open_" + f)
             print("       open, %-6s       %s   halves %s" % (f + ":", fmt(res[f]), halves(r)))
             if f == "left":
-                check("left: NOTHING laid", halves(r) == (None, None), halves(r))
+                check("left: only the OUT half laid (the plugin reads L by itself; its output replaces the pair)",
+                      halves(r) == (None, (True, "left")), halves(r))
             else:
                 check("%s: both halves laid and active" % f, halves(r) == ((True, f), (True, f)), halves(r))
         L_, R_, S_ = res["left"], res["right"], res["sum"]
-        check("left: L carries 1 kHz, R carries its own 3 kHz (dry), as before",
-              near(L_["L", 1000.0], -20) and near(L_["R", 3000.0], -20) and L_["L", 3000.0] < -80 and L_["R", 1000.0] < -80, fmt(L_))
-        check("left: the right channel is the DRY render's right channel, bit-exact (it passes round the plugin)",
-              channel_bytes(L_["raw"], 1) == channel_bytes(dry["raw"], 1),
-              "max %d LSB" % max_diff_lsb(channel_bytes(L_["raw"], 1), channel_bytes(dry["raw"], 1)))
-        print("       (dry render vs source file, right channel: max %d LSB)"
-              % max_diff_lsb(channel_bytes(dry["raw"], 1), channel_bytes(SRC_RAW, 1)))
+        check("left: both sides carry 1 kHz at -20, the right channel's 3 kHz is CUT (nothing passes dry)",
+              near(L_["L", 1000.0], -20) and near(L_["R", 1000.0], -20) and L_["L", 3000.0] < -80 and L_["R", 3000.0] < -80, fmt(L_))
         check("right: both sides carry 3 kHz at -20, no 1 kHz",
               near(R_["L", 3000.0], -20) and near(R_["R", 3000.0], -20) and R_["L", 1000.0] < -80 and R_["R", 1000.0] < -80, fmt(R_))
         check("sum: both sides carry 1 kHz AND 3 kHz at -26 dBFS ((L + R) / 2 = -6.02 dB each)",
               all(near(S_[s, hz], -26.02) for s in "LR" for hz in (1000.0, 3000.0)), fmt(S_))
         check("sum: RMS -26 dBFS per side (two tones at -26 peak, -29 RMS each, add up to -26)",
               near(S_["rmsL"], -26.02, 1.0) and near(S_["rmsR"], -26.02, 1.0), fmt(S_))
-        check("right / sum: the two sides are identical (the plugin's output replaces the pair)",
-              channel_bytes(R_["raw"], 0) == channel_bytes(R_["raw"], 1) and channel_bytes(S_["raw"], 0) == channel_bytes(S_["raw"], 1))
+        check("left / right / sum: the two sides are identical (the plugin's output replaces the pair)",
+              all(channel_bytes(m["raw"], 0) == channel_bytes(m["raw"], 1) for m in (L_, R_, S_)))
 
         section("the plugin really processes what it is fed (filter CLOSED)")
         set_param_named(lp, "cutoff", to_max=False)
@@ -318,7 +318,8 @@ try:
             fold(obj, lp, f)
             res[f] = render("closed_" + f)
             print("       closed, %-6s     %s" % (f + ":", fmt(res[f])))
-        check("left: L processed, R 3 kHz dry", res["left"]["L", 1000.0] < -50 and near(res["left"]["R", 3000.0], -20), fmt(res["left"]))
+        check("left: nothing passes round the plugin (both sides cut)",
+              max(res["left"][s, hz] for s in "LR" for hz in (1000.0, 3000.0)) < -50, fmt(res["left"]))
         check("right: nothing passes round the plugin (both sides cut)",
               max(res["right"][s, hz] for s in "LR" for hz in (1000.0, 3000.0)) < -50, fmt(res["right"]))
         check("sum: nothing passes round the plugin (both sides cut)",
@@ -339,6 +340,9 @@ try:
             print("       1->2, %-6s       %s   halves %s" % (f + ":", fmt(rr[f]), halves(r)))
         check("1 -> 2: only the IN half is laid (the plugin's two outputs are its own)",
               halves(layouts(obj, rv)) == ((True, "sum"), None), halves(layouts(obj, rv)))
+        fold(obj, rv, "left")
+        check("1 -> 2 left: nothing laid (the plugin reads L by itself, its two outputs are its own)",
+              halves(layouts(obj, rv)) == (None, None), halves(layouts(obj, rv)))
         hear = lambda m, hz: max(m["L", hz], m["R", hz]) > -60
         check("1 -> 2 left: 1 kHz heard, 3 kHz not", hear(rr["left"], 1000.0) and not hear(rr["left"], 3000.0), fmt(rr["left"]))
         check("1 -> 2 right: 3 kHz heard, 1 kHz not", hear(rr["right"], 3000.0) and not hear(rr["right"], 1000.0), fmt(rr["right"]))
@@ -366,7 +370,8 @@ try:
         fold(obj, lp, "left")
         send("edit.undo")
         r = layouts(obj, lp)
-        check("undo of right -> left: right again, halves laid again", r["mono_fold"] == "right" and halves(r)[0] == (True, "right"), (r["mono_fold"], halves(r)))
+        check("undo of right -> left: right again, both halves laid again",
+              r["mono_fold"] == "right" and halves(r) == ((True, "right"), (True, "right")), (r["mono_fold"], halves(r)))
 
         # ═══════════════════════════════════════════════════════════════ copies
         section("save / reopen, copies")
@@ -422,22 +427,22 @@ try:
         oo = objs[0]["id"]
         olp = send("plugin.list", {"host": oo})["plugins"][0]["id"]
         r = wait_loaded(oo, olp)
-        check("old file: the plugin reads `left`", r.get("mono_fold") == "left", r.get("mono_fold"))
-        check("old file: NOTHING laid in the engine", halves(r) == (None, None), halves(r))
+        check("old file: the plugin plays `sum` (MonoFold.whenUnset)", r.get("mono_fold") == "sum", r.get("mono_fold"))
+        check("old file: the fold is NOT chosen (no key)", r.get("mono_fold_chosen") is False, r.get("mono_fold_chosen"))
+        check("old file: both halves laid and active (the sum)", halves(r) == ((True, "sum"), (True, "sum")), halves(r))
         old = render("old_file")
         print("       old file:        " + fmt(old))
-        check("old file: right channel = the DRY render's, bit-exact (passes round the plugin, as before)",
-              channel_bytes(old["raw"], 1) == channel_bytes(dry["raw"], 1),
-              "max %d LSB" % max_diff_lsb(channel_bytes(old["raw"], 1), channel_bytes(dry["raw"], 1)))
-        check("old file: left processed", old["L", 1000.0] < -50, fmt(old))
-        # The FIRST render after an AU is opened differs from every later one (its filter warms up:
-        # measured, the left channel only, whatever the fold). So the comparison is made on a second
-        # render of the old file, against a render of it set to `left` through the API.
+        check("old file: nothing passes round the closed filter any more (R no longer dry)",
+              max(old[s, hz] for s in "LR" for hz in (1000.0, 3000.0)) < -50, fmt(old))
+        # The FIRST render after an AU is opened differs from every later one (its filter warms up).
+        # So the comparison is made on a second render of the old file, against a render of it set to
+        # `sum` through the API.
         old2 = render("old_file_again")
-        fold(oo, olp, "sum")
-        fold(oo, olp, "left")       # through the API: the same graph as the old file
-        again = render("old_set_left")
-        check("old file: bit-exact with the same project set to `left` through the API",
+        fold(oo, olp, "left")
+        fold(oo, olp, "sum")        # through the API: the same graph as the old file
+        check("set through the API: the fold is now chosen", layouts(oo, olp).get("mono_fold_chosen") is True)
+        again = render("old_set_sum")
+        check("old file: bit-exact with the same project set to `sum` through the API",
               again["raw"] == old2["raw"],
               "L %d LSB, R %d LSB" % (max_diff_lsb(channel_bytes(old2["raw"], 0), channel_bytes(again["raw"], 0)),
                                       max_diff_lsb(channel_bytes(old2["raw"], 1), channel_bytes(again["raw"], 1))))

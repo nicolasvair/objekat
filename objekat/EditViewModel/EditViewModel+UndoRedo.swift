@@ -449,12 +449,15 @@ extension EditViewModel {
         return out
     }
 
-    /// Every leaf's stereo → mono fold in a chain (FX blocks and racks walked), as the engine reads it.
+    /// Every leaf's CHOSEN stereo → mono fold in a chain (FX blocks and racks walked), as the engine reads it.
+    /// A leaf with no choice (`monoFold == nil`, a file written before it existed) plays `MonoFold.whenUnset`
+    /// (the sum); it would be ABSENT were that switch put back to the legacy graph (the engine then lays
+    /// nothing for it, where an explicit `left` lays the half that cuts the right channel).
     static func monoFolds(_ plugins: [ObjectPlugin]) -> [UUID: MonoFold] {
         var out: [UUID: MonoFold] = [:]
         func walk(_ series: [ObjectPlugin]) {
             for p in series {
-                if p.isContainer { p.childSeries.forEach(walk) } else { out[p.id] = p.effectiveMonoFold }
+                if p.isContainer { p.childSeries.forEach(walk) } else if let f = MonoFold.played(p.monoFold) { out[p.id] = f }
             }
         }
         walk(plugins)
