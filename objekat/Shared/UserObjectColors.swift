@@ -1,21 +1,32 @@
 import Foundation
 
-// MARK: - The colours the hand added to the object menu
+// MARK: - The object colour palette, as the hand edited it
 
-/// The ordered list of colours added through the "+" of an object's colour menu, after the seven
-/// base ones (@see `ObjectColorChoice`). It is the APP's memory, not the project's — a colour one
-/// likes is wanted in every session — kept in `UserDefaults` as a flat array of "#RRGGBB" strings
-/// under `objectColors.custom`, in the order they were added. A project never carries the list,
-/// only the colour an object really has (`SoundObject.colorHex`).
+/// The ordered palette of an object's colour menu — the seven base colours (@see `ObjectColorChoice`)
+/// and the ones added through the "+", as ONE list the hand edits: the "+" appends a colour, ⌥ + click
+/// on a swatch removes it (a base colour too), "Restore the default colours" goes back to the base row.
+/// It is the APP's memory, not the project's — a palette one likes is wanted in every session — kept
+/// in `UserDefaults` as an array of "#RRGGBB" strings under `objectColors.palette`.
 ///
-/// A colour is never added twice, and never when it is one of the seven base colours. There is no
-/// way to remove one in this version.
+/// WHY NO EDIT CAN EVER CHANGE AN OBJECT'S COLOUR: an object does not point INTO this list. It stores
+/// its own colour as 0xRRGGBB (`SoundObject.colorHex`, written "#RRGGBB" in the session file); the old
+/// pastels (`SoundObject.colorIndex`) index `ObjekatPalette.objects`, a FIXED table this list is not and
+/// never touches. So removing, re-adding or reordering a swatch here only changes what the menu
+/// OFFERS — every object, in this project or in any file opened later, keeps exactly the colour it had.
 ///
-/// A test never touches the real domain: under `--no-recent` or `--headless` the list lives in a
+/// Until the hand edits it, there is no `objectColors.palette` key and the palette is the base row
+/// followed by the first version's added colours (`objectColors.custom`, still read). The first edit
+/// writes the whole list and drops the old key. An EMPTY palette is a legitimate state (every swatch
+/// removed: only the "+" is left) and is stored as such.
+///
+/// A test never touches the real domain: under `--no-recent` or `--headless` the palette lives in a
 /// variable that dies with the process (same discretion as `ScriptPanelMemory`). The behaviour is
 /// identical, so a scenario can still assert it.
 enum UserObjectColors {
 
+    /// The palette as the hand edited it ("#RRGGBB", in order). Absent = never edited.
+    static let paletteKey = "objectColors.palette"
+    /// The first version's list (the colours added after the base row). Read, never written.
     static let defaultsKey = "objectColors.custom"
 
     static var isEphemeral: Bool {
@@ -23,37 +34,75 @@ enum UserObjectColors {
         return a.noRecentProjects || a.headless
     }
 
-    nonisolated(unsafe) private static var ephemeral: [String] = []
+    nonisolated(unsafe) private static var ephemeralPalette: [String]? = nil
+    nonisolated(unsafe) private static var ephemeralCustom: [String] = []
 
-    /// The added colours, 0xRRGGBB, in the order they were added. Anything in the stored list that
-    /// does not parse, repeats, or is a base colour is dropped on reading.
+    /// The palette offered, 0xRRGGBB, in order. Anything stored that does not parse or repeats is
+    /// dropped on reading.
     static func load() -> [Int] {
-        let raw: [String]
-        if isEphemeral { raw = ephemeral }
-        else { raw = UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [] }
-        var out: [Int] = []
-        for text in raw {
-            guard let v = ObjectColorChoice.parse(text), let next = ObjectColorChoice.adding(v, to: out) else { continue }
-            out = next
+        if let raw = storedPalette() { return parse(raw) }
+        let custom = parse(storedCustom()).reduce(into: [Int]()) { out, v in
+            if let next = ObjectColorChoice.adding(v, to: out) { out = next }
         }
-        return out
+        return ObjectColorChoice.defaultPalette(custom: custom)
     }
 
-    /// Appends `rgb` to the list. Returns false (and writes nothing) if it was already offered.
+    /// True while the palette is the base row (nothing added, nothing removed, nothing moved).
+    static var isDefault: Bool { load() == ObjectColorChoice.baseHex }
+
+    /// Appends `rgb` at the end of the palette. Returns false (and writes nothing) if it is already there.
     @discardableResult
     static func add(_ rgb: Int) -> Bool {
-        guard let next = ObjectColorChoice.adding(rgb, to: load()) else { return false }
+        guard let next = ObjectColorChoice.palette(load(), appending: rgb) else { return false }
         save(next)
         return true
     }
 
-    /// Test door: forgets every added colour.
-    static func reset() { save([]) }
+    /// Removes `rgb` from the palette (a base colour as well). Returns false if it was not there.
+    @discardableResult
+    static func remove(_ rgb: Int) -> Bool {
+        guard let next = ObjectColorChoice.palette(load(), removing: rgb) else { return false }
+        save(next)
+        return true
+    }
+
+    /// Back to the base row: the edited palette and the first version's list are both forgotten.
+    static func resetToDefault() {
+        if isEphemeral { ephemeralPalette = nil; ephemeralCustom = [] }
+        else {
+            UserDefaults.standard.removeObject(forKey: paletteKey)
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
+    }
+
+    /// Test door: the same as `resetToDefault`.
+    static func reset() { resetToDefault() }
+
+    // MARK: Storage
+
+    private static func parse(_ raw: [String]) -> [Int] {
+        var out: [Int] = []
+        for text in raw {
+            guard let v = ObjectColorChoice.parse(text), !out.contains(v) else { continue }
+            out.append(v)
+        }
+        return out
+    }
+
+    private static func storedPalette() -> [String]? {
+        isEphemeral ? ephemeralPalette : UserDefaults.standard.stringArray(forKey: paletteKey)
+    }
+
+    private static func storedCustom() -> [String] {
+        isEphemeral ? ephemeralCustom : (UserDefaults.standard.stringArray(forKey: defaultsKey) ?? [])
+    }
 
     private static func save(_ list: [Int]) {
         let text = list.map(ObjectColorChoice.format)
-        if isEphemeral { ephemeral = text }
-        else if text.isEmpty { UserDefaults.standard.removeObject(forKey: defaultsKey) }
-        else { UserDefaults.standard.set(text, forKey: defaultsKey) }
+        if isEphemeral { ephemeralPalette = text; ephemeralCustom = [] }
+        else {
+            UserDefaults.standard.set(text, forKey: paletteKey)
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
     }
 }

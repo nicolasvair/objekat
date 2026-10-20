@@ -9845,6 +9845,75 @@
         }
       }
     },
+    "menu.context.color.remove.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-click to remove this colour from the palette (objects keep their colour)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-clic para quitar este color de la paleta (los objetos conservan su color)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥-clic pour retirer cette couleur de la palette (les objets gardent leur couleur)"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the default colours"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer los colores predeterminados"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir les couleurs par défaut"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Go back to the seven base colours. No object changes colour."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a los siete colores básicos. Ningún objeto cambia de color."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Revenir aux sept couleurs de base. Aucun objet ne change de couleur."
+          }
+        }
+      }
+    },
     "menu.context.comment.create": {
       "extractionState": "manual",
       "localizations": {

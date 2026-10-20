@@ -5,7 +5,8 @@ import Foundation
 // Everything about an object's custom colour that needs no view and no model, in ONE place so a
 // test can compile it alone (`tools/test_object_color_choice.swift`):
 //
-//   • the BASE row the context menu opens on (seven strong colours, then a "+"),
+//   • the BASE row the context menu opens on (seven strong colours, then a "+"), and the EDITABLE
+//     palette made from it (the hand adds and removes entries, base ones included),
 //   • how that row is laid out once the hand has ADDED colours of its own (the "+" always comes
 //     LAST, and wraps to the next row when the row is full),
 //   • the grid of hues the "+" opens (8 hues × 5 lightnesses), from which one click picks AND adds,
@@ -215,10 +216,42 @@ nonisolated enum ObjectColorChoice {
     // MARK: The hand's added colours (the list, without its storage)
 
     /// `list` with `rgb` appended, unless it is already there or is one of the base colours.
-    /// Returns nil if nothing would change.
+    /// Returns nil if nothing would change. (The FIRST version's list, `objectColors.custom`: the
+    /// colours added after the seven base ones. Still read, to build a palette never edited since.)
     static func adding(_ rgb: Int, to list: [Int]) -> [Int]? {
         let v = rgb & 0xFFFFFF
         guard !baseHex.contains(v), !list.contains(v) else { return nil }
         return list + [v]
+    }
+
+    // MARK: The editable palette (the list, without its storage)
+    //
+    // The palette the menu offers is ONE ordered list of 0xRRGGBB, the base colours included, which
+    // the hand edits: the "+" appends, ⌥ + click removes ANY entry (a base colour too), "Restore the
+    // default colours" goes back to `baseHex`. An object never points INTO this list — it stores its
+    // own 0xRRGGBB (`SoundObject.colorHex`) — so no edit of the list can ever change an object's
+    // colour, in this project or in any other (@see `UserObjectColors`).
+
+    /// The palette of an app whose palette was never edited: the seven base colours, then the ones the
+    /// first version's "+" added, in order, each once.
+    static func defaultPalette(custom: [Int] = []) -> [Int] {
+        var out: [Int] = []
+        for v in baseHex + custom.map({ $0 & 0xFFFFFF }) where !out.contains(v) { out.append(v) }
+        return out
+    }
+
+    /// `palette` with `rgb` appended at the end, unless it is already there (nil: nothing changes).
+    /// A base colour removed earlier can come back this way.
+    static func palette(_ palette: [Int], appending rgb: Int) -> [Int]? {
+        let v = rgb & 0xFFFFFF
+        guard !palette.contains(v) else { return nil }
+        return palette + [v]
+    }
+
+    /// `palette` without `rgb` (nil: it was not there).
+    static func palette(_ palette: [Int], removing rgb: Int) -> [Int]? {
+        let v = rgb & 0xFFFFFF
+        guard palette.contains(v) else { return nil }
+        return palette.filter { $0 != v }
     }
 }
