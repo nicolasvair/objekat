@@ -138,7 +138,10 @@ extension EditViewModel {
             entries: ChannelVariant.allCases.map {
                 .init(variant: $0, supported: supported[$0] ?? false, isCurrent: $0 == current)
             },
-            exact: exact, blockedByPlayback: isTransportPlaying, linkedCount: peers.count)
+            // The OBSERVED running flag first: read in a view's body, it rebuilds the menu at the stop (the
+            // engine's own flag is not observable, and alone it left the menu built during playback greyed
+            // for ever — the bug of 20 October 2026). The engine is still asked, for a run not started here.
+            exact: exact, blockedByPlayback: isTransportRunning || isTransportPlaying, linkedCount: peers.count)
     }
 
     // MARK: Applying

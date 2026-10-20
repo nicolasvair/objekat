@@ -26,7 +26,7 @@ final class ObjekatSession {
             // A source file that changed during playback is reloaded when the engine stops, not
             // under the hand that is listening (@see EditViewModel+ChangedFiles). Pause counts as
             // stopped: the engine is.
-            viewModel.isTransportRunning = isPlaying
+            if viewModel.isTransportRunning != isPlaying { viewModel.isTransportRunning = isPlaying }
             if oldValue, !isPlaying { viewModel.flushPendingFileChanges() }
         }
     }

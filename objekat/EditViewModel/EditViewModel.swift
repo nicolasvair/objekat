@@ -1047,8 +1047,10 @@ final class EditViewModel {
 
     /// True while the transport is RUNNING (set by `ObjekatSession.isPlaying`'s `didSet`). A source
     /// file that changed under a playing engine is reloaded at the stop, not under the hand that
-    /// is listening. Paused is not running: the engine is stopped.
-    @ObservationIgnored var isTransportRunning = false
+    /// is listening. Paused is not running: the engine is stopped. OBSERVED (20 October 2026): a view that
+    /// greys a control while playing (a card's Channels menu, @see channelMenuState) must be told of the stop,
+    /// otherwise it keeps the menu it built during playback, greyed for ever. Written only when it changes.
+    var isTransportRunning = false
 
     /// Everything the file-change detection remembers (@see EditViewModel+ChangedFiles). One
     /// reference so the stored state stays in one place — an extension cannot carry any — and
