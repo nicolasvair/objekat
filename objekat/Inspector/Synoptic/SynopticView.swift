@@ -924,7 +924,9 @@ struct SynopticView: View {
         for b in d.placement.fxBlocks {
             let path = Path(roundedRect: b.bodyRect, cornerRadius: SynopticLayout.fxBodyCorner)
             ctx.fill(path, with: .color(b.link.color.opacity(b.link.isEnabled ? 0.16 : 0.06)))
-            ctx.stroke(path, with: .color(b.link.color.opacity(b.link.isDetached ? 0.6 : 0.95)),
+            // OFF = the same frame dimmed as its header is (×0.6), so the two edges meet in one colour.
+            let edge = (b.link.isDetached ? 0.6 : 0.95) * (b.link.isEnabled ? 1 : 0.6)
+            ctx.stroke(path, with: .color(b.link.color.opacity(edge)),
                        style: StrokeStyle(lineWidth: 1.5, dash: b.link.isDetached ? [4, 3] : []))
         }
 

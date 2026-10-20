@@ -158,9 +158,12 @@ struct FXBlockHeaderView: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(link.color.opacity(link.isDetached ? 0.6 : 1), lineWidth: 1.5)
         )
-        // A bin that is OFF reads like a card of a disabled container: greyed and dimmed.
-        .saturation(link.isEnabled ? 1 : 0.25)
+        // A bin that is OFF is the same header, only dimmed. Flattened FIRST (one layer, not each of its
+        // pieces dimmed on its own) and laid on an OPAQUE card: the body's top edge runs behind the header's
+        // middle, and through a see-through header it read as a second, misaligned top (20 October 2026).
+        .compositingGroup()
         .opacity(link.isEnabled ? 1 : 0.6)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
         .contentShape(RoundedRectangle(cornerRadius: 8))
         // A plugin let go on the header goes to the END of the bin; a place where nothing would happen
         // does not light up (@see PluginDropDelegate). The drop layer is a SIBLING behind the content,
