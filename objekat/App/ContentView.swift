@@ -83,6 +83,13 @@ struct ContentView: View {
                         case .liste: SoundObjectListView(viewModel: viewModel,
                                                          onOwnSelection: { listMadeSelection = $0 })
                         case .sons:  SoundLibraryView(vm: soundLibrary)
+                                        .onAppear {
+                                            // Removing a slot that holds a folder asks first, through the
+                                            // view-model's dialogue policy.
+                                            soundLibrary.confirm = { [viewModel] title, info, yes, no in
+                                                viewModel.confirm(title, info, yes: yes, no: no)
+                                            }
+                                        }
                         case .objet: ObjectInspectorView(viewModel: viewModel)
                         }
                     }

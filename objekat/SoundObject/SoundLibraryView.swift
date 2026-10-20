@@ -288,8 +288,25 @@ final class SoundLibraryViewModel {
 
     /// ⌥ + click: the slot leaves the row (its folder is only forgotten). What is on screen stays.
     func removeSlot(_ id: String) {
+        // A slot that HOLDS a folder is only removed once the hand confirms (it names the folder);
+        // an empty slot goes without a question.
+        if let path = slots.path(of: id) {
+            let name = (path as NSString).lastPathComponent
+            guard confirmRemoval(L("library.slot.remove.confirm.title"),
+                                 L("library.slot.remove.confirm.info", name, path),
+                                 L("library.slot.remove.confirm.yes"), L("common.cancel")) else { return }
+        }
         slots.removeSlot(id)
         slotLocations[id] = nil
+    }
+
+    /// The question asked before removing a slot that holds a folder. `ContentView` points it at
+    /// `EditViewModel.confirm`, so the dialogue policy applies (a script's run is journalled, never
+    /// shown). With no interface at all there is no hook, and nobody to ask: it goes ahead.
+    @ObservationIgnored var confirm: ((_ title: String, _ info: String, _ yes: String, _ no: String) -> Bool)? = nil
+
+    private func confirmRemoval(_ title: String, _ info: String, _ yes: String, _ no: String) -> Bool {
+        confirm?(title, info, yes, no) ?? true
     }
 
     /// The "+" at the end of the row: asks for a folder and, unless the panel is cancelled, adds a

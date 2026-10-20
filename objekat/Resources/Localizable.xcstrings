@@ -9661,6 +9661,75 @@
         }
       }
     },
+    "library.slot.remove.confirm.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It leads to the folder “%1$@” (%2$@). The folder itself is not touched: only the shortcut goes."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lleva a la carpeta «%1$@» (%2$@). La carpeta no se toca: solo desaparece el acceso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elle mène au dossier « %1$@ » (%2$@). Le dossier lui-même n’est pas touché : seul le raccourci disparaît."
+          }
+        }
+      }
+    },
+    "library.slot.remove.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this colour?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Quitar este color?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer cette couleur ?"
+          }
+        }
+      }
+    },
+    "library.slot.remove.confirm.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer"
+          }
+        }
+      }
+    },
     "markers.lane.color.help": {
       "extractionState": "manual",
       "localizations": {
@@ -9979,6 +10048,75 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rétablir les couleurs par défaut"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The palette goes back to the seven base colours; the colours added are forgotten. No object changes colour."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La paleta vuelve a los siete colores básicos; los colores añadidos se olvidan. Ningún objeto cambia de color."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La palette revient aux sept couleurs de base ; les couleurs ajoutées sont oubliées. Aucun objet ne change de couleur."
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore the default colours?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Restablecer los colores predeterminados?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir les couleurs par défaut ?"
+          }
+        }
+      }
+    },
+    "menu.context.color.restoreDefault.confirm.yes": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restore"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restablecer"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rétablir"
           }
         }
       }

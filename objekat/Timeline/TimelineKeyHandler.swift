@@ -1342,7 +1342,16 @@ extension TimelineView {
                         let screenPoint = NSEvent.mouseLocation
                         HueGridView.popUpLater(at: screenPoint,
                                                canRestoreDefault: !UserObjectColors.isDefault,
-                                               onRestoreDefault: { UserObjectColors.resetToDefault() }) { hex in
+                                               onRestoreDefault: {
+                                                   // Asked first, through the dialogue policy (journalled, never
+                                                   // shown, under a script). No object changes colour either way.
+                                                   guard vm.confirm(L("menu.context.color.restoreDefault.confirm.title"),
+                                                                    L("menu.context.color.restoreDefault.confirm.info"),
+                                                                    yes: L("menu.context.color.restoreDefault.confirm.yes"),
+                                                                    no: L("common.cancel"),
+                                                                    style: .informational) else { return }
+                                                   UserObjectColors.resetToDefault()
+                                               }) { hex in
                             Task { @MainActor in
                                 UserObjectColors.add(hex)
                                 await vm.performObjectMenuAction(.setColor(.hex(hex)), clickedID: clickedID, scope: scope)
