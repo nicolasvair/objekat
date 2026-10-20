@@ -1381,6 +1381,29 @@
         }
       }
     },
+    "cheatsheet.automation.straighten": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Straighten the segment (the selection if inside)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enderezar el segmento (la selección si está dentro)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redresser le segment (la sélection si dedans)"
+          }
+        }
+      }
+    },
     "cheatsheet.crossfade.sCurve": {
       "extractionState": "manual",
       "localizations": {
@@ -1561,6 +1584,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌥ clic dans la règle"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.optDoubleClickCurve": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ double-click a curve"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ doble clic en una curva"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥ double-clic sur une courbe"
           }
         }
       }

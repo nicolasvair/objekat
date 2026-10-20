@@ -171,6 +171,8 @@ enum ShortcutCheatsheet {
                             label: L("cheatsheet.crossfade.sCurve")),
                 ShortcutRow(keys: L("cheatsheet.keys.optClickRuler"),
                             label: L("cheatsheet.playheadJump")),
+                ShortcutRow(keys: L("cheatsheet.keys.optDoubleClickCurve"),
+                            label: L("cheatsheet.automation.straighten")),
             ])]
         }
         // Any other combination: nothing to say. We do NOT put up a 'no shortcut' panel — an empty
