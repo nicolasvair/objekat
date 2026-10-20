@@ -211,6 +211,13 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// beside `rack` and `fxBlock`, with no series of its own. Top level of `plugins` only. Session
     /// format 22. @see SendMarker, SoundObject.sendPosition(auxID:)
     var sendMarker: SendMarker? = nil
+    /// What this plugin is fed when its input is ONE channel and the signal reaching it is stereo
+    /// (@see MonoFold). Session format 28. THE RULE: a plugin record that carries no key keeps what
+    /// every plugin did before the choice existed — the LEFT channel (`effectiveMonoFold`) — so an old
+    /// project sounds as it did; a plugin MADE by this build is born `sum` (the `init`'s default), and
+    /// every copy carries its source's value (copy sites pass `monoFold:`), so a copied old plugin stays
+    /// on the left. Meaningless for a plugin with two inputs: kept, never read.
+    var monoFold: MonoFold? = .sum
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
@@ -219,7 +226,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
          fxBlock: FXLinkBlock? = nil,
          colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
          sidechain: SidechainSource? = nil,
-         sendMarker: SendMarker? = nil) {
+         sendMarker: SendMarker? = nil,
+         monoFold: MonoFold? = .sum) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -234,7 +242,11 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.colorIndex = colorIndex
         self.sidechain = sidechain
         self.sendMarker = sendMarker
+        self.monoFold = monoFold
     }
+
+    /// The fold the engine plays (@see monoFold): no key = the left channel.
+    var effectiveMonoFold: MonoFold { monoFold ?? .left }
 
     /// True if this entry represents a parallel block (and not a plain plugin).
     var isRack: Bool { rack != nil }
@@ -259,7 +271,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
-             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker
+             linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker, monoFold
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -280,6 +292,9 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
                         ?? Int.random(in: 0..<ObjekatPalette.plugins.count)
         sidechain = try c.decodeIfPresent(SidechainSource.self, forKey: .sidechain)
         sendMarker = try c.decodeIfPresent(SendMarker.self, forKey: .sendMarker)
+        // No key = written before format 28 (or by a plugin that never had one): the LEFT channel, what
+        // it sounded like — never the new default (@see monoFold).
+        monoFold = try c.decodeIfPresent(MonoFold.self, forKey: .monoFold)
     }
 }
 

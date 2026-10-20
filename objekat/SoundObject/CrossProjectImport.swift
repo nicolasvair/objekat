@@ -153,7 +153,8 @@ enum CrossProjectImport {
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: p.stateXML,
                                     linkGroupID: newGroup, colorIndex: p.colorIndex,
-                                    sidechain: remapSidechain(p.sidechain))
+                                    sidechain: remapSidechain(p.sidechain),
+                                    monoFold: p.monoFold)
             }
             /// A bin's block: the bin is recreated as a NEW one (once per source bin of the batch, so
             /// two pasted objects sharing a bin still share it), the instances get fresh ids and
@@ -168,7 +169,8 @@ enum CrossProjectImport {
                                             identifier: inst.identifier, formatName: inst.formatName,
                                             isEnabled: inst.isEnabled, stateXML: inst.stateXML,
                                             colorIndex: inst.colorIndex,
-                                            sidechain: remapSidechain(inst.sidechain))
+                                            sidechain: remapSidechain(inst.sidechain),
+                                            monoFold: inst.monoFold)
                     }
                 }
                 let newLinkID: UUID
@@ -232,7 +234,8 @@ enum CrossProjectImport {
                                              rack: PluginRack(voices: rack.voices.map(cloneSeries),
                                                               wetDb: rack.wetDb,
                                                               voiceMutes: rack.voiceMutes),
-                                             colorIndex: p.colorIndex)]
+                                             colorIndex: p.colorIndex,
+                                             monoFold: p.monoFold)]
                     }
                     return [cloneLeaf(p)]
                 }
@@ -285,7 +288,8 @@ enum CrossProjectImport {
                             identifier: inst.identifier, formatName: inst.formatName,
                             isEnabled: inst.isEnabled, stateXML: inst.stateXML,
                             colorIndex: inst.colorIndex,
-                            sidechain: remapSidechain(inst.sidechain))
+                            sidechain: remapSidechain(inst.sidechain),
+                            monoFold: inst.monoFold)
             }
 
             // A send follows its aux into the batch or is dropped — WITH its plugins (INC 3): the third

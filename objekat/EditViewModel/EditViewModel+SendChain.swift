@@ -150,7 +150,8 @@ extension EditViewModel {
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: xml ?? p.stateXML,
                                     linkGroupID: nil, colorIndex: p.colorIndex,
-                                    sidechain: p.sidechain)
+                                    sidechain: p.sidechain,
+                                    monoFold: p.monoFold)
             }
         }
         if !captured.isEmpty {

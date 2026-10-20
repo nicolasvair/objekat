@@ -11,13 +11,17 @@ import Foundation
 //   • a signal NARROWER than `inputs` is widened first (mono → stereo duplicates the channel);
 //   • a signal WIDER than E is not touched beyond E: the extra channels pass THROUGH UNPROCESSED (a
 //     stereo signal through a 1→1 plugin leaves the left channel processed and the right one dry);
-//   • a signal as wide as E, through a plugin with ONE input, is read on its first channel only.
+//   • a signal as wide as E, through a plugin with ONE input, is read on its first channel only — unless
+//     the plugin's `MonoFold` says right or sum (the app lays a service plugin before it, @see
+//     OBJMonoFoldPlugin.h).
 //
 // So the width after a plugin is E for a mono signal and max(width, E) otherwise. The signal view draws a
 // mono signal as ONE wire and a stereo one as TWO; where a plugin's input is not the width it is fed, the
 // wire into it merges (stereo into a mono input) or splits (mono into a stereo input), in orange, with a
 // tooltip saying what the engine really does (@see WireAdaptation). A 1 → 2 plugin fed mono is not a
 // warning: one wire in, two out.
+//
+// What a one-input plugin is fed from a stereo signal is the plugin's own choice (@see MonoFold).
 //
 // A bypassed plugin is transparent (nothing to say), and so is anything the engine does not report
 // channels for (gain stages, built-ins, an instance still loading): the signal passes at its width.
@@ -38,6 +42,22 @@ enum ChannelVariant: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+/// What a plugin with ONE input is fed when the signal reaching it is stereo — the choice the orange merging
+/// wire offers on a right click (request of 20 October 2026). Stored per plugin (`ObjectPlugin.monoFold`).
+///
+///   • `left`  — the plugin reads the left channel, as the engine always did: through a 1 → 1 plugin the
+///               right channel goes round it unprocessed, after a 1 → 2 plugin it is not heard. What a
+///               plugin saved before this choice existed keeps (no key in the file = `left`).
+///   • `right` — the plugin reads the right channel.
+///   • `sum`   — the plugin reads (L + R) / 2: half of each, so a centred (mono-compatible) sound keeps its
+///               level exactly and two full-scale channels cannot clip. The default of a plugin made by
+///               this build.
+///   With `right` and `sum` what the plugin puts out REPLACES the stereo pair: a 1 → 1 plugin's output is laid
+///   on both channels, nothing passes round it dry.
+enum MonoFold: String, CaseIterable, Codable, Equatable, Sendable {
+    case left, right, sum
+}
+
 /// A plugin's main bus, as the engine reports it.
 struct PluginChannels: Equatable, Sendable {
     var inputs: Int
@@ -51,11 +71,12 @@ struct PluginChannels: Equatable, Sendable {
 /// signal view draws in orange (request of 20 October 2026). Measured on exports, not guessed (@see
 /// tools/scenario_channel_width.py, "the SOUND").
 enum WireAdaptation: Equatable, Sendable {
-    /// A stereo signal into a plugin with ONE input: two wires meeting at its entry. The engine does NOT
-    /// sum: the plugin reads the LEFT channel. `rightPassesDry` = the plugin's node is one channel wide (a
-    /// 1 → 1 plugin), so the right channel goes round it unprocessed; false = the plugin puts out two
-    /// channels of its own (1 → 2), so the right channel is not heard after it.
-    case merge(rightPassesDry: Bool)
+    /// A stereo signal into a plugin with ONE input: two wires meeting at its entry. `fold` = what the plugin
+    /// is fed (@see MonoFold). `rightPassesDry` = with `left`, the plugin's node is one channel wide (a 1 → 1
+    /// plugin), so the right channel goes round it unprocessed; false with `left` = the plugin puts out two
+    /// channels of its own (1 → 2), so the right channel is not heard after it. Always false with `right` /
+    /// `sum`: the plugin's output replaces the pair.
+    case merge(fold: MonoFold, rightPassesDry: Bool)
     /// A mono signal into a plugin with two inputs (or more): one wire splitting in two at its entry. The
     /// engine copies the channel onto both inputs.
     case split
@@ -104,6 +125,9 @@ struct SynopticWidthFlow: Equatable {
     var outputOf: [UUID: Int] = [:]
     /// The plugins whose input bus is not the width they are fed (@see WireAdaptation).
     var adaptations: [UUID: WireAdaptation] = [:]
+    /// For each id `adaptations` holds a MERGE under (a card's node or its plugin): the plugin's own id,
+    /// the one a fold is set on.
+    var mergePlugin: [UUID: UUID] = [:]
     /// The width the chain is fed with, and the one it ends with.
     var sourceWidth: Int = 2
     var trunkOut: Int = 2
@@ -123,9 +147,11 @@ struct SynopticWidthFlow: Equatable {
     }
 
     /// What happens at the input of a plugin that is ON, fed `w` channels; nil = the widths agree.
-    static func adaptation(incoming w: Int, through p: PluginChannels) -> WireAdaptation? {
+    static func adaptation(incoming w: Int, through p: PluginChannels, fold: MonoFold = .left) -> WireAdaptation? {
         guard p.inputs > 0 else { return nil }
-        if w >= 2 && p.inputs == 1 { return .merge(rightPassesDry: nodeWidth(p) < w) }
+        if w >= 2 && p.inputs == 1 {
+            return .merge(fold: fold, rightPassesDry: fold == .left && nodeWidth(p) < w)
+        }
         if w == 1 && p.inputs >= 2 { return .split }
         return nil
     }
@@ -167,16 +193,20 @@ struct SynopticWidthFlow: Equatable {
 
     /// Walks `root` from a source of width `sourceWidth`. `channels` holds the plugins the engine reports
     /// a main bus for (external, loaded); every other card is transparent. A bypassed plugin is
-    /// transparent; a bin that is OFF makes its whole series transparent.
+    /// transparent; a bin that is OFF makes its whole series transparent. `folds` = each plugin's
+    /// `MonoFold` (absent = `left`).
     static func compute(root: SynopticNode, sourceWidth: Int,
-                        channels: [UUID: PluginChannels]) -> SynopticWidthFlow {
+                        channels: [UUID: PluginChannels],
+                        folds: [UUID: MonoFold] = [:]) -> SynopticWidthFlow {
         var flow = SynopticWidthFlow()
         flow.sourceWidth = sourceWidth
-        flow.trunkOut = walk(root, incoming: sourceWidth, channels: channels, transparent: false, into: &flow)
+        flow.trunkOut = walk(root, incoming: sourceWidth, channels: channels, folds: folds,
+                             transparent: false, into: &flow)
         return flow
     }
 
     private static func walk(_ node: SynopticNode, incoming w: Int, channels: [UUID: PluginChannels],
+                             folds: [UUID: MonoFold],
                              transparent: Bool, into flow: inout SynopticWidthFlow) -> Int {
         flow.inputOf[node.id] = w
         var out = w
@@ -187,9 +217,13 @@ struct SynopticWidthFlow: Equatable {
             flow.inputOf[p.id] = w
             if !transparent, p.isEnabled, !p.greyedByBlock, let ch = channels[p.id], ch.inputs > 0 {
                 out = output(incoming: w, through: ch)
-                if let a = adaptation(incoming: w, through: ch) {
+                if let a = adaptation(incoming: w, through: ch, fold: folds[p.id] ?? .left) {
                     flow.adaptations[p.id] = a
                     flow.adaptations[node.id] = a
+                    if case .merge = a {
+                        flow.mergePlugin[p.id] = p.id
+                        flow.mergePlugin[node.id] = p.id
+                    }
                 }
             }
             flow.outputOf[p.id] = out
@@ -197,13 +231,13 @@ struct SynopticWidthFlow: Equatable {
         case .series(let nodes):
             // A bin that is switched off lets the signal through whatever its members are.
             let off = transparent || (node.fxLink.map { !$0.isEnabled } ?? false)
-            for n in nodes { out = walk(n, incoming: out, channels: channels, transparent: off, into: &flow) }
+            for n in nodes { out = walk(n, incoming: out, channels: channels, folds: folds, transparent: off, into: &flow) }
 
         case .parallel(let branches):
             // Every branch is fed the same signal; the sum is as wide as the widest branch.
             if !branches.isEmpty {
                 out = branches
-                    .map { walk($0, incoming: w, channels: channels, transparent: transparent, into: &flow) }
+                    .map { walk($0, incoming: w, channels: channels, folds: folds, transparent: transparent, into: &flow) }
                     .max() ?? w
             }
         }

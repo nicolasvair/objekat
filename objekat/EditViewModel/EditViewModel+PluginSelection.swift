@@ -301,20 +301,23 @@ extension EditViewModel {
                                     isEnabled: p.isEnabled, stateXML: stateXML,
                                     linkGroupID: p.linkGroupID,
                                     detachedLinkGroupID: p.detachedLinkGroupID,
-                                    colorIndex: p.colorIndex, sidechain: p.sidechain)
+                                    colorIndex: p.colorIndex, sidechain: p.sidechain,
+                                    monoFold: p.monoFold)
             case .copy:
                 // No colour carried over: an independent copy draws its own, which is what makes
                 // it recognisable as a second plugin and not the same one seen twice.
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: stateXML, linkGroupID: nil,
-                                    sidechain: p.sidechain)
+                                    sidechain: p.sidechain,
+                                    monoFold: p.monoFold)
             case .link:
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: stateXML,
                                     linkGroupID: groups[p.id], colorIndex: p.colorIndex,
-                                    sidechain: p.sidechain)
+                                    sidechain: p.sidechain,
+                                    monoFold: p.monoFold)
             }
         }
 
@@ -375,6 +378,7 @@ extension EditViewModel {
         ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                      identifier: p.identifier, formatName: p.formatName,
                      isEnabled: p.isEnabled, stateXML: liveStateXML(of: p), linkGroupID: nil,
-                     sidechain: p.sidechain)
+                     sidechain: p.sidechain,
+                     monoFold: p.monoFold)
     }
 }

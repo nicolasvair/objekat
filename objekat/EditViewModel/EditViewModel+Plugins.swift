@@ -229,6 +229,11 @@ extension EditViewModel {
                 "enabled":    p.isEnabled
             ]
             if let s = p.stateXML, !s.isEmpty { d["stateXML"] = s }
+            // What a one-input plugin is fed from a stereo signal (@see MonoFold). `left` is what the engine
+            // does by itself and is NOT sent: nothing is laid for it, so an old project's graph is the same
+            // graph, sample for sample. The engine lays its service plugins only where the plugin really has
+            // one input (it reads the live bus), so the key can travel for every leaf.
+            if p.effectiveMonoFold != .left { d["fold"] = p.effectiveMonoFold.rawValue }
             return d
         }
     }
@@ -458,7 +463,8 @@ extension EditViewModel {
                                   identifier: inst.identifier, formatName: inst.formatName,
                                   isEnabled: inst.isEnabled, stateXML: stateXML,
                                   linkGroupID: gid, detachedLinkGroupID: detached,
-                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain)
+                                  colorIndex: inst.colorIndex, sidechain: inst.sidechain,
+                                  monoFold: inst.monoFold)
         pushUndo()
         if copy && linked, let gid, inst.linkGroupID == nil {
             // The source was not linked yet: it enters the group with the copy.
@@ -754,7 +760,8 @@ extension EditViewModel {
                                 identifier: inst.identifier, formatName: inst.formatName,
                                 isEnabled: inst.isEnabled,
                                 stateXML: (live?.isEmpty == false) ? live : inst.stateXML,
-                                sidechain: inst.sidechain)
+                                sidechain: inst.sidechain,
+                                monoFold: inst.monoFold)
         }
     }
 
@@ -790,7 +797,8 @@ extension EditViewModel {
                          identifier: p.identifier, formatName: p.formatName,
                          isEnabled: p.isEnabled, stateXML: liveState(p),
                          linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
-                         sidechain: p.sidechain)
+                         sidechain: p.sidechain,
+                         monoFold: p.monoFold)
         }
         /// A bin's block copied as it is: fresh ids, the same bin, the same attachment (a detached
         /// block gives a detached copy, with its own output section).
@@ -831,7 +839,8 @@ extension EditViewModel {
                                             isEnabled: p.isEnabled,
                                             rack: PluginRack(voices: rack.voices.map { copySeries($0, topLevel: false) },
                                                              wetDb: rack.wetDb,
-                                                             voiceMutes: rack.voiceMutes)))
+                                                             voiceMutes: rack.voiceMutes),
+                                                             monoFold: p.monoFold))
                 } else {
                     out.append(copyLeaf(p))
                 }
