@@ -99,8 +99,7 @@ struct SynopticBoundView: View {
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
                                                        ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,
-                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) },
-                                                       sourceChannels: sourceWidth) }
+                                                                                        isEnabled: $0.plugin.isEnabled, color: $0.plugin.color) }) }
             : nil
 
         // The 'clip' zone (the output mix): for any real object (not a bus). The title depends on the type.
@@ -239,7 +238,7 @@ struct SynopticBoundView: View {
                                     name: viewModel.consolidateDefinitions[defID]?.name ?? o.displayName,
                                     isOpen: viewModel.isInConsolidateEditStack(o.id))
                             },
-                            widthFlow: widthFlow, pluginChannels: channelCounts,
+                            widthFlow: widthFlow,
                             actions: SynopticActions(
             onOpenEditor: { openEditor($0) },
             onOpenEditors: { openEditors(clicked: $0, ids: $1) },

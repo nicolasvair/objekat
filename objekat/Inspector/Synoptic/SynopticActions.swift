@@ -285,9 +285,6 @@ struct SynopticAudioFile: Equatable {
     /// Non-nil ⇒ the object carries an ARA source: its card hangs under the zone, and the time
     /// controls (speed, reverse, loop) are locked — an ARA source needs speed 1, forward, no loop.
     var ara: SynopticARA? = nil
-    /// The source file's channels as the chain is fed with them (1 = mono, 2 = stereo), said by a small tag
-    /// in the zone's title row. nil = unknown (the demo).
-    var sourceChannels: Int? = nil
 }
 
 /// A setting of the 'audio file' zone that the FOLDED zone hides and that is not neutral: the folded row
