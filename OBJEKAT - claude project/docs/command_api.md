@@ -607,13 +607,22 @@ p99 / max / mean), `late_frames` (intervals of 2 frames or more), `dropped_frame
 Two things nothing headless could set before, and that decide how the timeline draws its blocks
 (@see `perf.census.regimes.rich_reasons`): the ACTIVE TOOL and an object's CUSTOM COLOUR (the latter no longer decides the regime).
 
-- `tool.set {tool, stem?}` arms `selection | cut | volume | pan | aux | stem` and writes exactly
+- `tool.set {tool, stem?}` arms `selection | cut | volume | pan | aux | fx | stem` and writes exactly
   what the ⇧ branches of the key handler (and the palette's buttons) write: `activeTool`,
   `isToolPermanent = true`, `heldToolKeyCode = nil`. It is the LOCKED form on purpose: a held key
   is released by a key-up, and a script has no key to release. `tool.set {tool: "selection"}` is how
   a tool is released; Esc also does. `stem` (1-based, 1 = Main; default 1) goes with `stem` alone.
   `tool.get` answers `tool`, `locked`, `held_by_key`, and for the stem tool `stem` / `stem_name`.
   Session state: undo policy `.none`, never saved.
+- `tool.fx_strip {id}` — what the FX tool's strip (F, hovering an object) shows: `entries` left to
+  right in chain order (`{id, kind: instrument | plugin | gain_stage | rack, name, enabled, toggle,
+  editor, bin, branches}` — the instruments first; a gain stage has no power button; a parallel block
+  is ONE box with its branch count and no power button, named by its branches' plugins; an FX link's
+  plugins carry `bin`, an index into `bins: [{id, name, detached}]`, drawn as a framed group; a
+  send's place on the trunk is skipped), and the strip's `size {w, h}`. A read: the strip's power
+  button is `plugin.toggle` (an instrument's own toggle), its double click the plugin's window
+  (nothing opens without an interface). The strip's geometry is `FXStripLayout`
+  (`tools/test_fx_strip_layout.swift`); `view.state.hover` reports the object whose strip is up.
 - `object.set_color {color_hex?, color_index?, ids?}` — one undo point for the whole batch (`undo:
   handled`; none when nothing changes). An object holds ONE colour in one of two storages, and
   writing either clears the other: **`color_hex`** (`"#RRGGBB"`, the `#` optional, case free; six
