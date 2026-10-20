@@ -12,6 +12,7 @@
 #include "OBJGainStagePlugin.h"
 #include "OBJWindowFadePlugin.h"
 #include "OBJChannelModePlugin.h"
+#include "OBJMonoFoldPlugin.h"
 #include "OBJParallelBlockPlugin.h"
 #include "OBJBridgeTapPlugin.h"
 #include "OBJBridgeSendPlugin.h"
@@ -551,6 +552,9 @@ struct CompileNode {
     std::string                key;        // pluginKey (ObjectPlugin.id)
     bool                       enabled = true;
     NSDictionary*              info = nil;  // identifier/format/name/stateXML (pour la création)
+    // What the plugin is fed from a stereo signal when it has ONE input: 0 = the left channel (nothing
+    // laid), else te::ObjMonoFoldPlugin::Mode (1 = right, 2 = (L+R)/2). @see OBJMonoFoldPlugin.h
+    int                        fold = 0;
     // bloc parallèle (isRack) — `key` = id du rack-carrier ; `wetDb` = gain dB par voie
     std::vector<CompileSeries> voices;
     std::vector<float>         wetDb;
@@ -581,6 +585,11 @@ static CompileNode parseCompileNode(NSDictionary* d) {
         n.key     = std::string([(d[@"id"] ?: @"") UTF8String]);
         n.enabled = d[@"enabled"] ? [d[@"enabled"] boolValue] : YES;
         n.info    = d;
+        NSString* fold = d[@"fold"];
+        if ([fold isKindOfClass:[NSString class]]) {
+            if ([fold isEqualToString:@"right"])    n.fold = (int)te::ObjMonoFoldPlugin::right;
+            else if ([fold isEqualToString:@"sum"]) n.fold = (int)te::ObjMonoFoldPlugin::sum;
+        }
     }
     return n;
 }
@@ -605,12 +614,34 @@ static std::string voiceGainKey(const std::string& rackKey, size_t voice) {
     return rackKey + "#wet" + std::to_string(voice);
 }
 
+// The keys of the two service halves laid around a one-input plugin whose fold is not the left channel
+// (@see OBJMonoFoldPlugin.h). Like the branch gains, they are not in the model and MUST be wanted keys,
+// or the clean-up pass would destroy them at every compile.
+static std::string monoFoldKey(const std::string& pluginKey, int half) {
+    return pluginKey + (half == (int)te::ObjMonoFoldPlugin::outHalf ? "#foldOut" : "#foldIn");
+}
+
+// Whether a fold half has anything to do beside `plugin`: an external plugin, loaded, whose main bus
+// takes ONE input (and, for the OUT half, gives at most one output). Nothing is laid anywhere else, so a
+// stereo plugin or a built-in costs no slot of the plugin list (20 at most, @see OBJEngineBehaviour).
+static bool objMonoFoldHalfFits(te::Plugin& plugin, int half) {
+    auto* ext = dynamic_cast<te::ExternalPlugin*>(&plugin);
+    if (!ext || ext->isInitialisingAsync()) return false;
+    auto* proc = ext->getAudioPluginInstance();
+    if (!proc || proc->getMainBusNumInputChannels() != 1) return false;
+    return half == (int)te::ObjMonoFoldPlugin::inHalf || proc->getMainBusNumOutputChannels() <= 1;
+}
+
 // Toutes les clés que l'arbre demande, récursivement : feuilles, porteurs de blocs parallèles
 // et gains de voie.
 static void collectCompileKeys(const CompileSeries& s, std::unordered_set<std::string>& out) {
     for (auto& n : s) {
         if (n.key.empty()) continue;
         out.insert(n.key);
+        if (!n.isRack && n.fold != 0) {
+            out.insert(monoFoldKey(n.key, (int)te::ObjMonoFoldPlugin::inHalf));
+            out.insert(monoFoldKey(n.key, (int)te::ObjMonoFoldPlugin::outHalf));
+        }
         if (!n.isRack) continue;
         for (size_t i = 0; i < n.voices.size(); ++i) {
             out.insert(voiceGainKey(n.key, i));
@@ -1639,6 +1670,11 @@ struct OBJExportLoadScope {
     std::unordered_set<std::string>                           _bridgeTouchedTaps, _bridgeTouchedKeyed, _bridgeTouchedRanked;
     // Plugin keys whose wires could not be laid yet (an AU still loading): done by the latency tick.
     std::unordered_set<std::string>                           _bridgePendingWires;
+    // The stereo -> mono fold each leaf asks for (key -> te::ObjMonoFoldPlugin::Mode; absent = left), and
+    // the leaves whose instance was still loading when the compile ran, so their halves are laid once it
+    // has (@see layPendingMonoFolds, syncMonoFoldHalvesForPluginKey:).
+    std::unordered_map<std::string, int>                      _monoFoldWanted;
+    std::unordered_set<std::string>                           _monoFoldPending;
     // The transaction changed something the graph reads: ONE restartPlayback at its end.
     bool                                                      _bridgeDirty;
     std::unordered_map<std::string, te::WaveAudioClip::Ptr>   _clipMap;
@@ -1892,6 +1928,9 @@ static BOOL gOBJAudioDisabled = NO;
         // Choix de canal d'un clip stéréo (L / R / C), en tête de sa chaîne. Même règle
         // d'enregistrement : avant toute création/restauration de clip.
         _engine->getPluginManager().createBuiltInType<te::ObjChannelModePlugin>();
+        // What a one-input plugin is fed from a stereo signal (R or (L+R)/2), laid around it by the
+        // compile. Registered like the others so a render clone recreates it from its state.
+        _engine->getPluginManager().createBuiltInType<te::ObjMonoFoldPlugin>();
         _engine->getPluginManager().createBuiltInType<te::ObjParallelBlockPlugin>();
         // The audio bridge (patch 0037): the engine-only tap, and two MEASURING tools reachable only
         // through DEBUG commands. None is added to tracktionBuiltInPluginList(): nothing new in the UI.
@@ -2062,6 +2101,7 @@ static BOOL gOBJAudioDisabled = NO;
 - (void)checkLatencyAndRebuild {
     if (!_edit) return;
     [self layPendingBridgeWires];
+    [self layPendingMonoFolds];
     double sig = 0.0;
     for (auto& kv : _pluginMap)     if (kv.second) sig += kv.second->getLatencySeconds();
     for (auto& kv : _instrumentMap) if (kv.second) sig += kv.second->getLatencySeconds();
@@ -2421,6 +2461,8 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _bridgeTouchedKeyed.clear();
     _bridgeTouchedRanked.clear();
     _bridgePendingWires.clear();
+    _monoFoldWanted.clear();
+    _monoFoldPending.clear();
     _bridgeDirty = false;
     _objectChainMap.clear();
     _pluginOwnerHost.clear();
@@ -8393,20 +8435,54 @@ static std::set<std::string>& objLayoutRefusals() {
     return refusals;
 }
 
-static juce::AudioProcessor::BusesLayout objLayoutForVariant(juce::AudioProcessor& proc, int nin, int nout) {
-    auto layout = proc.getBusesLayout();
-    if (layout.inputBuses.size() > 0)  layout.inputBuses.getReference(0)  = juce::AudioChannelSet::canonicalChannelSet(nin);
-    if (layout.outputBuses.size() > 0) layout.outputBuses.getReference(0) = juce::AudioChannelSet::canonicalChannelSet(nout);
-    return layout;
+// The layout a variant asks for: the MAIN buses in the variant's widths, and the auxiliary INPUT buses (a
+// sidechain) in a width the plugin accepts WITH them. The auxiliary width is not free: FabFilter Pro-Q 3
+// (AU), for one, refuses a mono main bus beside a STEREO sidechain bus and takes it beside a mono one —
+// keeping the sidechain as it was (stereo, as `enableAllBuses` left it) greyed "mono" for good on any plugin
+// with a sidechain input (found 20 October 2026, the Pro-Q 3 report). The candidates, in order:
+//   1. the sidechain in the main input's width (mono beside mono, stereo beside stereo) — also what
+//      `objLayBridgeWires` expects: its table reads the TOTAL input count, and a 1 + 2 = 3-input plugin
+//      would wire the main's right channel into the key's left;
+//   2. the sidechain as it is now;
+//   3. the sidechain in the main OUTPUT's width;
+//   4. the sidechain disabled (the plugin loses its key input in that variant, but keeps the variant).
+// A plugin without an auxiliary input has one candidate. Empty = the variant is refused whatever the aux.
+static std::vector<juce::AudioProcessor::BusesLayout> objLayoutCandidates(juce::AudioProcessor& proc, int nin, int nout) {
+    auto base = proc.getBusesLayout();
+    if (base.inputBuses.size() > 0)  base.inputBuses.getReference(0)  = juce::AudioChannelSet::canonicalChannelSet(nin);
+    if (base.outputBuses.size() > 0) base.outputBuses.getReference(0) = juce::AudioChannelSet::canonicalChannelSet(nout);
+    std::vector<juce::AudioProcessor::BusesLayout> out;
+    auto push = [&](const juce::AudioProcessor::BusesLayout& l) {
+        if (std::find(out.begin(), out.end(), l) == out.end()) out.push_back(l);
+    };
+    if (base.inputBuses.size() < 2) { push(base); return out; }
+    auto withAux = [&](juce::AudioChannelSet set) {
+        auto l = base;
+        for (int i = 1; i < l.inputBuses.size(); ++i)
+            if (!l.inputBuses.getReference(i).isDisabled() || set.isDisabled())
+                l.inputBuses.getReference(i) = set;
+        return l;
+    };
+    push(withAux(juce::AudioChannelSet::canonicalChannelSet(nin)));
+    push(base);
+    push(withAux(juce::AudioChannelSet::canonicalChannelSet(nout)));
+    push(withAux(juce::AudioChannelSet::disabled()));
+    return out;
 }
 
-// L'instance accepte-t-elle cette variante ? AU : exact et sans initialisation (JUCE compare aux
-// layouts qu'elle a lus une fois pour toutes). VST3 : exact seulement tant qu'il n'est pas actif
-// (`isBusesLayoutSupported` essaie alors vraiment le layout puis revient) ; actif, JUCE répond « oui,
-// sauf discret » — d'où le drapeau `exact` rendu à l'appelant.
+// The first candidate the instance accepts (@see objLayoutCandidates). AU: exact and with no initialisation
+// (JUCE compares with the layouts the unit declared once). VST3: exact only while it is not active
+// (`isBusesLayoutSupported` then really tries the layout and comes back); active, JUCE answers "yes unless
+// discrete" — hence the `exact` flag handed to the caller.
+static std::optional<juce::AudioProcessor::BusesLayout> objLayoutForVariant(juce::AudioProcessor& proc, int nin, int nout) {
+    if (proc.getBusCount(true) < 1 || proc.getBusCount(false) < 1) return std::nullopt;
+    for (auto& l : objLayoutCandidates(proc, nin, nout))
+        if (proc.checkBusesLayoutSupported(l)) return l;
+    return std::nullopt;
+}
+
 static bool objVariantSupported(juce::AudioProcessor& proc, int nin, int nout) {
-    if (proc.getBusCount(true) < 1 || proc.getBusCount(false) < 1) return false;
-    return proc.checkBusesLayoutSupported(objLayoutForVariant(proc, nin, nout));
+    return objLayoutForVariant(proc, nin, nout).has_value();
 }
 
 // The probe's answer, kept per plugin key: a card's context menu is built with the view's body, so the
@@ -8433,6 +8509,14 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     NSMutableDictionary* info = [NSMutableDictionary dictionary];
     auto* external = dynamic_cast<te::ExternalPlugin*>(&plugin);
     info[@"external"] = @(external != nullptr);
+    // The fold's two halves, when laid (@see OBJMonoFoldPlugin.h): whether each one acts, and its mode.
+    for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf })
+        if (auto fit = _pluginMap.find(monoFoldKey(pk, half)); fit != _pluginMap.end())
+            if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit->second.get())) {
+                NSString* k = half == (int)te::ObjMonoFoldPlugin::inHalf ? @"fold_in" : @"fold_out";
+                info[k] = @{ @"active": @(f->isActive()),
+                             @"mode": f->getMode() == (int)te::ObjMonoFoldPlugin::right ? @"right" : @"sum" };
+            }
 
     if (!external) {
         // Un plugin interne (Tracktion ou de la maison) : on rapporte ce que le graphe lit, sans menu.
@@ -8534,7 +8618,8 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     if (objCanFlushPluginState(*ext)) ext->flushPluginStateToValueTree();
     const juce::var stateBefore = ext->state.getProperty(te::IDs::state);
 
-    if (!ext->setBusesLayout(objLayoutForVariant(*proc, nin, nout))) {
+    const auto wantedLayout = objLayoutForVariant(*proc, nin, nout);
+    if (!wantedLayout || !ext->setBusesLayout(*wantedLayout)) {
         objLayoutRefusals().insert(refusalKey);
         return fail(@"refused");
     }
@@ -8557,6 +8642,7 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
 
     transport.ensureContextAllocated();
     _edit->restartPlayback();
+    [self refreshMonoFoldsForPluginKey:pk];   // a fold acts only beside ONE input
 
     return @{ @"ok": @YES, @"changed": @YES,
               @"inputs": @(proc->getMainBusNumInputChannels()),
@@ -8701,6 +8787,7 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     auto it = _pluginMap.find(pk);
     if (it == _pluginMap.end()) return;
     it->second->setEnabled(enabled);
+    [self refreshMonoFoldsForPluginKey:pk];
 }
 
 - (void)movePlugin:(NSString*)pluginKey toIndex:(int)toIndex forObjectID:(NSString*)uuid {
@@ -9303,6 +9390,56 @@ static void objDumpPluginList(te::PluginList& pl,
         if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end())
             pit->second->setEnabled(n.enabled);
 
+        // The fold (@see OBJMonoFoldPlugin.h): its IN half just before the plugin, its OUT half just after,
+        // in the order `here` gives the reordering pass below — laid only where a half has something to
+        // do (`objMonoFoldHalfFits`), removed where it no longer has. An instance still loading keeps what
+        // it had and is looked at again once loaded (`_monoFoldPending`).
+        if (n.fold != 0) _monoFoldWanted[pk] = n.fold;
+        else             _monoFoldWanted.erase(pk);
+        if (n.fold != 0) {
+            const std::string inKey = monoFoldKey(pk, (int)te::ObjMonoFoldPlugin::inHalf);
+            const std::string outKey = monoFoldKey(pk, (int)te::ObjMonoFoldPlugin::outHalf);
+            te::Plugin* target = nullptr;
+            if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end()) target = pit->second.get();
+            const bool loaded = target && objPluginIsLoaded(*target);
+            if (target && !loaded) _monoFoldPending.insert(pk);
+            else                   _monoFoldPending.erase(pk);
+            for (const auto& [fk, half] : { std::make_pair(inKey, (int)te::ObjMonoFoldPlugin::inHalf),
+                                            std::make_pair(outKey, (int)te::ObjMonoFoldPlugin::outHalf) }) {
+                auto fit = _pluginMap.find(fk);
+                if (loaded && !(target && objMonoFoldHalfFits(*target, half))) {
+                    if (fit != _pluginMap.end()) {
+                        if (fit->second) fit->second->deleteFromParent();
+                        _pluginOwnerHost.erase(fk);
+                        _pluginMap.erase(fit);
+                    }
+                    continue;
+                }
+                if (fit == _pluginMap.end() && loaded)
+                    if (auto f = pl.insertPlugin(te::ObjMonoFoldPlugin::create(half, n.fold), indexBefore(pl, anchor)))
+                        _pluginMap[fk] = f;
+                if (auto fit2 = _pluginMap.find(fk); fit2 != _pluginMap.end())
+                    if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit2->second.get())) f->setMode(n.fold);
+            }
+            if (_pluginMap.count(inKey))  { order.push_back(inKey);  here.push_back(inKey); }
+            order.push_back(pk);
+            here.push_back(pk);
+            if (_pluginMap.count(outKey)) { order.push_back(outKey); here.push_back(outKey); }
+            continue;
+        }
+
+        // `left` (or no fold): the halves a previous fold laid go, here and now — a half laid lazily
+        // (`syncMonoFoldHalvesForPluginKey:`) is in no chain's key list, so no orphan sweep would see it.
+        _monoFoldPending.erase(pk);
+        for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf }) {
+            const std::string fk = monoFoldKey(pk, half);
+            if (auto fit = _pluginMap.find(fk); fit != _pluginMap.end()) {
+                if (fit->second) fit->second->deleteFromParent();
+                _pluginOwnerHost.erase(fk);
+                _pluginMap.erase(fit);
+            }
+        }
+
         order.push_back(pk);
         here.push_back(pk);
     }
@@ -9320,6 +9457,78 @@ static void objDumpPluginList(te::PluginList& pl,
         for (auto& pk : here)
             if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end())
                 movePluginBefore(pl, pit->second, anchor);
+
+    // The folds read their neighbour: only now is it the right one.
+    for (auto& pk : here)
+        if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end())
+            if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(pit->second.get())) f->refreshActivity();
+}
+
+// A plugin's bypass changed, or its bus: the folds around it look again (@see OBJMonoFoldPlugin.h) —
+// laid or removed (a bus that became mono-in, or stopped being), then their activity re-read.
+- (void)refreshMonoFoldsForPluginKey:(const std::string&)pk {
+    if ([self syncMonoFoldHalvesForPluginKey:pk] && _edit) _edit->restartPlayback();
+    for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf })
+        if (auto fit = _pluginMap.find(monoFoldKey(pk, half)); fit != _pluginMap.end())
+            if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit->second.get())) f->refreshActivity();
+}
+
+// Lays or removes the halves of `pk`'s fold IN PLACE, beside the plugin, outside a compile (the compile
+// does the same in its own pass). True when the list changed. An instance still loading is left alone.
+- (bool)syncMonoFoldHalvesForPluginKey:(const std::string&)pk {
+    auto pit = _pluginMap.find(pk);
+    if (pit == _pluginMap.end() || !pit->second) return false;
+    te::Plugin& target = *pit->second;
+    const auto wit = _monoFoldWanted.find(pk);
+    const int mode = wit == _monoFoldWanted.end() ? 0 : wit->second;
+    if (mode != 0 && !objPluginIsLoaded(target)) { _monoFoldPending.insert(pk); return false; }
+    _monoFoldPending.erase(pk);
+    bool changed = false;
+    for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf }) {
+        const std::string fk = monoFoldKey(pk, half);
+        auto fit = _pluginMap.find(fk);
+        const bool need = mode != 0 && objMonoFoldHalfFits(target, half);
+        if (!need) {
+            if (fit != _pluginMap.end()) {
+                if (fit->second) fit->second->deleteFromParent();
+                _pluginOwnerHost.erase(fk);
+                _pluginMap.erase(fit);
+                changed = true;
+            }
+            continue;
+        }
+        if (fit != _pluginMap.end()) {
+            if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit->second.get())) f->setMode(mode);
+            continue;
+        }
+        auto* list = target.getOwnerList();
+        const int at = list ? list->indexOf(&target) : -1;
+        if (at < 0) continue;
+        if (auto f = list->insertPlugin(te::ObjMonoFoldPlugin::create(half, mode),
+                                        half == (int)te::ObjMonoFoldPlugin::inHalf ? at : at + 1)) {
+            _pluginMap[fk] = f;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+// Folds whose plugin was still loading at the compile: laid as soon as it has loaded, then ONE rebuild.
+// Called by the latency tick, like the pending sidechain wires.
+- (void)layPendingMonoFolds {
+    if (_monoFoldPending.empty() || !_edit) return;
+    bool any = false;
+    const auto pending = _monoFoldPending;
+    for (const auto& pk : pending) {
+        auto pit = _pluginMap.find(pk);
+        if (pit == _pluginMap.end() || !pit->second) { _monoFoldPending.erase(pk); continue; }
+        if (!objPluginIsLoaded(*pit->second)) continue;
+        if ([self syncMonoFoldHalvesForPluginKey:pk]) any = true;
+        for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf })
+            if (auto fit = _pluginMap.find(monoFoldKey(pk, half)); fit != _pluginMap.end())
+                if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(fit->second.get())) f->refreshActivity();
+    }
+    if (any) _edit->restartPlayback();
 }
 
 // True when `pk` belongs to the live chain of a host OTHER than `hostKey`: its owner (the host that

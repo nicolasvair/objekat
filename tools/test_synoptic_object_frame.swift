@@ -14,6 +14,7 @@ import SwiftUI
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusGesture.swift \
 //         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
+//         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift test_synoptic_object_frame.swift \
 //         && /tmp/t_frame
 

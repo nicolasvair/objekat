@@ -101,7 +101,7 @@ extension ObjectPlugin {
                      identifier: face.identifier, formatName: "TracktionInternal",
                      isEnabled: true,
                      stateXML: gainStageStateXML(face: face, values: values),
-                     linkGroupID: linkGroupID)
+                     linkGroupID: linkGroupID, monoFold: nil)   // in-house: no fold to choose
     }
 
     /// The engine state of a stage: the plugin tree with the three cached values the class reads.

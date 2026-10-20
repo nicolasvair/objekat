@@ -128,6 +128,9 @@ enum SynopticLayout {
         let from: CGPoint
         let to: CGPoint
         let style: CableStyle
+        /// The point of the chain whose width this wire carries (@see SynopticWidthFlow.look): one wire for
+        /// mono, two for stereo. nil = not known here (a send's column): the neutral single line.
+        var carries: WireSource? = nil
     }
 
     struct ScopeRect: Identifiable {
@@ -364,7 +367,8 @@ enum SynopticLayout {
             if fx.isFolded {
                 // The wire runs straight through the one-line body; the line is written beside it.
                 pl.cables.append(Cable(from: CGPoint(x: cx, y: headerRect.maxY),
-                                       to: CGPoint(x: cx, y: bodyRect.maxY), style: .plain))
+                                       to: CGPoint(x: cx, y: bodyRect.maxY), style: .plain,
+                                       carries: .after(node.id)))
                 let sx = cx + 8
                 let summary = CGRect(x: sx, y: headerRect.maxY + 2,
                                      width: max(0, bodyRect.maxX - fxPad - sx), height: fxFoldedBodyH - 4)
@@ -381,8 +385,10 @@ enum SynopticLayout {
             // The wire STOPS at the header card's foot and leaves again from there (the series' own head
             // cable carries the arrow into its first element). Under the series' tail '+' it runs on to the
             // body's bottom — the block's exit — without an arrow (the next element's wire has its own).
-            pl.cables.append(Cable(from: CGPoint(x: cx, y: headerRect.maxY), to: ipl.entry, style: .plain))
-            pl.cables.append(Cable(from: ipl.exit, to: CGPoint(x: cx, y: bodyRect.maxY), style: .plain))
+            pl.cables.append(Cable(from: CGPoint(x: cx, y: headerRect.maxY), to: ipl.entry, style: .plain,
+                                   carries: .into(node.id)))
+            pl.cables.append(Cable(from: ipl.exit, to: CGPoint(x: cx, y: bodyRect.maxY), style: .plain,
+                                   carries: .after(node.id)))
             pl.fxBlocks.append(FXBlockPlacement(
                 link: fx, rect: CGRect(origin: origin, size: total),
                 headerRect: headerRect, bodyRect: bodyRect, pluginCount: pluginCount))
@@ -423,7 +429,7 @@ enum SynopticLayout {
                                              seriesIsEmpty: true, sendSlot: slot(0)))
                 pl.entry = CGPoint(x: cx, y: c.y - plusW / 2)
                 pl.exit = CGPoint(x: cx, y: c.y + plusW / 2)
-                pl.cables.append(Cable(from: pl.entry, to: pl.exit, style: .plain))
+                pl.cables.append(Cable(from: pl.entry, to: pl.exit, style: .plain, carries: .into(node.id)))
                 pl.cableDrops.append(CableDropZone(seriesID: node.id, insertIndex: 0,
                                                    rect: band, previewFrame: cardFrame(cx, c.y)))
                 return pl
@@ -442,7 +448,8 @@ enum SynopticLayout {
                 let cpl = place(child, at: CGPoint(x: cxChild, y: y), depth: depth, role: role)
                 if i == 0 {
                     // The wire runs from the series' entry through the head '+' into the 1st element.
-                    pl.cables.append(Cable(from: pl.entry, to: cpl.entry, style: .connector))
+                    pl.cables.append(Cable(from: pl.entry, to: cpl.entry, style: .connector,
+                                           carries: .into(child.id)))
                     // The head segment: dropping here inserts BEFORE the 1st element (index 0).
                     // The zone is bounded by the head cable → it does NOT cover the body of the 1st element
                     // (useful if that is a parallel: its branches stay the only receptive things).
@@ -458,7 +465,7 @@ enum SynopticLayout {
                 if let pe = prevExit {
                     // A control BEFORE this element: '+' inserts here (index i), a drag branches it.
                     let ctrlY = (pe.y + cpl.entry.y) / 2
-                    pl.cables.append(Cable(from: pe, to: cpl.entry, style: .connector))
+                    pl.cables.append(Cable(from: pe, to: cpl.entry, style: .connector, carries: .into(child.id)))
                     // A cable segment between element i-1 and i: insertion at `i`. Bounded by the
                     // cable (pe → input) → if i is a parallel, this covers the zone BEFORE it
                     // and the inside of the parallel is left to the branches.
@@ -480,7 +487,7 @@ enum SynopticLayout {
             let trailCenter = CGPoint(x: cx, y: lastExit.y + plusGap + plusW / 2)
             pl.exit = CGPoint(x: cx, y: trailCenter.y + plusW / 2)
             // The wire runs on through the tail '+' to the series' exit, with no arrow of its own.
-            pl.cables.append(Cable(from: lastExit, to: pl.exit, style: .plain))
+            pl.cables.append(Cable(from: lastExit, to: pl.exit, style: .plain, carries: .after(a.last!.id)))
             // The end segment (after the last element): insertion at the end of the series (index a.count).
             // Bounded by the tail cable → it does not cover the last element's body.
             let band = CGRect(x: cx - cardW / 2, y: lastExit.y, width: cardW, height: pl.exit.y - lastExit.y)
@@ -540,7 +547,7 @@ enum SynopticLayout {
             for (i, voie) in a.enumerated() {
                 let cs = sizes[i]
                 let vpl = place(voie, at: CGPoint(x: x, y: voieTop), depth: depth + 1, role: .branch)
-                pl.cables.append(Cable(from: splitDot, to: vpl.entry, style: .fork))
+                pl.cables.append(Cable(from: splitDot, to: vpl.entry, style: .fork, carries: .into(voie.id)))
                 // The branch's drop column: it covers its whole half of the backing area (the bounds being
                 // the midpoints between branches), over the parallel's full height. Added BEFORE absorbing
                 // the branch's content → the inner zones (cards, nested branches) keep priority (being
@@ -559,13 +566,14 @@ enum SynopticLayout {
                 if hasGains, let g = voie.voiceGainDb {
                     let ctrl = CGPoint(x: vpl.exit.x, y: gainCenterY)
                     pl.cables.append(Cable(from: vpl.exit,
-                                           to: CGPoint(x: ctrl.x, y: ctrl.y - gainBandH / 2 + 3), style: .merge))
+                                           to: CGPoint(x: ctrl.x, y: ctrl.y - gainBandH / 2 + 3), style: .merge,
+                                           carries: .after(voie.id)))
                     pl.cables.append(Cable(from: CGPoint(x: ctrl.x, y: ctrl.y + gainBandH / 2 - 3),
-                                           to: mergeDot, style: .merge))
+                                           to: mergeDot, style: .merge, carries: .after(voie.id)))
                     pl.voiceGains.append(VoiceGain(blockID: node.id, voiceIndex: i, dB: g,
                                                    muted: voie.voiceMuted, center: ctrl))
                 } else {
-                    pl.cables.append(Cable(from: vpl.exit, to: mergeDot, style: .merge))
+                    pl.cables.append(Cable(from: vpl.exit, to: mergeDot, style: .merge, carries: .after(voie.id)))
                 }
                 pl.absorb(vpl)
                 x += cs.width + voiceGap
@@ -987,12 +995,13 @@ enum SynopticLayout {
         // The wire into the trunk runs on through its head '+' (the trunk's own first cable carries the
         // arrow into its first element): no arrow here.
         placement.cables.insert(
-            Cable(from: CGPoint(x: centerX, y: headBottomY), to: placement.entry, style: .plain), at: 0)
+            Cable(from: CGPoint(x: centerX, y: headBottomY), to: placement.entry, style: .plain,
+                  carries: .source), at: 0)
         if let r = araCard {
             // frame → card (the arrow arrives at the card, as it does at any card)
             placement.cables.insert(
                 Cable(from: CGPoint(x: centerX, y: leadRect.maxY),
-                      to: CGPoint(x: centerX, y: r.minY), style: .connector), at: 0)
+                      to: CGPoint(x: centerX, y: r.minY), style: .connector, carries: .source), at: 0)
         }
 
         // trunk → [clip zone] → [post-fader '+'] → foot
@@ -1003,7 +1012,8 @@ enum SynopticLayout {
                                   width: boxedClipW, height: clipZoneH)
             clipZone = clipRect
             placement.cables.append(
-                Cable(from: placement.exit, to: CGPoint(x: centerX, y: clipRect.minY), style: .connector))
+                Cable(from: placement.exit, to: CGPoint(x: centerX, y: clipRect.minY), style: .connector,
+                      carries: .trunk))
             wireTop = clipRect.maxY
         } else {
             wireTop = placement.exit.y
@@ -1017,7 +1027,7 @@ enum SynopticLayout {
         let stemsZone: CGRect? = stems ? outPill : nil
         placement.cables.append(
             Cable(from: CGPoint(x: centerX, y: wireTop), to: CGPoint(x: centerX, y: outPill.minY),
-                  style: .connector))
+                  style: .connector, carries: mix ? .bus : .trunk))
 
         // The post-fader '+' on that wire.
         var postFaderPlus: PostFaderPlus? = nil

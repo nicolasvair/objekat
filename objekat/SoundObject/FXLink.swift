@@ -156,7 +156,8 @@ struct FXLink: Identifiable, Codable, Equatable {
                                 isEnabled: d.isEnabled, stateXML: stateForNew(d),
                                 linkGroupID: attached ? d.id : nil,
                                 detachedLinkGroupID: attached ? nil : d.id,
-                                colorIndex: d.colorIndex, sidechain: d.sidechain)
+                                colorIndex: d.colorIndex, sidechain: d.sidechain,
+                                monoFold: d.monoFold)
         }
     }
 
@@ -164,7 +165,7 @@ struct FXLink: Identifiable, Codable, Equatable {
     static func blockEntry(linkID: UUID, name: String, instances: [ObjectPlugin],
                            id: UUID = UUID()) -> ObjectPlugin {
         ObjectPlugin(id: id, name: name, manufacturer: "", identifier: "", formatName: "",
-                     fxBlock: FXLinkBlock(linkID: linkID, plugins: instances))
+                     fxBlock: FXLinkBlock(linkID: linkID, plugins: instances), monoFold: nil)
     }
 }
 
@@ -225,7 +226,7 @@ extension ObjectPlugin {
     /// key for the send stays `sender|aux`, never this id).
     static func makeSendMarker(for auxID: UUID, id: UUID = UUID()) -> ObjectPlugin {
         ObjectPlugin(id: id, name: "", manufacturer: "", identifier: "", formatName: "",
-                     colorIndex: 0, sendMarker: SendMarker(auxID: auxID))
+                     colorIndex: 0, sendMarker: SendMarker(auxID: auxID), monoFold: nil)
     }
 
     /// True if this entry is a bin's block.

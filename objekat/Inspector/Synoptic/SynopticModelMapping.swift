@@ -360,7 +360,8 @@ extension EditViewModel {
         let copy = ObjectPlugin(id: UUID(), name: plug.name, manufacturer: plug.manufacturer,
                                 identifier: plug.identifier, formatName: plug.formatName,
                                 isEnabled: plug.isEnabled, stateXML: stateXML, linkGroupID: nil,
-                                sidechain: plug.sidechain)
+                                sidechain: plug.sidechain,
+                                monoFold: plug.monoFold)
         pushUndo()
         updateChainPlugins(objectID) {
             $0 = Self.simplifyTree(Self.inserting(copy, into: location, at: index, plugins: plugins))
@@ -434,7 +435,8 @@ extension EditViewModel {
     static func rackCarrier(voices: [[ObjectPlugin]]) -> ObjectPlugin {
         ObjectPlugin(id: UUID(), name: "//", manufacturer: "", identifier: "", formatName: "",
                      rack: PluginRack(voices: voices,
-                                      wetDb: Array(repeating: 0, count: voices.count)))
+                                      wetDb: Array(repeating: 0, count: voices.count)),
+                     monoFold: nil)   // a container: only its leaves have a fold
     }
 
     /// Puts the element in parallel with an EMPTY branch (the gain-only path). A plugin → a

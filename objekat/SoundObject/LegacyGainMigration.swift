@@ -239,7 +239,8 @@ enum LegacyGainMigration {
                 fb.plugins.append(ObjectPlugin(id: UUID(), name: def.name, manufacturer: def.manufacturer,
                                                identifier: def.identifier, formatName: def.formatName,
                                                isEnabled: def.isEnabled, stateXML: def.stateXML,
-                                               linkGroupID: def.id, colorIndex: def.colorIndex))
+                                               linkGroupID: def.id, colorIndex: def.colorIndex,
+                                               monoFold: def.monoFold))
             }
             plugins[i].fxBlock = fb
         }

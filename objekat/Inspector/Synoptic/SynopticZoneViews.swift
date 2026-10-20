@@ -415,16 +415,6 @@ struct AudioFileZoneView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            if let n = file.sourceChannels {
-                // The width the chain is fed with: the file's channel count, mono or a stereo pair.
-                Text(verbatim: "\(n)")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5).frame(height: 13)
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.5), lineWidth: 1))
-                    .fixedSize()
-                    .help(L(n >= 2 ? "synoptic.width.source.stereo" : "synoptic.width.source.mono"))
-            }
             if isFolded {
                 // A hidden setting that is not neutral says so (§B.7). Passive: a double click on one opens
                 // the zone like anywhere else.

@@ -93,7 +93,8 @@ extension EditViewModel {
                                                               isEnabled: inst.isEnabled,
                                                               stateXML: inst.stateXML,
                                                               colorIndex: inst.colorIndex,
-                                                              sidechain: freshSidechain(inst.sidechain))
+                                                              sidechain: freshSidechain(inst.sidechain),
+                                                              monoFold: inst.monoFold)
                                       })
                     link.output = out
                     // The naming rule travels (plan_synoptic_rework B.0.6): a name typed by hand stays the
@@ -133,7 +134,8 @@ extension EditViewModel {
                                         isEnabled: p.isEnabled,
                                         rack: PluginRack(voices: rack.voices.map { freshPlugins($0) },
                                                          wetDb: rack.wetDb,
-                                                         voiceMutes: rack.voiceMutes))
+                                                         voiceMutes: rack.voiceMutes),
+                                                         monoFold: p.monoFold)
                 }
                 return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
@@ -143,7 +145,8 @@ extension EditViewModel {
                                     // detached member stays reattachable to its peers after a bake.
                                     detachedLinkGroupID: freshLink(p.detachedLinkGroupID),
                                     colorIndex: p.colorIndex,
-                                    sidechain: freshSidechain(p.sidechain))
+                                    sidechain: freshSidechain(p.sidechain),
+                                    monoFold: p.monoFold)
             }
         }
 
