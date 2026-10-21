@@ -7,6 +7,8 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
+//         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
@@ -386,6 +388,59 @@ enum SendPositionTest {
             check("duplicate: onto itself does nothing", base.duplicatingSend(from: auxA, to: auxA) == base)
         }
 
+        // MARK: - A channel pick is a chain marker too: `chain(i)` never counts it (session format 31)
+
+        do {
+            func pickOf(_ mode: MonoFold) -> ObjectPlugin { ObjectPlugin.makeChannelPick(mode: mode) }
+            func word(_ plugins: [ObjectPlugin]) -> [String] {
+                plugins.map { $0.isSendMarker ? "m" : ($0.isChannelPick ? "p" : $0.name) }
+            }
+            let cards = [plugin("A"), plugin("B"), plugin("C")]
+            var o = clip(plugins: cards, sends: [AuxSend(auxID: auxA, levelDb: 0)])
+                .settingSendPosition(auxID: auxA, .chain(1))
+            check("a send at chain(1): A m B C", word(o.plugins) == ["A", "m", "B", "C"], "\(word(o.plugins))")
+
+            // Adding a pick on that very cable: the pick stands AHEAD of the marker (the send hears the
+            // chosen channel), and the send's index does not slide.
+            o.plugins = ChannelPicks.setting(.left, atVisible: 1, in: o.plugins)
+            check("a pick on the cable of a send: A p m B C (the pick first)",
+                  word(o.plugins) == ["A", "p", "m", "B", "C"], "\(word(o.plugins))")
+            check("chain(1) is still chain(1): the pick does not count", o.sendPosition(auxID: auxA) == .chain(1),
+                  "\(String(describing: o.sendPosition(auxID: auxA)))")
+
+            // The same for a pick elsewhere in the chain, whatever side of the marker it is on.
+            for (at, label) in [(0, "before"), (2, "after")] {
+                var q = clip(plugins: cards, sends: [AuxSend(auxID: auxA, levelDb: 0)])
+                    .settingSendPosition(auxID: auxA, .chain(1))
+                q.plugins = ChannelPicks.setting(.right, atVisible: at, in: q.plugins)
+                check("a pick \(label) the send does not move it: chain(1)", q.sendPosition(auxID: auxA) == .chain(1),
+                      "\(word(q.plugins))")
+            }
+
+            // A chain that carries picks lays the marker with the same indices as one without.
+            let withPick = clip(plugins: [plugin("A"), pickOf(.left), plugin("B"), plugin("C")],
+                                sends: [AuxSend(auxID: auxA, levelDb: 0)])
+            let expectedWords: [Int: [String]] = [0: ["m", "A", "p", "B", "C"], 1: ["A", "p", "m", "B", "C"],
+                                                  2: ["A", "p", "B", "m", "C"], 3: ["A", "p", "B", "C", "m"]]
+            for i in 0...3 {
+                let q = withPick.settingSendPosition(auxID: auxA, .chain(i))
+                check("with a pick in the chain, chain(\(i)) reads back", q.sendPosition(auxID: auxA) == .chain(i),
+                      "\(word(q.plugins))")
+                check("…and lays the marker at \(i): \(expectedWords[i]!.joined(separator: " "))",
+                      word(q.plugins) == expectedWords[i]!, "\(word(q.plugins))")
+            }
+            check("chain(99) is clamped to the end, past the picks too",
+                  withPick.settingSendPosition(auxID: auxA, .chain(99)).sendPosition(auxID: auxA) == .chain(3))
+
+            // A hand-edited file with the marker AHEAD of the pick is brought back to pick, then marker.
+            var swapped = clip(plugins: [plugin("A"), ObjectPlugin.makeSendMarker(for: auxA), pickOf(.left), plugin("B")],
+                               sends: [AuxSend(auxID: auxA, levelDb: 0)])
+            swapped = swapped.sanitisingChannelPicks()
+            check("a marker ahead of a pick in the same gap: the pick goes first", word(swapped.plugins) == ["A", "p", "m", "B"],
+                  "\(word(swapped.plugins))")
+            check("…and the send still reads chain(1)", swapped.sendPosition(auxID: auxA) == .chain(1))
+        }
+
         // MARK: - Names
 
         do {
@@ -394,7 +449,7 @@ enum SendPositionTest {
             check("named() inverts them", SendPosition.named("pre_fader") == .preFader
                   && SendPosition.named("chain", index: 2) == .chain(2)
                   && SendPosition.named("chain") == nil && SendPosition.named("nope") == nil)
-            check("the session format is 26", SessionSchema.formatVersion == 26)
+            check("the session format is at least 26 (the send position keys)", SessionSchema.formatVersion >= 26)
             check("the notice mentions both new keys",
                   SessionSchema.note.joined(separator: "\n").contains("sendMarker")
                   && SessionSchema.note.joined(separator: "\n").contains("preFader"))

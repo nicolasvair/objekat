@@ -19,9 +19,12 @@ What is asserted, with Apple's own AudioUnits (installed with macOS):
     open (levels: sum = each tone at -26 dBFS on BOTH sides; left = 1 kHz on both sides, 3 kHz cut)
     and closed (the plugin really processes what it is fed, nothing passes round it); through AUReverb2
     in mono -> stereo (1 -> 2), left, right and sum;
-  * the engine halves (`fold_in` / `fold_out`): IN + OUT for right / sum on a 1 -> 1 plugin, OUT only
-    for left, IN only (right / sum) on a 1 -> 2; nothing on a stereo plugin, whose export is then
-    bit-exact whatever the fold;
+  * the engine halves (`fold_in` / `fold_out`): since format 31 the choice made on the plugin lands on
+    the CABLE in front of it as a pick (`ObjChannelMode`), so a plugin that follows a card has OUT only
+    (a 1 -> 1) or nothing (a 1 -> 2) whatever the fold; the IN + OUT of right / sum, OUT only of left
+    and IN only of a 1 -> 2 survive for a plugin the file's own choice precedes (head of a clip) and are
+    asserted in scenario_cable_channels.py; nothing on a stereo plugin, whose export is bit-exact
+    whatever the fold;
   * an OLD-FORMAT file (no `monoFold` key, version 26): reads `sum` (not chosen), lays both halves,
     nothing passes round the plugin, and its export is bit-exact with the same project set to `sum`
     through the API;
@@ -196,11 +199,17 @@ try:
             wait_loaded(host, p)
             return p
 
-        def fresh(name):
+        def fresh(name, lead=False):
+            """A new project with one stereo clip. `lead` puts a card ahead of the plugins to come: the cable
+            in front of the plugin is then a cable of the chain (a pick lands there). At the HEAD of a stereo
+            clip the choice is the FILE's own channel mode (one menu): the plugin's fold is cleared."""
             send("project.new")
             manifest = os.path.join(WORK, name + ".objekat")
             send("project.save_as", {"path": manifest})
-            return manifest, send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+            oid = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+            if lead:
+                add_plugin(oid, "4bandEq")
+            return manifest, oid
 
         def set_param_named(plugin, needle, to_max):
             ps = send("plugin.get_params", {"plugin": plugin})["params"]
@@ -236,12 +245,25 @@ try:
             return all(abs(a[s, hz] - b[s, hz]) <= tol or (a[s, hz] < -80 and b[s, hz] < -80)
                        for s in "LR" for hz in (1000.0, 3000.0))
 
-        def leaf_of(host):
-            q = send("plugin.list", {"host": host})["plugins"][0]
-            return q["plugins"][0]["id"] if q.get("is_fx_block") else q["id"]
+        def leaf_of(host, needle="lpas"):
+            """The first leaf (inside a bin too) whose identifier holds `needle`."""
+            def walk(es):
+                for q in es:
+                    if q.get("is_fx_block"):
+                        r = walk(q["plugins"])
+                        if r:
+                            return r
+                    elif needle in q.get("identifier", "") and not q.get("is_rack"):
+                        return q["id"]
+                return None
+            return walk(send("plugin.list", {"host": host})["plugins"])
 
         def halves(r):
             return tuple(None if r.get(k) is None else (r[k]["active"], r[k]["mode"]) for k in ("fold_in", "fold_out"))
+
+        # A pick right before a plugin: the engine lays only the OUT half of its fold (L = R already).
+        PICKED_11 = (None, (True, "left"))      # a 1 -> 1 plugin: its mono result goes back to both sides
+        PICKED_12 = (None, None)                # a 1 -> 2 plugin: its two outputs are its own
 
         # ═══════════════════════════════════════════════════════════════ surface + default
         section("the surface, and the default of a NEW plugin")
@@ -250,7 +272,7 @@ try:
             else set(helped if isinstance(helped, list) else [])
         check("plugin.set_mono_fold is in help", "plugin.set_mono_fold" in names)
 
-        manifest, obj = fresh("sound")
+        manifest, obj = fresh("sound", lead=True)
         eq = add_plugin(obj, "4bandEq")
         r = layouts(obj, eq)
         check("a BUILT-IN plugin (`sum` by default): nothing laid", halves(r) == (None, None), halves(r))
@@ -295,11 +317,9 @@ try:
             r = layouts(obj, lp)
             res[f] = render("open_" + f)
             print("       open, %-6s       %s   halves %s" % (f + ":", fmt(res[f]), halves(r)))
-            if f == "left":
-                check("left: only the OUT half laid (the plugin reads L by itself; its output replaces the pair)",
-                      halves(r) == (None, (True, "left")), halves(r))
-            else:
-                check("%s: both halves laid and active" % f, halves(r) == ((True, f), (True, f)), halves(r))
+            check("%s: the choice is a pick on the cable in front: the engine lays only the OUT half" % f,
+                  halves(r) == PICKED_11, halves(r))
+            check("%s: the plugin reports the pick as its fold" % f, r.get("mono_fold") == f, r.get("mono_fold"))
         L_, R_, S_ = res["left"], res["right"], res["sum"]
         check("left: both sides carry 1 kHz at -20, the right channel's 3 kHz is CUT (nothing passes dry)",
               near(L_["L", 1000.0], -20) and near(L_["R", 1000.0], -20) and L_["L", 3000.0] < -80 and L_["R", 3000.0] < -80, fmt(L_))
@@ -328,7 +348,10 @@ try:
 
         # ═══════════════════════════════════════════════════════════════ the sound, 1 -> 2
         section("the SOUND through AUReverb2 in MONO -> STEREO (1 -> 2), fully wet")
-        send("plugin.toggle", {"host": obj, "plugin": lp})
+        # The lowpass would make the cable in front of the reverb MONO already (a 1 -> 1 plugin gives one
+        # channel): no menu there. It leaves the chain for this section, so the reverb's cable is the stereo
+        # one the lead card gives, where a pick lands.
+        send("plugin.remove", {"host": obj, "plugin": lp})
         rv = add_plugin(obj, AU_REVERB2)
         check("its dry/wet is set to wet", set_param_named(rv, "dry/wet", True) or set_param_named(rv, "mix", True))
         send("plugin.set_channel_layout", {"host": obj, "plugin": rv, "variant": "mono_stereo"})
@@ -338,17 +361,23 @@ try:
             r = layouts(obj, rv)
             rr[f] = render("rev_" + f)
             print("       1->2, %-6s       %s   halves %s" % (f + ":", fmt(rr[f]), halves(r)))
-        check("1 -> 2: only the IN half is laid (the plugin's two outputs are its own)",
-              halves(layouts(obj, rv)) == ((True, "sum"), None), halves(layouts(obj, rv)))
+            if f == "right":
+                check("1 -> 2 right: a pick on the cable, nothing laid round the plugin", halves(r) == PICKED_12, halves(r))
+        check("1 -> 2 sum (an explicit pick on the lead card's cable): nothing laid round the plugin",
+              halves(layouts(obj, rv)) == PICKED_12, halves(layouts(obj, rv)))
         fold(obj, rv, "left")
-        check("1 -> 2 left: nothing laid (the plugin reads L by itself, its two outputs are its own)",
-              halves(layouts(obj, rv)) == (None, None), halves(layouts(obj, rv)))
+        check("1 -> 2 left: a pick on the cable, NOTHING laid round the plugin",
+              halves(layouts(obj, rv)) == PICKED_12, halves(layouts(obj, rv)))
         hear = lambda m, hz: max(m["L", hz], m["R", hz]) > -60
         check("1 -> 2 left: 1 kHz heard, 3 kHz not", hear(rr["left"], 1000.0) and not hear(rr["left"], 3000.0), fmt(rr["left"]))
         check("1 -> 2 right: 3 kHz heard, 1 kHz not", hear(rr["right"], 3000.0) and not hear(rr["right"], 1000.0), fmt(rr["right"]))
         check("1 -> 2 sum: both tones heard", hear(rr["sum"], 1000.0) and hear(rr["sum"], 3000.0), fmt(rr["sum"]))
         send("plugin.remove", {"host": obj, "plugin": rv})
-        send("plugin.toggle", {"host": obj, "plugin": lp})
+        lp = add_plugin(obj, AU_LOWPASS)
+        set_param_named(lp, "cutoff", to_max=True)
+        send("plugin.set_channel_layout", {"host": obj, "plugin": lp, "variant": "mono"})
+        wait_loaded(obj, lp)
+        fold(obj, lp, "sum")          # the pick left standing by the reverb (a cable keeps its choice) is replaced
 
         # ═══════════════════════════════════════════════════════════════ undo / redo, no-op
         section("undo / redo, and a no-op")
@@ -358,7 +387,7 @@ try:
         fold(obj, lp, "right")
         send("edit.undo")
         r = layouts(obj, lp)
-        check("ONE undo gives `sum` back, model and engine", r["mono_fold"] == "sum" and halves(r) == ((True, "sum"), (True, "sum")), (r["mono_fold"], halves(r)))
+        check("ONE undo gives `sum` back, model and engine", r["mono_fold"] == "sum" and halves(r) == PICKED_11, (r["mono_fold"], halves(r)))
         u = render("undo")
         # Not bit-exact: two renders of one AU filter several gestures apart are not sample-aligned
         # (measured: same levels, a time offset). The levels and the L == R identity say the fold.
@@ -366,12 +395,12 @@ try:
               same_sound(u, S_) and channel_bytes(u["raw"], 0) == channel_bytes(u["raw"], 1), fmt(u))
         send("edit.redo")
         r = layouts(obj, lp)
-        check("redo gives `right` again", r["mono_fold"] == "right" and halves(r) == ((True, "right"), (True, "right")), (r["mono_fold"], halves(r)))
+        check("redo gives `right` again", r["mono_fold"] == "right" and halves(r) == PICKED_11, (r["mono_fold"], halves(r)))
         fold(obj, lp, "left")
         send("edit.undo")
         r = layouts(obj, lp)
         check("undo of right -> left: right again, both halves laid again",
-              r["mono_fold"] == "right" and halves(r) == ((True, "right"), (True, "right")), (r["mono_fold"], halves(r)))
+              r["mono_fold"] == "right" and halves(r) == PICKED_11, (r["mono_fold"], halves(r)))
 
         # ═══════════════════════════════════════════════════════════════ copies
         section("save / reopen, copies")
@@ -383,7 +412,7 @@ try:
         obj = objs[0]["id"]
         lp = leaf_of(obj)
         r = wait_loaded(obj, lp)
-        check("reopened: `right`, halves active", r.get("mono_fold") == "right" and halves(r) == ((True, "right"), (True, "right")), (r.get("mono_fold"), halves(r)))
+        check("reopened: `right` (the pick), OUT half laid", r.get("mono_fold") == "right" and halves(r) == PICKED_11, (r.get("mono_fold"), halves(r)))
         reo = render("reopened")
         check("reopened: the sound of `right` (same tone levels, L == R)",
               same_sound(reo, R_) and channel_bytes(reo["raw"], 0) == channel_bytes(reo["raw"], 1), fmt(reo))
@@ -391,18 +420,24 @@ try:
         b = send("object.add", {"path": STEREO, "lane": 1, "start": 0.0})["id"]
         send("plugin.copy", {"from": obj, "plugin": lp, "to": b})
         pb = send("plugin.list", {"host": b})["plugins"][-1]["id"]
-        check("plugin.copy carries the fold", wait_loaded(b, pb).get("mono_fold") == "right")
+        check("plugin.copy does NOT carry the choice (it lives on the cable of the chain it was in): default `sum`",
+              wait_loaded(b, pb).get("mono_fold") == "sum", wait_loaded(b, pb).get("mono_fold"))
         d = send("object.duplicate", {"ids": [obj]})
         did = (d.get("ids") or [None])[0] if isinstance(d, dict) else None
         if did:
-            pd = leaf_of(did)   # a duplicate makes an FX link bin of the chain
-            check("object.duplicate carries the fold", wait_loaded(did, pd).get("mono_fold") == "right")
+            # a duplicate makes one FX link bin per card; the pick stays on the root cable between them, with a
+            # fresh id, and still says `right` (the leaf's own record is not what carries the choice any more)
+            dcs = send("chain.cables", {"host": did})["cables"]
+            root = [c for c in dcs if c["series"] == "root" and c.get("pick")]
+            check("object.duplicate carries the choice: a pick `right` of its own on the root cable",
+                  len(root) == 1 and root[0]["choice"] == "right" and root[0]["pick"] != send("chain.cables", {"host": obj})["cables"][1]["pick"],
+                  dcs)
         else:
             check("object.duplicate answered an id", False, d)
 
         # ═══════════════════════════════════════════════════════════════ an OLD file
         section("an OLD-FORMAT file (no monoFold key, version 26)")
-        old_manifest, oo = fresh("old")
+        old_manifest, oo = fresh("old", lead=True)
         olp = add_plugin(oo, AU_LOWPASS)
         set_param_named(olp, "cutoff", to_max=False)
         send("plugin.set_channel_layout", {"host": oo, "plugin": olp, "variant": "mono"})
@@ -425,7 +460,7 @@ try:
         objs = send("object.list")
         objs = objs["objects"] if isinstance(objs, dict) and "objects" in objs else objs
         oo = objs[0]["id"]
-        olp = send("plugin.list", {"host": oo})["plugins"][0]["id"]
+        olp = leaf_of(oo)
         r = wait_loaded(oo, olp)
         check("old file: the plugin plays `sum` (MonoFold.whenUnset)", r.get("mono_fold") == "sum", r.get("mono_fold"))
         check("old file: the fold is NOT chosen (no key)", r.get("mono_fold_chosen") is False, r.get("mono_fold_chosen"))
@@ -440,7 +475,8 @@ try:
         old2 = render("old_file_again")
         fold(oo, olp, "left")
         fold(oo, olp, "sum")        # through the API: the same graph as the old file
-        check("set through the API: the fold is now chosen", layouts(oo, olp).get("mono_fold_chosen") is True)
+        check("set through the API: the fold is now chosen (a pick stands on the cable)",
+              layouts(oo, olp).get("mono_fold_chosen") is True)
         again = render("old_set_sum")
         check("old file: bit-exact with the same project set to `sum` through the API",
               again["raw"] == old2["raw"],
@@ -472,7 +508,8 @@ try:
         def bin_instance(host):
             for q in send("plugin.list", {"host": host})["plugins"]:
                 if q.get("is_fx_block"):
-                    return q["plugins"][0]["id"]
+                    # a pick may stand in the bin ahead of the plugin: the instance is the first LEAF
+                    return next(m["id"] for m in q["plugins"] if not m.get("is_channel_pick"))
             return None
 
         ia, ib = bin_instance(a), bin_instance(b)
@@ -481,7 +518,7 @@ try:
         res3 = fold(a, ia, "right")
         check("the bin's members change together", res3["instances"] == 2, res3)
         rb = layouts(b, ib)
-        check("the other member reads `right`, its halves active", rb["mono_fold"] == "right" and halves(rb)[0] == (True, "right"), (rb["mono_fold"], halves(rb)))
+        check("the other member reads `right`, the pick laid inside its bin", rb["mono_fold"] == "right" and halves(rb) == PICKED_11, (rb["mono_fold"], halves(rb)))
         send("fxlink.attach", {"link": lid, "host": c3})
         send("wait_idle", {"timeout_ms": 30000})
         ic = bin_instance(c3)
