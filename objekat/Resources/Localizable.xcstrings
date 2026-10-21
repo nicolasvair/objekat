@@ -1497,6 +1497,29 @@
         }
       }
     },
+    "cheatsheet.fineAdjust": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fine adjustment — a tenth of the travel (drags, wheel, arrows)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ajuste fino — una décima parte del recorrido (arrastres, rueda, flechas)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "réglage fin — un dixième du déplacement (glissers, molette, flèches)"
+          }
+        }
+      }
+    },
     "cheatsheet.fx.openEditor": {
       "extractionState": "manual",
       "localizations": {
@@ -1842,25 +1865,48 @@
         }
       }
     },
-    "cheatsheet.keys.shiftSpace": {
+    "cheatsheet.keys.optSpace": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧space"
+            "value": "⌥space"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧espacio"
+            "value": "⌥espacio"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧espace"
+            "value": "⌥espace"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.shiftHeld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (held)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (mantenida)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (maintenu)"
           }
         }
       }
@@ -2206,6 +2252,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "piano-roll (midi) : transposer d'une octave"
+          }
+        }
+      }
+    },
+    "cheatsheet.transposeSemitone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano roll (midi): transpose one semitone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano roll (midi): transponer un semitono"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano-roll (midi) : transposer d'un demi-ton"
           }
         }
       }
@@ -4079,19 +4148,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⌘ for fine); the compensation stays. Double-click: both trims back to 0."
+            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⇧ for fine); the compensation stays. Double-click: both trims back to 0."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⌘ para afinar); la compensación se mantiene. Doble clic: ambos trims vuelven a 0."
+            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⇧ para afinar); la compensación se mantiene. Doble clic: ambos trims vuelven a 0."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⌘ pour affiner) ; la compensation reste. Double-clic : les deux trims reviennent à 0."
+            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⇧ pour affiner) ; la compensation reste. Double-clic : les deux trims reviennent à 0."
           }
         }
       }
@@ -7621,19 +7690,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (after the speed change) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "BPM (after the speed change) — drag / ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (après modification de vitesse) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM (après modification de vitesse) — drag / ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }
@@ -18201,19 +18270,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag: move (⌥ copy, ⌘ linked copy to another object)"
+            "value": "Drag: move (⌥ copy)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+            "value": "Arrastrar: mover (⌥ copiar)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+            "value": "Glisser : déplacer (⌥ copie)"
           }
         }
       }
@@ -18799,19 +18868,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click: open the plugin · drag: move (⌥ copy, ⌘ linked copy to another object)"
+            "value": "Double-click: open the plugin · drag: move (⌥ copy)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie)"
           }
         }
       }
@@ -19880,19 +19949,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM of the wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "BPM of the wav — ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM del wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM del wav — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM du wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM du wav — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }
@@ -19903,19 +19972,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy, ⌘ linked copy to another object)."
+            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy)."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar, ⌘ copia vinculada a otro objeto)."
+            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar)."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie, ⌘ copie liée vers un autre objet)."
+            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie)."
           }
         }
       }
@@ -20846,19 +20915,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }

@@ -189,7 +189,7 @@ extension CommandRegistry {
                  into view, down = lower lanes), or `dx`/`dy` give AppKit's raw deltas. \
                  `style: trackpad` = pixel deltas with began/changed/ended phases (+ `momentum` \
                  for the system's inertia); `style: wheel` = `notches` line events, no phase. \
-                 `modifiers: ["shift"]` turns it into the ⇧-scroll zoom. Answers the frame \
+                 `modifiers: ["command"]` turns it into the ⌘-scroll zoom. Answers the frame \
                  report and the view before/after.
                  """,
                  params: Self.scrollParams + Self.runParams) { p in
@@ -227,16 +227,16 @@ extension CommandRegistry {
 
         register("input.zoom",
                  summary: """
-                 Zooms the timeline the way a hand does. `via: shift_scroll` (default) = a ⇧ + \
+                 Zooms the timeline the way a hand does. `via: cmd_scroll` (default) = a ⌘ + \
                  two-finger swipe, the delta computed from the timeline's own law \
                  (×e^(0.01·dx) horizontally, ×e^(0.012·dy) vertically) — its 3-point dead zone \
                  included, so the zoom reached can fall short of `factor` by a hair, and \
-                 `achieved_factor` says by how much. `via: keys` = `t` / `r` presses (⇧ for \
+                 `achieved_factor` says by how much. `via: keys` = `t` / `r` presses (⌥ for \
                  vertical), ×1.5 each, `factor` rounded to a whole number of presses.
                  """,
                  params: [ParamSpec("factor", "number", "> 1 zooms in, < 1 zooms out."),
                           ParamSpec("axis", "string", required: false, "horizontal (default) | vertical"),
-                          ParamSpec("via", "string", required: false, "shift_scroll (default) | keys"),
+                          ParamSpec("via", "string", required: false, "cmd_scroll (default) | keys"),
                           ParamSpec("duration_ms", "number", required: false, "Swipe length (default 300)."),
                           ParamSpec("rate_hz", "number", required: false, "Events per second (default 120)."),
                           ParamSpec("interval_ms", "number", required: false, "Between key presses (default 80).")]
@@ -256,15 +256,15 @@ extension CommandRegistry {
 
             let inputs: [TimedInput]
             var presses = 0
-            switch try p.string("via", or: "shift_scroll") {
-            case "shift_scroll":
+            switch try p.string("via", or: "cmd_scroll") {
+            case "cmd_scroll":
                 // The timeline's own law (@see TimelineKeyHandler, registerScrollMonitor).
                 let delta = log(factor) / (vertical ? 0.012 : 0.01)
                 inputs = GestureShape.trackpadSwipe(
                     dx: vertical ? 0 : delta, dy: vertical ? delta : 0,
                     durationMs: try Self.positive(p, "duration_ms", or: 300),
                     rateHz: try Self.positive(p, "rate_hz", or: 120),
-                    momentum: false, decayPerMs: 0.998, flags: .maskShift)
+                    momentum: false, decayPerMs: 0.998, flags: .maskCommand)
             case "keys":
                 presses = Int((log(factor) / log(1.5)).rounded())
                 guard presses != 0 else {
@@ -272,13 +272,13 @@ extension CommandRegistry {
                 }
                 let key = presses > 0 ? "t" : "r"
                 inputs = Self.keyPresses(code: presses > 0 ? 17 : 15,
-                                         characters: vertical ? key.uppercased() : key,
-                                         flags: vertical ? .maskShift : [],
+                                         characters: key,
+                                         flags: vertical ? .maskAlternate : [],
                                          count: abs(presses),
                                          intervalMs: try Self.positive(p, "interval_ms", or: 80),
                                          holdMs: 30)
             default:
-                throw CommandError(code: .bad_params, message: "'via' is shift_scroll or keys")
+                throw CommandError(code: .bad_params, message: "'via' is cmd_scroll or keys")
             }
             guard case .object(var o) = try await Self.run(inputs, p, hover: true) else {
                 return .null

@@ -302,7 +302,7 @@ objects (as `scenario_navigation.py`).
 Clamp
 1. `view.set block_height=5000` → `block_height == vsnap.max_block_height` and
    `≈ 0.9·available_h` (±0.5).
-2. `input.zoom axis=vertical factor=4` (shift_scroll) from 121.5 → capped at max, `achieved_factor`
+2. `input.zoom axis=vertical factor=4` (cmd_scroll) from 121.5 → capped at max, `achieved_factor`
    < 4. Same with `via: keys` (⇧T ×5).
 3. `marker_lane.create` + visible → `ruler_h` grows, `available_h` shrinks, `block_height` re-clamped
    (≤ 0.9·new available). Hide it again → state consistent.
