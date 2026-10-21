@@ -569,15 +569,11 @@ struct SynopticView: View {
     private func channelsMenu(_ m: ChannelMenuState, plugin id: UUID) -> some View {
         Menu(L("synoptic.menu.channels")) {
             ForEach(m.entries, id: \.variant) { e in
-                Button {
-                    actions.onSetChannelVariant?(id, e.variant)
-                } label: {
-                    if e.isCurrent {
-                        Label(Self.variantTitle(e.variant), systemImage: "checkmark")
-                    } else {
-                        Text(Self.variantTitle(e.variant))
-                    }
-                }
+                // A Toggle, not a Label with a "checkmark" image: macOS menus drop a Label's image, so the
+                // current format was never shown. The toggle's state is the native menu-item tick.
+                Toggle(Self.variantTitle(e.variant), isOn: Binding(
+                    get: { e.isCurrent },
+                    set: { _ in if !e.isCurrent { actions.onSetChannelVariant?(id, e.variant) } }))
                 .disabled(!e.supported || m.blockedByPlayback)
             }
             if m.blockedByPlayback || m.linkedCount > 0 || !m.exact {

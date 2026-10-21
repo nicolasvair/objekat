@@ -4,8 +4,9 @@ import SwiftUI
 /// The preset menu at the right of a plugin editor's title bar — the JUCE window of an AU / VST3
 /// (@see OBJEngineCore `setPluginEditorTitleAccessoryProvider:`) and the NSWindow of a built-in
 /// (@see BuiltInPluginEditorWindowController). Its label is the preset last laid or saved in this
-/// session, with a "•" once a parameter moved since; its items are the type's OBJEKAT presets, the
-/// plugin's own programs (read-only), and what one does with the library. Every action is the view
+/// session, with a "•" once a parameter moved since; its items are the type's OBJEKAT presets and what
+/// one does with the library — kept minimal: neither the plugin's own programs (still reachable through the
+/// command API) nor "set <preset> as default" (the current state as default covers it). Every action is the view
 /// model's (@see EditViewModel+Presets): this view only asks for a name and confirms a deletion.
 struct PluginPresetMenu: View {
     let viewModel: EditViewModel
@@ -57,17 +58,6 @@ struct PluginPresetMenu: View {
                 }
             }
         }
-        let factory = viewModel.factoryPrograms(for: plugin)
-        if !factory.isEmpty {
-            Divider()
-            Menu(L("preset.menu.factory")) {
-                ForEach(Array(factory.enumerated()), id: \.offset) { i, name in
-                    Button {
-                        run { try viewModel.loadFactoryProgram(pluginID: plugin, index: i) }
-                    } label: { Text(verbatim: name) }
-                }
-            }
-        }
         Divider()
         let current = (status?.isFactory == false) ? status?.name : nil
         if let current, presets.contains(where: { $0.name == current }) {
@@ -77,11 +67,6 @@ struct PluginPresetMenu: View {
         }
         Button(L("preset.menu.saveAs")) { saveAs(suggested: status?.name) }
         if let current, presets.contains(where: { $0.name == current }) {
-            if def != current {
-                Button(L("preset.menu.setDefault", current)) {
-                    run { try viewModel.setDefaultPreset(pluginID: plugin, name: current) }
-                }
-            }
             Button(L("preset.menu.delete", current)) { confirmDelete(current) }
         }
         Divider()
