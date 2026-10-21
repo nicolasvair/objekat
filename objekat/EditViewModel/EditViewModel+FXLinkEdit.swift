@@ -112,7 +112,7 @@ extension EditViewModel {
         guard let i = fxLinkIndex(linkID) else { return }
         let members = fxLinkAttachedMembers(linkID)
         guard !members.isEmpty else { return }
-        for k in fxLinks[i].plugins.indices {
+        for k in fxLinks[i].plugins.indices where !fxLinks[i].plugins[k].isChannelPick {
             if let s = fxDefinitionLiveState(fxLinks[i].plugins[k], members: members), !s.isEmpty {
                 fxLinks[i].plugins[k].stateXML = s
             }
@@ -124,7 +124,7 @@ extension EditViewModel {
     private func adoptFXDefinitionStates(_ linkID: UUID, fromHost hostID: UUID, blockID: UUID) {
         guard let i = fxLinkIndex(linkID), let chain = chainPlugins(hostID),
               let block = Self.findBlock(blockID, in: chain) else { return }
-        for inst in block.fxBlock?.plugins ?? [] {
+        for inst in block.fxBlock?.plugins ?? [] where !inst.isChannelPick {
             guard let g = inst.linkGroupID,
                   let k = fxLinks[i].plugins.firstIndex(where: { $0.id == g }),
                   let s = fxLiveState(of: inst), !s.isEmpty else { continue }
@@ -135,6 +135,10 @@ extension EditViewModel {
     private func updateFXLink(_ id: UUID, _ f: (inout FXLink) -> Void) {
         guard let i = fxLinkIndex(id) else { return }
         f(&fxLinks[i])
+        // The choices of cable inside a bin keep the rules of a chain: one per cable, upstream wins.
+        if ChannelPicks.containsPick(in: fxLinks[i].plugins) {
+            fxLinks[i].plugins = ChannelPicks.sanitised(fxLinks[i].plugins)
+        }
         isDirty = true
     }
 
@@ -238,7 +242,7 @@ extension EditViewModel {
         // The state a NEW instance is born with: the bin's, as one of its members plays it now.
         // Read BEFORE the model is touched — nothing is read from the engine inside a mutation.
         var fresh: [UUID: String] = [:]
-        for d in link.plugins {
+        for d in link.plugins where !d.isChannelPick {
             let missing = members.contains { m in
                 !(m.block.fxBlock?.plugins.contains { $0.linkGroupID == d.id } ?? false)
             }
@@ -297,13 +301,34 @@ extension EditViewModel {
         }
         guard let loc else { return nil }
         found.sort { $0.index < $1.index }
-        let firstIndex = found[0].index
 
         if undo { pushUndo() }
+
+        // The choice of a cable that runs BETWEEN two of the plugins (nothing but picks and send markers
+        // between them) goes into the bin with them: it is one of the bin's own cables now. The others stay
+        // where they are, ahead of or behind the block.
+        let series = Self.seriesEntries(loc, in: chain) ?? []
+        var carried: [ObjectPlugin] = []              // the picks of the chain that go into the block
+        var picksBefore: [UUID: ObjectPlugin] = [:]    // plugin id → the pick on the cable that enters it
+        for n in found.indices.dropFirst() {
+            guard let a = series.firstIndex(where: { $0.id == found[n - 1].plugin.id }),
+                  let b = series.firstIndex(where: { $0.id == found[n].plugin.id }), a < b,
+                  series[(a + 1)..<b].allSatisfy({ $0.isChainMarker }),
+                  let pick = series[(a + 1)..<b].first(where: { $0.isChannelPick }) else { continue }
+            picksBefore[found[n].plugin.id] = pick
+            carried.append(pick)
+        }
 
         var definition: [ObjectPlugin] = []
         var instances: [ObjectPlugin] = []
         for (_, leaf) in found {
+            if let pick = picksBefore[leaf.id] {
+                let d = ObjectPlugin.makeChannelPick(mode: pick.channelPick?.mode ?? .sum)
+                definition.append(d)
+                var inst = pick                       // the chain's own pick becomes the instance: same id
+                inst.linkGroupID = d.id
+                instances.append(inst)
+            }
             let state = fxLiveState(of: leaf)
             let d = ObjectPlugin(id: UUID(), name: leaf.name, manufacturer: leaf.manufacturer,
                                  identifier: leaf.identifier, formatName: leaf.formatName,
@@ -320,8 +345,12 @@ extension EditViewModel {
         fxLinks.append(link)
         let block = FXLink.blockEntry(linkID: link.id, name: link.name, instances: instances)
         updateChainPlugins(hostID) { c in
-            let removed = Self.removingPlugins(Set(found.map { $0.plugin.id }), from: c)
-            c = Self.inserting(block, into: loc, at: firstIndex, plugins: removed)
+            // The block takes the place of the first plugin it gathers: the cables around the run (a choice
+            // of channel on the cable that leaves its last plugin, say) stay on their side of it.
+            // The others go FIRST: the block's instances may reuse their ids, and a removal that came after
+            // the block was laid down would reach them inside it.
+            let rest = Self.removingPlugins(Set(found.dropFirst().map { $0.plugin.id } + carried.map(\.id)), from: c)
+            c = Self.replacingPlugin(found[0].plugin.id, with: block, in: rest)
         }
         compileRack(objectID: hostID)
         rewireLinkGroups()
@@ -417,7 +446,7 @@ extension EditViewModel {
         if undo { pushUndo() }
         let members = fxLinkAttachedMembers(linkID)
         var fresh: [UUID: String] = [:]
-        for d in link.plugins {
+        for d in link.plugins where !d.isChannelPick {
             if let s = fxDefinitionLiveState(d, members: members), !s.isEmpty { fresh[d.id] = s }
         }
         let instances = link.instanceSeries(reusing: [], attached: true) { fresh[$0.id] ?? $0.stateXML }
@@ -441,7 +470,7 @@ extension EditViewModel {
         if undo { pushUndo() }
         refreshFXDefinitionStates(fb.linkID)
         let local = link.output
-        for inst in fb.plugins { engine.clearPluginLinkGroup(inst.id.uuidString) }
+        for inst in fb.plugins where !inst.isChannelPick { engine.clearPluginLinkGroup(inst.id.uuidString) }
         updateChainPlugins(hostID) { c in
             c = Self.updatingBlock(blockID, in: c) { b in
                 b.fxBlock?.isDetached = true
@@ -469,7 +498,7 @@ extension EditViewModel {
         if undo { pushUndo() }
         let others = fxLinkAttachedMembers(fb.linkID).filter { $0.block.id != blockID }
         var fresh: [UUID: String] = [:]
-        for d in link.plugins where !fb.plugins.contains(where: { $0.effectiveLinkGroupID == d.id }) {
+        for d in link.plugins where !d.isChannelPick && !fb.plugins.contains(where: { $0.effectiveLinkGroupID == d.id }) {
             if let s = fxDefinitionLiveState(d, members: others), !s.isEmpty { fresh[d.id] = s }
         }
         let keep = Set(link.plugins.map(\.id))
@@ -477,7 +506,7 @@ extension EditViewModel {
             endPluginParamTouchWatch(inst.id)
             invalidatePluginParamInfos(inst.id)
         }
-        let reused = fb.plugins.filter { $0.effectiveLinkGroupID.map(keep.contains) ?? false }
+        let reused = fb.plugins.filter { !$0.isChannelPick && ($0.effectiveLinkGroupID.map(keep.contains) ?? false) }
         let realigned = link.instanceSeries(reusing: fb.plugins, attached: true) { fresh[$0.id] ?? $0.stateXML }
         updateChainPlugins(hostID) { c in
             c = Self.updatingBlock(blockID, in: c) { b in
@@ -520,7 +549,7 @@ extension EditViewModel {
             q.detachedLinkGroupID = nil
             return q
         }
-        for inst in fb.plugins { engine.clearPluginLinkGroup(inst.id.uuidString) }
+        for inst in fb.plugins where !inst.isChannelPick { engine.clearPluginLinkGroup(inst.id.uuidString) }
         updateChainPlugins(hostID) { $0 = Self.replacingBlock(blockID, in: $0, with: inline) }
         compileRack(objectID: hostID)
         isDirty = true
@@ -601,8 +630,14 @@ extension EditViewModel {
         if undo { pushUndo() }
 
         if fb.isDetached && !copy {
-            let instances = fb.plugins.map { inst in
-                ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
+            let instances = fb.plugins.map { inst -> ObjectPlugin in
+                if inst.isChannelPick {
+                    // A choice of cable travels with its block, under an id of its own.
+                    var q = inst.copiedChannelPick()
+                    q.linkGroupID = nil
+                    return q
+                }
+                return ObjectPlugin(id: UUID(), name: inst.name, manufacturer: inst.manufacturer,
                              identifier: inst.identifier, formatName: inst.formatName,
                              isEnabled: inst.isEnabled, stateXML: fxLiveState(of: inst),
                              linkGroupID: nil, detachedLinkGroupID: inst.detachedLinkGroupID,
@@ -671,15 +706,16 @@ extension EditViewModel {
         // from the state those answer with.
         updateChainPlugins(hostID) { c in
             var rest = Self.removingPlugins(wanted, from: c)
-            let at = min(max(0, index ?? Int.max), Self.findBlock(block.id, in: rest)?.fxBlock?.plugins.count ?? 0)
+            let at = min(max(0, index ?? Int.max),
+                         ChannelPicks.visibleCount(Self.findBlock(block.id, in: rest)?.fxBlock?.plugins ?? []))
             for (k, inst) in instances.enumerated() {
                 rest = Self.inserting(inst, into: .block(blockID: block.id), at: at + k, plugins: rest)
             }
             c = rest
         }
         updateFXLink(linkID) { l in
-            let at = min(max(0, index ?? Int.max), l.plugins.count)
-            l.plugins.insert(contentsOf: definition, at: at)
+            let at = min(max(0, index ?? Int.max), ChannelPicks.visibleCount(l.plugins))
+            l.plugins.insert(contentsOf: definition, at: ObjectPlugin.modelIndex(ofVisibleIndex: at, in: l.plugins))
         }
         reconcileFXLinkMembers(linkID)
         return definition.map(\.id)
@@ -773,7 +809,9 @@ extension EditViewModel {
                              colorIndex: template.colorIndex,
                              monoFold: template.monoFold)
         updateFXLink(linkID) { l in
-            l.plugins.insert(d, at: min(max(0, index ?? l.plugins.count), l.plugins.count))
+            // `index` is the view's: the choices of cable inside the bin are not cards.
+            let at = min(max(0, index ?? Int.max), ChannelPicks.visibleCount(l.plugins))
+            l.plugins.insert(d, at: ObjectPlugin.modelIndex(ofVisibleIndex: at, in: l.plugins))
         }
         reconcileFXLinkMembers(linkID)
         // The engine drops the instances it cannot resolve (`compileRack`): a definition plugin
@@ -812,12 +850,14 @@ extension EditViewModel {
     func fxMovePlugin(linkID: UUID, definitionID: UUID, to index: Int, undo: Bool = true) -> Bool {
         guard let link = fxLink(linkID), let from = link.plugins.firstIndex(where: { $0.id == definitionID })
         else { return false }
-        let target = min(max(0, index), link.plugins.count - 1)
-        if target == from { return false }
+        // The view's indices: the choices of cable inside the bin are not cards (they stay on their cables).
+        let fromVisible = ObjectPlugin.visibleIndex(ofModelIndex: from, in: link.plugins)
+        let target = min(max(0, index), ChannelPicks.visibleCount(link.plugins) - 1)
+        if target == fromVisible { return false }
         if undo { pushUndo() }
         updateFXLink(linkID) { l in
             let d = l.plugins.remove(at: from)
-            l.plugins.insert(d, at: target)
+            l.plugins.insert(d, at: ObjectPlugin.modelIndex(ofVisibleIndex: target, in: l.plugins))
         }
         reconcileFXLinkMembers(linkID)
         return true

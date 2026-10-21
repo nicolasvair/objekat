@@ -361,7 +361,7 @@ extension CommandRegistry {
             // `addPlugin` removes the entry if the engine cannot instantiate it: not checking
             // would have a command return "ok" while it laid nothing down.
             // `last(where:)`: a send's marker can sit at the end of the array (an append lands behind it).
-            guard after.count > before.count, let added = after.last(where: { !$0.isSendMarker }) else {
+            guard after.count > before.count, let added = after.last(where: { !$0.isChainMarker }) else {
                 throw CommandError(code: .engine_error,
                                    message: "the engine could not instantiate '\(available.name)'")
             }
@@ -1285,7 +1285,7 @@ extension CommandRegistry {
             let available = AvailablePlugin(name: type, manufacturer: "Tracktion", identifier: type,
                                             formatName: "TracktionInternal")
             vm.addPlugin(objectID: host, available: available)
-            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last(where: { !$0.isSendMarker }) : nil }) else {
+            guard let added = vm.chainPlugins(host).flatMap({ $0.count > before.count ? $0.last(where: { !$0.isChainMarker }) : nil }) else {
                 throw CommandError(code: .engine_error, message: "the engine could not instantiate '\(type)'")
             }
             if type == "latencyTester", let ms = try p.optionalDouble("latency_ms") {

@@ -62,7 +62,8 @@ struct FXLinkOutput: Codable, Equatable {
     }
 }
 
-/// A bin's definition. `plugins` holds LEAF plugins only (no parallel block), in the bin's order;
+/// A bin's definition. `plugins` holds LEAF plugins only (no parallel block), in the bin's order, and the
+/// channel picks of the cables inside the bin (@see ChannelPick: a pick is not a plugin, it has no card);
 /// their ids are the DEFINITION ids, which the members' instances name through `linkGroupID`.
 struct FXLink: Identifiable, Codable, Equatable {
     let id: UUID
@@ -149,7 +150,18 @@ struct FXLink: Identifiable, Codable, Equatable {
                 old.linkGroupID         = attached ? d.id : nil
                 old.detachedLinkGroupID = attached ? nil : d.id
                 if attached { old.isEnabled = d.isEnabled; old.sidechain = d.sidechain }
+                // A channel choice of the bin: the member's instance follows the definition's choice while
+                // attached (a detached block keeps its own), and keeps its id (the engine's key).
+                if attached, d.isChannelPick { old.channelPick = d.channelPick }
                 return old
+            }
+            if d.isChannelPick {
+                // A new instance of a channel choice: an id of its own, named to the definition like any
+                // instance (the pick holds no parameter: the choice IS the mode).
+                var q = d.copiedChannelPick()
+                q.linkGroupID         = attached ? d.id : nil
+                q.detachedLinkGroupID = attached ? nil : d.id
+                return q
             }
             return ObjectPlugin(id: UUID(), name: d.name, manufacturer: d.manufacturer,
                                 identifier: d.identifier, formatName: d.formatName,

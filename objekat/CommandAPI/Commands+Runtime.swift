@@ -183,11 +183,11 @@ extension CommandRegistry {
                 noteCount += item.midiNotes.count
                 if item.isConsolidateInstance { instanceCount += 1 }
                 for plugin in item.plugins + item.instruments {
-                    if plugin.isSendMarker { continue }       // the place of a send, not a plugin
+                    if plugin.isChainMarker { continue }       // the place of a send, not a plugin
                     if plugin.isRack { rackCount += 1 } else { pluginCount += 1 }
                 }
             }
-            for stem in vm.stems { pluginCount += stem.plugins.filter { !$0.isSendMarker }.count }
+            for stem in vm.stems { pluginCount += stem.plugins.filter { !$0.isChainMarker }.count }
 
             return .object([
                 "objects": .object(byKind.mapValues { .int($0) }),

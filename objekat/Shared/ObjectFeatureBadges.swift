@@ -94,7 +94,7 @@ enum ObjectFeatureBadges {
         /// `inBin`: below an FX link bin's block.
         func walk(_ chain: [ObjectPlugin], trunk: Bool, inBin: Bool) {
             for p in chain {
-                if p.isSendMarker { continue }                  // the place of a send, not a plugin
+                if p.isChainMarker { continue }                  // the place of a send, not a plugin
                 if let rack = p.rack {
                     for voice in rack.voices { walk(voice, trunk: trunk, inBin: inBin) }
                     continue
@@ -149,7 +149,7 @@ enum ObjectFeatureBadges {
         var out = Set<UUID>()
         func leaves(_ chain: [ObjectPlugin]) {
             for p in chain {
-                if p.isSendMarker { continue }
+                if p.isChainMarker { continue }
                 if let rack = p.rack { for voice in rack.voices { leaves(voice) }; continue }
                 if let block = p.fxBlock { leaves(block.plugins); continue }
                 if let key = p.sidechain { out.insert(key.sourceID) }

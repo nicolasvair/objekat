@@ -26,7 +26,7 @@ extension CommandRegistry {
                     "gain_db": .number(Double(stem.gainDb ?? 0)),
                     "muted": .bool(stem.muted),
                     "route_to_main": .bool(stem.routeToMain),
-                    "plugin_count": .int(stem.plugins.count),
+                    "plugin_count": .int(stem.plugins.filter { !$0.isChannelPick }.count),
                 ])
             }
             return .object(["stems": .array(stems), "main": .string(mainID.uuidString)])

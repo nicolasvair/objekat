@@ -50,7 +50,7 @@ enum SynopticMapping {
         locations[seriesID] = location
         // A send's marker is not a card of the chain (step 2.9 draws the sends as cards of their own).
         let children: [SynopticNode] = plugins.compactMap { p in
-            if p.isSendMarker { return nil }
+            if p.isChainMarker { return nil }
             if let rack = p.rack {
                 let gains = EditViewModel.paddedWetDb(rack.wetDb, count: rack.voices.count)
                 let mutes = EditViewModel.paddedMutes(rack.voiceMutes, count: rack.voices.count)
@@ -234,8 +234,11 @@ extension EditViewModel {
         if run.count == 1 { return branchingEmpty(plugins, elementID: run[0]) }
         guard let series = seriesEntries(location, in: plugins) else { return nil }
         let idx = run.compactMap { id in series.firstIndex { $0.id == id } }
-        guard idx.count == run.count, let lo = idx.min(), let hi = idx.max(), hi - lo + 1 == run.count,
-              idx == Array(lo...hi) else { return nil }
+        // A cable pick between two cards of the run is not a card: it goes into the branch with them (the
+        // run is consecutive CARDS), while the pick ahead of the run stays on the cable that feeds the block.
+        guard idx.count == run.count, let lo = idx.min(), let hi = idx.max(),
+              series[lo...hi].filter({ !$0.isChannelPick }).map(\.id) == idx.sorted().map({ series[$0].id }),
+              idx == idx.sorted() else { return nil }
         return mappingSeries(location, in: plugins) { s in
             var a = s
             let carrier = rackCarrier(voices: [Array(s[lo...hi]), []])
@@ -247,7 +250,8 @@ extension EditViewModel {
     /// A series' entries as the run reads them: a send's marker is a barrier; a container is selected when
     /// its id is, or when every leaf it holds is.
     static func branchRunElements(_ series: [ObjectPlugin], selection: Set<UUID>) -> [SynopticBranchRun.Element] {
-        series.map { p in
+        // A cable pick is not an element: it is invisible to the run (it follows the cards it sits between).
+        series.filter { !$0.isChannelPick }.map { p in
             let leaves = p.isContainer && !p.isSendMarker ? flattenLeaves([p]) : []
             let selected = selection.contains(p.id)
                 || (!leaves.isEmpty && leaves.allSatisfy { selection.contains($0.id) })
@@ -381,13 +385,13 @@ extension EditViewModel {
     }
 
     /// Locates a plugin in the tree: (the containing series, the index within that series).
-    /// The index is the one the VIEW uses: at the root, send markers do not count (`ObjectPlugin.visibleIndex`),
+    /// The index is the one the VIEW uses: send markers and cable picks do not count (`ObjectPlugin.visibleIndex`),
     /// so that `locate` and `inserting` agree with the cards the signal view draws.
     static func locate(_ pluginID: UUID, in plugins: [ObjectPlugin],
                        location: SeriesLocation = .root) -> (SeriesLocation, Int)? {
         for (i, p) in plugins.enumerated() {
             if p.id == pluginID {
-                return (location, location == .root ? ObjectPlugin.visibleIndex(ofModelIndex: i, in: plugins) : i)
+                return (location, ObjectPlugin.visibleIndex(ofModelIndex: i, in: plugins))
             }
             if let rack = p.rack {
                 for (vi, voice) in rack.voices.enumerated() {
@@ -471,7 +475,7 @@ extension EditViewModel {
         }
     }
 
-    /// `index` is the view's at the root (send markers do not count), the series' own elsewhere.
+    /// `index` is the view's (send markers and cable picks do not count), in any series.
     static func inserting(_ newPlug: ObjectPlugin, into location: SeriesLocation,
                           at index: Int, plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         switch location {
@@ -484,7 +488,7 @@ extension EditViewModel {
             return plugins.map { p in
                 if p.id == blockID, var rack = p.rack, vi < rack.voices.count {
                     var voice = rack.voices[vi]
-                    voice.insert(newPlug, at: min(max(0, index), voice.count))
+                    voice.insert(newPlug, at: ObjectPlugin.modelIndex(ofVisibleIndex: index, in: voice))
                     rack.voices[vi] = voice
                     var np = p; np.rack = rack; return np
                 }
@@ -496,7 +500,7 @@ extension EditViewModel {
         case .block(let blockID):
             return plugins.map { p in
                 if p.id == blockID, var block = p.fxBlock {
-                    block.plugins.insert(newPlug, at: min(max(0, index), block.plugins.count))
+                    block.plugins.insert(newPlug, at: ObjectPlugin.modelIndex(ofVisibleIndex: index, in: block.plugins))
                     var np = p; np.fxBlock = block; return np
                 }
                 if p.isContainer {

@@ -47,8 +47,9 @@ enum ChainAudibility {
 
     /// Does this single entry of a series cut the sound?
     private static func entryCuts(_ p: ObjectPlugin, offBins: Set<UUID>) -> Bool {
-        // A send's marker is the PLACE a send taps the trunk: the sound goes through it.
-        if p.isSendMarker { return false }
+        // A send's marker is the PLACE a send taps the trunk and a pick is a channel choice on a cable:
+        // the sound goes through both (a pick never mutes, whatever it keeps of the pair).
+        if p.isChainMarker { return false }
 
         // A parallel block: cut only if every branch is — an unmuted branch holding no cut series lets
         // the sound reach the sum. A block with no branch is not a cut.

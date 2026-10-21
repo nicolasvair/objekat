@@ -86,6 +86,14 @@ extension EditViewModel {
                                       colorIndex: reg?.colorIndex,
                                       plugins: fb.plugins.compactMap { inst in
                                           guard let g = inst.linkGroupID else { return nil }
+                                          // A channel choice of the block is a choice of the definition too.
+                                          if inst.isChannelPick {
+                                              var d = inst
+                                              d.id = freshFXDef(g)
+                                              d.linkGroupID = nil
+                                              d.detachedLinkGroupID = nil
+                                              return d
+                                          }
                                           return ObjectPlugin(id: freshFXDef(g), name: inst.name,
                                                               manufacturer: inst.manufacturer,
                                                               identifier: inst.identifier,
@@ -127,6 +135,8 @@ extension EditViewModel {
                     // A fresh id; an aux internal to the sub-tree follows it to its copy (as the send does).
                     return ObjectPlugin.makeSendMarker(for: idMap[m.auxID] ?? m.auxID)
                 }
+                // A channel choice on a cable: the copy gets one of its own (the id is the engine's key).
+                if p.isChannelPick { return p.copiedChannelPick() }
                 if let fb = p.fxBlock { return freshBlock(p, fb) }
                 if let rack = p.rack {
                     return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,

@@ -203,7 +203,8 @@ extension EditViewModel {
                    let adopted = Self.adoptingPluginStates(liveStem.plugins, stem.plugins) {
                     var probe = liveStem
                     probe.plugins = adopted
-                    if probe == stem, Self.monoFolds(liveStem.plugins) == Self.monoFolds(stem.plugins) {
+                    if probe == stem, Self.monoFolds(liveStem.plugins) == Self.monoFolds(stem.plugins),
+                       ChannelPicks.places(in: liveStem.plugins) == ChannelPicks.places(in: stem.plugins) {
                         for change in Self.changedPluginStates(liveStem.plugins, stem.plugins) {
                             engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
                                                         forObjectID: stem.id.uuidString)
@@ -360,14 +361,16 @@ extension EditViewModel {
     /// doing, at the end of the load, exactly the call we now make on its own.
     static func adoptingPluginStates(_ old: [ObjectPlugin],
                                      _ new: [ObjectPlugin]) -> [ObjectPlugin]? {
-        // A send marker is the PLACE of a send on the trunk (INC 2), not a plugin: it holds no state
-        // and two chains that differ only by their markers are the same chain. The answer keeps the
-        // plugins of `old` wearing `new`'s states, and takes `new`'s markers where `new` has them.
-        let realOld = old.filter { !$0.isSendMarker }
-        let realNew = new.filter { !$0.isSendMarker }
+        // A send marker is the PLACE of a send on the trunk (INC 2) and a channel pick the choice written on
+        // a cable (format 31): neither is a plugin, neither holds a state, and two chains that differ only by
+        // their markers or their picks are the same chain. The answer keeps the plugins of `old` wearing
+        // `new`'s states, and takes `new`'s markers and picks where `new` has them (the caller compiles
+        // again when their places moved, @see ChannelPicks.places and sendMarkerPlaces).
+        let realOld = old.filter { !$0.isChainMarker }
+        let realNew = new.filter { !$0.isChainMarker }
         guard let adopted = adoptingRealPluginStates(realOld, realNew) else { return nil }
         var next = adopted.makeIterator()
-        return new.map { $0.isSendMarker ? $0 : next.next()! }
+        return new.map { $0.isChainMarker ? $0 : next.next()! }
     }
 
     private static func adoptingRealPluginStates(_ old: [ObjectPlugin],
@@ -436,9 +439,9 @@ extension EditViewModel {
     static func changedPluginStates(_ old: [ObjectPlugin], _ new: [ObjectPlugin]) -> [(id: UUID, xml: String)] {
         var out: [(id: UUID, xml: String)] = []
         func walk(_ a: [ObjectPlugin], _ b: [ObjectPlugin]) {
-            // The markers are not plugins: pair the real entries only (two chains differing by their
-            // markers are patchable, and a position pairing would read a marker against a plugin).
-            for (x, y) in zip(a.filter { !$0.isSendMarker }, b.filter { !$0.isSendMarker }) {
+            // The markers and the picks are not plugins: pair the real entries only (two chains differing by
+            // their markers are patchable, and a position pairing would read a marker against a plugin).
+            for (x, y) in zip(a.filter { !$0.isChainMarker }, b.filter { !$0.isChainMarker }) {
                 if x.isContainer, y.isContainer {
                     for (va, vb) in zip(x.childSeries, y.childSeries) { walk(va, vb) }
                 } else if x.stateXML != y.stateXML, let xml = y.stateXML, !xml.isEmpty {
@@ -497,7 +500,10 @@ extension EditViewModel {
         // where to lay each send, so the chain is compiled again — the plugins are KEPT (the compile
         // finds every one in the engine's map), only the list order changes. The `tap` positions and
         // the send plugins themselves come with the bridge sync that closes `applySnapshot`.
-        if let live, Self.monoFolds(of: live) != Self.monoFolds(of: object) {
+        // The choices of cable (a pick is a chain entry the engine lays or erases, never reloaded) that
+        // moved, were born or went (@see ChannelPicks.places) are compiled again the same way.
+        if let live, Self.monoFolds(of: live) != Self.monoFolds(of: object)
+            || ChannelPicks.places(in: live.plugins) != ChannelPicks.places(in: object.plugins) {
             compileRack(objectID: object.id)
         } else if let live, ObjectPlugin.sendMarkerPlaces(in: live.plugins) != ObjectPlugin.sendMarkerPlaces(in: object.plugins) {
             recompileForSendMarker(object.id)

@@ -695,7 +695,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// A send that CARRIES plugins does (INC 3): the compile owns the content of every mini-chain,
     /// and an object whose only plugins sit on a send would otherwise never instantiate them.
     var needsChainCompile: Bool {
-        plugins.contains(where: { !$0.isSendMarker })
+        plugins.contains(where: { !$0.isChainMarker })
             || (!isAux && sends.contains { !$0.plugins.isEmpty })
     }
 

@@ -266,7 +266,7 @@ extension CommandAdapters {
             guard name == "root" else {
                 throw CommandError(code: .bad_params, message: "series: \"root\", {\"block\": id} or {\"voice\": id, \"index\": n}")
             }
-            location = .root; count = chain.count
+            location = .root; count = chain.filter { !$0.isChannelPick }.count   // a cable pick is no card
         } else if case .object(let o) = raw, let b = o["block"]?.stringValue {
             guard let id = UUID(uuidString: b) else {
                 throw CommandError(code: .bad_params, message: "series.block: invalid UUID")
@@ -274,7 +274,7 @@ extension CommandAdapters {
             guard let block = EditViewModel.findBlock(id, in: chain), let fb = block.fxBlock else {
                 throw CommandError(code: .not_found, message: "unknown block: \(id.uuidString)")
             }
-            location = .block(blockID: id); count = fb.plugins.count
+            location = .block(blockID: id); count = fb.plugins.filter { !$0.isChannelPick }.count
         } else if case .object(let o) = raw, let v = o["voice"]?.stringValue {
             guard let id = UUID(uuidString: v) else {
                 throw CommandError(code: .bad_params, message: "series.voice: invalid UUID")
@@ -286,7 +286,7 @@ extension CommandAdapters {
                   rack.voices.indices.contains(index) else {
                 throw CommandError(code: .not_found, message: "unknown branch \(index) of block \(id.uuidString)")
             }
-            location = .voice(blockID: id, voiceIndex: index); count = rack.voices[index].count
+            location = .voice(blockID: id, voiceIndex: index); count = rack.voices[index].filter { !$0.isChannelPick }.count
         } else {
             throw CommandError(code: .bad_params, message: "series: \"root\", {\"block\": id} or {\"voice\": id, \"index\": n}")
         }
@@ -367,6 +367,13 @@ extension CommandAdapters {
             payload["is_send_marker"] = .bool(true)
             payload["send_marker"] = .object(["aux": .string(marker.auxID.uuidString)])
         }
+        // A channel pick is not a plugin either: it says which channel of the cable it stands on goes on.
+        if let pick = plugin.channelPick {
+            payload["is_channel_pick"] = .bool(true)
+            // In a bin: the definition's pick this instance follows (null elsewhere).
+            payload["channel_pick"] = .object(["mode": .string(pick.mode.rawValue),
+                                               "definition": .stringOrNull((plugin.effectiveLinkGroupID)?.uuidString)])
+        }
         // An FX link's block is not a plugin either: its instances are listed under `plugins`, and
         // `plugin.set_param` & co. address THEM (they are ordinary instances, mirrors of the bin).
         if let block = plugin.fxBlock {
@@ -375,7 +382,7 @@ extension CommandAdapters {
             payload["detached"] = .bool(block.isDetached)
             payload["plugins"] = .array(block.plugins.map { pluginPayload($0, bridgeStatus: bridgeStatus) })
         }
-        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil, plugin.sendMarker == nil {
+        if let bridgeStatus, !plugin.isRack, plugin.fxBlock == nil, plugin.sendMarker == nil, plugin.channelPick == nil {
             if let key = plugin.sidechain {
                 let why = bridgeStatus[plugin.id]
                 payload["sidechain"] = .object(["source": .string(key.sourceID.uuidString),

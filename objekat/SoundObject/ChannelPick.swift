@@ -236,7 +236,7 @@ enum ChannelPicks {
         for p in series {
             if p.isChainMarker { gap.append(p); continue }
             flush()
-            out.append(p.mappingChildSeries(sanitised))
+            out.append(p.mappingChildSeries { sanitised($0) })
         }
         flush()
         return out
@@ -247,19 +247,19 @@ enum ChannelPicks {
     static func removingPicks(from plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.compactMap { p in
             if p.isChannelPick { return nil }
-            return p.mappingChildSeries(removingPicks)
+            return p.mappingChildSeries { removingPicks(from: $0) }
         }
     }
 
     /// True if any entry, at any depth, is a pick.
     static func containsPick(in plugins: [ObjectPlugin]) -> Bool {
-        plugins.contains { $0.isChannelPick || $0.childSeries.contains(where: containsPick) }
+        plugins.contains { $0.isChannelPick || $0.childSeries.contains { containsPick(in: $0) } }
     }
 
     /// Every pick at any depth, in walk order.
     static func allPicks(in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.flatMap { p -> [ObjectPlugin] in
-            p.isChannelPick ? [p] : p.childSeries.flatMap(allPicks)
+            p.isChannelPick ? [p] : p.childSeries.flatMap { allPicks(in: $0) }
         }
     }
 
@@ -267,7 +267,7 @@ enum ChannelPicks {
     /// batch, where the ids of the original must not survive (the id is the engine's key).
     static func freshenedPicks(in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { p in
-            p.isChannelPick ? p.copiedChannelPick() : p.mappingChildSeries(freshenedPicks)
+            p.isChannelPick ? p.copiedChannelPick() : p.mappingChildSeries { freshenedPicks(in: $0) }
         }
     }
 
@@ -333,5 +333,17 @@ extension SoundObject {
             o.plugins.remove(at: k)
         }
         return o
+    }
+
+    /// `sanitisingChannelPicks` for the load and the imports, which have no engine to ask: whether the
+    /// head belongs to the file is read from the file's channel count, and only when the chain really
+    /// holds a pick at its head (the rare case; the disk is never read otherwise).
+    func sanitisingChannelPicksReadingFile() -> SoundObject {
+        var stereoHead = false
+        if case .clip(let path, _, _, _, _) = kind, !isConsolidateInstance,
+           ChannelPicks.pickIndex(atVisible: 0, in: plugins) != nil {
+            stereoHead = ClipChannels.isStereo(atPath: path)
+        }
+        return sanitisingChannelPicks(headIsFileLevel: stereoHead)
     }
 }

@@ -60,7 +60,7 @@ extension ObjectPlugin {
         for p in plugins {
             if let m = p.sendMarker {
                 if m.auxID == auxID { return entries }
-            } else {
+            } else if !p.isChannelPick {
                 entries += 1
             }
         }
@@ -73,7 +73,7 @@ extension ObjectPlugin {
         var out: [UUID: Int] = [:]
         var entries = 0
         for p in plugins {
-            if let m = p.sendMarker { out[m.auxID] = entries } else { entries += 1 }
+            if let m = p.sendMarker { out[m.auxID] = entries } else if !p.isChannelPick { entries += 1 }
         }
         return out
     }
@@ -84,7 +84,7 @@ extension ObjectPlugin {
     static func modelIndex(ofVisibleIndex visible: Int, in plugins: [ObjectPlugin]) -> Int {
         let wanted = max(0, visible)
         var seen = 0
-        for (k, p) in plugins.enumerated() where !p.isSendMarker {
+        for (k, p) in plugins.enumerated() where !p.isChainMarker {
             if seen == wanted { return k }
             seen += 1
         }
@@ -93,14 +93,14 @@ extension ObjectPlugin {
 
     /// The view's index of the entry at model index `model`: how many non-markers precede it.
     static func visibleIndex(ofModelIndex model: Int, in plugins: [ObjectPlugin]) -> Int {
-        plugins.prefix(max(0, model)).reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }
+        plugins.prefix(max(0, model)).reduce(0) { $0 + ($1.isChainMarker ? 0 : 1) }
     }
 
     /// The `chain(i)` index that puts a marker immediately BEFORE the top-level plugin `id` (markers do
     /// not count); nil if `id` is not a top-level non-marker entry.
     static func chainIndex(ofTopLevelPlugin id: UUID, in plugins: [ObjectPlugin]) -> Int? {
         var entries = 0
-        for p in plugins where !p.isSendMarker {
+        for p in plugins where !p.isChainMarker {
             if p.id == id { return entries }
             entries += 1
         }
@@ -112,14 +112,14 @@ extension ObjectPlugin {
     static func neighbours(ofMarkerFor auxID: UUID,
                            in plugins: [ObjectPlugin]) -> (after: UUID?, before: UUID?)? {
         guard let k = plugins.firstIndex(where: { $0.sendMarker?.auxID == auxID }) else { return nil }
-        let prev = plugins[..<k].last(where: { !$0.isSendMarker })?.id
-        let next = plugins[(k + 1)...].first(where: { !$0.isSendMarker })?.id
+        let prev = plugins[..<k].last(where: { !$0.isChainMarker })?.id
+        let next = plugins[(k + 1)...].first(where: { !$0.isChainMarker })?.id
         return (prev, next)
     }
 
     /// How many top-level entries are not markers: the largest valid `chain(i)`.
     static func chainEntryCount(_ plugins: [ObjectPlugin]) -> Int {
-        plugins.reduce(0) { $0 + ($1.isSendMarker ? 0 : 1) }
+        plugins.reduce(0) { $0 + ($1.isChainMarker ? 0 : 1) }
     }
 
     /// `plugins` without the markers `drop` selects, at any depth (a marker belongs at the top level,
@@ -181,7 +181,7 @@ extension SoundObject {
             let i = min(max(0, wanted), ObjectPlugin.chainEntryCount(o.plugins))
             var seen = 0
             var at = o.plugins.count
-            for (k, p) in o.plugins.enumerated() where !p.isSendMarker {
+            for (k, p) in o.plugins.enumerated() where !p.isChainMarker {
                 if seen == i { at = k; break }
                 seen += 1
             }

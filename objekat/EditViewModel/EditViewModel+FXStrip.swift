@@ -21,7 +21,7 @@ extension EditViewModel {
         func series(_ plugins: [ObjectPlugin], bin: Int?, rack: Int?, branch: Int?) -> [FXStripNode] {
             var out: [FXStripNode] = []
             for p in plugins {
-                if p.isSendMarker { continue }
+                if p.isChainMarker { continue }
                 if let block = p.fxBlock {
                     let index = m.bins.count
                     m.bins.append(FXStripBin(id: p.id, name: fxLink(block.linkID)?.name ?? p.name,

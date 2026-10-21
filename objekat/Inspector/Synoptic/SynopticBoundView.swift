@@ -205,7 +205,7 @@ struct SynopticBoundView: View {
                 return EditViewModel.locate(cardID, in: model).map { .series($0.0, index: $0.1) }
             case .blockEnd(let blockID):
                 return EditViewModel.findBlock(blockID, in: model)?.fxBlock
-                    .map { .series(.block(blockID: blockID), index: $0.plugins.count) }
+                    .map { .series(.block(blockID: blockID), index: $0.plugins.filter { !$0.isChannelPick }.count) }
             }
         }
 
@@ -225,7 +225,7 @@ struct SynopticBoundView: View {
         }
         // The trunk's top-level entries as the view counts them (a send's marker is not one): its head '+'
         // is the input slot and its tail '+' the pre-fader one (@see SendDrop.decide(_:trunkCount:)).
-        let trunkCount = model.filter { !$0.isSendMarker }.count
+        let trunkCount = model.filter { !$0.isChainMarker }.count
         let sendOutcome: (SynopticSendTarget) -> PluginDropOutcome? = { t in
             guard let payload = SendDragSession.shared.current else { return nil }
             if payload.sendSender != objectID { return .sendRefused(.refusedElsewhere) }

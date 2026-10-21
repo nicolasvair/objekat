@@ -18,7 +18,9 @@ enum SendMarkerAudit {
         /// Where, readable: `plugins[2]`, `plugins[1].rack.voices[0][3]`, `instruments[0]`.
         let path: String
         /// The rule: `orphan`, `duplicate`, `nested`, `on_aux`, `on_stem`, `in_instruments`, `phantom`,
-        /// `in_send_plugins`, `send_chain_not_leaf`, `send_plugin_linked`.
+        /// `in_send_plugins`, `send_chain_not_leaf`, `send_plugin_linked`, and for a channel pick
+        /// (@see ChannelPick): `pick_in_send_chain`, `pick_in_instruments`, `pick_order` (two picks on
+        /// one cable, or a pick standing after a send marker of its gap).
         let rule: String
     }
 
@@ -29,9 +31,19 @@ enum SendMarkerAudit {
         /// Walks one series: `path` names it, `top` is true for the host's own `plugins` array.
         func walk(_ series: [ObjectPlugin], host: UUID, path: String, top: Bool,
                   onAux: Bool, onStem: Bool, known: Set<UUID>, seen: inout Set<UUID>) {
+            // The gap since the last card: how many picks it holds and whether a send marker stands in it.
+            var picksInGap = 0
+            var markerInGap = false
             for (i, p) in series.enumerated() {
                 let here = "\(path)[\(i)]"
+                if p.isChannelPick {
+                    // A pick is neither a plugin nor a phantom: it must be alone on its cable, ahead of the markers.
+                    if picksInGap > 0 || markerInGap { out.append(Violation(host: host, path: here, rule: "pick_order")) }
+                    picksInGap += 1
+                    continue
+                }
                 if let m = p.sendMarker {
+                    markerInGap = true
                     if onStem { out.append(Violation(host: host, path: here, rule: "on_stem")) }
                     else if onAux { out.append(Violation(host: host, path: here, rule: "on_aux")) }
                     else if !top { out.append(Violation(host: host, path: here, rule: "nested")) }
@@ -39,6 +51,8 @@ enum SendMarkerAudit {
                     else if !seen.insert(m.auxID).inserted { out.append(Violation(host: host, path: here, rule: "duplicate")) }
                     continue
                 }
+                picksInGap = 0
+                markerInGap = false
                 if let rack = p.rack {
                     for (v, voice) in rack.voices.enumerated() {
                         walk(voice, host: host, path: "\(here).rack.voices[\(v)]", top: false,
@@ -61,6 +75,7 @@ enum SendMarkerAudit {
                      known: known, seen: &seen)
                 for (i, inst) in o.instruments.enumerated() {
                     if inst.sendMarker != nil { out.append(Violation(host: o.id, path: "instruments[\(i)]", rule: "in_instruments")) }
+                    else if ChannelPicks.containsPick(in: [inst]) { out.append(Violation(host: o.id, path: "instruments[\(i)]", rule: "pick_in_instruments")) }
                     else if inst.identifier.isEmpty && inst.formatName.isEmpty && !inst.isContainer {
                         out.append(Violation(host: o.id, path: "instruments[\(i)]", rule: "phantom"))
                     }
@@ -71,6 +86,7 @@ enum SendMarkerAudit {
                     for (k, p) in send.plugins.enumerated() {
                         let here = "sends[\(j)].plugins[\(k)]"
                         if p.sendMarker != nil { out.append(Violation(host: o.id, path: here, rule: "in_send_plugins")) }
+                        else if ChannelPicks.containsPick(in: [p]) { out.append(Violation(host: o.id, path: here, rule: "pick_in_send_chain")) }
                         else if p.isContainer { out.append(Violation(host: o.id, path: here, rule: "send_chain_not_leaf")) }
                         else if p.identifier.isEmpty && p.formatName.isEmpty {
                             out.append(Violation(host: o.id, path: here, rule: "phantom"))

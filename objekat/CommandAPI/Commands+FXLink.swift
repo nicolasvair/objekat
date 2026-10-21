@@ -39,7 +39,9 @@ extension CommandRegistry {
                          "manufacturer": .string(d.manufacturer),
                          "identifier": .string(d.identifier),
                          "format": .string(d.formatName),
-                         "enabled": .bool(d.isEnabled)])
+                         "enabled": .bool(d.isEnabled),
+                         // A choice of cable inside the bin (not a plugin): its mode, null for a plugin.
+                         "channel_pick": .stringOrNull(d.channelPick?.mode.rawValue)])
             }),
             "members": .array(members.map { m in
                 let fb = m.block.fxBlock
@@ -52,7 +54,8 @@ extension CommandRegistry {
                         .object(["id": .string(inst.id.uuidString),
                                  "definition": (inst.effectiveLinkGroupID.map { .string($0.uuidString) }) ?? .null,
                                  "name": .string(inst.name),
-                                 "enabled": .bool(inst.isEnabled)])
+                                 "enabled": .bool(inst.isEnabled),
+                                 "channel_pick": .stringOrNull(inst.channelPick?.mode.rawValue)])
                     }),
                 ]
                 if fb?.isDetached == true, let l = fb?.local {

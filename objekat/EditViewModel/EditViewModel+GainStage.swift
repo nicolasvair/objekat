@@ -208,16 +208,16 @@ extension EditViewModel {
 
     // MARK: Tree helpers
 
-    /// The number of entries a series shows (the view's count: markers do not count at the root).
+    /// The number of entries a series shows (the view's count: markers and picks do not count).
     static func seriesLength(_ series: SeriesLocation, in plugins: [ObjectPlugin]) -> Int {
         switch series {
         case .root:
-            return plugins.filter { !$0.isSendMarker }.count
+            return plugins.filter { !$0.isChainMarker }.count
         case .voice(let blockID, let vi):
             guard let b = findEntry(blockID, in: plugins), let rack = b.rack, vi < rack.voices.count else { return 0 }
-            return rack.voices[vi].count
+            return rack.voices[vi].filter { !$0.isChannelPick }.count
         case .block(let blockID):
-            return findBlock(blockID, in: plugins)?.fxBlock?.plugins.count ?? 0
+            return (findBlock(blockID, in: plugins)?.fxBlock?.plugins ?? []).filter { !$0.isChannelPick }.count
         }
     }
 

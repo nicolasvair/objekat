@@ -163,6 +163,14 @@ enum CrossProjectImport {
             func cloneBlock(_ p: ObjectPlugin, _ fb: FXLinkBlock) -> [ObjectPlugin] {
                 guard let old = clipboard.fxLinks[fb.linkID] else {
                     return fb.plugins.map { inst in
+                        // A channel choice inside the bin stays a choice, under an id of its own.
+                        if inst.isChannelPick {
+                            var pick = inst.copiedChannelPick()
+                            pick.linkGroupID = nil
+                            pick.detachedLinkGroupID = nil
+                            pluginIDMap[inst.id] = pick.id
+                            return pick
+                        }
                         let newID = UUID()
                         pluginIDMap[inst.id] = newID
                         return ObjectPlugin(id: newID, name: inst.name, manufacturer: inst.manufacturer,
@@ -224,6 +232,8 @@ enum CrossProjectImport {
                         guard let newAux = objectIDMap[m.auxID] else { return [] }
                         return [ObjectPlugin.makeSendMarker(for: newAux)]
                     }
+                    // A channel choice on a cable travels with the chain it stands in, under an id of its own.
+                    if p.isChannelPick { return [p.copiedChannelPick()] }
                     if let fb = p.fxBlock { return cloneBlock(p, fb) }
                     if let rack = p.rack {
                         let newID = UUID()
@@ -330,7 +340,9 @@ enum CrossProjectImport {
             default:
                 break
             }
-            return no
+            // One pick per cable, none on an instrument or a send's chain (pure: the file is not read
+            // here, the clipboard's chains were consistent where they were copied).
+            return no.sanitisingChannelPicks()
         }
 
         let dt = target.pasteTime - clipboard.originTime

@@ -607,6 +607,11 @@ extension EditViewModel {
             return ma.auxID == (map[mb.auxID] ?? mb.auxID)
         }
         if b.sendMarker != nil { return false }
+        if let pa = a.channelPick {
+            guard let pb = b.channelPick else { return false }
+            return pa.mode == pb.mode && a.linkGroupID == b.linkGroupID
+        }
+        if b.channelPick != nil { return false }
         if let fa = a.fxBlock {
             guard let fb = b.fxBlock, fa.linkID == fb.linkID, fa.isDetached == fb.isDetached,
                   fa.local == fb.local, a.isEnabled == b.isEnabled else { return false }

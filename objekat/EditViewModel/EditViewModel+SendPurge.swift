@@ -77,8 +77,9 @@ extension EditViewModel {
     }
 
     /// `items` with every object's sends and markers made consistent (@see SoundObject.sanitisingSends),
-    /// at any depth; `stems` with their markers stripped (a stem and the Main never send). Pure.
-    /// `changed` counts the objects and stems that were repaired.
+    /// at any depth, and their channel picks too (@see SoundObject.sanitisingChannelPicksReadingFile);
+    /// `stems` with their markers stripped (a stem and the Main never send) and their picks sanitised
+    /// (a stem's chain is a host like another). Pure. `changed` counts the objects and stems that were repaired.
     static func sanitisingSendMarkers(_ items: [SoundObject], stems: [Stem] = [])
         -> (items: [SoundObject], stems: [Stem], changed: Int) {
         var changed = 0
@@ -88,17 +89,17 @@ extension EditViewModel {
                 if case .group(let children, let expanded) = o.kind {
                     o.kind = .group(children: walk(children), isExpanded: expanded)
                 }
-                let clean = o.sanitisingSends()
+                let clean = o.sanitisingSends().sanitisingChannelPicksReadingFile()
                 if clean != o { changed += 1 }
                 return clean
             }
         }
         let outItems = walk(items)
         let outStems: [Stem] = stems.map { st in
-            guard ObjectPlugin.containsSendMarker(in: st.plugins, where: { _ in true }) else { return st }
             var st = st
-            st.plugins = ObjectPlugin.strippingSendMarkers(st.plugins)
-            changed += 1
+            let before = st.plugins
+            st.plugins = ChannelPicks.sanitised(ObjectPlugin.strippingSendMarkers(before))
+            if st.plugins != before { changed += 1 }
             return st
         }
         return (outItems, outStems, changed)

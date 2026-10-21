@@ -93,7 +93,12 @@ extension EditViewModel {
     /// A send's mini-chain is written through its SENDER and sanitised (leaves only).
     @discardableResult
     func updateChainPlugins(_ hostID: UUID, _ f: (inout [ObjectPlugin]) -> Void) -> Bool {
-        if let i = stemIndex(hostID) { f(&stems[i].plugins); isDirty = true; return true }
+        if let i = stemIndex(hostID) {
+            f(&stems[i].plugins)
+            Self.settlingChannelPicks(&stems[i].plugins)
+            isDirty = true
+            return true
+        }
         if find(id: hostID) == nil, let k = sendChainKey(hostID) {
             var written = false
             update(id: k.sender) { o in
@@ -105,7 +110,16 @@ extension EditViewModel {
             }
             return written
         }
-        return update(id: hostID) { f(&$0.plugins) }
+        return update(id: hostID) { f(&$0.plugins); Self.settlingChannelPicks(&$0.plugins) }
+    }
+
+    /// Every edit of a chain goes through here, so the cable picks are put back in order once it is done:
+    /// at most one per cable (a card removed between two chosen cables: the upstream one wins) and ahead of
+    /// the send markers of its gap. Idempotent, and a chain with no pick is not touched at all.
+    static func settlingChannelPicks(_ plugins: inout [ObjectPlugin]) {
+        guard ChannelPicks.containsPick(in: plugins) else { return }
+        let settled = ChannelPicks.sanitised(plugins)
+        if settled != plugins { plugins = settled }
     }
 
     // MARK: - Plugins
@@ -202,6 +216,8 @@ extension EditViewModel {
             if let m = p.sendMarker {
                 return topLevel ? ["kind": "send", "aux": m.auxID.uuidString] : nil
             }
+            // A choice of cable is not a plugin either. (The engine learns it in the step that lays it.)
+            if p.isChannelPick { return nil }
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
@@ -304,9 +320,23 @@ extension EditViewModel {
         return out
     }
 
+    /// Puts `replacement` where the leaf `id` stands, in whatever series holds it: the neighbouring cables
+    /// (the choices of channel, the markers) stay exactly on the side of the place where they were.
+    static func replacingPlugin(_ id: UUID, with replacement: ObjectPlugin,
+                                in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+        plugins.map { p in
+            if p.id == id, !p.isContainer { return replacement }
+            if p.isContainer { return p.mappingChildSeries { replacingPlugin(id, with: replacement, in: $0) } }
+            return p
+        }
+    }
+
     /// Recursively removes (voices included) the plugins whose id is in `ids`.
     static func removingPlugins(_ ids: Set<UUID>, from plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.compactMap { p in
+            // A choice of cable is a container with no series of its own: it goes when its id is named
+            // (the bin that carries it off), it is not a card that a removal of cards could reach by chance.
+            if p.isChannelPick { return ids.contains(p.id) ? nil : p }
             if p.isContainer { return p.mappingChildSeries { removingPlugins(ids, from: $0) } }
             return ids.contains(p.id) ? nil : p
         }
@@ -803,7 +833,7 @@ extension EditViewModel {
             nb.plugins = fb.plugins.map { inst in
                 var q = inst
                 q.id = UUID()
-                q.stateXML = liveState(inst)
+                if !inst.isChannelPick { q.stateXML = liveState(inst) }
                 return q
             }
             var np = p
@@ -827,6 +857,10 @@ extension EditViewModel {
                     // The copy of an object keeps its sends (same auxes): its markers go with them, each
                     // with an id of its own.
                     out.append(p.copiedSendMarker())
+                } else if p.isChannelPick {
+                    // A choice written on a cable travels with its cable, under an id of its own
+                    // (a pick of a bin keeps its definition's `linkGroupID`).
+                    out.append(p.copiedChannelPick())
                 } else if let fb = p.fxBlock {
                     out.append(copyBlock(p, fb))
                 } else if let rack = p.rack {
