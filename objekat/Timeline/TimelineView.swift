@@ -59,10 +59,10 @@ struct TimelineView: View {
     var playheadPosition: () -> Double = { 0 }
     var selectionCursor: Double = 0
     var isPlaying: Bool = false
-    /// Playback suspended (⇧space): the playhead stays where it is and resuming starts from there.
+    /// Playback suspended (⌥space): the playhead stays where it is and resuming starts from there.
     var isPaused: Bool = false
     var onTogglePlayback: () -> Void = {}
-    /// ⇧space: suspend / resume in the same place (without going back to the cursor).
+    /// ⌥space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
     /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).
@@ -156,7 +156,7 @@ struct TimelineView: View {
     @State private var vZoomAnchorLaneCentre: Double? = nil
     @State private var vZoomHeld: Bool = false
     /// D8 — the end-of-zoom-session settle: cancelled and rearmed on every notch of the wheel /
-    /// ⇧-scroll / ⇧R / ⇧T, fires `VerticalLaneSnap.zoomSettleDebounce` after the last one.
+    /// ⌘-scroll / ⌥R / ⌥T, fires `VerticalLaneSnap.zoomSettleDebounce` after the last one.
     @State private var vZoomSettleWork: DispatchWorkItem? = nil
     @State private var vZoomLastEventTime: TimeInterval = 0
 
@@ -296,7 +296,7 @@ struct TimelineView: View {
 
     /// The axis lock of a scroll GESTURE (a trackpad's fingers AND its inertia, or a mouse wheel's
     /// run of notches): decided from its first events, then held until the next gesture. Shared by
-    /// ⇧-zoom and the wheel over an automation line, so the two cannot drift apart.
+    /// ⌘-zoom and the wheel over an automation line, so the two cannot drift apart.
     struct ScrollAxisLock {
         var axis: ScrollZoomAxis? = nil
         private var lastEventTime: TimeInterval = 0
@@ -355,14 +355,14 @@ struct TimelineView: View {
         /// Two notches less than `valueScrollUndoGap` apart belong to the same gesture and share ONE
         /// undo — otherwise the wheel was not undoable at all.
         var lastValueScrollTime: TimeInterval = 0
-        var shiftZoomLock = ScrollAxisLock()
+        var cmdZoomLock = ScrollAxisLock()
         /// The same lock for the wheel over a highlighted automation line, and whether the current
         /// gesture was identified as a VERTICAL one there (the sideways component is then swallowed).
         var automationLineWheelLock = ScrollAxisLock()
         var automationLineWheelEngaged = false
 
         // MARK: Vertical lane snap (D6) — the scroll monitor's own axis lock and step state,
-        // independent of the ⇧-zoom fields above (a different gesture: no modifier held).
+        // independent of the ⌘-zoom fields above (a different gesture: no modifier held).
         var vSnapAxis: ScrollZoomAxis? = nil
         var vSnapAccumX: Double = 0
         var vSnapAccumY: Double = 0
@@ -705,7 +705,7 @@ struct TimelineView: View {
                         .zIndex(3.05)
                 }
 
-                // While paused (⇧space), the playhead stays where playback stopped — that is where it
+                // While paused (⌥space), the playhead stays where playback stopped — that is where it
                 // will start again — but in a muted red to say 'stopped'.
                 if isPlaying || isPaused {
                     PlayheadLine(position: playheadPosition, pixelsPerSecond: pixelsPerSecond,

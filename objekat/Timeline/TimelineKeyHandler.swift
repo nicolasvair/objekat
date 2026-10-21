@@ -23,6 +23,31 @@ extension TimelineView {
         return n
     }
 
+    /// The wheel delta a Volume / Pan / Send notch reads. With ⇧ held (the fine adjustment) a MOUSE
+    /// wheel reports its notch as a SIDEWAYS scroll — `scrollingDeltaY` is 0 and the notch is in
+    /// `scrollingDeltaX` (macOS turns ⇧ + wheel into a horizontal scroll); a trackpad keeps its
+    /// vertical delta. Without ⇧ the vertical delta is the only one read, as it always was.
+    static func valueWheelDelta(_ event: NSEvent, fine: Bool) -> CGFloat {
+        let dy = event.scrollingDeltaY
+        if dy != 0 || !fine { return dy }
+        return event.scrollingDeltaX
+    }
+
+    /// The Volume tool's ↑/↓ step, in dB: 1 bare, ⇧ = the fine step (a tenth), ⌘ = the big step (10).
+    /// ⌘ wins if both are held — the big step is the explicit ask.
+    static func volumeArrowStep(_ flags: NSEvent.ModifierFlags) -> Float {
+        if flags.contains(.command) { return 10 }
+        return Float(FineAdjust.step(1, fine: flags.contains(.shift)))
+    }
+
+    /// The Pan tool's ↑/↓ step: a tenth bare (the detent), ⇧ = a hundredth with the detent LIFTED
+    /// (`fine`), ⌘ = half the range (0.5, which sits on the tenths).
+    static func panArrowStep(_ flags: NSEvent.ModifierFlags) -> (delta: Float, fine: Bool) {
+        if flags.contains(.command) { return (0.5, false) }
+        if flags.contains(.shift) { return (Float(FineAdjust.step(0.1, fine: true, fineStep: 0.01)), true) }
+        return (0.1, false)
+    }
+
     func registerScrollMonitor() {
         let vm       = viewModel
         let hs       = hoverState
@@ -55,26 +80,28 @@ extension TimelineView {
             let bh  = vm.blockHeight
             let ls  = bh + 4.0
 
-            // MARK: Shift+scroll = horizontal OR vertical zoom, never both at once.
+            // MARK: ⌘+scroll = horizontal OR vertical zoom, never both at once.
+            // (It was ⇧ until 22 October 2026: ⇧ is now the fine adjustment of every value, and a
+            // ⇧ + wheel on a mouse arrives as a sideways scroll, which the timeline keeps for itself.)
             // A 'logical' gesture = the active phase (fingers) AND its inertia (momentum):
             // the axis is locked for that whole span and is never decided again along the way.
             // The decision is only rearmed at the START of a new gesture (the trackpad's .began
             // phase) or after a long silence (a mouse with no usable phase).
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if flags.contains(.shift) {
+            if flags.contains(.command) {
                 let now = ProcessInfo.processInfo.systemUptime
                 // Rearming (a new trackpad gesture, or an idle gap for a mouse) and the axis decision
                 // itself are `ScrollAxisLock`'s — shared with the wheel over an automation line.
                 // NB: we most certainly do NOT reset on .ended, otherwise the first inertia event
                 // would decide the axis again → both axes felt zooming during a single gesture.
-                hs.shiftZoomLock.observe(event, now: now)
+                hs.cmdZoomLock.observe(event, now: now)
 
                 let dx = event.scrollingDeltaX
                 let dy = event.scrollingDeltaY
 
                 // While the accumulated signal is too weak, we engage no zoom (a dead zone of a few
                 // points, imperceptible).
-                guard let zoomAxis = hs.shiftZoomLock.decide(event, wheelDecidesAtOnce: false) else { return nil }
+                guard let zoomAxis = hs.cmdZoomLock.decide(event, wheelDecidesAtOnce: false) else { return nil }
 
                 switch zoomAxis {
                 case .horizontal:
@@ -148,7 +175,7 @@ extension TimelineView {
             // its grab the same way). The steps are the TOTAL since the grab, applied from the
             // anchors. A trackpad's inertia does not edit: it is swallowed while a gesture is held.
             //
-            // AXIS LOCK, as ⇧-zoom has (`ScrollAxisLock`, ONE implementation for both): over a line,
+            // AXIS LOCK, as ⌘-zoom has (`ScrollAxisLock`, ONE implementation for both): over a line,
             // the gesture's axis is decided from its first events and never again. VERTICAL = the
             // value: the horizontal component of every event of that gesture, momentum included, is
             // swallowed so the timeline does not drift sideways while one adjusts. HORIZONTAL = the
@@ -237,7 +264,11 @@ extension TimelineView {
                 let bw   = max(item.duration * pps, 2)
                 guard (pos.x - bx) >= bw * 0.6 else { return event }
 
-                hs.scrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
+                // ⇧ = fine: one notch is a tenth of a dB (@see FineAdjust). A mouse's ⇧ + wheel
+                // arrives as a SIDEWAYS scroll (deltaY 0): read the delta that carries the notch.
+                let fine = flags.contains(.shift)
+                let wheelDelta = Self.valueWheelDelta(event, fine: fine)
+                hs.scrollAccumulator -= Float(wheelDelta * 0.1)
                 let steps = Int(hs.scrollAccumulator.rounded())
                 if steps != 0 {
                     hs.scrollAccumulator -= Float(steps)
@@ -247,7 +278,7 @@ extension TimelineView {
                         if !vm.selectedIDs.contains(item.id) {
                             vm.select(item.id, additive: false)
                         }
-                        vm.adjustVolumeDB(Float(steps))
+                        vm.adjustVolumeDB(Float(FineAdjust.scaled(Double(steps), fine: fine)))
                     }
                 }
                 return nil
@@ -257,7 +288,9 @@ extension TimelineView {
             // Vertical like the volume and the sends: since pan is shown as a knob, it is the
             // same wheel gesture everywhere (up = to the right).
             if vm.activeTool == .toolPan {
-                guard event.scrollingDeltaY != 0 else { return event }
+                let fine = flags.contains(.shift)   // ⇧ = fine, and the tenth detent is lifted
+                let wheelDelta = Self.valueWheelDelta(event, fine: fine)
+                guard wheelDelta != 0 else { return event }
 
                 guard let entry = vm.laneEntries.first(where: { e in
                     let bx = e.absStart * pps
@@ -268,7 +301,7 @@ extension TimelineView {
                 }) else { return event }
                 let item = entry.item
 
-                hs.panScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
+                hs.panScrollAccumulator -= Float(wheelDelta * 0.1)
                 let steps = Int(hs.panScrollAccumulator.rounded())
                 if steps != 0 {
                     hs.panScrollAccumulator -= Float(steps)
@@ -278,7 +311,7 @@ extension TimelineView {
                         if !vm.selectedIDs.contains(item.id) {
                             vm.select(item.id, additive: false)
                         }
-                        vm.adjustPanSelected(Float(steps) * 0.1)
+                        vm.adjustPanSelected(Float(FineAdjust.scaled(Double(steps) * 0.1, fine: fine)), fine: fine)
                     }
                 }
                 return nil
@@ -286,10 +319,11 @@ extension TimelineView {
 
             // MARK: Send scroll (deltaY over the knob column under the cursor, the aux tool)
             // An alternative to the drag: each notch ≈ 1 dB of send towards that aux, applied to the
-            // whole selection overlapping the aux (like the drag). ⇧+scroll is still the zoom.
+            // whole selection overlapping the aux (like the drag). ⇧ = fine (a tenth of a dB a notch).
             if vm.activeTool == .toolAux {
                 guard let hit = self.sendRowHit(at: pos) else { return event }
-                hs.sendScrollAccumulator -= Float(event.scrollingDeltaY * 0.1)
+                let fine = flags.contains(.shift)
+                hs.sendScrollAccumulator -= Float(Self.valueWheelDelta(event, fine: fine) * 0.1)
                 let steps = Int(hs.sendScrollAccumulator.rounded())
                 if steps != 0 {
                     hs.sendScrollAccumulator -= Float(steps)
@@ -300,7 +334,8 @@ extension TimelineView {
                             vm.select(hit.clipID, additive: false)
                         }
                         vm.sendToolFocus = SendFocus(objectID: hit.clipID, auxID: hit.auxID)
-                        vm.adjustSendLevelSelected(toAux: hit.auxID, deltaDb: Float(steps))
+                        vm.adjustSendLevelSelected(toAux: hit.auxID,
+                                                   deltaDb: Float(FineAdjust.scaled(Double(steps), fine: fine)))
                     }
                 }
                 return nil
@@ -308,7 +343,7 @@ extension TimelineView {
 
             // MARK: Vertical lane snap (D6 of plan_vertical_lane_snap.md). Once a lane's block
             // passes 70 % of the available height, plain vertical scrolling snaps lane to lane
-            // instead of scrolling continuously — placed LAST, after ⇧-zoom, ⌥-curve and the
+            // instead of scrolling continuously — placed LAST, after ⌘-zoom, ⌥-curve and the
             // three tools above, which all keep priority (a Volume-tool wheel over a block stays
             // a volume wheel even in this mode).
             if flags.intersection(Self.heldModifiers).isEmpty, self.verticalSnapActive {
@@ -318,7 +353,7 @@ extension TimelineView {
                 let now = ProcessInfo.processInfo.systemUptime
 
                 // Rearming: a new trackpad gesture (.began) or, failing a phase (a mouse), an
-                // idle gap — the same rule ⇧-zoom's own axis lock uses, just above.
+                // idle gap — the same rule ⌘-zoom's own axis lock uses, just above.
                 let newGesture = event.phase.contains(.began)
                               || (!hasPhase && now - hs.vSnapLastEventTime > 0.4)
                 if newGesture {
@@ -332,7 +367,7 @@ extension TimelineView {
                 hs.vSnapLastEventTime = now
 
                 // Axis lock, decided once for the whole gesture. A trackpad gets the 3 pt dead
-                // zone ⇧-zoom uses (a diagonal swipe's first few events are ambiguous). A WHEEL's
+                // zone ⌘-zoom uses (a diagonal swipe's first few events are ambiguous). A WHEEL's
                 // notch already IS the unit — a mouse wheel is single-axis by construction, and
                 // holding it to the trackpad's dead zone would EAT real notches deciding the
                 // axis, which a continuous zoom can shrug off but a discrete lane count cannot
@@ -539,8 +574,9 @@ extension TimelineView {
                 // (There used to be a s+space "audition" that seeked to the selection and stopped
                 // at its end; removed on purpose — @see EditViewModel+Solo's header comment. Do not
                 // reintroduce a chord here.)
-                // ⇧space = pause / resume IN THE SAME PLACE (bare space, for its part, goes back to the cursor).
-                if flags.contains(.shift) {
+                // ⌥space = pause / resume IN THE SAME PLACE (bare space, for its part, goes back to the cursor).
+                // (⇧space until 22 October 2026: ⇧ is the fine adjustment of every value now.)
+                if flags.contains(.option) {
                     DispatchQueue.main.async { togglePause() }
                     return nil
                 }
@@ -673,23 +709,29 @@ extension TimelineView {
             case 123, 124:  // ← / →
                 return nil
             case 125:  // ↓
-                // The piano roll: notes selected → transposition. ↓ = a semitone, ⇧↓ = an octave
-                // (the visible window follows the octave shift).
-                if !vm.selectedMidiNoteIDs.isEmpty, !flags.contains(.command) {
+                // The piano roll: notes selected → transposition. ↓ = a semitone (⇧ too: a semitone is
+                // already the finest step), ⌘↓ = an octave (the visible window follows the octave
+                // shift). ⇧ was the octave until 22 October 2026: ⇧ is the fine adjustment now, and
+                // ⌘ the big step, of every arrow.
+                if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async {
-                        if flags.contains(.shift) { vm.shiftSelectedMidiNotesByOctave(-1) }
+                        if flags.contains(.command) { vm.shiftSelectedMidiNotesByOctave(-1) }
                         else { vm.transposeSelectedMidiNotes(bySemitones: -1) }
                     }
                     return nil
                 }
+                // Volume: ↓ = -1 dB, ⇧ = -0.1 dB (fine), ⌘ = -10 dB (big step).
                 if vm.activeTool == .toolVolume {
-                    DispatchQueue.main.async { vm.edit { vm.adjustVolumeDB(-1) } }
+                    let db = Self.volumeArrowStep(flags)
+                    DispatchQueue.main.async { vm.edit { vm.adjustVolumeDB(-db) } }
                     return nil
                 }
                 // Pan: ↓ = to the left. Vertical like the knob, the wheel and the inspector's box —
-                // pan is never set with ← / → any more.
+                // pan is never set with ← / → any more. ⇧ = a hundredth with the tenth detent lifted,
+                // ⌘ = half the range.
                 if vm.activeTool == .toolPan {
-                    DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(-0.1) } }
+                    let step = Self.panArrowStep(flags)
+                    DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(-step.delta, fine: step.fine) } }
                     return nil
                 }
                 // Bare ↓ with a TIME SELECTION — or with OBJECTS selected, whose frame is then
@@ -719,19 +761,21 @@ extension TimelineView {
                     return nil
                 }
             case 126:  // ↑
-                if !vm.selectedMidiNoteIDs.isEmpty, !flags.contains(.command) {
+                if !vm.selectedMidiNoteIDs.isEmpty {
                     DispatchQueue.main.async {
-                        if flags.contains(.shift) { vm.shiftSelectedMidiNotesByOctave(1) }
+                        if flags.contains(.command) { vm.shiftSelectedMidiNotesByOctave(1) }
                         else { vm.transposeSelectedMidiNotes(bySemitones: 1) }
                     }
                     return nil
                 }
                 if vm.activeTool == .toolVolume {
-                    DispatchQueue.main.async { vm.edit { vm.adjustVolumeDB(1) } }
+                    let db = Self.volumeArrowStep(flags)
+                    DispatchQueue.main.async { vm.edit { vm.adjustVolumeDB(db) } }
                     return nil
                 }
                 if vm.activeTool == .toolPan {   // ↑ = to the right
-                    DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(0.1) } }
+                    let step = Self.panArrowStep(flags)
+                    DispatchQueue.main.async { vm.edit { vm.adjustPanSelected(step.delta, fine: step.fine) } }
                     return nil
                 }
                 // @see the ↓ branch, both for the modifier reading and for why the automation
@@ -755,7 +799,7 @@ extension TimelineView {
                 // on keyUp by the heldToolKeyCode mechanism): the
                 // ⇧ lock ('⇧+3 to stay in stem 3 mode') was removed — useless, and it
                 // conflicted with editing numeric values.
-                guard !flags.contains(.command), !flags.contains(.control), !flags.contains(.option),
+                guard !flags.contains(.command), !flags.contains(.option),
                       let n = Self.stemDigit(forKeyCode: event.keyCode)
                 else { return event }
                 guard n <= vm.stems.count else { return nil }   // no stem N → we swallow it (no beep)
@@ -882,7 +926,8 @@ extension TimelineView {
                         return nil
                     }
                     if !flags.contains(.command) {
-                        if flags.contains(.shift) {
+                        // ⌥R / ⌥T = the VERTICAL zoom (⇧R / ⇧T until 22 October 2026: ⇧ is fine now).
+                        if flags.contains(.option) {
                             DispatchQueue.main.async { self.applyVerticalZoom(self.blockHeight / 1.5) }
                         } else {
                             DispatchQueue.main.async { self.applyZoom(vm.pixelsPerSecond / 1.5) }
@@ -891,7 +936,7 @@ extension TimelineView {
                     }
                 case "t":
                     if !flags.contains(.command) {
-                        if flags.contains(.shift) {
+                        if flags.contains(.option) {
                             DispatchQueue.main.async { self.applyVerticalZoom(self.blockHeight * 1.5) }
                         } else {
                             DispatchQueue.main.async { self.applyZoom(vm.pixelsPerSecond * 1.5) }
@@ -914,7 +959,7 @@ extension TimelineView {
                     return nil
                 case "f":
                     // 'F' = the FX tool: hovering an object shows its plugins (@see FXStripLayout).
-                    if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) { break }
+                    if flags.contains(.command) || flags.contains(.option) { break }
                     guard !event.isARepeat else { return nil }
                     let permanent = flags.contains(.shift)
                     DispatchQueue.main.async {

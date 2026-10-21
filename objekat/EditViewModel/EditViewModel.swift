@@ -1069,7 +1069,7 @@ final class EditViewModel {
 
     /// The height (in px) of a note row in the piano rolls, set by the zoom +/- at the bottom of the
     /// piano roll. GLOBAL (shared by every clip). Decoupled from the vertical zoom (blockHeight):
-    /// shift+R/T enlarges the band → more rows visible, the height per note stays fixed.
+    /// ⌥R/⌥T enlarges the band → more rows visible, the height per note stays fixed.
     /// Pure UI, not persisted. See `pianoRollZoom`.
     var pianoRollRowHeight: Double = 10
 
