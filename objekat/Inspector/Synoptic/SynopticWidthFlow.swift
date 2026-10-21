@@ -41,6 +41,38 @@ struct CablePoint: Hashable, Sendable {
     var index: Int
 }
 
+/// What a cable can be told, as a person names it: Stereo (the cable as it is, no pick), Left, Right or
+/// Sum. `fold` is the bridge to the model's `MonoFold` (Stereo has none).
+enum CableChoice: String, CaseIterable, Sendable {
+    case stereo, left, right, sum
+
+    init(_ fold: MonoFold?) {
+        switch fold {
+        case nil:      self = .stereo
+        case .left?:   self = .left
+        case .right?:  self = .right
+        case .sum?:    self = .sum
+        }
+    }
+
+    var fold: MonoFold? {
+        switch self {
+        case .stereo: return nil
+        case .left:   return .left
+        case .right:  return .right
+        case .sum:    return .sum
+        }
+    }
+}
+
+/// The menu a cable offers on a right click: the choice in force and the choices a hand may make. A mono
+/// cable has none (nothing to choose on one wire); a cable that enters a one-input plugin offers Left /
+/// Right / Sum only (it cannot receive a pair).
+struct CableMenu: Equatable, Sendable {
+    var current: CableChoice
+    var offered: [CableChoice]
+}
+
 /// The three ways a plugin's main bus can be set, named by what it takes in and what it puts out.
 enum ChannelVariant: String, CaseIterable, Equatable, Sendable {
     case mono                       // 1 → 1
@@ -160,6 +192,9 @@ struct WireLook: Equatable, Sendable {
     /// The wire that leaves an audio FILE whose channels can be chosen: its current choice (right click =
     /// LR / L / R / Sum). nil anywhere else.
     var sourceChoice: SourceChannelChoice? = nil
+    /// A choice written on the cable (`sum` / `pick`) AND a plugin that takes a pair right after it: the one
+    /// wire the choice leaves splits in two again before the wire's end (@see SynopticWidthFlow.look(_:pick:)).
+    var splitsAfter = false
 
     /// Drawn in orange: a sum, a channel left out, a mono signal copied to stereo, or a legacy plugin reading
     /// the left channel only.
@@ -201,11 +236,25 @@ struct SynopticWidthFlow: Equatable {
     /// The choice written on each cable point that carries one and whose pick IS in force (a pick inside a
     /// bin that is switched off is not; a pick on a cable that is already mono changes nothing but is listed).
     var pickAt: [CablePoint: MonoFold] = [:]
+    /// What a right click offers on each cable point whose signal is stereo (a mono cable has none): the
+    /// choice in force and the choices a hand may make. The head of a stereo audio clip's chain is NOT here:
+    /// its choice is the file's own (@see fileLevelPoint).
+    var menuAt: [CablePoint: CableMenu] = [:]
+    /// The root series' id (the host's), to name the head of the chain.
+    var rootID: UUID? = nil
 
     /// The width the chain is FED with: a stereo file played other than LR is one channel.
     var chainInput: Int {
         guard sourceWidth >= 2, let c = sourceChoice, c != .both else { return sourceWidth }
         return 1
+    }
+
+    /// The head of a stereo audio clip's chain, where the choice is the file's own channel mode (one menu, the
+    /// one of the wire that leaves the file). nil when the chain's source takes no choice (a mono file, a
+    /// bus, a MIDI clip).
+    var fileLevelPoint: CablePoint? {
+        guard sourceChoice != nil, let id = rootID else { return nil }
+        return CablePoint(seriesID: id, index: 0)
     }
 
     /// Nothing computed (the demo): every wire keeps the neutral single line.
@@ -279,6 +328,21 @@ struct SynopticWidthFlow: Equatable {
         }
     }
 
+    /// The look of the cable segment that carries `source` AND ends at the cable point `point`, where the pick
+    /// of the point is drawn: a pick in force on a stereo cable makes the wire bend into one (the sum: the two
+    /// wires JOIN, a dot where they meet; Left / Right: the other channel STOPS short with a cross), in
+    /// orange. When the plugin right after takes a pair, the single wire splits in two again (`splitsAfter`).
+    /// With no pick in force (or on a cable that is already mono) it is `look(source)`.
+    func look(_ source: WireSource?, pick point: CablePoint?) -> WireLook? {
+        guard var base = look(source) else { return nil }
+        guard let point, let mode = pickAt[point], (widthAt[point] ?? 1) >= 2 else { return base }
+        base.count = 2
+        base.splitsAfter = base.shape == .split
+        base.shape = mode == .sum ? .sum : .pick(mode == .left ? .left : .right)
+        base.sourceChoice = nil
+        return base
+    }
+
     // MARK: A chain
 
     /// Walks `root` from a source of width `sourceWidth` (`sourceChoice` = the audio file's channel choice when
@@ -292,6 +356,7 @@ struct SynopticWidthFlow: Equatable {
         var flow = SynopticWidthFlow()
         flow.sourceWidth = sourceWidth
         flow.sourceChoice = sourceWidth >= 2 ? sourceChoice : nil
+        flow.rootID = root.id
         flow.trunkOut = walk(root, incoming: flow.chainInput, channels: channels, folds: folds,
                              transparent: false, into: &flow)
         return flow
@@ -308,6 +373,28 @@ struct SynopticWidthFlow: Equatable {
         if off { return w }
         flow.pickAt[point] = mode
         return min(w, 1)
+    }
+
+    /// What a right click offers on the cable point (`node`, `index`), whose signal arrives `w` wide: nothing on
+    /// a mono cable, Left / Right / Sum into a one-input plugin (the choice in force being the pick, else that
+    /// plugin's inherited fold), the four choices elsewhere. The head of a stereo audio clip's chain is the
+    /// file's: its menu is the wire that leaves the file's.
+    private static func menu(_ node: SynopticNode, index i: Int, width w: Int, before next: SynopticNode?,
+                             channels: [UUID: PluginChannels], folds: [UUID: MonoFold],
+                             into flow: inout SynopticWidthFlow) {
+        guard w >= 2 else { return }
+        let point = CablePoint(seriesID: node.id, index: i)
+        if point == flow.fileLevelPoint { return }
+        var oneInput = false
+        var inherited: MonoFold? = nil
+        if let next, case .plugin(let p) = next.kind, channels[p.id]?.inputs == 1 {
+            oneInput = true
+            inherited = folds[p.id]
+        }
+        let current: CableChoice = node.cablePicks[i].map { CableChoice($0) }
+            ?? (oneInput ? CableChoice(inherited) : .stereo)
+        flow.menuAt[point] = CableMenu(current: current,
+                                       offered: oneInput ? [.left, .right, .sum] : CableChoice.allCases)
     }
 
     private static func walk(_ node: SynopticNode, incoming w: Int, channels: [UUID: PluginChannels],
@@ -337,9 +424,11 @@ struct SynopticWidthFlow: Equatable {
             // A bin that is switched off lets the signal through whatever its members are.
             let off = transparent || (node.fxLink.map { !$0.isEnabled } ?? false)
             for (i, n) in nodes.enumerated() {
+                menu(node, index: i, width: out, before: n, channels: channels, folds: folds, into: &flow)
                 out = cross(node, index: i, width: out, off: off, into: &flow)
                 out = walk(n, incoming: out, channels: channels, folds: folds, transparent: off, into: &flow)
             }
+            menu(node, index: nodes.count, width: out, before: nil, channels: channels, folds: folds, into: &flow)
             out = cross(node, index: nodes.count, width: out, off: off, into: &flow)
 
         case .parallel(let branches):

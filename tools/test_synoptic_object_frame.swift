@@ -264,6 +264,62 @@ struct Main {
         check(SynopticSendSlot.forTrunkInsert(index: 3, count: 3) == .preFader, "tail ≡ pre-fader")
         check(SynopticSendSlot.forTrunkInsert(index: 0, count: 0) == .input, "the one '+' of an empty trunk ≡ input")
 
+        // --- the cable points (a channel choice is written on a cable, session format 31) -----------------
+        do {
+            let x = plug("X"), y = plug("Y")
+            let va = SynopticNode.series([plug("P")]), vb = SynopticNode.series([])
+            let par = SynopticNode.parallel([va, vb])
+            let trunk = SynopticNode.series([x, par, y])
+            let d = SynopticLayout.diagram(for: trunk)
+            let cables = d.placement.cables
+            func point(_ s: WireSource) -> [CablePoint?] { cables.filter { $0.carries == s }.map(\.point) }
+            func draws(_ s: WireSource) -> [Bool] { cables.filter { $0.carries == s }.map(\.drawsPick) }
+
+            check(point(.source) == [CablePoint(seriesID: trunk.id, index: 0)] && draws(.source) == [false],
+                  "the wire from the head names the head point and draws no pick")
+            check(point(.into(x.id)) == [CablePoint(seriesID: trunk.id, index: 0)] && draws(.into(x.id)) == [true],
+                  "the head segment draws the head point's pick")
+            check(point(.into(par.id)) == [CablePoint(seriesID: trunk.id, index: 1)] && draws(.into(par.id)) == [true],
+                  "a cable between two elements is the point before the second")
+            check(point(.into(y.id)) == [CablePoint(seriesID: trunk.id, index: 2)], "the third")
+            check(point(.after(y.id)) == [CablePoint(seriesID: trunk.id, index: 3)] && draws(.after(y.id)) == [true],
+                  "the tail names the series' count, and draws it (the mixer's own copy stays after)")
+            check(point(.trunk).allSatisfy { $0 == nil } && point(.bus).allSatisfy { $0 == nil },
+                  "the mixer's wires carry no point")
+            // Parallel: the fork is the branch's head point, the merge its tail; the branch's own series draws.
+            check(point(.into(va.id)) == [CablePoint(seriesID: va.id, index: 0)] && draws(.into(va.id)) == [false],
+                  "the fork names the branch's head point and draws nothing")
+            check(Set(point(.after(va.id)).compactMap { $0 }) == [CablePoint(seriesID: va.id, index: 1)]
+                  && draws(.after(va.id)).allSatisfy { !$0 }, "the merge names the branch's tail point and draws nothing")
+            check(Set(point(.into(vb.id)).compactMap { $0 }) == [CablePoint(seriesID: vb.id, index: 0)]
+                  && draws(.into(vb.id)).filter { $0 }.count == 1,
+                  "an empty branch draws its pick on its one wire (the fork only names the point)")
+            // Every point of the chain is a cable some segment names, and exactly ONE segment draws it.
+            var drawn: [CablePoint: Int] = [:]
+            for c in cables where c.drawsPick { if let p = c.point { drawn[p, default: 0] += 1 } }
+            check(drawn.values.allSatisfy { $0 == 1 }, "a pick is drawn on one segment only")
+            check(drawn.keys.contains(CablePoint(seriesID: va.id, index: 0)) && drawn.keys.contains(CablePoint(seriesID: va.id, index: 1)),
+                  "a branch with one card has its two points drawn")
+
+            // A bin: the cable into it is the host's point; its inside names its own (the block's series).
+            let k = plug("K")
+            var block = SynopticNode.series([k])
+            block.fxLink = SynopticFXLink(blockID: UUID(), name: "bin", color: .red, isDetached: false,
+                                          isEnabled: true, memberCount: 2)
+            let host = SynopticNode.series([block])
+            let db = SynopticLayout.diagram(for: host).placement.cables
+            func pts(_ s: WireSource) -> [CablePoint?] { db.filter { $0.carries == s }.map(\.point) }
+            check(pts(.into(block.id)).contains(CablePoint(seriesID: host.id, index: 0))
+                  && pts(.into(block.id)).contains(CablePoint(seriesID: block.id, index: 0)),
+                  "into the bin: the host's cable, then the bin's own head")
+            check(pts(.after(block.id)) == [CablePoint(seriesID: block.id, index: 1)] || pts(.after(block.id)).contains(CablePoint(seriesID: block.id, index: 1)),
+                  "out of the bin: the bin's tail point")
+            block.fxLink?.isFolded = true
+            let folded = SynopticLayout.diagram(for: .series([block])).placement.cables
+            check(folded.filter { $0.carries == .after(block.id) && !$0.drawsPick }.allSatisfy { $0.point == nil },
+                  "a folded bin offers no point (its inside is not laid)")
+        }
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

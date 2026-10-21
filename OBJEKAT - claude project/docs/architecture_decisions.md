@@ -976,6 +976,18 @@ so the engine lays only the OUT half of its fold (L = R already).
 picks in the DEFINITION and every instance; a cable inside an attached bin is written through the definition
 (`reconcileFXLinkMembers`), a manual ⌘-link does not carry a cable's choice (Q4).
 
+### Decision: the signal view names a cable point on each segment, and draws a pick on ONE of them
+
+`SynopticLayout.Cable` carries an explicit `point: CablePoint?` (hover → the right-click menu,
+`SynopticWidthFlow.menuAt`: nothing on a mono cable, Left / Right / Sum into a one-input plugin, the four
+elsewhere) and `drawsPick`. Several segments can name the same point (the fork and the head of a branch, a
+tail and the merge, the cable into a bin and the bin's own head); exactly one draws its pick, so the shape
+(the sum's V, the cross on the channel not kept) is never doubled. That segment is the one that ENTERS the
+element the point stands before; at a series' TAIL it is the one that LEAVES the last element, so that the
+mixer's own copy to stereo (`.trunk`) can still be drawn on the wire after it. A pick right before a plugin
+that takes a pair draws both changes on its one segment (`WireLook.splitsAfter`). The head of a stereo audio
+clip keeps the file's menu (`fileLevelPoint`).
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

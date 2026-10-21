@@ -274,6 +274,131 @@ struct WidthFlowTest {
             check(empty.trunkOut == 2, "an empty parallel is the identity")
         }
 
+        // --- a choice written on a cable (session format 31) -------------------------------------
+        do {
+            // The bridge to the model's fold, and the four names a person gives.
+            check(CableChoice.allCases == [.stereo, .left, .right, .sum], "four choices, Stereo first")
+            for c in CableChoice.allCases { check(CableChoice(c.fold) == c, "\(c) round-trips through its fold") }
+            check(CableChoice.stereo.fold == nil && CableChoice.sum.fold == .sum, "Stereo has no fold")
+
+            // Stereo through two stereo plugins, a Left pick between them.
+            let a = plugin("a"), b = plugin("b")
+            var root = SynopticNode.series([.plugin(a), .plugin(b)])
+            root.cablePicks = [1: .left]
+            let p0 = CablePoint(seriesID: root.id, index: 0)
+            let p1 = CablePoint(seriesID: root.id, index: 1)
+            let p2 = CablePoint(seriesID: root.id, index: 2)
+            let f = SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [a.id: stereo, b.id: stereo])
+            check(f.widthAt[p0] == 2 && f.widthAt[p1] == 2 && f.widthAt[p2] == 2,
+                  "the width AT a point is the one arriving, before its pick (a stereo plugin widens the mono it is fed)")
+            check(f.pickAt == [p1: .left], "only the pick written is in force")
+            check(f.inputOf[b.id] == 1, "the plugin after a pick is fed one channel")
+            check(f.menuAt[p0] == CableMenu(current: .stereo, offered: CableChoice.allCases), "a stereo cable offers the four")
+            check(f.menuAt[p1] == CableMenu(current: .left, offered: CableChoice.allCases), "a cable with a pick ticks it")
+            check(f.menuAt[p2]?.current == .stereo, "a cable after the stereo plugin is stereo again")
+            // The pick's shape sits on the segment that enters the plugin after it.
+            let shown = f.look(.into(b.id), pick: p1)
+            check(shown?.shape == .pick(.left) && shown?.count == 2 && shown?.isOrange == true,
+                  "Left: the right wire stops short, in orange")
+            check(shown?.splitsAfter == true, "a stereo plugin after the pick spreads the single wire again")
+            check(f.look(.into(b.id)) == WireLook(count: 1, shape: .split, adaptation: .split),
+                  "without the pick argument the wire reads as before")
+            check(f.look(.into(a.id), pick: p0) == WireLook(count: 2), "a point with no pick keeps its plain wires")
+
+            // Sum and Right, and the sum's shape.
+            for (mode, shape) in [(MonoFold.sum, WireLook.Shape.sum), (.right, .pick(.right))] {
+                var r = SynopticNode.series([.plugin(a)])
+                r.cablePicks = [0: mode]
+                let g = SynopticWidthFlow.compute(root: r, sourceWidth: 2, channels: [a.id: stereo])
+                check(g.look(.into(a.id), pick: CablePoint(seriesID: r.id, index: 0))?.shape == shape, "\(mode) draws \(shape)")
+            }
+        }
+        do {
+            // A pick before a ONE-input plugin: the implicit merge disappears (the plugin is fed one wire).
+            let m = plugin("m")
+            var root = SynopticNode.series([.plugin(m)])
+            let p0 = CablePoint(seriesID: root.id, index: 0)
+            let bare = SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [m.id: mono], folds: [m.id: .left])
+            check(bare.adaptations[m.id] == .merge(fold: .left, rightPassesDry: false), "no pick: the implicit merge as ever")
+            check(bare.menuAt[p0] == CableMenu(current: .left, offered: [.left, .right, .sum]),
+                  "into a one-input plugin: Left / Right / Sum, the plugin's own fold ticked")
+            root.cablePicks = [0: .sum]
+            let f = SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [m.id: mono], folds: [m.id: .left])
+            check(f.adaptations.isEmpty && f.inputOf[m.id] == 1, "a pick before a one-input plugin removes its merge")
+            check(f.menuAt[p0] == CableMenu(current: .sum, offered: [.left, .right, .sum]),
+                  "the pick wins over the plugin's inherited fold")
+            let shown = f.look(.into(m.id), pick: p0)
+            check(shown?.shape == .sum && shown?.splitsAfter == false, "Sum into a mono plugin: the pair joins, nothing splits")
+            check(f.trunkOut == 1, "the chain goes on mono")
+            // A one-input plugin 1 -> 2 after a pick: still one wire in.
+            check(SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [m.id: monoStereo]).trunkOut == 2,
+                  "a 1 -> 2 plugin after the pick widens again")
+        }
+        do {
+            // A mono cable: no menu, no shape, a pick written there is inert.
+            let a = plugin("a")
+            var root = SynopticNode.series([.plugin(a)])
+            root.cablePicks = [0: .left]
+            let f = SynopticWidthFlow.compute(root: root, sourceWidth: 1, channels: [a.id: mono])
+            let p0 = CablePoint(seriesID: root.id, index: 0)
+            check(f.menuAt.isEmpty, "a mono file: no cable offers anything")
+            check(f.widthAt[p0] == 1 && f.pickAt[p0] == .left, "the pick is listed on the mono cable (kept, inert)")
+            check(f.look(.into(a.id), pick: p0)?.shape != .pick(.left), "and draws nothing there")
+            // A stereo cable made mono by a pick upstream.
+            let b = plugin("b")
+            var two = SynopticNode.series([.plugin(a), .plugin(b)])
+            two.cablePicks = [0: .right]
+            let g = SynopticWidthFlow.compute(root: two, sourceWidth: 2, channels: [a.id: mono, b.id: mono])
+            check(g.menuAt[CablePoint(seriesID: two.id, index: 1)] == nil && g.menuAt[CablePoint(seriesID: two.id, index: 2)] == nil,
+                  "after a pick the cables are mono: no menu on them")
+        }
+        do {
+            // The head of a stereo audio clip's chain is the FILE's: one menu, on its own wire.
+            let a = plugin("a")
+            let root = SynopticNode.series([.plugin(a)])
+            let withFile = SynopticWidthFlow.compute(root: root, sourceWidth: 2, sourceChoice: .both, channels: [a.id: stereo])
+            check(withFile.fileLevelPoint == CablePoint(seriesID: root.id, index: 0), "the file's point is the head of the root")
+            check(withFile.menuAt[CablePoint(seriesID: root.id, index: 0)] == nil, "no cable menu there: the file's")
+            check(withFile.menuAt[CablePoint(seriesID: root.id, index: 1)]?.current == .stereo, "the tail still has its own")
+            let bus = SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [a.id: stereo])
+            check(bus.fileLevelPoint == nil && bus.menuAt[CablePoint(seriesID: root.id, index: 0)] != nil,
+                  "a bus or a MIDI clip has no file: its head is an ordinary cable")
+            let monoFile = SynopticWidthFlow.compute(root: root, sourceWidth: 1, sourceChoice: .left, channels: [a.id: stereo])
+            check(monoFile.fileLevelPoint == nil, "a mono file takes no choice")
+        }
+        do {
+            // A bin that is OFF ignores the picks written inside it; ON, they count.
+            let a = plugin("a"), b = plugin("b")
+            var inner = SynopticNode.series([.plugin(a)])
+            inner.fxLink = SynopticFXLink(blockID: UUID(), name: "bin", color: .red, isDetached: false,
+                                          isEnabled: false, memberCount: 2)
+            inner.cablePicks = [0: .left]
+            let root = SynopticNode.series([inner, .plugin(b)])
+            let off = SynopticWidthFlow.compute(root: root, sourceWidth: 2, channels: [a.id: stereo, b.id: stereo])
+            let pa = CablePoint(seriesID: inner.id, index: 0)
+            check(off.pickAt.isEmpty && off.inputOf[a.id] == 2, "a bin switched off ignores its picks")
+            check(off.menuAt[pa]?.current == .left, "its cable still shows what is written there (not in force)")
+            inner.fxLink?.isEnabled = true
+            let on = SynopticWidthFlow.compute(root: .series([inner, .plugin(b)]), sourceWidth: 2,
+                                               channels: [a.id: stereo, b.id: stereo])
+            check(on.pickAt[pa] == .left && on.inputOf[a.id] == 1, "switched on, the pick is in force")
+            check(on.menuAt[pa]?.current == .left, "and ticked")
+        }
+        do {
+            // Parallel: a branch that picks narrows only itself; the sum is as wide as the widest branch.
+            var va = SynopticNode.series([]), vb = SynopticNode.series([])
+            va.cablePicks = [0: .left]
+            let one = SynopticWidthFlow.compute(root: .series([.parallel([va, vb])]), sourceWidth: 2, channels: [:])
+            check(one.widthAt[CablePoint(seriesID: va.id, index: 0)] == 2, "a branch is fed the stereo signal")
+            check(one.outputOf[va.id] == 1 && one.outputOf[vb.id] == 2, "the picking branch is mono, the other not")
+            check(one.trunkOut == 2, "the sum of the branches is the widest")
+            vb.cablePicks = [0: .right]
+            let both = SynopticWidthFlow.compute(root: .series([.parallel([va, vb])]), sourceWidth: 2, channels: [:])
+            check(both.trunkOut == 1, "every branch picked: the sum is mono")
+            check(both.look(.after(va.id), pick: CablePoint(seriesID: va.id, index: 0))?.shape == .pick(.left),
+                  "an empty branch draws its pick on its one wire")
+        }
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "\(failures) FAILED of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

@@ -286,7 +286,11 @@ struct SynopticBoundView: View {
             sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
             channelMenu: { viewModel.channelMenuState(pluginID: $0, host: objectID) },
             onSetChannelVariant: { viewModel.setChannelVariantFromHand($1, pluginID: $0, host: objectID) },
-            onSetMonoFold: { viewModel.setMonoFold($1, pluginID: $0, host: objectID) },
+            onSetCableChannels: { point, choice in
+                guard let loc = locations[point.seriesID] else { return }
+                viewModel.setCableChannels(host: objectID, location: loc, index: point.index, choice: choice,
+                                           channels: channelCounts)
+            },
             dragProvider: { dragProvider($0) },
             dropOutcome: { target, flags in
                 // A send card in the hand is answered by the send table (a plugin never is one).

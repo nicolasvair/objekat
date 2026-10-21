@@ -20218,7 +20218,7 @@
         }
       }
     },
-    "synoptic.wire.fold.left": {
+    "synoptic.wire.cable.left": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -20241,7 +20241,7 @@
         }
       }
     },
-    "synoptic.wire.fold.right": {
+    "synoptic.wire.cable.right": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -20264,7 +20264,30 @@
         }
       }
     },
-    "synoptic.wire.fold.sum": {
+    "synoptic.wire.cable.stereo": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stereo (both channels)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estéreo (ambos canales)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stéréo (les deux canaux)"
+          }
+        }
+      }
+    },
+    "synoptic.wire.cable.sum": {
       "extractionState": "manual",
       "localizations": {
         "en": {

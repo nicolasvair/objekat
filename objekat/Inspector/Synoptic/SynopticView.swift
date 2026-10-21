@@ -80,9 +80,10 @@ struct SynopticView: View {
     @State private var hoveredWire: HoveredWire? = nil
 
     private enum HoveredWire: Equatable {
-        /// A MERGING wire into a one-input plugin: the plugin, and the fold it was given (nil = none chosen).
-        case fold(plugin: UUID, current: MonoFold?)
-        /// The wire that leaves a stereo audio file: its channel choice.
+        /// A STEREO cable: the cable point it belongs to, and its menu (the choice in force, the choices
+        /// offered).
+        case cable(point: CablePoint, menu: CableMenu)
+        /// The wire that leaves a stereo audio file (or runs on from it to the first card): its channel choice.
         case source(current: SourceChannelChoice)
     }
 
@@ -365,11 +366,11 @@ struct SynopticView: View {
         .contentShape(Rectangle())
         .gesture(marqueeGesture(cards: d.placement.cards, blockers: marqueeBlockers(d)))
         .contextMenu {
-            // On a wire that carries a channel choice, and only there: what the one-input plugin is fed, or
-            // which channels of the audio file the chain gets.
+            // On a STEREO wire, and only there: which channels the cable carries on (Stereo / Left / Right / Sum),
+            // or, on the wire from the audio file, which channels of the file the chain gets.
             switch hoveredWire {
-            case .fold(let id, let current)?:
-                if let set = actions.onSetMonoFold { monoFoldMenu(plugin: id, current: current, set: set) }
+            case .cable(let point, let menu)?:
+                if let set = actions.onSetCableChannels { cableChannelMenu(point: point, menu: menu, set: set) }
             case .source(let current)?:
                 if let set = actions.onSetSourceChannels { sourceChannelMenu(current: current, set: set) }
             case nil:
@@ -378,14 +379,15 @@ struct SynopticView: View {
         }
     }
 
-    /// Left / Right / Sum, the current one ticked (none for a plugin that never had a choice: it reads the
-    /// left channel and lets the right one pass round it, which none of the three is).
+    /// The choices a cable offers (Stereo / Left / Right / Sum; Left / Right / Sum only into a one-input
+    /// plugin), the one in force ticked.
     @ViewBuilder
-    private func monoFoldMenu(plugin id: UUID, current: MonoFold?,
-                              set: @escaping (UUID, MonoFold) -> Void) -> some View {
-        ForEach(MonoFold.allCases, id: \.self) { f in
-            Toggle(Self.foldLabel(f),
-                   isOn: Binding(get: { current == f }, set: { _ in if current != f { set(id, f) } }))
+    private func cableChannelMenu(point: CablePoint, menu: CableMenu,
+                                  set: @escaping (CablePoint, CableChoice) -> Void) -> some View {
+        ForEach(menu.offered, id: \.self) { c in
+            Toggle(Self.cableChoiceLabel(c),
+                   isOn: Binding(get: { menu.current == c },
+                                 set: { _ in if menu.current != c { set(point, c) } }))
         }
     }
 
@@ -884,24 +886,42 @@ struct SynopticView: View {
             return out
         }
         let len = b.y - a.y
-        let j0 = a.y + len * 0.3, j1 = a.y + len * 0.65    // the bend starts / the width has changed
+        // A choice written on the cable that the next plugin then spreads over its pair again needs both
+        // changes on one segment: the first in its first half, the second in its last.
+        let both = look.splitsAfter
+        let j0 = a.y + len * (both ? 0.12 : 0.3), j1 = a.y + len * (both ? 0.38 : 0.65)    // the bend starts / the width has changed
+        let k0 = a.y + len * 0.55, k1 = a.y + len * 0.85    // the second change (a split), when there is one
         let changes = straight && len > 8
+        /// The single wire a sum / a pick leaves: down to the segment's end, or down to the split of a plugin
+        /// that takes a pair.
+        func tail(from top: CGPoint) {
+            if both {
+                out.paths.append(line([top, CGPoint(x: b.x, y: k0)]))
+                for dx in [-g, g] {
+                    out.paths.append(line([CGPoint(x: b.x, y: k0), CGPoint(x: b.x + dx, y: k1), CGPoint(x: b.x + dx, y: b.y)]))
+                }
+                out.dots.append(CGPoint(x: b.x, y: k0))
+                out.arrowXs = [b.x - g, b.x + g]
+            } else {
+                out.paths.append(line([top, b]))
+                out.arrowXs = [b.x]
+            }
+        }
         switch look.shape {
         case .sum where changes:
             for dx in [-g, g] {
                 out.paths.append(line([CGPoint(x: a.x + dx, y: a.y), CGPoint(x: a.x + dx, y: j0), CGPoint(x: b.x, y: j1)]))
             }
-            out.paths.append(line([CGPoint(x: b.x, y: j1), b]))
             out.dots = [CGPoint(x: b.x, y: j1)]
-            out.arrowXs = [b.x]
+            tail(from: CGPoint(x: b.x, y: j1))
         case .pick(let keep) where changes:
             let kept: CGFloat = keep == .left ? -g : g
             out.paths.append(line([CGPoint(x: a.x + kept, y: a.y), CGPoint(x: a.x + kept, y: j0),
-                                   CGPoint(x: b.x, y: j1), b]))
+                                   CGPoint(x: b.x, y: j1)]))
             let cut = CGPoint(x: a.x - kept, y: j0)
             out.paths.append(line([CGPoint(x: a.x - kept, y: a.y), cut]))
             out.crosses = [cut]
-            out.arrowXs = [b.x]
+            tail(from: CGPoint(x: b.x, y: j1))
         case .split where changes:
             out.paths.append(line([a, CGPoint(x: a.x, y: j0)]))
             for dx in [-g, g] {
@@ -921,26 +941,27 @@ struct SynopticView: View {
         return out
     }
 
-    private static func foldLabel(_ f: MonoFold) -> String {
-        switch f {
-        case .left:  return L("synoptic.wire.fold.left")
-        case .right: return L("synoptic.wire.fold.right")
-        case .sum:   return L("synoptic.wire.fold.sum")
+    private static func cableChoiceLabel(_ c: CableChoice) -> String {
+        switch c {
+        case .stereo: return L("synoptic.wire.cable.stereo")
+        case .left:   return L("synoptic.wire.cable.left")
+        case .right:  return L("synoptic.wire.cable.right")
+        case .sum:    return L("synoptic.wire.cable.sum")
         }
     }
 
     private static func sourceChoiceLabel(_ c: SourceChannelChoice) -> String {
         switch c {
         case .both:  return L("synoptic.wire.source.both")
-        case .left:  return L("synoptic.wire.fold.left")
-        case .right: return L("synoptic.wire.fold.right")
-        case .sum:   return L("synoptic.wire.fold.sum")
+        case .left:  return cableChoiceLabel(.left)
+        case .right: return cableChoiceLabel(.right)
+        case .sum:   return cableChoiceLabel(.sum)
         }
     }
 
-    /// The wire under the pointer that has a channel menu (the ONE hover tracker reports the point): a wire
-    /// merging into a one-input plugin, or the one leaving a stereo audio file — within 9 pt of its axis (the
-    /// two wires of a pair are 9 pt apart).
+    /// The wire under the pointer that has a channel menu (the ONE hover tracker reports the point): a STEREO
+    /// cable — every cable point of the chain, in a series, a branch or a bin — or the one leaving a stereo
+    /// audio file, within 9 pt of its axis (the two wires of a pair are 9 pt apart). A mono cable has none.
     private func hoveredChannelWire(at p: CGPoint, in d: SynopticLayout.Diagram) -> HoveredWire? {
         guard !widthFlow.isEmpty else { return nil }
         for cable in d.placement.cables {
@@ -949,10 +970,10 @@ struct SynopticView: View {
             let minY = min(f.y, t.y) - 2, maxY = max(f.y, t.y) + 2
             guard p.y >= minY, p.y <= maxY, abs(p.x - (f.x + t.x) / 2) <= 9 else { continue }
             if let c = look.sourceChoice { return .source(current: c) }
-            if case .merge(let fold, _)? = look.adaptation, case .into(let node)? = cable.carries,
-               let plugin = widthFlow.mergePlugin[node] {
-                return .fold(plugin: plugin, current: fold)
-            }
+            guard let point = cable.point else { continue }
+            // The head of a stereo audio clip's chain is the file's own choice: one menu there.
+            if point == widthFlow.fileLevelPoint, let c = widthFlow.sourceChoice { return .source(current: c) }
+            if let menu = widthFlow.menuAt[point] { return .cable(point: point, menu: menu) }
         }
         return nil
     }
@@ -988,7 +1009,7 @@ struct SynopticView: View {
             // Mono = one wire, stereo = two well apart; a sum JOINS the two into one, a channel left out STOPS
             // short with a cross, a mono signal into a stereo input SPLITS — all three in orange. A cable whose
             // width is not known here keeps the single neutral line.
-            let look = isGhost ? nil : widthFlow.look(cable.carries)
+            let look = isGhost ? nil : widthFlow.look(cable.carries, pick: cable.drawsPick ? cable.point : nil)
             let orange = look?.isOrange ?? false
             let color = (orange ? Color.orange : Color.secondary).opacity(isGhost ? 0.4 : (orange ? 0.95 : 0.7))
             let width: CGFloat = isGhost ? 1 : (look == nil ? 1.5 : 1.2)
