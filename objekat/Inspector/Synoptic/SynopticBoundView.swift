@@ -354,8 +354,10 @@ struct SynopticBoundView: View {
                 }
             },
             onSetVolume: { viewModel.updateVolume(id: objectID, volume: $0) },
-            // A HAND's door, not `updatePan`: the pan lands on its tenth (@see EditViewModel+Pan).
-            onSetPan: { viewModel.setPanFromHand(id: objectID, pan: $0) },
+            // A HAND's door, not `updatePan`: the pan lands on its tenth (@see EditViewModel+Pan),
+            // or on its hundredth while ⇧ (the fine adjustment) is held.
+            onSetPan: { viewModel.setPanFromHand(id: objectID, pan: $0,
+                                                 fine: NSEvent.modifierFlags.contains(.shift)) },
             onToggleMute: { viewModel.edit { viewModel.toggleMute(id: objectID) } },
             // Solo is a session listening state, outside the model and outside undo (@see
             // EditViewModel+Solo): no `edit {}`, no undo point, like a stem's mute — otherwise ⌘Z

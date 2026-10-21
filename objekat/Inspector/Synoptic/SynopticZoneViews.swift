@@ -62,8 +62,9 @@ struct GainDbControl: View {
 // MARK: - Draggable value box ('gain' style: a value plus a unit, drag ↑/↓)
 
 /// A small box showing a formatted value. Editing:
-///  · dragging ↑/↓ adjusts (a step of 1 by default, ⌘ = fine adjustment);
-///  · a click then the ↑/↓ arrows = a `keyStep` step, Delete = reset;
+///  · dragging ↑/↓ adjusts (a step of 1 by default, ⇧ = fine adjustment: a tenth of the travel,
+///    re-anchored when ⇧ changes mid-gesture — @see FineAdjust);
+///  · a click then the ↑/↓ arrows = a `keyStep` step (⇧ = the fine step, ⌘ = the big step), Delete = reset;
 ///  · a click then a digit = typing the value directly (Return commits, Esc cancels);
 ///  · a double click = reset.
 /// Reused for speed / semitones / bpm / pan / gains.
@@ -72,14 +73,18 @@ struct DragValueBox: View {
     let format: (Double) -> String
     var range: ClosedRange<Double>
     var pointsPerStep: CGFloat = 6
-    /// true = rounds to the whole step (⌘ = fine); false = continuous (no snapping).
+    /// true = rounds to the whole step (a tenth of it under ⇧); false = continuous (no snapping).
     var snap: Bool = true
     var width: CGFloat = 56
     /// Not applied to the keyboard's ↑/↓ arrows.
     var keyStep: Double = 1
-    /// ↑/↓ with ⌘ / with ⇧ (nil = same as `keyStep`). The tempo boxes: ⌘ ±0.1, ⇧ ±10.
+    /// ↑/↓ with ⇧ / with ⌘ (nil = `keyStep` x `FineAdjust.factor` / `keyStep` x 10). The tempo boxes
+    /// name theirs: ⇧ ±0.1, ⌘ ±10.
     var fineKeyStep: Double? = nil
     var coarseKeyStep: Double? = nil
+    /// false = a box that holds a strictly WHOLE value (a transposition in whole semitones): ⇧ has no
+    /// fine adjustment to offer there, neither dragging nor on the arrows.
+    var allowsFine: Bool = true
     /// true = the box follows the length of what it shows (`width` becomes a minimum).
     var fitsContent: Bool = false
     /// Reads a direct keyboard entry (nil = refuse). By default: a plain number.
@@ -94,6 +99,8 @@ struct DragValueBox: View {
     var onReset: (() -> Void)? = nil
 
     @State private var start: Double? = nil
+    /// The drag's fine-adjust state (re-anchors when ⇧ is pressed or released mid-gesture).
+    @State private var fineAdjust = FineAdjust()
     @State private var typing: String? = nil   // non-nil = direct keyboard entry under way
     @FocusState private var focused: Bool       // the container (display mode: drag / arrows / digit)
     @FocusState private var fieldFocused: Bool  // the TextField (typing mode)
@@ -108,9 +115,10 @@ struct DragValueBox: View {
 
     private func bump(_ delta: Double) { onTouch?(); onBegin?(); onChange(clamp(value + delta)) }
 
+    /// ⇧ = the fine step, ⌘ = the big step (⌘ wins if both are held: the big step is the rarer, explicit ask).
     private func keyStep(for modifiers: EventModifiers) -> Double {
-        if modifiers.contains(.command), let f = fineKeyStep { return f }
-        if modifiers.contains(.shift), let c = coarseKeyStep { return c }
+        if modifiers.contains(.command) { return coarseKeyStep ?? keyStep * 10 }
+        if modifiers.contains(.shift) && allowsFine { return fineKeyStep ?? keyStep * FineAdjust.factor }
         return keyStep
     }
 
@@ -222,11 +230,14 @@ struct DragValueBox: View {
         .gesture(
             DragGesture(minimumDistance: 2)
                 .onChanged { v in
-                    if start == nil { start = value; onBegin?(); grabKeyFocus() }
+                    if start == nil { start = value; fineAdjust = FineAdjust(); onBegin?(); grabKeyFocus() }
                     let s = start ?? value
-                    let fine = NSEvent.modifierFlags.contains(.command)
-                    let raw = s - Double(v.translation.height) / Double(pointsPerStep)
-                    let val = (snap && !fine) ? raw.rounded() : raw
+                    // ⇧ is read on EVERY frame: held from the click it makes the whole drag fine, pressed
+                    // or released mid-gesture it re-anchors (no jump).
+                    let fine = allowsFine && NSEvent.modifierFlags.contains(.shift)
+                    let travel = -Double(v.translation.height) / Double(pointsPerStep)
+                    let raw = s + fineAdjust.effective(travel, fine: fine)
+                    let val = snap ? FineAdjust.snapped(raw, to: 1, fine: fine) : raw
                     onChange(clamp(val))
                 }
                 .onEnded { _ in start = nil }
@@ -320,7 +331,7 @@ struct AudioFileZoneView: View {
         baseCommandArrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard baseFocused, event.modifierFlags.contains(.command),
                   event.keyCode == 125 || event.keyCode == 126 else { return event }
-            nudgeBaseBPM(by: event.keyCode == 126 ? 0.1 : -0.1)
+            nudgeBaseBPM(by: event.keyCode == 126 ? 10 : -10)
             return nil
         }
     }
@@ -495,7 +506,7 @@ struct AudioFileZoneView: View {
             DragValueBox(value: semis,
                          format: stLabel,
                          range: -48...48, pointsPerStep: 6, width: 48,
-                         keyStep: 1,
+                         keyStep: 1, allowsFine: false,
                          help: L("help.drag.semitones"),
                          onBegin: { actions.onBeginSpeedEdit?() },
                          onChange: { actions.onSetSpeed?(pow(2.0, $0 / 12.0)) },
@@ -518,8 +529,8 @@ struct AudioFileZoneView: View {
                 }
                 .onDisappear { removeBaseCommandArrowMonitor() }
                 .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                    let step: Double = press.modifiers.contains(.command) ? 0.1
-                        : press.modifiers.contains(.shift) ? 10
+                    let step: Double = press.modifiers.contains(.command) ? 10
+                        : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                         : 1
                     nudgeBaseBPM(by: press.key == .upArrow ? step : -step)
                     return .handled
@@ -531,7 +542,7 @@ struct AudioFileZoneView: View {
 
             if let base = file.baseBPM, base > 0 {
                 // Same rules as the wav BPM field and the transport tempo: up to 4 decimals shown
-                // only when needed, ',' or '.', ⌘↑/↓ ±0.1, ⇧ ±10, width follows the text.
+                // only when needed, ',' or '.', ↑/↓ ±1, ⇧ ±0.1, ⌘ ±10, width follows the text.
                 DragValueBox(value: targetBPM ?? base,
                              format: { TempoText.display(TempoText.rounded($0)) },
                              range: 20...400, pointsPerStep: 2, width: 38,

@@ -83,12 +83,20 @@ enum AutomationHandTravel {
     struct PencilDrag {
         private(set) var anchorDy: Double = 0
         private(set) var anchorValue: Double
+        /// ⇧ (`fine`) turns the same travel into a tenth of the value, re-anchored when it flips
+        /// mid-gesture so the value never jumps (@see FineAdjust). The anchor above lives in
+        /// EFFECTIVE travel, so the bound re-anchoring and the ⇧ one compose.
+        private var fineAdjust = FineAdjust()
 
-        init(startValue: Double) { anchorValue = startValue }
+        init(startValue: Double, fine: Bool = false) {
+            anchorValue = startValue
+            fineAdjust = FineAdjust(fine: fine)
+        }
 
-        mutating func value(handDy dy: Double, step: Double,
-                            range: ClosedRange<Double>) -> Double {
+        mutating func value(handDy rawDy: Double, step: Double,
+                            range: ClosedRange<Double>, fine: Bool = false) -> Double {
             guard step > 0 else { return anchorValue }
+            let dy = fineAdjust.effective(rawDy, fine: fine)
             let raw = anchorValue - (dy - anchorDy) / AutomationHandTravel.pencilPxPerStep * step
             let v = min(max(raw, range.lowerBound), range.upperBound)
             if v != raw { anchorDy = dy; anchorValue = v }

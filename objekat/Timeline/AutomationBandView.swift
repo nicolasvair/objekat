@@ -213,6 +213,11 @@ struct AutomationBandView: View {
         /// step would have it leap over the point the moment the drag skims the height where the
         /// rule changes sides; decided once, it holds for the whole gesture (@see drawReadout).
         let badgeBelow: Bool
+        /// The hand's travel on each axis as ⇧ reads it (@see FineAdjust): a tenth of the travel while
+        /// ⇧ is held, re-anchored when it flips, so no point jumps. Only the modes that follow the
+        /// hand relatively use it (`.point`, `.segment`, `.curve`, `.staticValue`).
+        var fineX = FineAdjust()
+        var fineY = FineAdjust()
         /// The last known cursor position: it allows REPLAYING the gesture without a mouse movement,
         /// when ⌘ flips the snap along the way.
         var last: CGPoint
@@ -351,14 +356,18 @@ struct AutomationBandView: View {
                                                   origin: bandStartTime, maxT: geo.maxT,
                                                   source: .drag)
             let start = ok ? viewModel.automationWrite.map { Double($0.startValue) } : nil
-            pencilPress = (row, ok, start.map { AutomationHandTravel.PencilDrag(startValue: $0) })
+            pencilPress = (row, ok, start.map {
+                AutomationHandTravel.PencilDrag(startValue: $0,
+                                                fine: NSEvent.modifierFlags.contains(.shift))
+            })
             clearHover()
         }
         guard var p = pencilPress, p.writing, var d = p.drag else { return }
         let range = ref.valueRange
         let v = Float(d.value(handDy: Double(value.translation.height),
                               step: Double(EditViewModel.automationWheelStepValue(ref)),
-                              range: Double(range.lowerBound)...Double(range.upperBound)))
+                              range: Double(range.lowerBound)...Double(range.upperBound),
+                              fine: NSEvent.modifierFlags.contains(.shift)))
         p.drag = d
         pencilPress = p
         viewModel.setAutomationWriteValue(v)
@@ -1108,8 +1117,18 @@ struct AutomationBandView: View {
     private func applyDrag(at location: CGPoint) {
         guard let d = drag else { return }
 
-        let dy  = location.y - d.anchor.y
-        let dx  = location.x - d.anchor.x
+        // ⇧ = fine: a tenth of the hand's travel, re-anchored whenever ⇧ flips (@see FineAdjust). The
+        // zone and the transform read the pointer's ABSOLUTE place and keep the raw travel.
+        let rawDx = Double(location.x - d.anchor.x)
+        var dx = rawDx
+        var dy = Double(location.y - d.anchor.y)
+        switch d.mode {
+        case .timeZone, .transform: break
+        default:
+            let fine = NSEvent.modifierFlags.contains(.shift)
+            dx = drag?.fineX.effective(rawDx, fine: fine) ?? rawDx
+            dy = drag?.fineY.effective(dy, fine: fine) ?? dy
+        }
         let g   = geo
         let ref = d.ref
         // The vertical travel as the ROW reads it: fine near the anchor, the row's own geometry
@@ -1123,7 +1142,7 @@ struct AutomationBandView: View {
             let o = d.origPoints[i]
             // A hand that has not travelled sideways leaves the time ALONE: snapping on the first
             // frame would throw the point onto the nearest grid line under a purely vertical edit.
-            let t = abs(dx) < Self.timeDeadZonePx ? o.t : snappedT(atX: g.x(ofT: o.t) + dx)
+            let t = abs(rawDx) < Self.timeDeadZonePx ? o.t : snappedT(atX: g.x(ofT: o.t) + dx)
             // The point grabbed was part of the selection: the whole of it travels, by ONE common
             // 2D delta. The TIME half is snapped on the grabbed point and the difference handed to
             // the others — snapping each of them in turn would destroy the curve's internal
@@ -1405,10 +1424,13 @@ struct AutomationBandView: View {
                            at p: CGPoint, anchor: CGPoint, edits: Bool) {
         viewModel.select(object.id, additive: false)
         if edits { viewModel.beginAutomationEdit() }
+        // ⇧ held from the very click makes the whole drag fine (read again at every frame).
+        let shiftHeld = NSEvent.modifierFlags.contains(.shift)
         drag = BandDrag(ref: ref, row: row, mode: mode, origPoints: pts,
                         origStatic: staticValue(ref), groupRows: groupRows, start: p,
                         anchor: anchor,
                         badgeBelow: p.y - Self.readoutHeightGuess - Self.readoutOffset.drag.gap < 3,
+                        fineX: FineAdjust(fine: shiftHeld), fineY: FineAdjust(fine: shiftHeld),
                         last: p)
     }
 

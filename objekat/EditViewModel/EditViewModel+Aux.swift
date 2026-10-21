@@ -406,9 +406,13 @@ extension EditViewModel {
     /// on every frame and the knob never moves (@see EditViewModel+Pan, which paid for that once).
     /// Which is why `adjustSendLevelSelected` does NOT go through it — it reads the stored value
     /// and adds, and its callers already hand over whole steps.
-    func setSendLevelFromHand(from objectID: UUID, to auxID: UUID, levelDb: Float) {
+    ///
+    /// `fine` (⇧ held, @see FineAdjust): the level lands on the TENTH of a dB instead — the fine
+    /// adjustment would otherwise be swallowed by the whole-dB rounding.
+    func setSendLevelFromHand(from objectID: UUID, to auxID: UUID, levelDb: Float, fine: Bool = false) {
         guard handMayCreateSend(from: objectID, to: auxID) else { return }
-        setSendLevel(from: objectID, to: auxID, levelDb: levelDb.rounded())
+        let landed = fine ? (levelDb * 10).rounded() / 10 : levelDb.rounded()
+        setSendLevel(from: objectID, to: auxID, levelDb: landed)
     }
 
     /// Sets the send level (clamped -∞…+sendMaxDb) with auto enabling/disabling

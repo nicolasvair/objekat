@@ -252,10 +252,14 @@ struct SlipDragState {
     var dt: Double = 0
 }
 
+/// The three value tools' drags carry a `FineAdjustTracker`: ⇧ is read on every frame, and a flip
+/// re-anchors the travel instead of jumping (@see FineAdjust). Held by reference so the frame's
+/// update does not write the `@State` that holds the struct.
 struct VolumeDragState {
     var ids: Set<UUID>
     var anchors: [UUID: Float]
     var grabbedID: UUID
+    var fine = FineAdjustTracker()
 }
 
 struct PanDragState {
@@ -263,12 +267,14 @@ struct PanDragState {
     var anchors: [UUID: Float]
     var grabbedID: UUID
     var trackWidth: Double
+    var fine = FineAdjustTracker()
 }
 
 struct SendDragState {
     var auxID: UUID
     var grabbedID: UUID            // the clip grabbed (it serves the visual focus)
     var anchors: [UUID: Float]     // objectID → the send level at the start of the drag
+    var fine = FineAdjustTracker()
 }
 
 /// A mark of the band being dragged. ONE AXIS AT A TIME, and that is the whole shape of the
@@ -1915,11 +1921,14 @@ extension TimelineView {
             // next one then went back to the action before (a deleted object came back at the same time
             // as the volume). Removed on release if nothing moved.
             viewModel.pushUndo()
-            volumeDrag = VolumeDragState(ids: ids, anchors: anchors, grabbedID: item.id)
+            volumeDrag = VolumeDragState(ids: ids, anchors: anchors, grabbedID: item.id,
+                                         fine: FineAdjustTracker(fine: NSEvent.modifierFlags.contains(.shift)))
         }
 
         guard let state = volumeDrag else { return }
-        let dDB = Float(-value.translation.height / 10.0)
+        // 10 px = 1 dB bare; ⇧ = a tenth of that, re-anchored when it flips (no jump).
+        let fine = NSEvent.modifierFlags.contains(.shift)
+        let dDB = Float(state.fine.effective(Double(-value.translation.height), fine: fine) / 10.0)
         // One batch per frame: K `updateVolume` = K writes of `items` = K lane-entry rebuilds otherwise.
         viewModel.batchItemsMutation {
             for (id, anchorDB) in state.anchors {
@@ -1985,18 +1994,23 @@ extension TimelineView {
             // The undo before the first change (see handleVolumeDrag).
             viewModel.pushUndo()
             panDrag = PanDragState(ids: ids, anchors: anchors, grabbedID: item.id,
-                                   trackWidth: ToolOverlayGeometry.panDragTrackWidth(spanWidth: span.width))
+                                   trackWidth: ToolOverlayGeometry.panDragTrackWidth(spanWidth: span.width),
+                                   fine: FineAdjustTracker(fine: NSEvent.modifierFlags.contains(.shift)))
         }
 
         guard let state = panDrag else { return }
         // A VERTICAL gesture (up = to the right), like the wheel, the arrows and the inspector:
         // since pan is shown as a knob, it is set everywhere by the same movement. The travel stays
         // set on the block's visible width — a wide block keeps a fine adjustment.
-        let dPan = Float(-value.translation.height / state.trackWidth * 2.0)
+        // ⇧ = fine: a tenth of the travel, re-anchored when it flips, and the tenth detent lifted
+        // (the pan then lands on the hundredth, @see EditViewModel+Pan).
+        let fine = NSEvent.modifierFlags.contains(.shift)
+        let dPan = Float(state.fine.effective(Double(-value.translation.height), fine: fine)
+                         / state.trackWidth * 2.0)
         // Through `applyPanDelta` and not a loop of its own: that is where the anchors, the tenth
         // detent and the two-pass propagation live, and a second implementation here is how the
         // tool and the inspector's box came to disagree.
-        viewModel.applyPanDelta(dPan, from: state.anchors)
+        viewModel.applyPanDelta(dPan, from: state.anchors, fine: fine)
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy { viewModel.find(id: $0.key)?.pan == $0.value }
             if unchanged { _ = viewModel.undoStack.popLast() }
@@ -2089,16 +2103,19 @@ extension TimelineView {
                 })
             // The undo before the first change (see handleVolumeDrag).
             viewModel.pushUndo()
-            sendDrag = SendDragState(auxID: hit.auxID, grabbedID: hit.clipID, anchors: anchors)
+            sendDrag = SendDragState(auxID: hit.auxID, grabbedID: hit.clipID, anchors: anchors,
+                                     fine: FineAdjustTracker(fine: NSEvent.modifierFlags.contains(.shift)))
         }
         guard let state = sendDrag else { return }
         // Reasserted on every step: the hover must not put the accent out during the drag.
         viewModel.sendToolFocus = SendFocus(objectID: state.grabbedID, auxID: state.auxID)
-        let dDB = Float(-value.translation.height / 10.0)   // 10 px ≈ 1 dB, upwards = +
+        // 10 px ≈ 1 dB, upwards = +; ⇧ = a tenth of that, re-anchored when it flips (@see FineAdjust).
+        let fine = NSEvent.modifierFlags.contains(.shift)
+        let dDB = Float(state.fine.effective(Double(-value.translation.height), fine: fine) / 10.0)
         // The whole dB, always: the hand's door (@see setSendLevelFromHand). The anchor plus the
         // TOTAL travel, never a compounded delta — that is what lets the result be rounded.
         for (id, anchor) in state.anchors {
-            viewModel.setSendLevelFromHand(from: id, to: state.auxID, levelDb: anchor + dDB)
+            viewModel.setSendLevelFromHand(from: id, to: state.auxID, levelDb: anchor + dDB, fine: fine)
         }
         if phase == .ended {
             let unchanged = state.anchors.allSatisfy {

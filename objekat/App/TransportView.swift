@@ -18,10 +18,10 @@ struct TransportView: View {
 
     @State private var bpmText: String = "120"
     @FocusState private var bpmFocused: Bool
-    /// Fallback for ⌘↑/⌘↓ while the field editor holds first responder: macOS binds Cmd+Up/Down
+    /// Fallback for ⌘↑/⌘↓ (±10) while the field editor holds first responder: macOS binds Cmd+Up/Down
     /// to "move to beginning/end of document" in a text view, which can eat the event before
     /// SwiftUI's `onKeyPress` ever sees it. Active only while `bpmFocused`, and only for that
-    /// exact combination — plain and ⇧ arrows are left to `onKeyPress` below.
+    /// exact combination — plain (±1) and ⇧ (±0.1) arrows are left to `onKeyPress` below.
     @State private var bpmCommandArrowMonitor: Any?
 
     /// How much the bar gives up to fit a narrow window (@see ToolbarDensity). Changed ONLY by
@@ -63,7 +63,7 @@ struct TransportView: View {
         bpmCommandArrowMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard bpmFocused, event.modifierFlags.contains(.command),
                   event.keyCode == 125 || event.keyCode == 126 else { return event }
-            nudgeTempo(by: event.keyCode == 126 ? 0.1 : -0.1)
+            nudgeTempo(by: event.keyCode == 126 ? 10 : -10)
             return nil
         }
     }
@@ -197,8 +197,8 @@ struct TransportView: View {
                     .onAppear { bpmText = TempoText.display(viewModel.tempo) }
                     .onDisappear { removeBpmCommandArrowMonitor() }
                     .onKeyPress(keys: [.upArrow, .downArrow]) { press in
-                        let step: Double = press.modifiers.contains(.command) ? 0.1
-                            : press.modifiers.contains(.shift) ? 10
+                        let step: Double = press.modifiers.contains(.command) ? 10
+                            : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                             : 1
                         nudgeTempo(by: press.key == .upArrow ? step : -step)
                         return .handled
@@ -398,7 +398,10 @@ private struct LockedDragSurface: NSViewRepresentable {
 
         override func scrollWheel(with event: NSEvent) {
             guard let onScroll else { return }
-            let delta = axis == .horizontal ? event.scrollingDeltaX : event.scrollingDeltaY
+            // BOTH handles answer to the VERTICAL wheel only (the horizontal handle used to read the sideways
+            // delta): with ⇧ no longer a zoom modifier, a sideways scroll over a zoom handle is the
+            // timeline's, not a zoom.
+            let delta = event.scrollingDeltaY
             guard delta != 0 else { return }
             onScroll(Double(delta))
         }

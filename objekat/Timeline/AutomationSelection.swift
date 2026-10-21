@@ -161,11 +161,12 @@ enum AutomationTransform {
         lo + n * (hi - lo)
     }
 
-    /// ⇧ = fine adjustment: the factor is brought back towards 1 by a factor of four. Not a
-    /// comfort on this gesture — a row is some sixteen pixels tall, so `k = 2` sits sixteen pixels
-    /// above the box's edge, and without this the grip would be unusable on anything but a coarse
-    /// move. `k == 1` stays `1`, so ⇧ never moves anything by itself.
-    static func fine(_ k: Double) -> Double { 1 + (k - 1) / 4 }
+    /// ⇧ = fine adjustment: the factor is brought back towards 1 by `FineAdjust.factor` (a tenth,
+    /// the one coefficient of every fine gesture). Not a comfort on this gesture — a row is some
+    /// sixteen pixels tall, so `k = 2` sits sixteen pixels above the box's edge, and without this
+    /// the grip would be unusable on anything but a coarse move. `k == 1` stays `1`, so ⇧ never
+    /// moves anything by itself.
+    static func fine(_ k: Double) -> Double { 1 + (k - 1) * FineAdjust.factor }
 
     /// WHAT the gesture asks for, decided from the grip and the pointer; `apply` is what carries
     /// it out.
@@ -186,7 +187,7 @@ enum AutomationTransform {
                 r.time = .scale(anchor: anchorT, k: fineTune ? fine(k) : k)
             } else {
                 let d = targetT - pulledT
-                r.time = .shift(fineTune ? d / 4 : d)
+                r.time = .shift(fineTune ? d * FineAdjust.factor : d)
             }
             return r
         }

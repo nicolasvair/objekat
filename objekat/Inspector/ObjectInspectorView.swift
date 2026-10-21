@@ -277,6 +277,7 @@ struct ObjectInspectorView: View {
                             return String(format: "%+.1f st", v)
                         },
                         range: -48...48, pointsPerStep: 6, snap: true, width: 48, keyStep: 1,
+                        allowsFine: false,
                         help: L("help.drag.semitones"),
                         onBegin: { viewModel.pushUndo() },
                         onChange: { new in
@@ -456,8 +457,9 @@ struct ObjectInspectorView: View {
                 // `relPan` is a local accumulator, nothing reads the objects back into it
                 // during a drag. Quantising it does not compound — DragValueBox works from
                 // the travel since the gesture's start, never from the value it last wrote.
-                let stepped = Double(EditViewModel.detentedPan(Float(new)))
-                viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
+                let fine = NSEvent.modifierFlags.contains(.shift)   // ⇧ lifts the tenth (@see EditViewModel+Pan)
+                let stepped = Double(EditViewModel.detentedPan(Float(new), fine: fine))
+                viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors, fine: fine)
                 relPan = stepped
                 panOwnWrite = panSignature
             },

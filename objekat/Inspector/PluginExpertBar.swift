@@ -14,6 +14,8 @@ struct PluginExpertBar: View {
 
     @State private var playing = false
     @State private var dragAnchor: (input: Float, output: Float)?
+    /// ⇧ (fine) pressed or released mid-drag re-anchors instead of jumping (@see FineAdjust).
+    @State private var dragFine = FineAdjust()
 
     var body: some View {
         let trims = viewModel.pluginTrims(plugin) ?? (0, 0)
@@ -48,7 +50,7 @@ struct PluginExpertBar: View {
     private func trimControls(_ t: (input: Float, output: Float)) -> some View {
         HStack(spacing: 6) {
             trimLabel(L("expert.trim.in"), t.input)
-            // The coupled gesture: a horizontal drag, 0.1 dB per point, on half-dB detents (⌘ = fine).
+            // The coupled gesture: a horizontal drag, 0.1 dB per point, on half-dB detents (⇧ = a tenth of the travel, on detents a tenth as wide).
             Image(systemName: "arrow.left.and.right")
                 .font(.system(size: 10, weight: .bold))
                 .frame(width: 28, height: 18)
@@ -57,11 +59,11 @@ struct PluginExpertBar: View {
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1)
                     .onChanged { v in
-                        if dragAnchor == nil { dragAnchor = t; viewModel.pushUndo() }
+                        if dragAnchor == nil { dragAnchor = t; dragFine = FineAdjust(); viewModel.pushUndo() }
                         guard let a = dragAnchor else { return }
-                        let raw = Float(v.translation.width) * 0.1
-                        let fine = NSEvent.modifierFlags.contains(.command)
-                        let d = fine ? (raw * 0.2 * 100).rounded() / 100 : (raw * 2).rounded() / 2
+                        let fine = NSEvent.modifierFlags.contains(.shift)
+                        let travel = dragFine.effective(Double(v.translation.width), fine: fine)
+                        let d = Float(FineAdjust.snapped(travel * 0.1, to: 0.5, fine: fine))
                         let next = EditViewModel.coupledTrims(from: a, delta: d)
                         try? viewModel.setPluginTrims(pluginID: plugin, input: next.input, output: next.output, undo: false)
                     }

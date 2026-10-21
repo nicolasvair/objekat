@@ -8,6 +8,7 @@
 // it is worth.
 //
 //     swiftc -parse-as-library ../objekat/Timeline/AutomationSelection.swift \
+//         ../objekat/Shared/FineAdjust.swift \
 //         test_automation_transform.swift -o /tmp/autotransform && /tmp/autotransform
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -219,13 +220,13 @@ enum AutomationTransformTest {
 
     // MARK: - ⇧, the fine adjustment
 
-    check("⇧ brings k back towards 1 by a factor of four",
-          near(AutomationTransform.fine(3), 1.5) && near(AutomationTransform.fine(0), 0.75))
+    check("⇧ brings k back towards 1 by the common factor (a tenth)",
+          near(AutomationTransform.fine(3), 1.2) && near(AutomationTransform.fine(0), 0.9))
     check("⇧ leaves k = 1 exactly where it is",
           near(AutomationTransform.fine(1), 1),
           "otherwise ⇧ alone would move the curve")
     check("⇧ reaches the request's own valueK",
-          near(vertical(.top, rampSpan, 3, fine: true).valueK, 1.5))
+          near(vertical(.top, rampSpan, 3, fine: true).valueK, 1.2))
 
     // MARK: - boxFactor, the guard rail
     //
