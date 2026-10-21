@@ -141,8 +141,9 @@ struct MarkerLane: Codable, Equatable, Identifiable {
 /// one (the engine sync). Living beside `items` instead, it touches neither the engine, nor the
 /// bake, nor the export, nor the stems.
 ///
-/// The accepted cost: it inherits nothing for free. It does not move with a ripple, a cut or a
-/// dragged object — those gestures have to name it explicitly, and until they do, a comment stays
+/// The accepted cost: it inherits nothing for free. A cut or a dragged object does not move it;
+/// only the gestures that take time out or open it (the ripple delete from the ruler, "insert
+/// time") name it explicitly — @see the comments' extension below. For the rest a comment stays
 /// where it was put.
 struct TimelineComment: Codable, Equatable, Identifiable {
     var id: UUID = UUID()
@@ -317,5 +318,78 @@ extension Array where Element == Marker {
             out.append(q)
         }
         return out
+    }
+
+    /// Opens a blank of `length` seconds at the time `at` — the exact inverse of `splicedInTime`
+    /// over the same span (insert, then remove [at, at + length]: the identity, for a region of at
+    /// least `minRegionDuration`). The ruler's "insert time".
+    ///
+    /// A mark AT or AFTER `at` slides forward by `length`, a region included — it starts on the far
+    /// side of the blank. A REGION that CONTAINS `at` (starts before it, ends after it) is
+    /// LENGTHENED: it names a passage and the passage has just grown, so its start stays and its end
+    /// goes on by `length`. A mark or a region that ends AT `at` (or before) is left alone — the
+    /// blank opens after it. Nothing is ever dropped. Times in whatever frame the caller holds.
+    func insertingTime(at: Double, length: Double) -> [Marker] {
+        guard length > 1e-9 else { return self }
+        return map { m in
+            var q = m
+            if m.time >= at {
+                q.time += length
+            } else if m.isRegion, m.endTime > at {
+                q.duration += length
+            }
+            return q
+        }
+    }
+}
+
+// MARK: - The same two gestures on the timeline's COMMENTS
+//
+// A comment is a text laid on the timeline (@see TimelineComment) and it has to follow time when
+// time is taken out or opened (the ripple delete from the ruler and "insert time"). The rule is the POINT rule of the marks above,
+// read on the comment's START — the user's ruling: one that starts at or after the edit slides, one
+// that starts in a removed span goes, one that starts before keeps its start AND its length (it is
+// not lengthened nor trimmed). Only the comments of the TIMELINE are concerned (`parentID == nil`):
+// a comment laid inside a group is in the group's own frame and follows the group.
+extension Array where Element == TimelineComment {
+
+    /// Takes the span [from, to] out and closes the gap: a comment starting after it slides back by
+    /// its length, one starting INSIDE it disappears (it was written beside material that has
+    /// gone), one starting before it stays as it is.
+    func splicedInTime(removing from: Double, to: Double) -> [TimelineComment] {
+        let hole = to - from
+        guard hole > 1e-9 else { return self }
+        var out: [TimelineComment] = []
+        for c in self {
+            guard c.parentID == nil else { out.append(c); continue }
+            if c.startTime < from { out.append(c) }
+            else if c.startTime >= to { var q = c; q.startTime -= hole; out.append(q) }
+            // else: inside the hole, it goes.
+        }
+        return out
+    }
+
+    /// Opens a blank of `length` at `at`: a comment starting at or after `at` slides forward.
+    func insertingTime(at: Double, length: Double) -> [TimelineComment] {
+        guard length > 1e-9 else { return self }
+        return map { c in
+            guard c.parentID == nil, c.startTime >= at else { return c }
+            var q = c; q.startTime += length; return q
+        }
+    }
+}
+
+// MARK: - The same gesture on a SPAN (the playback loop)
+extension ClosedRange where Bound == Double {
+
+    /// A span under an "insert time" of `length` at `at`: one that starts at or after `at` slides
+    /// whole; one that CONTAINS `at` is LENGTHENED (the passage it names has grown, its start
+    /// stays); one that ends at or before `at` is left alone. Returns the span unchanged in that
+    /// last case. The playback loop's rule.
+    func insertingTime(at: Double, length: Double) -> ClosedRange<Double> {
+        guard length > 1e-9 else { return self }
+        if lowerBound >= at { return (lowerBound + length)...(upperBound + length) }
+        if upperBound > at { return lowerBound...(upperBound + length) }
+        return self
     }
 }

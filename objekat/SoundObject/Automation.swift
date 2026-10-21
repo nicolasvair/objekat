@@ -429,4 +429,36 @@ extension Array where Element == AutomationLane {
         }
         return out
     }
+
+    /// Opens a blank of `length` seconds at `at` in every curve — the "insert time" counterpart of
+    /// `splicedInTime`, times LOCAL to the object. What follows `at` slides forward by `length`; what
+    /// precedes it stays; and the stretch between them HOLDS the value the curve had at `at`, flat:
+    /// a blank is silence of time, not a ramp from one value to the next.
+    ///
+    ///  • No point before `at`: the whole curve shifts (the engine already holds a curve's first
+    ///    value before its first point, so the blank is flat by itself).
+    ///  • No point at or after `at`: nothing to do (the last value is held to the end anyway).
+    ///  • The curve CROSSES `at`: the cut `split(at:)` gives both halves an interpolated point at
+    ///    `at` (the left one with a straight outgoing segment, which is the plateau), and the right
+    ///    half, shifted, opens on a point at `at + length` carrying the same value and the curvature
+    ///    of the segment that was straddled — so the shape after the blank is exactly the shape
+    ///    that was there, and the two points around the blank are what make it flat.
+    func insertingTime(at: Double, length: Double) -> [AutomationLane] {
+        guard length > 1e-9 else { return self }
+        var out: [AutomationLane] = []
+        for lane in self where !lane.points.isEmpty {
+            let hasBefore = lane.points.contains { $0.t < at }
+            let hasAfter  = lane.points.contains { $0.t >= at }
+            if !hasAfter {
+                out.append(lane)
+            } else if !hasBefore {
+                out.append(lane.shifted(by: length))
+            } else {
+                let (l, r) = lane.split(at: at)
+                out.append(AutomationLane(param: lane.param,
+                                          points: l.points + r.shifted(by: at + length).points))
+            }
+        }
+        return out
+    }
 }
