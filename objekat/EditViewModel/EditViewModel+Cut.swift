@@ -104,6 +104,22 @@ extension EditViewModel {
         engine?.beginPlaybackEdit()
         defer { engine?.endPlaybackEdit() }
         pushUndo()
+        let result = cutCore(ids: ids, atTime: splitTime, keeping: keeping, windowOnly: windowOnly)
+        guard !result.isEmpty else {
+            _ = undoStack.popLast()
+            return []
+        }
+        return result
+    }
+
+    /// The body of `cut(ids:atTime:keeping:windowOnly:)` with NO undo of its own: the caller owns
+    /// the transaction (`pushUndo` before, pop it if the result comes back empty) and has already
+    /// filtered `ids` (`cuttableIDs`, `droppingDescendants`). It is the cut the "insert time"
+    /// gesture reuses inside its own single undo step (@see EditViewModel+InsertTime), exactly as
+    /// the ripple reuses `carveTimeRange`. Returns the pieces the cut produced, `[]` if nothing was
+    /// cut — in which case it has touched nothing.
+    func cutCore(ids: [UUID], atTime splitTime: Double, keeping: CutKeepSide?,
+                 windowOnly: Bool) -> Set<UUID> {
         // The crossfades the cut objects are in, noted while they still stand — and this one
         // cannot simply be wrapped like a move (@see withCrossfadeRefit), because a split hands
         // the seam to a fragment that did not exist a moment ago.
@@ -163,10 +179,7 @@ extension EditViewModel {
         }
         // A half thrown away takes its seam with it: `refitCrossfade` then clears what is left.
         for p in pairs { refitCrossfade(leftID: p.left, rightID: p.right) }
-        guard !result.isEmpty else {
-            _ = undoStack.popLast()
-            return []
-        }
+        guard !result.isEmpty else { return [] }
         // A marker or a region left on a piece the cut swallowed no longer names anything —
         // the same pruning `applySnapshot` does after an undo (@see EditViewModel+UndoRedo).
         pruneAnnotationSelection()
