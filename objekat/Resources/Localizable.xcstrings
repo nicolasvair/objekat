@@ -11180,6 +11180,29 @@
         }
       }
     },
+    "menu.context.time.insert": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insert time"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insertar tiempo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Insérer du temps"
+          }
+        }
+      }
+    },
     "menu.context.volumeOffline": {
       "extractionState": "manual",
       "localizations": {

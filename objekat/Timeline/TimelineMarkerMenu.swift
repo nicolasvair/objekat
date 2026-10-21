@@ -42,6 +42,14 @@ func buildMarkerBandMenu(vm: EditViewModel,
                 vm.renamingID = made.marker
             }
         }
+        // "Insert time" is offered ONLY for a range traced in the RULER: that is the gesture which
+        // names time itself rather than the matter on some lanes, and it is the one that carries the
+        // marks, the comments and the loop along (@see `insertTimeAtTimeSelection`). No shortcut.
+        if vm.timeSelectionFromRuler, hi - lo > 0.001 {
+            addItem(menu, &proxies, L("menu.context.time.insert")) {
+                vm.insertTimeAtTimeSelection()
+            }
+        }
     }
 
     // NO 'new marker lane' here. Creating a ROW is the lanes' button's alone (@see
