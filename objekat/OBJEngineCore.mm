@@ -565,6 +565,13 @@ struct CompileNode {
     // -applySendPositionsForKey:. `sendAux` = l'id de l'aux visé.
     bool                       isSend = false;
     std::string                sendAux;
+    // A CHOICE OF CHANNEL written on a cable (`{kind:"pick", id, mode, enabled}`, session format 31): one
+    // te::ObjChannelModePlugin laid at its place, `key` = the pick's id (a key like a plugin's: kept
+    // alive across compiles, wanted by `collectCompileKeys`, destroyed by the orphan pass). It is NOT a
+    // plugin to resolve — never goes through `resolvedPluginTreeForInfo`, never in `failed` (Swift would
+    // erase the entry). `pickMode` = te::ObjChannelModePlugin::Mode (1 = left, 2 = right, 3 = centre).
+    bool                       isPick = false;
+    int                        pickMode = 0;
 };
 
 static CompileSeries parseCompileSeries(NSArray<NSDictionary*>* arr);
@@ -574,6 +581,16 @@ static CompileNode parseCompileNode(NSDictionary* d) {
     if ([d[@"kind"] isEqualToString:@"send"]) {
         n.isSend  = true;
         n.sendAux = std::string([(d[@"aux"] ?: @"") UTF8String]);
+    } else if ([d[@"kind"] isEqualToString:@"pick"]) {
+        n.isPick  = true;
+        n.key     = std::string([(d[@"id"] ?: @"") UTF8String]);
+        n.enabled = d[@"enabled"] ? [d[@"enabled"] boolValue] : YES;
+        NSString* mode = d[@"mode"];
+        if ([mode isKindOfClass:[NSString class]]) {
+            if ([mode isEqualToString:@"left"])       n.pickMode = (int)te::ObjChannelModePlugin::left;
+            else if ([mode isEqualToString:@"right"]) n.pickMode = (int)te::ObjChannelModePlugin::right;
+            else if ([mode isEqualToString:@"sum"])   n.pickMode = (int)te::ObjChannelModePlugin::centre;
+        }
     } else if ([d[@"kind"] isEqualToString:@"rack"]) {
         n.isRack = true;
         n.key = std::string([(d[@"id"] ?: @"") UTF8String]);   // id du bloc → clé des gains de voie
@@ -6058,6 +6075,68 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     return out;
 }
 
+// DEBUG. The engine's REAL chain of a host, nested: every entry of its plugin list in order, with what it is
+// (`role`: fader, windowFade, send, pick, fold_in, fold_out, fx, gain, parallel, channel_mode, other), its
+// model key when it has one, its engine type, whether it is on, and — for a pick — its mode (`left` / `right` /
+// `sum`) and for a fold half its mode; a parallel block carries its branches (`branches`: one list per voice,
+// the branch gain included, role `gain`). What a scenario reads to PROVE the order the compile laid (pick,
+// IN fold, plugin, OUT fold, anchor) and the places of the folds' halves. nil if the host is unknown.
+- (NSArray<NSDictionary*>* _Nullable)engineChainForObjectID:(NSString*)uuid {
+    if (!_edit || !uuid) return nil;
+    const std::string key([uuid UTF8String]);
+    te::PluginList* pl = [self userPluginListForKey:key];
+    if (!pl) return nil;
+    std::unordered_map<te::Plugin*, std::string> userKey, sendKey;
+    for (auto& [k, p] : _pluginMap) if (p) userKey[p.get()] = k;
+    for (auto& [mk, p] : _bridgeSendMap) if (p) sendKey[p.get()] = mk;
+    te::Plugin *fader = nullptr, *window = nullptr, *channelMode = nullptr;
+    if (auto it = _faderGainMap.find(key); it != _faderGainMap.end()) fader = it->second.get();
+    if (auto it = _windowFadeMap.find(key); it != _windowFadeMap.end()) window = it->second.get();
+    if (auto it = _channelModeMap.find(key); it != _channelModeMap.end()) channelMode = it->second.get();
+
+    std::function<NSArray<NSDictionary*>*(te::PluginList&)> walk;
+    walk = [&](te::PluginList& list) -> NSArray<NSDictionary*>* {
+        NSMutableArray* out = [NSMutableArray array];
+        for (int i = 0; i < list.size(); ++i) {
+            te::Plugin* p = list[i];
+            if (!p) continue;
+            NSMutableDictionary* e = [NSMutableDictionary dictionaryWithObject:@(i) forKey:@"index"];
+            const juce::String type = p->getPluginType();
+            e[@"type"] = objNS(type);
+            e[@"enabled"] = @(p->isEnabled());
+            e[@"instance"] = [NSString stringWithFormat:@"%p", (void*)p];
+            std::string k;
+            if (auto uit = userKey.find(p); uit != userKey.end()) { k = uit->second; e[@"key"] = [NSString stringWithUTF8String:k.c_str()]; }
+            if (p == fader)             e[@"role"] = @"fader";
+            else if (p == window)       e[@"role"] = @"windowFade";
+            else if (p == channelMode)  e[@"role"] = @"channel_mode";
+            else if (sendKey.count(p))  e[@"role"] = @"send";
+            else if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(p)) {
+                e[@"role"] = @"pick";
+                static const char* const names[] = { "stereo", "left", "right", "sum" };
+                e[@"mode"] = [NSString stringWithUTF8String:names[juce::jlimit(0, 3, cm->getMode())]];
+            } else if (auto* f = dynamic_cast<te::ObjMonoFoldPlugin*>(p)) {
+                e[@"role"] = f->getHalf() == (int)te::ObjMonoFoldPlugin::outHalf ? @"fold_out" : @"fold_in";
+                static const char* const names[] = { "?", "right", "sum", "left" };
+                e[@"mode"] = [NSString stringWithUTF8String:names[juce::jlimit(0, 3, f->getMode())]];
+            } else if (auto* block = dynamic_cast<te::ObjParallelBlockPlugin*>(p)) {
+                e[@"role"] = @"parallel";
+                NSMutableArray* branches = [NSMutableArray array];
+                for (int b = 0; b < block->getNumBranches(); ++b)
+                    if (auto* branch = block->getBranch(b)) [branches addObject:walk(*branch)];
+                e[@"branches"] = branches;
+            } else if (!k.empty()) {
+                e[@"role"] = k.find("#wet") != std::string::npos ? @"gain" : @"fx";   // a branch's end gain, or a plugin
+            } else {
+                e[@"role"] = @"other";
+            }
+            [out addObject:e];
+        }
+        return out;
+    };
+    return walk(*pl);
+}
+
 // MARK: - Bus de stem (FolderTrack submix par stem)
 //
 // Un stem = UN FolderTrack submix. Ses membres ne sont pas des objets mais des PISTES : les
@@ -9605,6 +9684,35 @@ static void objDumpPluginList(te::PluginList& pl,
         // destroy the other host's instance. Not added to `failed` either: Swift would drop the
         // plugin from the model, and the model is what a repaired save should keep.
         if ([self isPluginKeyHeldByAnotherHost:n.key]) continue;
+
+        // A choice of channel on a cable: an ObjChannelMode laid at its place, in the order of the model
+        // (pick, then the plugin's IN fold, the plugin, its OUT fold). Created once, kept across compiles
+        // (an undo patches the mode in place), switched off with its bin. A mode of 0 (an unknown word)
+        // is the pass-through of the plugin itself.
+        if (n.isPick) {
+            te::Plugin::Ptr p;
+            if (auto pit = _pluginMap.find(n.key); pit != _pluginMap.end()) p = pit->second;
+            if (p && !dynamic_cast<te::ObjChannelModePlugin*>(p.get())) {
+                // The key was a plugin's (a retouched file): never turn it into a pick under its feet.
+                NSLog(@"[FX] compile: pick '%s' has the key of another plugin — ignored", n.key.c_str());
+                continue;
+            }
+            if (!p) {
+                p = pl.insertPlugin(te::ObjChannelModePlugin::create(), indexBefore(pl, anchor));
+                if (!p) {
+                    // Refused (the list is full): not `failed` — the model keeps the pick, the next
+                    // compile lays it.
+                    NSLog(@"[FX] compile: pick '%s' refused", n.key.c_str());
+                    continue;
+                }
+                _pluginMap[n.key] = p;
+            }
+            if (auto* cm = dynamic_cast<te::ObjChannelModePlugin*>(p.get())) cm->setMode(n.pickMode);
+            p->setEnabled(n.enabled);
+            order.push_back(n.key);
+            here.push_back(n.key);
+            continue;
+        }
 
         if (n.isRack) {
             te::Plugin::Ptr carrier;

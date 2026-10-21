@@ -14,6 +14,10 @@ the steps of docs/plan_canaux_cables (E2 .. E6); what is asserted TODAY:
     reopen give the same chain back, a bin made of cards with a pick between them holds the pick in its
     definition AND in its instance, and `debug.send_marker_audit` stays `ok` all along (no phantom: a
     pick is never an empty plugin, never erased by a compile, never listed twice).
+  * E3, the engine (`debug.engine_chain`): each pick is an `ObjChannelMode` instance of its own, keyed by
+    its model id, laid where the model says (before the plugin it feeds, in the user segment); a card
+    removed / a branch / a bin move them with it; against an external one-input plugin a pick right
+    before it leaves only the OUT half of the fold.
 
     ./scenario_channel_picks.py /path/to/objekat.app [socket]
 
@@ -266,6 +270,134 @@ try:
         check("undo of the bin: A p:left B p:sum C p:right", shape(obj) == "A p:left B p:sum C p:right", shape(obj))
 
         section("E2: end")
+        audit_ok("end")
+
+        # ═══════════════════════════════════════════════════════════════ E3 : the engine
+        def engine_chain(host):
+            send("wait_idle")
+            return send("debug.engine_chain", {"id": host})["chain"]
+
+        def lite(chain):
+            """The user-visible part of the engine's chain: [(role, tag-or-mode)] for fx and picks, in order."""
+            out = []
+            low = {k.lower(): v for k, v in TAGS.items()}
+            for e in chain:
+                if e["role"] == "pick":
+                    out.append(("pick", e["mode"]))
+                elif e["role"] == "fx":
+                    out.append(("fx", low.get(e.get("key", "").lower(), "?")))
+                elif e["role"] == "parallel":
+                    out.append(("parallel", [lite(b) for b in e["branches"]]))
+                elif e["role"] in ("fold_in", "fold_out"):
+                    out.append((e["role"], e["mode"]))
+            return out
+
+        def eng_until(host, pred, timeout=30.0):
+            deadline = time.time() + timeout
+            ch = engine_chain(host)
+            while not pred(ch) and time.time() < deadline:
+                time.sleep(0.25)
+                ch = engine_chain(host)
+            return ch
+
+        def picks_of(chain):
+            return [e for e in chain if e["role"] == "pick"]
+
+        section("E3: the engine lays each pick as an ObjChannelMode, before the plugin it feeds")
+        manifest = fresh("engine")
+        obj = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        A, B, C = tag(obj, ["A", "B", "C"])
+        retouch(manifest, put)
+        obj = send("object.list")["objects"][0]["id"]
+        ch = engine_chain(obj)
+        want = [("fx", "A"), ("pick", "left"), ("fx", "B"), ("pick", "sum"), ("fx", "C"), ("pick", "right")]
+        # the ids of the cards changed with the reload: re-tag them from the model, in order.
+        TAGS.clear()
+        for name, e in zip("ABC", [e for e in entries(obj) if not e.get("is_channel_pick")]):
+            TAGS[e["id"]] = name
+        got = lite(ch)
+        check("the engine chain reads A p:left B p:sum C p:right", got == want, got)
+        check("each pick is keyed by its model id (the engine's key)",
+              [p["key"].lower() for p in picks_of(ch)] == [uid(1), uid(2), uid(3)], [p.get("key") for p in picks_of(ch)])
+        check("every pick is an instance of its own (never one shared)",
+              len({p["instance"] for p in picks_of(ch)}) == 3)
+        roles = [e["role"] for e in ch]
+        if "fader" in roles:
+            last_pick = max(i for i, r in enumerate(roles) if r == "pick")
+            check("the tail pick stands in the user segment, before the fader", last_pick < roles.index("fader"), roles)
+        audit_ok("engine chain read")
+
+        section("E3: a card removed — the engine follows (upstream pick wins), undo brings the pick back")
+        send("plugin.remove", {"host": obj, "plugin": [k for k, v in TAGS.items() if v == "B"][0]})
+        got = lite(engine_chain(obj))
+        check("B removed: A p:left C p:right in the engine too", got == [("fx", "A"), ("pick", "left"), ("fx", "C"), ("pick", "right")], got)
+        send("edit.undo")
+        got = lite(engine_chain(obj))
+        check("undo: the three picks are back in the engine", got == want, got)
+        check("…and still under their own keys",
+              [p["key"].lower() for p in picks_of(engine_chain(obj))] == [uid(1), uid(2), uid(3)])
+
+        section("E3: a parallel branch over a run — the pick between its cards goes in the branch")
+        send("plugin.select", {"host": obj, "plugins": [k for k, v in TAGS.items() if v in ("B", "C")]})
+        send("plugin.branch", {"host": obj, "plugin": [k for k, v in TAGS.items() if v == "B"][0]})
+        got = lite(engine_chain(obj))
+        check("A p:left [B p:sum C | ...] p:right", len(got) == 4 and got[0] == ("fx", "A") and got[1] == ("pick", "left")
+              and got[2][0] == "parallel" and got[3] == ("pick", "right"), got)
+        if len(got) == 4 and got[2][0] == "parallel":
+            check("branch 0 holds B p:sum C", got[2][1][0] == [("fx", "B"), ("pick", "sum"), ("fx", "C")], got[2][1])
+        audit_ok("engine, parallel")
+        send("edit.undo")
+        send("wait_idle")
+
+        section("E3: a bin keeps its pick in the engine too (the instance, keyed by the chain's pick id)")
+        link = send("fxlink.create", {"host": obj, "plugins": [k for k, v in TAGS.items() if v in ("A", "B")]})
+        ch = engine_chain(obj)
+        pk = [p["key"].lower() for p in picks_of(ch)]
+        check("three picks in the engine chain: the bin's one, then the two on the cables", pk == [uid(1), uid(2), uid(3)], pk)
+        got = [r for r, _ in lite(ch)]
+        check("order fx pick fx pick fx pick", got == ["fx", "pick", "fx", "pick", "fx", "pick"], got)
+        audit_ok("engine, bin")
+        send("edit.undo")
+        send("wait_idle")
+
+        section("E3: against an external one-input plugin, a pick before it leaves only the OUT half of the fold")
+        AU_LOWPASS = "AudioUnit:Effects/aufx,lpas,appl"
+        manifest = fresh("fold")
+        obj = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        # a pick at the HEAD of a stereo clip root is the clip's own channel mode (one menu): the pick under
+        # test therefore stands between a card and the plugin.
+        send("plugin.add", {"host": obj, "identifier": "4bandEq"})
+        lp = send("plugin.add", {"host": obj, "identifier": AU_LOWPASS})["plugin"]["id"]
+        deadline = time.time() + 40
+        while not send("plugin.channel_layouts", {"host": obj, "plugin": lp}).get("loaded") and time.time() < deadline:
+            time.sleep(0.25)
+        send("plugin.set_channel_layout", {"host": obj, "plugin": lp, "variant": "mono"})
+        ch = eng_until(obj, lambda c: any(e["role"] == "fold_in" for e in c))
+        got = [(e["role"], e.get("mode")) for e in ch if e["role"] in ("fold_in", "fold_out", "fx")]
+        check("no pick: IN and OUT halves around the plugin (the default fold, sum)",
+              got == [("fx", None), ("fold_in", "sum"), ("fx", None), ("fold_out", "sum")], got)
+
+        for mode in ("left", "sum"):
+            def put_pick(doc, mode=mode):
+                chain = doc["items"][0]["plugins"]
+                doc["items"][0]["plugins"] = [chain[0], pick_entry(7, mode)] + chain[1:]
+            retouch(manifest, put_pick)
+            obj = send("object.list")["objects"][0]["id"]
+            deadline = time.time() + 40
+            lp = [e for e in entries(obj) if not e.get("is_channel_pick")][1]["id"]
+            while not send("plugin.channel_layouts", {"host": obj, "plugin": lp}).get("loaded") and time.time() < deadline:
+                time.sleep(0.25)
+            ch = eng_until(obj, lambda c: any(e["role"] == "pick" for e in c) and any(e["role"] == "fold_out" for e in c))
+            got = [(e["role"], e.get("mode")) for e in ch if e["role"] in ("pick", "fold_in", "fold_out", "fx")]
+            check("pick %s right before the mono plugin: card, pick, plugin, OUT half only (L = R after a pick)" % mode,
+                  got == [("fx", None), ("pick", mode), ("fx", None), ("fold_out", "left")], got)
+            audit_ok("fold, pick " + mode)
+            # put the file back to its pick-less shape for the next round
+            def drop_pick(doc):
+                doc["items"][0]["plugins"] = [p for p in doc["items"][0]["plugins"] if "channelPick" not in p]
+            retouch(manifest, drop_pick)
+
+        section("E3: end")
         audit_ok("end")
 finally:
     try:

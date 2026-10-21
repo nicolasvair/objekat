@@ -1254,6 +1254,27 @@ extension CommandRegistry {
                 })])
         }
 
+        register("debug.engine_chain",
+                 summary: """
+                 DEBUG. The engine's REAL chain of a host (object, stem or Main), nested, as the compile laid it: \
+                 `chain` = [{index, role, type, enabled, instance, key?, mode?, branches?}] in list order. \
+                 `role` is fader, windowFade, send, `pick` (a channel choice written on a cable: `mode` left / \
+                 right / sum), `fold_in` / `fold_out` (the halves of a one-input plugin's fold, `mode` \
+                 left / right / sum), fx (any plugin with a model key), gain (a branch's end gain), parallel (its `branches` are lists of the same shape), \
+                 channel_mode (the audio file's own choice) or other. What a scenario reads to prove WHERE the \
+                 compile put a pick against the plugin it feeds. Reads only; call it after `wait_idle`.
+                 """,
+                 params: [ParamSpec("id", "uuid", "The host: an object, a stem or the Main.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            guard let raw = engine.engineChain(forObjectID: vm.engineHostKey(id).uuidString) else {
+                throw CommandError(code: .not_found, message: "no engine chain for \(id.uuidString)")
+            }
+            return .object(["chain": JSONValue.fromFoundation(raw)])
+        }
+
         register("debug.add_test_plugin",
                  summary: """
                  DEBUG. Adds a MEASURING plugin to a host's chain through the normal model path: \

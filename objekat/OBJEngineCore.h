@@ -682,6 +682,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // The sender's plugin list as roles, in order ({index, role, key?, aux?, tap_position?, type?,
 // segment_start?, segment_end?}); nil if the host is unknown.
 - (NSArray<NSDictionary*>* _Nullable)chainLayoutForObjectID:(NSString* _Nonnull)uuid;
+// DEBUG: the host's REAL chain, nested (a parallel block carries its branches): {index, role, type, enabled,
+// key?, mode? (a pick or a fold half), branches?}; nil if the host is unknown.
+- (NSArray<NSDictionary*>* _Nullable)engineChainForObjectID:(NSString* _Nonnull)uuid;
 // YES if the LIVE instance can take a sidechain (an AU still loading answers NO: not known yet).
 - (BOOL)pluginCanSidechain:(NSString* _Nonnull)pluginKey;
 // DEBUG tool: sets a numeric property on a live plugin's state (the latency tester's `time`).

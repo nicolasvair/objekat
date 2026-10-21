@@ -208,7 +208,7 @@ extension EditViewModel {
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
     private func rackSpec(for plugins: [ObjectPlugin], topLevel: Bool = false) -> [[String: Any]] {
-        plugins.compactMap { p in
+        plugins.enumerated().compactMap { (k, p) in
             // A send's marker is not a plugin: the engine has nothing to resolve for it. It travels as an
             // ORDERING TOKEN, `{kind: "send", aux}`, at the root only (a marker lives nowhere else): the
             // engine records the root order with it and -applySendPositionsForKey: reads the place of
@@ -216,8 +216,12 @@ extension EditViewModel {
             if let m = p.sendMarker {
                 return topLevel ? ["kind": "send", "aux": m.auxID.uuidString] : nil
             }
-            // A choice of cable is not a plugin either. (The engine learns it in the step that lays it.)
-            if p.isChannelPick { return nil }
+            // A choice of cable is not a plugin either, and the engine must never try to resolve it as one: it
+            // travels as `{kind: "pick"}` and is laid as an ObjChannelMode at its place (its on/off is the
+            // bin's, when it stands in one: the bin's mapping below folds it into each entry).
+            if let pick = p.channelPick {
+                return ["id": p.id.uuidString, "kind": "pick", "mode": pick.mode.rawValue, "enabled": p.isEnabled]
+            }
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
@@ -250,7 +254,11 @@ extension EditViewModel {
             // that switch nil it would send nothing and the engine would keep the legacy graph. A CHOSEN fold travels, `left` included (its output then
             // replaces the pair, the right channel cut). The engine lays its service plugins only where the
             // plugin really has one input (it reads the live bus), so the key can travel for every leaf.
-            if let f = MonoFold.played(p.monoFold) { d["fold"] = f.rawValue }
+            // A pick that stands right before the plugin has already made the pair L = R: the plugin then reads
+            // the LEFT channel (exact, and no IN half is laid — @see ChannelPicks.engineFold). Nothing but the
+            // record's own fold otherwise, so a chain with no pick gives the spec it always gave.
+            let visible = ChannelPicks.visibleIndex(ofModelIndex: k, in: plugins)
+            if let f = ChannelPicks.engineFold(forVisible: visible, in: plugins) { d["fold"] = f.rawValue }
             return d
         }
     }
