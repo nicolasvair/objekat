@@ -1,20 +1,22 @@
 import Foundation
 
-// MARK: - Trims and gain match: a gain before a plugin, a gain after it
+// MARK: - Trims and gain match: a gain before a plugin, a gain after it, a compensation after that
 //
-// Two numbers per plugin, `ObjectPlugin.inputTrimDb` / `outputTrimDb`, applied by the probe engine
-// patch 0045 puts around the plugin (@see OBJPluginProbe.h): live and in a render, bypassed with
-// the plugin, ramped over one block. The editor bar moves them two ways, and only those two:
+// Three numbers per plugin, `ObjectPlugin.inputTrimDb` / `outputTrimDb` / `compensationDb`, applied
+// by the probe engine patch 0045 puts around the plugin (@see OBJPluginProbe.h): live and in a
+// render, bypassed with the plugin, ramped over one block, ±24 dB each. Three SEPARATE gains, moved
+// two ways and only those two:
 //
 //   • the COUPLED gesture — +n dB in, −n dB out: drive the plugin harder (or softer) without the
-//     level that leaves it moving, which is what one wants from a saturation or a compressor;
-//   • the GAIN MATCH — the output only, set so that what leaves the plugin (after its output trim)
-//     is as loud, K-weighted, as what entered it (before its input trim), over the last seconds
-//     PLAYED. The coupled gesture made afterwards adds to it.
+//     level that leaves it moving, which is what one wants from a saturation or a compressor. It
+//     keeps the compensation as it is;
+//   • the GAIN MATCH — the compensation only, set so that what leaves it is as loud, K-weighted, as
+//     what entered the plugin (before its input trim), over the last seconds PLAYED. What it
+//     measures leaving is taken AFTER the output trim, so it compensates the trims too.
 //
 // Not automatable. Carried like the rest of a plugin's identity: undo (patched, never a rebuild),
-// the session file (format 29), a copy, a link (a gesture on a linked plugin moves every instance
-// ACTIVELY linked to it, as a preset load does), a render.
+// the session file (format 29 for the trims, 30 for the compensation), a copy, a link (a gesture on
+// a linked plugin moves every instance ACTIVELY linked to it, as a preset load does), a render.
 
 extension EditViewModel {
 
@@ -35,22 +37,36 @@ extension EditViewModel {
         presetTarget(pluginID)?.plugin.trims
     }
 
+    func pluginCompensation(_ pluginID: UUID) -> Float? {
+        presetTarget(pluginID)?.plugin.compensation
+    }
+
     // MARK: Writing
 
-    /// Sets both trims (clamped to ±24 dB) on the plugin and on every instance actively linked to
-    /// it. `undo` false for the frames of a gesture that pushed its point at its start.
-    func setPluginTrims(pluginID: UUID, input: Float, output: Float, undo: Bool = true) throws {
+    /// Sets the trims (clamped to ±24 dB) on the plugin and on every instance actively linked to it;
+    /// `compensation` nil keeps the plugin's own. `undo` false for the frames of a gesture that pushed
+    /// its point at its start.
+    func setPluginTrims(pluginID: UUID, input: Float, output: Float, compensation: Float? = nil,
+                        undo: Bool = true) throws {
         guard let t = presetTarget(pluginID) else { throw TrimError.unknownPlugin }
         let i = Self.clampTrim(input), o = Self.clampTrim(output)
-        if t.plugin.trims == (i, o) { return }
+        let c = Self.clampTrim(compensation ?? t.plugin.compensation)
+        if t.plugin.trims == (i, o) && t.plugin.compensation == c { return }
         if undo { pushUndo() }
         for target in [(t.hostID, t.plugin)] + activeLinkedInstances(of: pluginID) {
-            writeTrims(i, o, on: target.1.id, host: chainHost(holding: target.1.id, on: target.0))
+            writeTrims(i, o, c, on: target.1.id, host: chainHost(holding: target.1.id, on: target.0))
         }
         isDirty = true
     }
 
+    /// Sets the compensation alone (the trims stay).
+    func setPluginCompensation(pluginID: UUID, db: Float, undo: Bool = true) throws {
+        guard let cur = pluginTrims(pluginID) else { throw TrimError.unknownPlugin }
+        try setPluginTrims(pluginID: pluginID, input: cur.input, output: cur.output, compensation: db, undo: undo)
+    }
+
     /// The coupled gesture: +delta in, −delta out, the delta cut so that neither trim leaves ±24 dB.
+    /// The compensation stays.
     func nudgeCoupledTrims(pluginID: UUID, deltaDb: Float, undo: Bool = true) throws {
         guard let cur = pluginTrims(pluginID) else { throw TrimError.unknownPlugin }
         let t = Self.coupledTrims(from: cur, delta: deltaDb)
@@ -66,20 +82,21 @@ extension EditViewModel {
         return (anchor.input + d, anchor.output - d)
     }
 
-    /// The gain match: the OUTPUT trim that makes the plugin's output as loud as its input over the
-    /// last seconds played. Answers the trim laid. The input trim is left as it is.
+    /// The gain match: the COMPENSATION that makes what leaves the plugin (after its output trim) as
+    /// loud as what entered it, over the last seconds played. Answers the compensation laid. The trims
+    /// are left as they are.
     @discardableResult
     func gainMatch(pluginID: UUID) throws -> Float {
-        guard let cur = pluginTrims(pluginID) else { throw TrimError.unknownPlugin }
+        guard presetTarget(pluginID) != nil else { throw TrimError.unknownPlugin }
         guard isTransportRunning else { throw TrimError.notPlaying }
         let r = engine?.pluginLoudnessReading(pluginID.uuidString, seconds: Self.gainMatchWindowSeconds)
         let blocks = r?["blocks"]?.intValue ?? 0
         guard blocks >= Self.gainMatchMinimumBlocks,
               let lin = r?["input_lufs"]?.doubleValue, let lout = r?["output_lufs"]?.doubleValue,
               lin.isFinite, lout.isFinite else { throw TrimError.notEnoughSignal(blocks: blocks) }
-        let out = Self.clampTrim(Float(lin - lout))
-        try setPluginTrims(pluginID: pluginID, input: cur.input, output: out)
-        return out
+        let comp = Self.clampTrim(Float(lin - lout))
+        try setPluginCompensation(pluginID: pluginID, db: comp)
+        return comp
     }
 
     /// The bar asks for the measurement while it is shown (it costs a K-weighting per block).
@@ -87,12 +104,21 @@ extension EditViewModel {
         engine?.setPluginLoudnessMeasuring(pluginID.uuidString, enabled: on)
     }
 
-    /// What the probe has read lately (`seconds` of it): nil when nothing was measured.
+    /// What the probe has read lately (`seconds` of it): nil when nothing was measured. `total` counts
+    /// every 100 ms block ever measured — it stands still while the plugin is bypassed.
     func pluginLoudness(pluginID: UUID, seconds: Double = gainMatchWindowSeconds)
-        -> (input: Double, output: Double, blocks: Int)? {
+        -> (input: Double, output: Double, blocks: Int, total: Int)? {
         guard let r = engine?.pluginLoudnessReading(pluginID.uuidString, seconds: seconds) else { return nil }
         return (r["input_lufs"]?.doubleValue ?? -.infinity, r["output_lufs"]?.doubleValue ?? -.infinity,
-                r["blocks"]?.intValue ?? 0)
+                r["blocks"]?.intValue ?? 0, r["total"]?.intValue ?? 0)
+    }
+
+    /// Reads the plugin's OWN bypass parameter and tells the measurement (nothing is measured while it
+    /// is on — OBJEKAT's bypass needs no call: patch 0045 skips the probe then). Polled by the bar while
+    /// it measures. Answers whether the plugin bypasses itself.
+    @discardableResult
+    func refreshGainMatchBypass(pluginID: UUID) -> Bool {
+        engine?.refreshProbeBypass(pluginID.uuidString) ?? false
     }
 
     private static func clampTrim(_ v: Float) -> Float {
@@ -100,12 +126,15 @@ extension EditViewModel {
         return (c * 100).rounded() / 100          // a hundredth of a dB: no 1e-7 noise in the file
     }
 
-    private func writeTrims(_ input: Float, _ output: Float, on pluginID: UUID, host: UUID) {
+    private func writeTrims(_ input: Float, _ output: Float, _ compensation: Float, on pluginID: UUID, host: UUID) {
         let i: Float? = input == 0 ? nil : input
         let o: Float? = output == 0 ? nil : output
+        let c: Float? = compensation == 0 ? nil : compensation
         func set(_ list: [ObjectPlugin]) -> [ObjectPlugin] {
             list.map { p in
-                if p.id == pluginID { var q = p; q.inputTrimDb = i; q.outputTrimDb = o; return q }
+                if p.id == pluginID {
+                    var q = p; q.inputTrimDb = i; q.outputTrimDb = o; q.compensationDb = c; return q
+                }
                 if p.isContainer { return p.mappingChildSeries { set($0) } }
                 return p
             }
@@ -115,7 +144,8 @@ extension EditViewModel {
         } else {
             _ = updateChainPlugins(host) { $0 = set($0) }
         }
-        engine?.setPluginTrims(pluginID.uuidString, inputDb: Double(input), outputDb: Double(output))
+        engine?.setPluginTrims(pluginID.uuidString, inputDb: Double(input), outputDb: Double(output),
+                               compensationDb: Double(compensation))
     }
 
     // MARK: Engine
@@ -129,7 +159,8 @@ extension EditViewModel {
         for s in stems { all += Self.flattenLeaves(s.plugins) }
         for p in all {
             let t = p.trims
-            engine.setPluginTrims(p.id.uuidString, inputDb: Double(t.input), outputDb: Double(t.output))
+            engine.setPluginTrims(p.id.uuidString, inputDb: Double(t.input), outputDb: Double(t.output),
+                                  compensationDb: Double(p.compensation))
         }
     }
 }

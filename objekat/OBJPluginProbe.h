@@ -6,13 +6,16 @@
 //  (`te::Plugin::ObjProbe`, called by PluginNode::process just before and just after the plugin):
 //
 //    • the TRIMS — an input gain before the plugin and an output gain after it, in dB, the pair the
-//      editor bar's coupled gesture moves (+n in / −n out) and the gain match sets (the output only).
+//      editor bar's coupled gesture moves (+n in / −n out) — and the COMPENSATION, a third gain after
+//      the output trim, which the gain match sets and nothing else (the coupled gesture keeps it).
 //      Ramped over one block at every change, so a gesture never clicks. Applied live AND in a
 //      render (an export must sound like what was heard), never in bypass (the patch only calls a
 //      probe while the plugin really processes — a bypass bypasses its trims with it).
-//    • the MEASUREMENT for the gain match — the K-weighted energy (ITU-R BS.1770, the K-weighting of
+//    • the MEASUREMENT for the gain match — taken only while the plugin really processes (never in
+//      OBJEKAT's bypass, never while its own bypass parameter is on) — the K-weighted energy (ITU-R BS.1770, the K-weighting of
 //      OBJLoudness.h, so the bar and the export's loudness speak the same unit) of what ENTERS the
-//      plugin before its input trim, and of what LEAVES it before its output trim. Only while the
+//      plugin before its input trim, and of what LEAVES it AFTER its output trim and before the
+//      compensation (so the match compensates what the trims did too). Only while the
 //      app asked for it (the editor bar is open) and never during an offline render. Sub-blocks of
 //      ~100 ms go into a ring the main thread reads without a lock.
 //
@@ -37,7 +40,13 @@
 struct OBJProbeState {
     std::atomic<float> inGain  { 1.0f };      // linear
     std::atomic<float> outGain { 1.0f };      // linear
+    std::atomic<float> compGain { 1.0f };     // linear, after outGain (the gain match's)
     std::atomic<bool>  measuring { false };
+    /// The plugin's OWN bypass is on (its bypass parameter — a VST3's kIsBypass, an AU's BypassEffect —,
+    /// read by the main thread, @see OBJEngineCore `refreshProbeBypass:`). OBJEKAT's bypass needs no flag:
+    /// patch 0045 does not call the probe at all then. Either way the block is NOT measured, so the gain
+    /// match's window holds only moments the plugin really processed.
+    std::atomic<bool>  pluginBypassed { false };
     /// Bumped by the main thread to throw away what was accumulated (measurement switched on).
     std::atomic<uint32_t> resetGeneration { 0 };
 
@@ -53,7 +62,8 @@ struct OBJProbeState {
 
     bool isNeutral() const noexcept {
         return inGain.load(std::memory_order_relaxed) == 1.0f
-            && outGain.load(std::memory_order_relaxed) == 1.0f;
+            && outGain.load(std::memory_order_relaxed) == 1.0f
+            && compGain.load(std::memory_order_relaxed) == 1.0f;
     }
 };
 
@@ -68,12 +78,14 @@ public:
         // fade its trims in from unity over its first block.
         currentIn  = state->inGain.load();
         currentOut = state->outGain.load();
+        currentComp = state->compGain.load();
     }
 
     void objBeforePlugin(juce::AudioBuffer<float>& b, double sampleRate, bool isRendering) noexcept override {
         const int n = b.getNumSamples();
         if (n <= 0) return;
-        measuringThisBlock = canMeasure && !isRendering && state->measuring.load(std::memory_order_relaxed);
+        measuringThisBlock = canMeasure && !isRendering && state->measuring.load(std::memory_order_relaxed)
+                          && !state->pluginBypassed.load(std::memory_order_relaxed);
         if (measuringThisBlock) {
             prepare(sampleRate, b.getNumChannels());
             accIn += weightedEnergy(b, zIn);
@@ -84,6 +96,7 @@ public:
     void objAfterPlugin(juce::AudioBuffer<float>& b, double, bool) noexcept override {
         const int n = b.getNumSamples();
         if (n <= 0) return;
+        applyRamp(b, currentOut, state->outGain.load(std::memory_order_relaxed));
         if (measuringThisBlock) {
             accOut += weightedEnergy(b, zOut);
             filled += n;
@@ -97,7 +110,7 @@ public:
                 filled = 0;
             }
         }
-        applyRamp(b, currentOut, state->outGain.load(std::memory_order_relaxed));
+        applyRamp(b, currentComp, state->compGain.load(std::memory_order_relaxed));
     }
 
 private:
@@ -105,7 +118,7 @@ private:
 
     std::shared_ptr<OBJProbeState> state;
     const bool canMeasure;
-    float currentIn = 1.0f, currentOut = 1.0f;
+    float currentIn = 1.0f, currentOut = 1.0f, currentComp = 1.0f;
 
     double preparedRate = 0.0;
     int preparedChannels = 0;

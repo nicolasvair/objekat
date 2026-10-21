@@ -22,7 +22,8 @@ extension CommandRegistry {
     private func trimsJSON(_ vm: EditViewModel, _ id: UUID) throws -> JSONValue {
         guard let t = vm.pluginTrims(id) else { throw trimError(EditViewModel.TrimError.unknownPlugin) }
         return .object(["plugin": .string(id.uuidString),
-                        "input_db": .number(Double(t.input)), "output_db": .number(Double(t.output))])
+                        "input_db": .number(Double(t.input)), "output_db": .number(Double(t.output)),
+                        "compensation_db": .number(Double(vm.pluginCompensation(id) ?? 0))])
     }
 
     private func lufsJSON(_ v: Double) -> JSONValue { v.isFinite ? .number(v) : .null }
@@ -41,6 +42,8 @@ extension CommandRegistry {
             let value = chosen.flatMap { vm.gainReductionValue(of: id, parameter: $0) }
             return .object([
                 "candidates": .array(cands.map { .object(["index": .number(Double($0.index)), "id": .string($0.id), "name": .string($0.name)]) }),
+                // false = the bar says "not published by this plugin" (no estimate is made in its place)
+                "published": .bool(!cands.isEmpty),
                 "chosen": chosen.map { .string($0.id) } ?? .null,
                 "text": value.map { .string($0.text) } ?? .null,
                 "db": value?.decibels.map { .number($0) } ?? .null
@@ -69,7 +72,7 @@ extension CommandRegistry {
         }
 
         register("plugin.trims",
-                 summary: "A plugin's input and output trims, in dB.",
+                 summary: "A plugin's input and output trims and its compensation (the gain match's, after the output trim), in dB.",
                  params: [ParamSpec("plugin", "uuid", "A live plugin.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -77,22 +80,24 @@ extension CommandRegistry {
         }
 
         register("plugin.set_trims",
-                 summary: "Sets a plugin's trims (dB, clamped to ±24; an absent one is kept), on it and on every instance actively linked to it. One undo point.",
+                 summary: "Sets a plugin's trims and compensation (dB, clamped to ±24; an absent one is kept), on it and on every instance actively linked to it. One undo point.",
                  params: [ParamSpec("plugin", "uuid", "A live plugin."),
                           ParamSpec("input", "number", required: false, "Input trim, dB."),
-                          ParamSpec("output", "number", required: false, "Output trim, dB.")],
+                          ParamSpec("output", "number", required: false, "Output trim, dB."),
+                          ParamSpec("compensation", "number", required: false, "Compensation, dB (after the output trim).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("plugin")
             guard let cur = vm.pluginTrims(id) else { throw self.trimError(EditViewModel.TrimError.unknownPlugin) }
             let i = try p.optionalDouble("input").map(Float.init) ?? cur.input
             let o = try p.optionalDouble("output").map(Float.init) ?? cur.output
-            do { try vm.setPluginTrims(pluginID: id, input: i, output: o) } catch { throw self.trimError(error) }
+            let c = try p.optionalDouble("compensation").map(Float.init)
+            do { try vm.setPluginTrims(pluginID: id, input: i, output: o, compensation: c) } catch { throw self.trimError(error) }
             return try self.trimsJSON(vm, id)
         }
 
         register("plugin.nudge_trims",
-                 summary: "The coupled gesture: +delta dB on the input trim, -delta on the output (cut so neither leaves ±24). One undo point.",
+                 summary: "The coupled gesture: +delta dB on the input trim, -delta on the output (cut so neither leaves ±24); the compensation stays. One undo point.",
                  params: [ParamSpec("plugin", "uuid", "A live plugin."),
                           ParamSpec("delta", "number", "dB.")],
                  undo: .handled) { p in
@@ -115,7 +120,7 @@ extension CommandRegistry {
         }
 
         register("plugin.loudness",
-                 summary: "What the measurement read over the last `seconds` (default 5): K-weighted LUFS entering the plugin (before its input trim) and leaving it (before its output trim), gated at -70 LUFS.",
+                 summary: "What the measurement read over the last `seconds` (default 5) of moments the plugin REALLY processed (never while bypassed, by OBJEKAT or by its own bypass parameter): K-weighted LUFS entering the plugin (before its input trim) and leaving it (after its output trim, before the compensation), gated at -70 LUFS. `total` = 100 ms blocks ever measured; `plugin_bypassed` = its own bypass parameter is on (re-read by this call).",
                  params: [ParamSpec("plugin", "uuid", "A live plugin."),
                           ParamSpec("seconds", "number", required: false, "Window, 0.1..12 s.")],
                  undo: .none) { p in
@@ -123,15 +128,18 @@ extension CommandRegistry {
             let id = try p.uuid("plugin")
             guard vm.presetTarget(id) != nil else { throw self.trimError(EditViewModel.TrimError.unknownPlugin) }
             let secs = try p.double("seconds", or: EditViewModel.gainMatchWindowSeconds)
+            let selfBypassed = vm.refreshGainMatchBypass(pluginID: id)
             guard let r = vm.pluginLoudness(pluginID: id, seconds: secs) else {
-                return .object(["blocks": .number(0), "input_lufs": .null, "output_lufs": .null])
+                return .object(["blocks": .number(0), "total": .number(0), "input_lufs": .null, "output_lufs": .null,
+                                "plugin_bypassed": .bool(selfBypassed)])
             }
-            return .object(["blocks": .number(Double(r.blocks)),
-                            "input_lufs": self.lufsJSON(r.input), "output_lufs": self.lufsJSON(r.output)])
+            return .object(["blocks": .number(Double(r.blocks)), "total": .number(Double(r.total)),
+                            "input_lufs": self.lufsJSON(r.input), "output_lufs": self.lufsJSON(r.output),
+                            "plugin_bypassed": .bool(selfBypassed)])
         }
 
         register("plugin.gain_match",
-                 summary: "Sets the plugin's OUTPUT trim so that what leaves it is as loud (K-weighted) as what enters it, over the last 5 s played. Needs the transport running and the measurement on. One undo point.",
+                 summary: "Sets the plugin's COMPENSATION (only: the trims stay) so that what leaves it is as loud (K-weighted) as what enters it, over the last 5 s played. Needs the transport running and the measurement on. One undo point.",
                  params: [ParamSpec("plugin", "uuid", "A live plugin.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()

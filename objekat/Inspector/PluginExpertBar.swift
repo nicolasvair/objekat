@@ -4,9 +4,10 @@ import SwiftUI
 /// The bar at the bottom of a plugin's editor window, under the Sidechain strip when there is one,
 /// on every plugin: the GAIN REDUCTION the plugin publishes (one of its read-only parameters, chosen
 /// by its name unless the hand chose, remembered per plugin type — @see EditViewModel+GainReduction),
-/// the TRIMS around it moved by one coupled gesture (+n in, −n out), and the GAIN MATCH, which sets
-/// the output trim from what was played (@see EditViewModel+Trims). The bar measures only while it
-/// is shown; nothing it reads is polled when the window is closed.
+/// the TRIMS around it moved by one coupled gesture (+n in, −n out), the COMPENSATION after them, and
+/// the GAIN MATCH, which sets the compensation (and only it) from what was played (@see
+/// EditViewModel+Trims). The bar measures only while it is shown; nothing it reads is polled when the
+/// window is closed.
 struct PluginExpertBar: View {
     let viewModel: EditViewModel
     let plugin: UUID
@@ -24,9 +25,10 @@ struct PluginExpertBar: View {
     var body: some View {
         let trims = viewModel.pluginTrims(plugin) ?? (0, 0)
         HStack(spacing: 10) {
-            if !candidates.isEmpty { gainReduction }
+            if candidates.isEmpty { notPublished } else { gainReduction }
             Spacer(minLength: 4)
             trimControls(trims)
+            compensationLabel(viewModel.pluginCompensation(plugin) ?? 0)
             matchButton
         }
         .padding(.horizontal, 10)
@@ -42,10 +44,23 @@ struct PluginExpertBar: View {
         .onDisappear { viewModel.setGainMatchMeasuring(pluginID: plugin, false) }
         .task(id: chosen?.id) {
             // ~30 Hz: the plugin's own text, never a value cached by the model.
+            var tick = 0
             while !Task.isCancelled {
+                // An instance still loading when the bar appeared publishes nothing YET: asked again
+                // once a second while nothing was found (never once something was).
+                tick += 1
+                if candidates.isEmpty, tick % 30 == 0 {
+                    let found = viewModel.meterParameters(of: plugin)
+                    if !found.isEmpty {
+                        candidates = found
+                        chosen = viewModel.gainReductionParameter(of: plugin, among: found)
+                    }
+                }
                 if let c = chosen { reading = viewModel.gainReductionValue(of: plugin, parameter: c) }
                 else { reading = nil }
                 playing = viewModel.isTransportRunning
+                // The plugin's own bypass: nothing is measured while it is on (@see OBJPluginProbe.h).
+                viewModel.refreshGainMatchBypass(pluginID: plugin)
                 try? await Task.sleep(nanoseconds: 33_000_000)
             }
         }
@@ -93,6 +108,18 @@ struct PluginExpertBar: View {
         }
     }
 
+    /// A plugin that publishes no meter: said, rather than an empty place (no estimate in its stead).
+    private var notPublished: some View {
+        HStack(spacing: 4) {
+            Text(L("expert.gr.short")).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+            Text(L("expert.gr.notPublished"))
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .help(L("expert.gr.notPublished.help"))
+    }
+
     private func choose(_ c: PluginMeterParameter?) {
         viewModel.chooseGainReductionParameter(of: plugin, c)
         chosen = c
@@ -127,6 +154,14 @@ struct PluginExpertBar: View {
                 .help(L("expert.trim.drive.help"))
             trimLabel(L("expert.trim.out"), t.output)
         }
+    }
+
+    /// The gain match's own gain, after the output trim. Double-click: back to 0 (the trims stay).
+    private func compensationLabel(_ v: Float) -> some View {
+        trimLabel(L("expert.trim.comp"), v)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { try? viewModel.setPluginCompensation(pluginID: plugin, db: 0) }
+            .help(L("expert.trim.comp.help"))
     }
 
     private func trimLabel(_ title: String, _ v: Float) -> some View {

@@ -224,10 +224,15 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// @see EditViewModel+Trims, OBJPluginProbe.h (engine patch 0045)
     var inputTrimDb: Float? = nil
     var outputTrimDb: Float? = nil
+    /// The COMPENSATION, in dB (nil = 0): a third gain after the output trim, which the gain match
+    /// sets and nothing else — the coupled gesture keeps it. ±24 dB, not automatable, bypassed with the
+    /// plugin. Session format 30.
+    var compensationDb: Float? = nil
 
     /// The trims as numbers (0 = neutral).
     var trims: (input: Float, output: Float) { (inputTrimDb ?? 0, outputTrimDb ?? 0) }
-    var hasTrims: Bool { (inputTrimDb ?? 0) != 0 || (outputTrimDb ?? 0) != 0 }
+    var compensation: Float { compensationDb ?? 0 }
+    var hasTrims: Bool { (inputTrimDb ?? 0) != 0 || (outputTrimDb ?? 0) != 0 || (compensationDb ?? 0) != 0 }
 
     init(id: UUID, name: String, manufacturer: String, identifier: String, formatName: String,
          isEnabled: Bool = true, stateXML: String? = nil,
@@ -265,6 +270,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         var p = self
         p.inputTrimDb = other.inputTrimDb
         p.outputTrimDb = other.outputTrimDb
+        p.compensationDb = other.compensationDb
         return p
     }
 
@@ -292,7 +298,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
              linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker, monoFold,
-             inputTrimDb, outputTrimDb
+             inputTrimDb, outputTrimDb, compensationDb
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -318,6 +324,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         monoFold = try c.decodeIfPresent(MonoFold.self, forKey: .monoFold)
         inputTrimDb = try c.decodeIfPresent(Float.self, forKey: .inputTrimDb).flatMap { $0 == 0 ? nil : $0 }
         outputTrimDb = try c.decodeIfPresent(Float.self, forKey: .outputTrimDb).flatMap { $0 == 0 ? nil : $0 }
+        compensationDb = try c.decodeIfPresent(Float.self, forKey: .compensationDb).flatMap { $0 == 0 ? nil : $0 }
     }
 }
 

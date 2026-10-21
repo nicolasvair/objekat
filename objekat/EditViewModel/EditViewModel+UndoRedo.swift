@@ -400,6 +400,7 @@ extension EditViewModel {
                 // undoing one is a number pushed, never a rebuild.
                 out[i].inputTrimDb = new[i].inputTrimDb
                 out[i].outputTrimDb = new[i].outputTrimDb
+                out[i].compensationDb = new[i].compensationDb
             case let (oldRack?, newRack?):
                 guard oldRack.voices.count == newRack.voices.count else { return nil }
                 var voices: [[ObjectPlugin]] = []

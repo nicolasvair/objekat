@@ -7436,14 +7436,16 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
     if (it != _pluginMap.end()) [self attachProbeIfWanted:key plugin:it->second];
 }
 
-- (void)setPluginTrims:(NSString*)pluginKey inputDb:(double)inputDb outputDb:(double)outputDb {
+- (void)setPluginTrims:(NSString*)pluginKey inputDb:(double)inputDb outputDb:(double)outputDb
+        compensationDb:(double)compensationDb {
     if (!pluginKey) return;
     const std::string key([pluginKey UTF8String]);
-    const bool neutral = inputDb == 0.0 && outputDb == 0.0;
+    const bool neutral = inputDb == 0.0 && outputDb == 0.0 && compensationDb == 0.0;
     auto st = [self probeStateForKey:key create:!neutral];
     if (!st) return;                      // neutral and never trimmed: nothing to carry
     st->inGain.store(objDbToLinear(inputDb));
     st->outGain.store(objDbToLinear(outputDb));
+    st->compGain.store(objDbToLinear(compensationDb));
     [self attachProbeForKey:key];
 }
 
@@ -7457,8 +7459,18 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
     if (enabled) [self attachProbeForKey:key];
 }
 
+- (BOOL)refreshProbeBypass:(NSString*)pluginKey {
+    if (!pluginKey) return NO;
+    auto* pi = [self loadedExternalInstance:pluginKey];
+    auto* bp = pi ? pi->getBypassParameter() : nullptr;
+    const bool bypassed = bp != nullptr && bp->getValue() >= 0.5f;
+    if (auto st = [self probeStateForKey:std::string([pluginKey UTF8String]) create:NO])
+        st->pluginBypassed.store(bypassed, std::memory_order_relaxed);
+    return bypassed ? YES : NO;
+}
+
 // The K-weighted loudness of the last `seconds` of measurement: what entered the plugin (before its
-// input trim) and what left it (before its output trim), over the sub-blocks whose INPUT is above the
+// input trim) and what left it (after its output trim, before the compensation), over the sub-blocks whose INPUT is above the
 // absolute gate of BS.1770 (−70 LUFS) — silence says nothing about a gain. nil = nothing measured.
 - (NSDictionary<NSString*, NSNumber*>* _Nullable)pluginLoudnessReading:(NSString*)pluginKey seconds:(double)seconds {
     if (!pluginKey) return nil;
@@ -7493,6 +7505,7 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
         auto copy = std::make_shared<OBJProbeState>();
         copy->inGain.store(st->inGain.load());
         copy->outGain.store(st->outGain.load());
+        copy->compGain.store(st->compGain.load());
         wanted[it->second->itemID] = copy;
     }
     if (wanted.empty()) return;
@@ -7519,13 +7532,18 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
         juce::String pid;
         if (auto* hosted = dynamic_cast<juce::HostedAudioProcessorParameter*>(prm)) pid = hosted->getParameterID();
         bool readOnly = false;
+        // `meter`: the plugin DECLARES a meter (an AU's MeterReadOnly). A merely non-writable AU
+        // parameter is often a setting (FabFilter: Oversampling, Style…), and a VST3 read-only one
+        // cannot be told from a setting: those are offered only when their NAME says gain reduction
+        // (@see EditViewModel.meterParameters).
+        bool meter = false;
         if (au) {
             AudioUnitParameterInfo info {};
             UInt32 size = sizeof(info);
             if (AudioUnitGetProperty(au, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global,
                                      (AudioUnitElement) pid.getLargeIntValue(), &info, &size) == noErr) {
-                readOnly = (info.flags & kAudioUnitParameterFlag_MeterReadOnly) != 0
-                        || (info.flags & kAudioUnitParameterFlag_IsWritable) == 0;
+                meter = (info.flags & kAudioUnitParameterFlag_MeterReadOnly) != 0;
+                readOnly = meter || (info.flags & kAudioUnitParameterFlag_IsWritable) == 0;
                 if (info.flags & kAudioUnitParameterFlag_CFNameRelease) {
                     if (info.cfNameString) CFRelease(info.cfNameString);
                 }
@@ -7538,7 +7556,8 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
         juce::String idStr = pid.isNotEmpty() ? pid : juce::String(i);
         [out addObject:@{ @"index": @(i),
                           @"id":    [NSString stringWithUTF8String:idStr.toRawUTF8()],
-                          @"name":  [NSString stringWithUTF8String:name.toRawUTF8()] }];
+                          @"name":  [NSString stringWithUTF8String:name.toRawUTF8()],
+                          @"meter": @(meter) }];
     }
     return out;
 }
@@ -7551,9 +7570,39 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
     const auto& params = pi->getParameters();
     if (index < 0 || index >= params.size() || !params[index]) return nil;
     auto* prm = params[index];
-    const float v = prm->getValue();
-    juce::String text = prm->getText(v, 32);
-    juce::String label = prm->getLabel();
+    float v = prm->getValue();
+    juce::String text, label;
+    // An AU: JUCE's `getValue()` is a CACHE refreshed only when the unit posts a parameter event,
+    // which a meter never does (it is polled) — the reading stayed frozen. Asked of the unit itself.
+    if (auto* c = pi->getAudioUnitClient()) {
+        juce::String pid;
+        if (auto* hosted = dynamic_cast<juce::HostedAudioProcessorParameter*>(prm)) pid = hosted->getParameterID();
+        AudioUnit au = c->getAudioUnitHandle();
+        const auto element = (AudioUnitParameterID) pid.getLargeIntValue();
+        AudioUnitParameterValue raw = 0;
+        AudioUnitParameterInfo info {};
+        UInt32 size = sizeof(info);
+        if (au && pid.isNotEmpty()
+            && AudioUnitGetParameter(au, element, kAudioUnitScope_Global, 0, &raw) == noErr
+            && AudioUnitGetProperty(au, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global,
+                                    element, &info, &size) == noErr) {
+            if ((info.flags & kAudioUnitParameterFlag_CFNameRelease) && info.cfNameString)
+                CFRelease(info.cfNameString);
+            const float range = info.maxValue - info.minValue;
+            v = range > 0 ? juce::jlimit(0.0f, 1.0f, (raw - info.minValue) / range) : 0.0f;
+            if (info.unit == kAudioUnitParameterUnit_Decibels) {
+                text = juce::String(raw, 1);
+                label = "dB";
+            } else {
+                text = prm->getText(v, 32);
+                label = prm->getLabel();
+            }
+        }
+    }
+    if (text.isEmpty()) {
+        text = prm->getText(v, 32);
+        label = prm->getLabel();
+    }
     return @{ @"value": @(v),
               @"text":  [NSString stringWithUTF8String:text.toRawUTF8()],
               @"label": [NSString stringWithUTF8String:label.toRawUTF8()] };

@@ -17,12 +17,17 @@ struct GainReductionValue: Equatable {
 
 extension EditViewModel {
 
-    /// The plugin's read-only parameters ([] for a built-in, an instance still loading, a plugin that
-    /// declares none). Asked when the bar appears, never per frame.
+    /// The plugin's METERS ([] for a built-in, an instance still loading, a plugin that publishes
+    /// none — most do not: FabFilter's, for one). A parameter the plugin declares as a meter (an AU's
+    /// MeterReadOnly) is one; a merely read-only one is a candidate only when its NAME says gain
+    /// reduction — otherwise the menu offered settings (Oversampling, Style…) as meters. Asked when
+    /// the bar appears (and again while it found nothing), never per frame.
     func meterParameters(of pluginID: UUID) -> [PluginMeterParameter] {
         (engine?.pluginMeterParameters(pluginID.uuidString) ?? []).compactMap { d in
             guard let i = d["index"] as? Int, let id = d["id"] as? String, let n = d["name"] as? String
             else { return nil }
+            let declared = (d["meter"] as? Bool) ?? false
+            guard declared || GainReductionReading.defaultIndex(names: [n]) != nil else { return nil }
             return PluginMeterParameter(index: i, id: id, name: n)
         }
     }

@@ -121,8 +121,9 @@ struct SynopticCardView: View {
         .background(dropLayer)
         // The trims, OUTSIDE the card: a tag under its bottom-left corner, only when one is not neutral.
         .overlay(alignment: .bottomLeading) {
-            if plugin.trimInDb != 0 || plugin.trimOutDb != 0 {
-                Text(verbatim: PluginExpertBar.dbText(plugin.trimInDb) + " / " + PluginExpertBar.dbText(plugin.trimOutDb))
+            if plugin.trimInDb != 0 || plugin.trimOutDb != 0 || plugin.trimCompDb != 0 {
+                Text(verbatim: PluginExpertBar.dbText(plugin.trimInDb) + " / " + PluginExpertBar.dbText(plugin.trimOutDb)
+                     + (plugin.trimCompDb != 0 ? " · " + PluginExpertBar.dbText(plugin.trimCompDb) : ""))
                     .font(.system(size: 8, weight: .semibold).monospacedDigit())
                     .foregroundStyle(plugin.color)
                     .padding(.horizontal, 5)
@@ -131,8 +132,8 @@ struct SynopticCardView: View {
                     .overlay(Capsule().strokeBorder(plugin.color.opacity(0.6), lineWidth: 1))
                     .fixedSize()
                     .offset(x: 4, y: 14)
-                    .help(L("synoptic.card.trims.help", PluginExpertBar.dbText(plugin.trimInDb),
-                            PluginExpertBar.dbText(plugin.trimOutDb)))
+                    .help(L("synoptic.card.trims.help.comp", PluginExpertBar.dbText(plugin.trimInDb),
+                            PluginExpertBar.dbText(plugin.trimOutDb), PluginExpertBar.dbText(plugin.trimCompDb)))
             }
         }
         // The sidechain key, OUTSIDE the card: a small tag hanging above its top-left corner, in the

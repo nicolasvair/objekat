@@ -13,9 +13,12 @@ What it proves, on a built-in Low Pass over a 1 kHz tone:
   • ±24 dB is the range; one undo point per set, the undo PATCHED (same plugin id, same level back);
   • `plugin.list` carries `trims` only when they are not neutral;
   • a manual link (⌘) carries them to the linked instance; a duplicate and a save / reopen keep them;
-  • the GAIN MATCH is refused while stopped, and while playing sets the OUTPUT trim so that the export
-    comes back to the dry level (within 0.5 dB), the input trim untouched;
-  • a built-in publishes no gain-reduction parameter: no candidate;
+  • the COMPENSATION (a third gain after the output trim) is heard, kept by the coupled nudge, ±24 dB;
+  • the GAIN MATCH is refused while stopped, and while playing sets the COMPENSATION only (both trims
+    untouched, an output trim of −3 dB compensated too) so that the export comes back to the dry level
+    (within 0.5 dB); `compensationDb` is saved, reopened, heard, and absent from the file while 0;
+  • a built-in publishes no gain-reduction parameter: no candidate, `published` false;
+  • a BYPASSED moment is not measured by the gain match (the block count stands still);
   • no window on the headless pid.
 Exit: 0 if every assertion passes, 1 otherwise; 2 if the instance has no audio.
 """
@@ -89,6 +92,9 @@ try:
             t = cmd("plugin.trims", plugin=pid)
             return (t["input_db"], t["output_db"])
 
+        def comp(pid):
+            return cmd("plugin.trims", plugin=pid)["compensation_db"]
+
         def listed(host, pid):
             return next(p for p in cmd("plugin.list", host=host)["plugins"] if p["id"] == pid)
 
@@ -111,7 +117,7 @@ try:
         cmd("plugin.set_trims", plugin=P, output=-6.0)
         idle()
         check("plugin.trims reads the output trim", trims(P) == (0, -6), str(trims(P)))
-        check("plugin.list carries the trims", listed(A, P).get("trims") == {"input_db": 0, "output_db": -6},
+        check("plugin.list carries the trims", listed(A, P).get("trims") == {"input_db": 0, "output_db": -6, "compensation_db": 0},
               str(listed(A, P).get("trims")))
         l = level()
         check("output −6 dB is heard as −6 dB (live render)", near(l - L_wet, -6.0, 0.05), "%.3f" % (l - L_wet))
@@ -164,6 +170,7 @@ try:
         gr = cmd("plugin.gain_reduction", plugin=P)
         check("a built-in publishes no gain-reduction candidate", gr["candidates"] == [] and gr["chosen"] is None,
               str(gr))
+        check("...which the bar says (published false)", gr.get("published") is False, str(gr))
 
         # ── link, duplicate ───────────────────────────────────────────────
         B = cmd("object.add", path=SRC, lane=1, start=10.0)["id"]
@@ -181,7 +188,7 @@ try:
         idle()
         D = [o["id"] for o in cmd("object.list")["objects"] if o["id"] not in before]
         dp = [p for p in cmd("plugin.list", host=D[0])["plugins"] if p.get("identifier") == "lowpass"] if D else []
-        check("a duplicate keeps the trims", bool(dp) and dp[0].get("trims") == {"input_db": 0, "output_db": -3},
+        check("a duplicate keeps the trims", bool(dp) and dp[0].get("trims") == {"input_db": 0, "output_db": -3, "compensation_db": 0},
               str(dp))
 
         # ── save / reopen ─────────────────────────────────────────────────
@@ -192,8 +199,9 @@ try:
             text = f.read()
         import json
         doc = json.loads(text)
-        check("the session is written in format 29", doc.get("version") == 29, str(doc.get("version")))
+        check("the session is written in format 30", doc.get("version") == 30, str(doc.get("version")))
         check("the file carries outputTrimDb", '"outputTrimDb"' in text)
+        check("no compensationDb while it is 0", '"compensationDb"' not in text)
         cmd("project.new")
         cmd("project.open", path=path)
         idle()
@@ -201,8 +209,24 @@ try:
         l = level()
         check("...and heard", near(l - L_wet, -3.0, 0.05), "%.3f" % (l - L_wet))
 
+        # ── the compensation, a third gain after the output trim ──────────
+        cmd("plugin.set_trims", plugin=P, input=0.0, output=0.0, compensation=-4.0)
+        idle()
+        check("set_trims sets the compensation", comp(P) == -4 and trims(P) == (0, 0), str((trims(P), comp(P))))
+        l = level()
+        check("the compensation is heard", near(l - L_wet, -4.0, 0.05), "%.3f" % (l - L_wet))
+        cmd("plugin.nudge_trims", plugin=P, delta=3.0)
+        check("the coupled gesture keeps the compensation", comp(P) == -4 and trims(P) == (3, -3),
+              str((trims(P), comp(P))))
+        cmd("plugin.set_trims", plugin=P, compensation=40.0)
+        check("the compensation is clamped to ±24 dB", comp(P) == 24, str(comp(P)))
+        cmd("plugin.set_trims", plugin=P, input=0.0, output=0.0, compensation=0.0)
+        check("...and back to 0", comp(P) == 0)
+
         # ── gain match ────────────────────────────────────────────────────
-        cmd("plugin.set_trims", plugin=P, input=0.0, output=0.0)
+        # An output trim of -3 dB is laid first: the gain match must compensate it too (what leaves
+        # is measured AFTER the output trim) and leave it where it is.
+        cmd("plugin.set_trims", plugin=P, input=0.0, output=-3.0)
         idle()
         e = refused("plugin.gain_match", plugin=P)
         check("the gain match is refused while stopped", e is not None and e[0] == "invalid_state", str(e))
@@ -211,19 +235,44 @@ try:
         time.sleep(3.0)
         loud = cmd("plugin.loudness", plugin=P)
         check("the probe measured blocks while playing", loud.get("blocks", 0) >= 10, str(loud))
+        # a BYPASSED moment is not measured: the count of blocks stands still, and starts again after
+        t0 = cmd("plugin.loudness", plugin=P)["total"]
+        cmd("plugin.toggle", host=A, plugin=P)
+        time.sleep(1.5)
+        t1 = cmd("plugin.loudness", plugin=P)["total"]
+        check("nothing is measured while the plugin is bypassed", t1 - t0 <= 1, "%d -> %d" % (t0, t1))
+        cmd("plugin.toggle", host=A, plugin=P)
+        time.sleep(1.5)
+        t2 = cmd("plugin.loudness", plugin=P)["total"]
+        check("...and the measurement goes on once it is back", t2 - t1 >= 10, "%d -> %d" % (t1, t2))
+        check("a built-in has no bypass parameter of its own", cmd("plugin.loudness", plugin=P)["plugin_bypassed"] is False)
         g = cmd("plugin.gain_match", plugin=P)
         cmd("transport.stop")
         cmd("plugin.measure_loudness", plugin=P, on=False)
-        t = trims(P)
-        check("the gain match leaves the input trim alone", t[0] == 0, str(t))
-        check("the gain match sets an output trim near the plugin's loss", near(t[1], L_dry - L_wet, 0.5),
-              "%s vs %.2f" % (t, L_dry - L_wet))
+        t, cg = trims(P), comp(P)
+        check("the gain match leaves both trims alone", t == (0, -3), str(t))
+        check("the gain match sets the compensation: the plugin's loss AND the output trim",
+              near(cg, L_dry - L_wet + 3.0, 0.5), "%s vs %.2f" % (cg, L_dry - L_wet + 3.0))
+        check("plugin.gain_match answers the compensation", g.get("compensation_db") == cg, str(g))
         idle()
         l = level()
         check("after the gain match the export is back at the dry level", near(l, L_dry, 0.5),
               "%.2f vs %.2f" % (l, L_dry))
+        path2 = os.path.join(TMP, "expert-comp.objekat")
+        cmd("project.save_as", path=path2)
+        idle()
+        with open(path2) as f:
+            text2 = f.read()
+        check("the file carries compensationDb", '"compensationDb"' in text2)
+        cmd("project.new")
+        cmd("project.open", path=path2)
+        idle()
+        check("reopened, the compensation is back", near(comp(P), cg, 0.01), str(comp(P)))
+        check("...and heard", near(level(), L_dry, 0.5))
+        cmd("plugin.set_trims", plugin=P, compensation=0.0)
+        idle()
         cmd("edit.undo"); idle()
-        check("one undo takes the gain match back", trims(P) == (0, 0), str(trims(P)))
+        check("one undo point per compensation change", near(comp(P), cg, 0.01), str(comp(P)))
 
         pid = pid_for_socket(SOCK)
         if pid:

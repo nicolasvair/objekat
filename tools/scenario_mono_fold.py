@@ -266,7 +266,7 @@ try:
         send("project.save")
         doc = json.load(open(manifest))
         blob = json.dumps(doc)
-        check("the file is format 29", doc.get("version") == 29, doc.get("version"))
+        check("the file is format 30", doc.get("version") == 30, doc.get("version"))
         check("the new plugin is written \"monoFold\": \"sum\"", '"monoFold": "sum"' in blob)
 
         # ═══════════════════════════════════════════════════════════════ the sound, 1 -> 1

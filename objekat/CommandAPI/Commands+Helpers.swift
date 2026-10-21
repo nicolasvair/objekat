@@ -391,7 +391,8 @@ extension CommandAdapters {
         // The trims around a leaf (@see EditViewModel+Trims), only when not neutral.
         if !plugin.isContainer, plugin.hasTrims {
             payload["trims"] = .object(["input_db": .number(Double(plugin.trims.input)),
-                                        "output_db": .number(Double(plugin.trims.output))])
+                                        "output_db": .number(Double(plugin.trims.output)),
+                                        "compensation_db": .number(Double(plugin.compensation))])
         }
         return .object(payload)
     }

@@ -933,13 +933,18 @@ gets a probe on a COPY of the gains (found by `EditItemID`), measuring nothing. 
 optional fields of `ObjectPlugin` (absent when 0): every copy that rebuilds a plugin field by field carries
 them through `withTrims(of:)`; an undo that differs only by trims is patched. Not automatable (asked).
 
-### Decision: the gain match measures what was PLAYED, K-weighted, and moves the OUTPUT only
+### Decision: the gain match measures what was PLAYED, K-weighted, and moves the COMPENSATION only
 
 The same probe accumulates the K-weighted energy (BS.1770, the coefficients of `OBJLoudness.h`) of what enters
-the plugin before its input trim and what leaves it before its output trim, in 100 ms sub-blocks into a
-lock-free ring, only while the editor bar is shown and never in an offline render. The match is one click
-during playback: output = Lin − Lout over the last 5 s (gated at −70 LUFS, at least 1 s of signal), the input
-untouched, so a coupled gesture made afterwards adds to it. Measuring what was played rather than rendering
+the plugin before its input trim and what leaves it AFTER its output trim, in 100 ms sub-blocks into a
+lock-free ring, only while the editor bar is shown, only while the plugin really processes (not in OBJEKAT's
+bypass, not while its own bypass parameter is on) and never in an offline render. The match is one click
+during playback: compensation = Lin − Lout over the last 5 s (gated at −70 LUFS, at least 1 s of signal).
+
+Revised on 20 October 2026 (format 30): the match used to set the OUTPUT trim, so the coupled gesture made
+afterwards fought it. There are now THREE separate gains — input, output, and a compensation after the output
+trim (`compensationDb`) — the coupled gesture moves the first two and keeps the third, the match sets the third
+and nothing else. A bypassed moment adds nothing to the window rather than resetting it (asked: no reset). Measuring what was played rather than rendering
 offline keeps it instant and honest about the material the hand is actually listening to.
 
 ## The phases to come — decisions to take

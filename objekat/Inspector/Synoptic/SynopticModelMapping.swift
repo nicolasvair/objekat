@@ -110,7 +110,7 @@ enum SynopticMapping {
                        isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
                        color: p.color,
                        gainStage: synopticFace(of: p),
-                       trimInDb: p.trims.input, trimOutDb: p.trims.output)
+                       trimInDb: p.trims.input, trimOutDb: p.trims.output, trimCompDb: p.compensation)
     }
 
     /// A gain stage's face as the signal view names it (nil = not a stage).

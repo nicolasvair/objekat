@@ -1022,48 +1022,64 @@ measured unless a view registered the plugin; no node is added to the graph.
 
 OBJEKAT's own presets, per plugin TYPE (format + identifier), in ONE global library (a `--no-recent` process
 uses a temporary one, never the user's). The plugin's own factory programs are offered read-only beside them.
-A type's DEFAULT preset is laid on a FRESH insertion only (a copy, a duplicate, a paste keep their state). A
+A type has ONE default at most, laid on a FRESH insertion only (a copy, a duplicate, a paste keep their
+state): a named preset, or the state a plugin had when "Set the current state as default" was chosen (an
+anonymous state, never listed among the presets, named "Default" in the title bar). The last one chosen
+wins, whichever kind. A
 load lays the state on the live instance (same id, no rebuild) and on every instance ACTIVELY linked to it,
 as ONE undo point, and keeps the instance's own bypass. The current preset's name is transient (not saved);
 a state changed through the plugin's own chunk only is not seen as "modified".
 
 - `preset.library` → `{root}`.
-- `preset.list {plugin}` → `{plugin, host, identifier, format, presets, default, factory, status}` —
-  `status` `{name, factory, modified}` or `null`.
+- `preset.list {plugin}` → `{plugin, host, identifier, format, presets, default, default_kind, factory, status}` —
+  `default` the named default or `null`, `default_kind` `none` / `named` / `state`; `status` `{name, factory, modified}` or `null`.
 - `preset.save {plugin, name}` → `{name, status}` (overwrites a preset of that name).
 - `preset.load {plugin, name? | factory?}` → `{status}` (`factory` = an index into `preset.list`'s `factory`).
 - `preset.delete {plugin, name}` (takes the default with it if it was the default).
-- `preset.set_default {plugin, name?}` → `{default}`; `null` / absent clears.
+- `preset.set_default {plugin, name? | current?}` → `{default, default_kind}`: `name` a preset, `current: true`
+  the live state as an anonymous default (`bad_params` with both); neither (or `name: null`) forgets the default.
+  Writes the library only, no undo point.
+- `preset.restore_default {plugin}` → `{status}` — lays the type's default (named or anonymous) on the plugin
+  and on every instance actively linked to it; one undo point; `not_found` when the type has none.
 Tested by `tools/scenario_presets.py`.
 
-### The editor's expert bar: gain reduction, trims, gain match (session format 29, engine patch `0045`)
+### The editor's expert bar: gain reduction, trims, compensation, gain match (session formats 29 and 30, engine patch `0045`)
 
 A bar at the bottom of every plugin editor (under the Sidechain strip when there is one).
 
 **Gain reduction** — read ONLY from a read-only parameter the plugin publishes (nothing is measured by
-OBJEKAT). The bar picks the one whose name says gain reduction unless the hand chose, the choice remembered
-per plugin TYPE; the dB are parsed from the plugin's own text. A built-in publishes none.
-- `plugin.gain_reduction {plugin}` → `{candidates: [{index, id, name}], chosen, text, db}`.
+OBJEKAT, and nothing is estimated in its place: a plugin that publishes none — a built-in, FabFilter — shows
+"not published by this plugin"). The candidates are the parameters the plugin flags as METERS (an AU's
+MeterReadOnly) or whose name says gain reduction; an AU's value is read straight from the unit
+(`AudioUnitGetParameter`, JUCE's cache is never refreshed for meters). The bar picks the one whose name says
+gain reduction unless the hand chose, the choice remembered per plugin TYPE; the dB are parsed from the
+plugin's own text.
+- `plugin.gain_reduction {plugin}` → `{candidates: [{index, id, name}], chosen, text, db, published}`.
 - `plugin.choose_gain_reduction {plugin, id?}` — `null` / absent = show nothing (also remembered).
 
-**Trims** — an input gain before the plugin and an output gain after it (`ObjectPlugin.inputTrimDb` /
-`outputTrimDb`, absent when 0), ±24 dB, applied by the probe patch `0045` puts around the plugin, live AND in
+**Trims and compensation** — an input gain before the plugin, an output gain after it, and a COMPENSATION
+after the output trim (`ObjectPlugin.inputTrimDb` / `outputTrimDb` / `compensationDb`, each absent when 0;
+the compensation is format 30), three separate gains, ±24 dB each, applied by the probe patch `0045` puts around the plugin, live AND in
 every render, ramped over one block, and BYPASSED with the plugin. Not automatable. Carried by undo (patched,
 never a rebuild), the session file, copies, duplicates, a manual link and an FX link's active members (a set
-on one moves every instance actively linked to it). `plugin.list` carries `trims {input_db, output_db}` on a
-plugin whose trims are not neutral.
-- `plugin.trims {plugin}` → `{plugin, input_db, output_db}`.
-- `plugin.set_trims {plugin, input?, output?}` — an absent one is kept; one undo point.
+on one moves every instance actively linked to it). `plugin.list` carries `trims {input_db, output_db,
+compensation_db}` on a plugin where one of the three is not neutral.
+- `plugin.trims {plugin}` → `{plugin, input_db, output_db, compensation_db}`.
+- `plugin.set_trims {plugin, input?, output?, compensation?}` — an absent one is kept; one undo point.
 - `plugin.nudge_trims {plugin, delta}` — the coupled gesture: +delta in, −delta out, cut so neither leaves
-  ±24; one undo point.
+  ±24; the compensation stays; one undo point.
 
-**Gain match** — sets the OUTPUT trim so that what leaves the plugin (before its output trim) is as loud,
-K-weighted (BS.1770, gated at −70 LUFS), as what enters it (before its input trim), over the last 5 s
-PLAYED. The input trim is untouched; a later coupled gesture adds to it. The measurement runs only while
-asked (the bar asks for it while shown) and never during an offline render.
+**Gain match** — sets the COMPENSATION (and only it) so that what leaves the plugin (measured AFTER its
+output trim, before the compensation) is as loud, K-weighted (BS.1770, gated at −70 LUFS), as what enters it
+(before its input trim), over the last 5 s PLAYED. Both trims are untouched, and a later coupled gesture
+keeps the compensation. Only moments the plugin REALLY processed are measured: never while OBJEKAT bypasses
+it, never while its own bypass parameter is on (`getBypassParameter`: a VST3's kIsBypass is the plugin's own
+switch; an AU's BypassEffect is the host property, not necessarily the button in its interface — that one is
+NOT detectable). The window is not reset on a bypass: a bypassed moment simply adds nothing. The measurement
+runs only while asked (the bar asks for it while shown) and never during an offline render.
 - `plugin.measure_loudness {plugin, on}`.
-- `plugin.loudness {plugin, seconds?}` → `{blocks, input_lufs, output_lufs}` (100 ms sub-blocks above the gate; a LUFS is `null` when nothing was read).
-- `plugin.gain_match {plugin}` → the trims laid (as `plugin.trims`); `invalid_state` when the transport is stopped or when fewer
+- `plugin.loudness {plugin, seconds?}` → `{blocks, total, input_lufs, output_lufs, plugin_bypassed}` (100 ms sub-blocks above the gate; `total` counts every block ever measured; a LUFS is `null` when nothing was read).
+- `plugin.gain_match {plugin}` → the gains laid (as `plugin.trims`); `invalid_state` when the transport is stopped or when fewer
   than 10 sub-blocks (1 s) above the gate were read. One undo point.
 Tested by `tools/scenario_plugin_expert.py` (an instance WITH audio: not `--no-audio`) and
 `tools/test_gain_reduction_reading.swift`.

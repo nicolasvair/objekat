@@ -3957,6 +3957,52 @@
         }
       }
     },
+    "expert.gr.notPublished": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "not published by this plugin"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no publicado por este plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "non publié par ce plugin"
+          }
+        }
+      }
+    },
+    "expert.gr.notPublished.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plugin does not publish its gain reduction as a readable parameter: OBJEKAT cannot show it, and does not estimate it instead."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este plugin no publica su reducción de ganancia como parámetro legible: OBJEKAT no puede mostrarla, y no la estima en su lugar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce plugin ne publie pas sa réduction de gain comme paramètre lisible : OBJEKAT ne peut pas l'afficher, et ne l'estime pas à sa place."
+          }
+        }
+      }
+    },
     "expert.gr.short": {
       "extractionState": "manual",
       "localizations": {
@@ -4055,19 +4101,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sets the output trim so the plugin leaves as loud as it entered (K-weighted, over the last 5 s played)."
+            "value": "Sets the compensation so the plugin leaves as loud as it entered (K-weighted, over the last 5 s played). The trims stay."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ajusta el trim de salida para que el plugin salga tan fuerte como entró (ponderación K, en los últimos 5 s reproducidos)."
+            "value": "Ajusta la compensación para que el plugin salga tan fuerte como entró (ponderación K, en los últimos 5 s reproducidos). Los trims no cambian."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Règle le trim de sortie pour que le plugin sorte aussi fort qu'il est entré (pondération K, sur les 5 dernières secondes jouées)."
+            "value": "Règle la compensation pour que le plugin sorte aussi fort qu'il est entré (pondération K, sur les 5 dernières secondes jouées). Les trims ne bougent pas."
           }
         }
       }
@@ -4095,25 +4141,71 @@
         }
       }
     },
+    "expert.trim.comp": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comp."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comp."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comp."
+          }
+        }
+      }
+    },
+    "expert.trim.comp.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compensation: a gain after the output trim, set by Gain match (and only by it). Double-click: back to 0, the trims stay."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compensación: una ganancia tras el trim de salida, que ajusta «Igualar nivel» (y solo él). Doble clic: vuelve a 0, los trims se mantienen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compensation : un gain après le trim de sortie, que règle « Égaliser le niveau » (et lui seul). Double-clic : retour à 0, les trims restent."
+          }
+        }
+      }
+    },
     "expert.trim.drive.help": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⌘ for fine). Double-click: both trims back to 0."
+            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⌘ for fine); the compensation stays. Double-click: both trims back to 0."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⌘ para afinar). Doble clic: ambos trims vuelven a 0."
+            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⌘ para afinar); la compensación se mantiene. Doble clic: ambos trims vuelven a 0."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⌘ pour affiner). Double-clic : les deux trims reviennent à 0."
+            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⌘ pour affiner) ; la compensation reste. Double-clic : les deux trims reviennent à 0."
           }
         }
       }
@@ -18148,25 +18240,25 @@
         }
       }
     },
-    "synoptic.card.trims.help": {
+    "synoptic.card.trims.help.comp": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trims: in %@, out %@"
+            "value": "Trims: in %1$@, out %2$@; compensation %3$@"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trims: entrada %@, salida %@"
+            "value": "Trims: entrada %1$@, salida %2$@; compensación %3$@"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trims : entrée %@, sortie %@"
+            "value": "Trims : entrée %1$@, sortie %2$@ ; compensation %3$@"
           }
         }
       }

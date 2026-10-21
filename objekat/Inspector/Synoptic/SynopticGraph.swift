@@ -73,6 +73,8 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// card says them as soon as one of them is not neutral.
     var trimInDb: Float = 0
     var trimOutDb: Float = 0
+    /// The compensation after the output trim (the gain match's), said by the same tag.
+    var trimCompDb: Float = 0
 
     /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
     var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
@@ -85,9 +87,10 @@ struct SynopticPlugin: Identifiable, Equatable {
          isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
          inFXBlock: Bool = false, greyedByBlock: Bool = false,
          gainStage: SynopticGainStageFace? = nil,
-         trimInDb: Float = 0, trimOutDb: Float = 0) {
+         trimInDb: Float = 0, trimOutDb: Float = 0, trimCompDb: Float = 0) {
         self.trimInDb = trimInDb
         self.trimOutDb = trimOutDb
+        self.trimCompDb = trimCompDb
         self.id = id
         self.name = name
         self.category = category
