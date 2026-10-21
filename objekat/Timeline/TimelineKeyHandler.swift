@@ -1450,12 +1450,13 @@ final class ColorSwatchGridView: NSView {
     private var onPickHex: ((Int) -> Void)?
     private var plusToolTip: NSView.ToolTipTag?
     private var swatchToolTips: [NSView.ToolTipTag] = []
-    /// Object mode only: the colour cell under the pointer, which shows a small trash in its corner (a
-    /// click on it removes the colour — the same path as ⌥ + click).
+    /// Object mode only: the colour cell under the pointer. While ⌥ is held, its WHOLE disc turns into a
+    /// trash (a click on it removes the colour — the ⌥ + click path); without ⌥ nothing shows.
     private var hoveredCell: Int?
-    /// Whether the pointer is on that trash (it turns red).
-    private var trashHot = false
+    /// ⌥ held at this instant (polled: a menu does not deliver `flagsChanged` to its views).
+    private var optionHeld = false
     private var hoverArea: NSTrackingArea?
+    private var optionTimer: Timer?
 
     override var isFlipped: Bool { true }
 
@@ -1529,14 +1530,7 @@ final class ColorSwatchGridView: NSView {
         needsDisplay = true
     }
 
-    // MARK: Hover trash (object mode)
-
-    /// The trash badge of a colour cell: a small circle straddling the swatch's top-right corner, in
-    /// the gap between swatches (it never covers a neighbour's hit zone, @see `Geometry.hit`'s slop).
-    private func trashRect(of cell: Cell) -> NSRect {
-        let r = rect(of: cell), d: CGFloat = 11
-        return NSRect(x: r.maxX - d + 3.5, y: r.minY - 3.5, width: d, height: d)
-    }
+    // MARK: Hover trash (object mode, ⌥ held)
 
     /// Only the object palette's colours can be removed; the "+" and the fixed palettes never show it.
     private var canRemove: Bool { onRemove != nil }
@@ -1554,42 +1548,53 @@ final class ColorSwatchGridView: NSView {
         hoverArea = area
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        optionTimer?.invalidate()
+        optionTimer = nil
+        guard canRemove, window != nil else { return }
+        // A menu delivers no `flagsChanged` to its views: ⌥ pressed or released without the pointer
+        // moving is seen by this light poll (common modes, so that it also runs while the menu tracks).
+        let t = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let held = NSEvent.modifierFlags.contains(.option)
+            if held != self.optionHeld { self.optionHeld = held; self.needsDisplay = true }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        optionTimer = t
+    }
+
     override func mouseMoved(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
     override func mouseEntered(with event: NSEvent) { updateHover(at: convert(event.locationInWindow, from: nil)) }
     override func mouseExited(with event: NSEvent) { updateHover(at: nil) }
 
-    /// The cell whose swatch OR whose trash is under `p` (the trash overhangs the swatch, so the hover
-    /// must hold while the pointer travels onto it).
+    /// The colour cell under `p`.
     private func updateHover(at p: NSPoint?) {
-        var cellIndex: Int? = nil, hot = false
+        var cellIndex: Int? = nil
         if canRemove, let p {
             for (i, cell) in cells.enumerated() where cell.fill != nil && objectColors.indices.contains(i) {
-                if trashRect(of: cell).contains(p) { cellIndex = i; hot = true; break }
                 if rect(of: cell).insetBy(dx: -2, dy: -2).contains(p) { cellIndex = i; break }
             }
         }
-        guard cellIndex != hoveredCell || hot != trashHot else { return }
+        optionHeld = NSEvent.modifierFlags.contains(.option)
+        guard cellIndex != hoveredCell else { return }
         hoveredCell = cellIndex
-        trashHot = hot
         needsDisplay = true
     }
 
     private static let trashImage: NSImage? = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)?
-        .withSymbolConfiguration(.init(pointSize: 7, weight: .semibold))
+        .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
 
+    /// The trash takes the WHOLE disc: the colour darkened (so the hue still says which one goes), the
+    /// glyph large and white on it.
     private func drawTrash(for cell: Cell) {
-        let b = trashRect(of: cell)
-        NSColor.windowBackgroundColor.setFill()
+        let b = rect(of: cell)
+        NSColor.black.withAlphaComponent(0.5).setFill()
         NSBezierPath(ovalIn: b).fill()
-        NSColor.labelColor.withAlphaComponent(0.35).setStroke()
-        let edge = NSBezierPath(ovalIn: b.insetBy(dx: 0.25, dy: 0.25))
-        edge.lineWidth = 0.5
-        edge.stroke()
         guard let image = Self.trashImage else { return }
-        let tint: NSColor = trashHot ? .systemRed : .secondaryLabelColor
         let tinted = NSImage(size: image.size, flipped: false) { r in
             image.draw(in: r)
-            tint.set()
+            NSColor.white.set()
             r.fill(using: .sourceAtop)
             return true
         }
@@ -1643,21 +1648,14 @@ final class ColorSwatchGridView: NSView {
                 cross.stroke()
             }
         }
-        // Drawn last, above every swatch (it overhangs into the gap).
-        if canRemove, let h = hoveredCell, cells.indices.contains(h), cells[h].fill != nil {
+        // Over the hovered disc, only while ⌥ is held.
+        if canRemove, optionHeld, let h = hoveredCell, cells.indices.contains(h), cells[h].fill != nil {
             drawTrash(for: cells[h])
         }
     }
 
     override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        // The hovered colour's trash first: it overhangs its swatch, and a click on it removes the
-        // colour (the ⌥ + click path), never picks it; the menu stays open.
-        if canRemove, let h = hoveredCell, cells.indices.contains(h), cells[h].fill != nil,
-           trashRect(of: cells[h]).contains(p), let onRemove, objectColors.indices.contains(h) {
-            rebuildObjectCells(palette: onRemove(objectColors[h]))
-            return
-        }
         for (i, cell) in cells.enumerated() where rect(of: cell).insetBy(dx: -2, dy: -2).contains(p) {
             // ⌥ + click on a colour of the OBJECT palette removes it from the palette; the menu stays
             // open, redrawn without it (the object keeps its colour whatever happens here).

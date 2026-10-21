@@ -990,9 +990,12 @@ private struct FinderSlotsBar: View {
     private var slots: FinderSlotStore { vm.slots }
     /// The slot being dragged, while the drag lasts (the row reorders live under it).
     @State private var draggingID: String? = nil
-    /// The slot under the pointer: it shows a small trash in its corner (a click there = Remove, the
-    /// same path as ⌥ + click, the same question for a slot that holds a folder).
+    /// The slot under the pointer: while ⌥ is held, its whole dot turns into a trash (a click = Remove,
+    /// the ⌥ + click path, the same question for a slot that holds a folder).
     @State private var hoveredID: String? = nil
+    /// ⌥ held at this instant (fed by a `flagsChanged` monitor while the bar is on screen).
+    @State private var optionHeld = false
+    @State private var flagsMonitor: Any? = nil
 
     var body: some View {
         HStack(spacing: 4) {
@@ -1006,6 +1009,17 @@ private struct FinderSlotsBar: View {
         .padding(.vertical, 5)
         .frame(maxWidth: .infinity)
         .background(Color(nsColor: .underPageBackgroundColor))
+        .onAppear {
+            optionHeld = NSEvent.modifierFlags.contains(.option)
+            flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { e in
+                optionHeld = e.modifierFlags.contains(.option)
+                return e
+            }
+        }
+        .onDisappear {
+            if let m = flagsMonitor { NSEvent.removeMonitor(m) }
+            flagsMonitor = nil
+        }
     }
 
     private var addCapsule: some View {
@@ -1028,18 +1042,21 @@ private struct FinderSlotsBar: View {
                 Circle().strokeBorder(colour.opacity(0.6), lineWidth: 1).frame(width: 9, height: 9)
             }
         }
-        .capsuleTab(active: slots.activeID == slot.id)
-        // The trash is an OVERLAY in the capsule's free corner: nothing moves when it shows, and the
-        // dot itself stays clear for the click that shows the slot. A Button, so its click is its own
-        // and never reaches the capsule's tap or drag.
-        .overlay(alignment: .topTrailing) {
-            if hoveredID == slot.id, draggingID == nil {
-                SlotTrashBadge {
-                    hoveredID = nil
-                    vm.removeSlot(slot.id)
+        // ⌥ held over the slot: the trash takes the WHOLE dot (nothing moves, the click is the capsule's
+        // own ⌥ + click, which removes the slot).
+        .overlay {
+            if optionHeld, hoveredID == slot.id, draggingID == nil {
+                ZStack {
+                    Circle().fill(Color.black.opacity(0.5))
+                    Image(systemName: "trash")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(Color.white)
                 }
+                .frame(width: 9, height: 9)
+                .allowsHitTesting(false)
             }
         }
+        .capsuleTab(active: slots.activeID == slot.id)
         .onHover { inside in
             if inside { hoveredID = slot.id }
             else if hoveredID == slot.id { hoveredID = nil }
@@ -1063,28 +1080,6 @@ private struct FinderSlotsBar: View {
             Divider()
             Button(L("library.slot.remove")) { vm.removeSlot(slot.id) }
         }
-    }
-}
-
-/// The small trash shown in the corner of the slot under the pointer. Discreet (secondary, 8 pt),
-/// red under the pointer; a plain Button so that its click is consumed here.
-private struct SlotTrashBadge: View {
-    let action: () -> Void
-    @State private var hot = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "trash")
-                .font(.system(size: 8, weight: .medium))
-                .foregroundStyle(hot ? Color.red : Color.secondary)
-                .frame(width: 11, height: 11)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { hot = $0 }
-        .padding(.trailing, 1)
-        .help(L("library.slot.remove"))
-        .accessibilityLabel(L("library.slot.remove"))
     }
 }
 
