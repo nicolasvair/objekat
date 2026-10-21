@@ -47,10 +47,14 @@ import AppKit
 // **Identities are PER DOCUMENT.** The single `EditViewModel` serves every tab, so what it knows
 // (`fileChanges.known`) travels with the tab (`ParkedProject.fileIdentities`) and comes back with
 // it: a file changed while its tab was parked is then caught on the way back, against what the tab
-// knew when it left. A path with NO earlier identity is learned, never reloaded on a guess — except
-// that a clip's recorded `fileSize` (partially populated: FolderImport, relink, `object.add`) is a
-// baseline of size alone, so a project reopened after an outside edit that changed the length is
-// caught too.
+// knew when it left. A path the DOCUMENT never saw falls back on what the PROCESS saw, in this
+// order: the identity the last scan of any document learned for it (`FileChangeTracker.seen`), the
+// identity its peaks were decoded from if the memory waveform cache still holds them
+// (`waveformStamps`), and a clip's recorded `fileSize` (partially populated: FolderImport, relink,
+// `object.add`, a baseline of size alone). Without the first two, a project closed and reopened in
+// the same run learned the rewritten file as new — the engine kept its old reading and the memory
+// cache its old peaks, which only quitting the app cleared (21 October 2026). A path nobody in this
+// process has seen is learned, never reloaded on a guess.
 
 /// Why a scan is run — only to tell the triggers apart in a report and to decide the anti-bounce.
 enum FileChangeScanReason: String, Sendable {
@@ -115,6 +119,11 @@ final class FileChangeTracker {
     var carried: [String: SourceFileIdentity]?
     var lastScan: Date?
     var activationToken: NSObjectProtocol?
+
+    /// path → identity as of the last scan that saw it, for ANY document of this process: the
+    /// engine's readings and the memory waveform cache are the process's, not a document's, so a
+    /// file rewritten while its project was closed must be judged against them.
+    static var seen: [String: SourceFileIdentity] = [:]
 
     var isBusy: Bool { queued > 0 || scanningEpoch != nil }
 }
@@ -243,8 +252,25 @@ extension EditViewModel {
         }
         if let why = fileChangeBlocker { return deferScan(report, because: why) }
 
-        // What was known, completed with the sizes the model recorded for paths never seen.
+        // What was known, completed for the paths this document never saw: what the process saw,
+        // then what the memory waveform cache decoded, then the sizes the model recorded.
         var before = tracker.known
+        for path in paths where before[path] == nil {
+            if let seen = FileChangeTracker.seen[path] { before[path] = seen }
+        }
+        let unseen = paths.filter { before[$0] == nil }
+        if !unseen.isEmpty, let stamps = waveformStamps?(unseen) {
+            for (path, stamp) in stamps {
+                // The cache reads its time through Foundation, the scan through `stat` with its
+                // nanoseconds: the same file must not read as changed for a rounding.
+                if let now = after[path] ?? nil, let t = now.mtime, let s = stamp.mtime,
+                   now.size == stamp.size, abs(t - s) < 1e-3 {
+                    before[path] = now
+                } else {
+                    before[path] = stamp
+                }
+            }
+        }
         for (path, size) in inputs.recordedSizes where before[path] == nil {
             before[path] = SourceFileIdentity(size: size, mtime: nil)
         }
@@ -255,7 +281,10 @@ extension EditViewModel {
         // gaining their time). A changed path is learned by its reload, once it has succeeded.
         let changedSet = Set(changed)
         for path in paths where !changedSet.contains(path) {
-            if let now = after[path] ?? nil { tracker.known[path] = now }
+            if let now = after[path] ?? nil {
+                tracker.known[path] = now
+                FileChangeTracker.seen[path] = now
+            }
         }
 
         if !changed.isEmpty {
@@ -347,6 +376,7 @@ extension EditViewModel {
                 }
             }
             fileChanges.known[path] = identity
+            FileChangeTracker.seen[path] = identity
             reloaded.append(path)
             WaveformCacheMeter.record { $0.fileChangeReloads += 1 }
         }

@@ -489,6 +489,19 @@ final class WaveformCache {
     /// A path this cache never held (an object whose block was never drawn) is not loaded: there is
     /// nothing on screen to refresh, and its first `load` will read the new file anyway. Its stale
     /// `.wfc` is still removed.
+    /// The identity each of `paths` had when its peaks in MEMORY were decoded, for the paths that
+    /// have peaks in memory and a stamp. The memory cache outlives a project (it is shared by every
+    /// document of the process), so this is what a reopened project has to be compared with: peaks
+    /// held here for a file rewritten since would otherwise be drawn as they are, for ever.
+    func stamps(for paths: [String]) -> [String: SourceFileIdentity] {
+        var out: [String: SourceFileIdentity] = [:]
+        for path in paths {
+            guard let stamp = cache[path]?.stamp else { continue }
+            out[path] = SourceFileIdentity(size: Int64(stamp.size), mtime: stamp.mtime)
+        }
+        return out
+    }
+
     func invalidate(paths: [String]) {
         var toReload: [String] = []
         for path in Set(paths).sorted() {

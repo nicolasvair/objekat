@@ -1218,6 +1218,7 @@ struct TimelineView: View {
             // A source file rewritten on disk: forget its peaks and read them again
             // (@see EditViewModel+ChangedFiles).
             viewModel.invalidateWaveforms = { paths in waveformCache.invalidate(paths: paths) }
+            viewModel.waveformStamps = { paths in waveformCache.stamps(for: paths) }
             viewModel.beginVerticalZoomDrag = {
                 openVerticalZoomSession()
                 vZoomHeld = true

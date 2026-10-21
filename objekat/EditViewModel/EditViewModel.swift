@@ -1044,6 +1044,10 @@ final class EditViewModel {
     /// `--headless`), so the view model reaches it through a closure. nil with no interface.
     /// @see EditViewModel+ChangedFiles
     @ObservationIgnored var invalidateWaveforms: (([String]) -> Void)?
+    /// The identity (size + mtime) each path had when the memory waveform cache decoded it, for
+    /// the paths it holds — what this PROCESS has already read, whatever document it was for.
+    /// nil with no interface. @see EditViewModel+ChangedFiles
+    @ObservationIgnored var waveformStamps: (([String]) -> [String: SourceFileIdentity])?
 
     /// True while the transport is RUNNING (set by `ObjekatSession.isPlaying`'s `didSet`). A source
     /// file that changed under a playing engine is reloaded at the stop, not under the hand that
