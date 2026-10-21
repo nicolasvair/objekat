@@ -130,12 +130,12 @@ enum CrossProjectImportTest {
                   newNotes[0].startBeat == 0 && newNotes[1].startBeat == 1 && lengthBeats == 4)
         }
 
-        // MARK: - Internal links remapped, never equal to a V1/V2 target's own groups
+        // MARK: - No single-instance link survives a cross-project paste
 
         do {
-            // Simulate the V1/V2 collision the mission names: the SOURCE clip's plugin, and its
-            // link group id, happen to share a UUID with something that could exist on the target
-            // side. plan() must never reuse that id for the new group.
+            // The single-instance manual link no longer exists (format 32). A plain plugin that still
+            // carries a link id (a clipboard built by a script) comes out with none: plan() must neither
+            // keep the source's id (it could collide with the V1/V2 target's own groups) nor create one.
             let sharedGroupID = UUID()
             let p1 = plugin(linkGroupID: sharedGroupID)
             let p2 = plugin(linkGroupID: sharedGroupID)
@@ -146,10 +146,8 @@ enum CrossProjectImportTest {
                                                   originFolder: originFolder,
                                                   originTime: 0, originLane: 0)
             let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 0, pasteLane: 0))
-            let newGroup1 = plan.clips[0].plugins[0].linkGroupID
-            let newGroup2 = plan.clips[1].plugins[0].linkGroupID
-            check("the two linked plugins share ONE new group", newGroup1 != nil && newGroup1 == newGroup2)
-            check("the new group is never the target's own (V1/V2) id", newGroup1 != sharedGroupID)
+            check("a plain plugin pasted across projects carries no link",
+                  plan.clips[0].plugins[0].linkGroupID == nil && plan.clips[1].plugins[0].linkGroupID == nil)
         }
 
         do {

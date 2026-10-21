@@ -27,7 +27,7 @@ struct ChannelMenuState: Equatable {
     var exact: Bool
     /// Playback runs: the change frees the playback context, so the entries are shown greyed.
     var blockedByPlayback: Bool
-    /// How many OTHER instances change with this one (an FX link's mirrors, a manual link's peers).
+    /// How many OTHER instances change with this one (an FX link's mirrors).
     var linkedCount: Int
 }
 
@@ -217,8 +217,7 @@ extension EditViewModel {
     /// stereo, the choice is written as a PICK on the cable that enters it (the plugin's own key goes), so the
     /// hand and the script say the same thing. Everywhere else (a send's mini-chain, a plugin the engine has
     /// not loaded, a cable already mono) it keeps its old meaning and writes the plugin's own record
-    /// (`setMonoFoldRecord`). A manual ⌘-link's peers are NOT carried along on the cable path (Q4: the cable
-    /// belongs to its host's chain); an FX link's bin is, through its definition.
+    /// (`setMonoFoldRecord`). An FX link's bin is carried along on the cable path, through its definition.
     @discardableResult
     func setMonoFold(_ fold: MonoFold, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
         if let me = hostedPlugin(pluginID, of: host), !me.isContainer, !isInstrument(pluginID, of: host),
@@ -234,7 +233,7 @@ extension EditViewModel {
 
     /// What a stereo signal is folded into for a ONE-input plugin: `left` (as before), `right`, or the sum
     /// (L + R) / 2 (@see `MonoFold`). The same members as the Channels menu — the plugin and its link group
-    /// (FX link mirrors, manual link peers), all together — and the FX link's definition, so a member
+    /// (FX link mirrors), all together — and the FX link's definition, so a member
     /// attached later is born with it. One undo step; none when nothing changes. Unlike a channel layout,
     /// nothing is refused while playing: it is two service plugins laid or removed around the plugin.
     @discardableResult

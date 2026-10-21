@@ -24,11 +24,6 @@ struct SynopticCardView: View {
     var onDropPlugin: ((_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
     /// A send card let go on this card (just before it, in its series).
     var onDropSend: ((_ payload: SendDragPayload) -> Void)? = nil
-    /// Unlinks this instance from its group (nil = the card cannot be driven, e.g. the demo).
-    var onUnlink: (() -> Void)? = nil
-    var onRelink: (() -> Void)? = nil
-    /// The number of linked instances (for the tooltip). 0 if unlinked.
-    var linkSiblingCount: Int = 0
     /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
     var sidechainBadge: SidechainBadge? = nil
 
@@ -47,7 +42,7 @@ struct SynopticCardView: View {
     /// slot passes its fixed width.
     var width: CGFloat? = nil
     /// Non-nil = this card is the ARA SOURCE of the object (Melodyne), not an FX: the SAME card as any
-    /// plugin's (on/off column, name, ✕, VU line), minus what a source has no business with — no link, no
+    /// plugin's (on/off column, name, ✕, VU line), minus what a source has no business with — no
     /// drag, no selection, nothing dropped on it — plus an "ARA" tag and, while the plugin analyses the
     /// audio, a spinner. The power button switches the source off WITHOUT losing its retouches (the
     /// object then plays its dry file; @see `EditViewModel.setARAEnabled`); the ✕ takes the source off for
@@ -58,19 +53,6 @@ struct SynopticCardView: View {
     private let cardH = SynopticLayout.cardH
 
     private let toggleW: CGFloat = 26
-
-    private var linkHelp: String {
-        // `linkSiblings` already excludes the plugin itself: that count IS the others'.
-        let others = linkSiblingCount
-        if plugin.isLinked {
-            return others > 0
-                ? L("synoptic.link.linkedWithOthers", others)
-                : L("synoptic.link.linked")
-        }
-        return others > 0
-            ? L("synoptic.link.unlinkedWithOthers", others)
-            : L("synoptic.link.unlinked")
-    }
 
     var body: some View {
         Group {
@@ -85,16 +67,13 @@ struct SynopticCardView: View {
         .frame(width: cardW, height: cardH, alignment: .topLeading)
         .background(isSelected ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        // The halo = the instance's identity colour, always visible (not only when linked): it is
-        // what allows finding an open plugin's card at a glance. Linked → a thicker line plus a glow,
-        // so as to tell 'this group moves together' from plain identity.
+        // The halo = the instance's identity colour, always visible: it is what allows finding an
+        // open plugin's card at a glance.
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isSelected ? Color.accentColor : plugin.color.opacity(plugin.showsLinkedStyle ? 1 : 0.7),
-                              lineWidth: isSelected ? 2 : (plugin.showsLinkedStyle ? 2 : 1))
+                .strokeBorder(isSelected ? Color.accentColor : plugin.color.opacity(0.7),
+                              lineWidth: isSelected ? 2 : 1)
         )
-        .shadow(color: plugin.showsLinkedStyle ? plugin.color.opacity(0.6) : .clear,
-                radius: plugin.showsLinkedStyle ? 5 : 0)
         .opacity(plugin.isEnabled ? 1 : 0.5)
         // A card of a bin that is switched OFF: its own state (on / off) and its identity colours
         // stay, but the whole card is greyed and dimmed — the look of a state inherited from a
@@ -117,7 +96,7 @@ struct SynopticCardView: View {
         // NOT on the card itself: the card is the ANCESTOR of the `Text` carrying the `.onDrag`, and
         // macOS does not deliver a drop to an ancestor of a drag source — which is why the '+'
         // (with no descendant source) received drops but the axis did not. The background steals no
-        // click from the buttons (bypass / ✕ / link), which stay above it.
+        // click from the buttons (bypass / ✕), which stay above it.
         .background(dropLayer)
         // The trims, OUTSIDE the card: a tag under its bottom-left corner, only when one is not neutral.
         .overlay(alignment: .bottomLeading) {
@@ -176,7 +155,7 @@ struct SynopticCardView: View {
         }
     }
 
-    /// The ordinary face: on/off · name · link badge · ✕, and the VU line.
+    /// The ordinary face: on/off · name · ✕, and the VU line.
     private var pluginContent: some View {
         HStack(spacing: 0) {
             // on/off — a REAL button, full height, square edges (the identity colour = active)
@@ -211,28 +190,6 @@ struct SynopticCardView: View {
                             PluginDragPreview(plugin: plugin, dragCount: dragCount)
                         }
                         .help(isARA ? L("synoptic.ara.open") : L("synoptic.openPlugin"))
-
-                    // 🔗 — the link toggle. Linked: a solid badge, tinted by the group's colour.
-                    // DETACHED: the badge REMAINS, hollow and in the same tint — the group left is
-                    // therefore recognisable by eye, and a click takes it back (@see relinkPlugin).
-                    // Never inside a bin's block: the block's header carries the link.
-                    if plugin.showsLinkBadge {
-                        Button(action: { plugin.isLinked ? onUnlink?() : onRelink?() }) {
-                            Image(systemName: FeatureIcons.fxLink)
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(plugin.isLinked ? .white : plugin.color.opacity(0.8))
-                                .padding(3)
-                                .background {
-                                    if plugin.isLinked {
-                                        Circle().fill(plugin.color)
-                                    } else {
-                                        Circle().strokeBorder(plugin.color.opacity(0.55), lineWidth: 1.5)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .help(linkHelp)
-                    }
 
                     // Melodyne is still reading the audio: the editor will open once it is done.
                     if let ara, ara.analysing {
@@ -385,8 +342,7 @@ struct SynopticGainStageControls: View {
 
     // MARK: Pieces
 
-    /// A 2 × 3 grid of dots: the drag handle (reorder / move; ⌥ copies, ⌘ links across objects, like a
-    /// plugin's name).
+    /// A 2 × 3 grid of dots: the drag handle (reorder / move; ⌥ copies, like a plugin's name).
     private var grip: some View {
         HStack(spacing: 2) {
             ForEach(0..<2, id: \.self) { _ in
@@ -502,8 +458,6 @@ struct PluginDragPreview: View {
     /// The size of the card being carried (its name whole, @see SynopticLayout.cardWidth),
     /// nothing more — the modifiers are explained by the band at the bottom of the timeline.
     private var width: CGFloat { SynopticLayout.cardWidth(for: plugin) }
-    /// Shared with the drop targets' link badge, which must be laid OUTSIDE this card: the drag
-    /// image is drawn by the system above every window, so nothing of ours can sit on top of it.
     static let height: CGFloat = 32
 
     var body: some View {
@@ -644,10 +598,10 @@ struct PluginDropDelegate: DropDelegate {
         let flags = NSEvent.modifierFlags
         guard let o = outcome(flags) else {
             isTargeted.wrappedValue = true
-            PluginDropHint.shared.present(hintKey, context: .sameChain)
+            PluginDropHint.shared.present(hintKey, context: .host)
             return DropProposal(operation: flags.contains(.option) ? .copy : .move)
         }
-        guard let ctx = o.hintContext(plainContext: .sameChain) else {
+        guard let ctx = o.hintContext() else {
             isTargeted.wrappedValue = false
             PluginDropHint.shared.leave(hintKey)
             return DropProposal(operation: .forbidden)

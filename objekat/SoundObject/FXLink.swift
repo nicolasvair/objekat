@@ -24,7 +24,8 @@ import SwiftUI
 //    but stops following (`isDetached`); the host keeps an INDEPENDENT copy of the chain with the
 //    settings of the moment (and of the common on/off, `local`). Reattaching realigns the host on
 //    the bin — it adopts the bin's settings, never the reverse.
-//  • Manual ⌘-links (`linkGroupID` on a plain plugin) are untouched and live beside the bins.
+//  • There is no other kind of link: the single-instance manual link (`linkGroupID` on a plain plugin) was
+//    removed in format 32 (@see LegacyManualLinkMigration); `linkGroupID` now only names a bin's definition.
 //  • DRAGGING (@see EditViewModel+PluginDrop, one resolver for the cursor, the band and the drop):
 //    the block moves by its header — the target joins the bin and the source loses its block (⌥ / ⌘: it
 //    keeps it; every copy of a bin stays on the bin; a detached block travels as it is). A plain plugin

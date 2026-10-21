@@ -280,9 +280,6 @@ struct SynopticBoundView: View {
             },
             instanceState: { instanceStates[$0] ?? 0 },
             loadError: { loadErrors[$0] },
-            onUnlink: { viewModel.unlinkPlugin(objectID: objectID, pluginID: $0) },
-            onRelink: { viewModel.relinkPlugin(objectID: objectID, pluginID: $0) },
-            linkSiblingCount: { viewModel.linkSiblings(of: $0).count },
             sidechainBadge: { viewModel.sidechainBadge(plugin: $0, host: objectID) },
             channelMenu: { viewModel.channelMenuState(pluginID: $0, host: objectID) },
             onSetChannelVariant: { viewModel.setChannelVariantFromHand($1, pluginID: $0, host: objectID) },
@@ -708,7 +705,7 @@ struct SynopticBoundView: View {
     }
 
     /// A card's drag payload (the same format as the chips → it reuses the timeline drop to
-    /// move/copy/link to another object, and the '+'s to reorder).
+    /// move/copy to another object, and the '+'s to reorder).
     ///
     /// A card taken WHILE IT IS IN THE SELECTION carries the whole selection with it; a card taken
     /// from outside carries itself alone. The clips' rule word for word (@see the timeline's drag
@@ -764,7 +761,7 @@ struct SynopticBoundView: View {
 
     /// A row taken in the hand: the trunk's payload with the SEND as its source host. A row taken while
     /// it is in the selection carries the selection (the rows of that box). Announced as coming from a
-    /// send: such a drag never links, wherever it lands (@see PluginDragSession.fromSend).
+    /// send (@see PluginDragSession.fromSend).
     private func sendPluginDragProvider(aux: UUID, pluginID: UUID) -> NSItemProvider {
         let host = sendHost(aux)
         let all = (viewModel.selectedPluginHostID == host && viewModel.selectedPluginIDs.contains(pluginID))

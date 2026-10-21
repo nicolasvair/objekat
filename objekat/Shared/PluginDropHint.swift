@@ -5,7 +5,7 @@ import Observation
 //
 // The object move has its band (DÉPLACEMENT / COPIE, the ⌥ and ⌘ chips lit as they are held);
 // a plugin drag had nothing but the cursor's '+' and the maillon. This is the same band for the
-// plugin gesture: nothing = move, ⌥ = an independent copy, ⌘ = a linked copy.
+// plugin gesture: nothing = move, ⌥ = an independent copy (⌘ means nothing here).
 //
 // A plugin drag is a SYSTEM drag session: there is no gesture of ours to read it from, only the
 // drop targets it hovers. So every door that takes a plugin — a timeline object, a bus's strip,
@@ -21,44 +21,35 @@ final class PluginDropHint {
     static let shared = PluginDropHint()
 
     /// Where the card would land, which decides what the band says.
-    ///  • `.host` — an object or a bus: nothing = move, ⌥ = an independent copy, ⌘ = a linked copy
-    ///    (or, for an FX link's plugin, the target joining the bin).
-    ///  • `.sameChain` — a card or a cable of the synoptic, moving within a chain: ⌘ does not link
-    ///    there (two linked instances in one chain are refused on purpose, @see transferPlugins) —
-    ///    the band says so instead of lighting a ⌘ that would do nothing.
+    ///  • `.host` — an object or a bus, or a card / a cable of the synoptic: nothing = move,
+    ///    ⌥ = an independent copy.
     ///  • `.intoBin` — a place INSIDE an FX link's block: the plugin joins the bin (every object
-    ///    sharing it gets one), or ⌥ adds an independent copy of it; ⌘ does nothing.
+    ///    sharing it gets one), or ⌥ adds an independent copy of it.
     ///  • `.outOfBin` — an instance of an FX link let go OUTSIDE it: it leaves the bin for every
     ///    object and stays a plain plugin here; ⌥ takes an independent copy and leaves the bin alone.
-    ///  • `.blockMove` — a whole FX link block: it moves to the target, which joins the bin (⌥ or ⌘ =
-    ///    the source keeps its own, still on the same bin).
+    ///  • `.blockMove` — a whole FX link block: it moves to the target, which joins the bin (⌥ = the
+    ///    source keeps its own, still on the same bin).
     ///  • `.send` — a SEND card is in the hand (not a plugin): the band says where it would be taken, or
     ///    why it cannot (@see SendDrop). No modifier: one send per pair, so no copy.
     ///  • `.sendChain` — a plugin going onto, or coming from, a SEND's box (INC 3): nothing = move,
-    ///    ⌥ = copy, and ⌘ is a plain copy too — a send's plugin is never linked, so the band never
-    ///    shows the link's glyph there (@see EditViewModel.effectiveTransferMode).
+    ///    ⌥ = copy.
     ///  • `.refusal(key)` — a plugin a send's box refuses, with the catalogue key of the reason
     ///    (@see SendBoxPluginRefusal). The only plugin refusal that speaks: elsewhere the cursor alone does.
-    enum Context: Hashable { case host, sameChain, intoBin, outOfBin, blockMove, sendChain, refusal(String), send(SendDropBanner) }
+    enum Context: Hashable { case host, intoBin, outOfBin, blockMove, sendChain, refusal(String), send(SendDropBanner) }
 
     struct State: Equatable {
         var context: Context
         var alt: Bool
-        var cmd: Bool
 
-        /// The gesture a release would make NOW — the same reading as `acceptPluginDrop`
-        /// (⌘ wins over ⌥) and as the synoptic's delegate (⌥ only, ⌘ = a move). Only a host has a
-        /// link to make: every other context says what ⌘ does (or does not) in its own words.
-        var isLink: Bool { context == .host && cmd }
-        /// A copy is what the release makes: ⌥, except where ⌘ is a copy too (a block's second
-        /// gesture — it is never an independent one, the copy stays on the bin).
-        var isCopy: Bool { !isLink && (alt || ((context == .blockMove || context == .sendChain) && cmd)) }
+        /// A copy is what the release makes: ⌥ (the same reading as `acceptPluginDrop` and as the
+        /// synoptic's delegate — ⌘ is not read at all).
+        var isCopy: Bool { alt }
     }
 
     private(set) var state: State?
 
     @ObservationIgnored private var targets: [String: Context] = [:]
-    /// Follows ⌥/⌘ without the mouse moving: `dropUpdated` only speaks on a movement, and the
+    /// Follows ⌥ without the mouse moving: `dropUpdated` only speaks on a movement, and the
     /// expected gesture is to stop, read the band, press a key. Same probe as the file drop's
     /// (@see EditViewModel.fileDropModifierWatch): `Task.sleep` resumes in the drag's tracking
     /// run-loop mode, where a `.default` Timer would not.
@@ -93,18 +84,16 @@ final class PluginDropHint {
         var context: Context
         if let line = sendLines.first(where: { !$0.isRefusal }) ?? sendLines.first {
             context = .send(line)
-        } else if let place = [Context.blockMove, .intoBin, .outOfBin, .sendChain, .sameChain].first(where: present.contains) {
+        } else if let place = [Context.blockMove, .intoBin, .outOfBin, .sendChain].first(where: present.contains) {
             context = place
         } else if let refused = present.first(where: { if case .refusal = $0 { return true } else { return false } }) {
             context = refused
         } else {
             context = .host
         }
-        // A plugin taken FROM a send's box never links, wherever it lands: the band of a host or of a
-        // chain must not light a ⌘ that would only copy.
-        if PluginDragSession.shared.fromSend, context == .host || context == .sameChain { context = .sendChain }
-        let f = NSEvent.modifierFlags
-        let next = State(context: context, alt: f.contains(.option), cmd: f.contains(.command))
+        // A plugin taken FROM a send's box reads as a send chain's, wherever it lands.
+        if PluginDragSession.shared.fromSend, context == .host { context = .sendChain }
+        let next = State(context: context, alt: NSEvent.modifierFlags.contains(.option))
         // Reassigned only if it changes: the timeline reads it, and rewriting the same value on
         // every hover update would invalidate it for nothing.
         if state != next { state = next }

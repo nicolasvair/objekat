@@ -7914,29 +7914,6 @@
         }
       }
     },
-    "hud.drop.cmdHint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ changes the layout"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ cambia la disposición"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ change la disposition"
-          }
-        }
-      }
-    },
     "hud.drop.fileCount.one": {
       "extractionState": "manual",
       "localizations": {
@@ -7979,6 +7956,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d fichiers"
+          }
+        }
+      }
+    },
+    "hud.drop.optHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ changes the layout"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ cambia la disposición"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ change la disposition"
           }
         }
       }
@@ -8282,29 +8282,6 @@
         }
       }
     },
-    "hud.pluginDrop.binNoCmd": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ has no effect here"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ no tiene efecto aquí"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ n'a pas d'effet ici"
-          }
-        }
-      }
-    },
     "hud.pluginDrop.blockCopy": {
       "extractionState": "manual",
       "localizations": {
@@ -8347,29 +8324,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "DÉPLACER LE FX LINK"
-          }
-        }
-      }
-    },
-    "hud.pluginDrop.chip.link": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copy linked"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copiar vinculado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copier lié"
           }
         }
       }
@@ -8420,29 +8374,6 @@
         }
       }
     },
-    "hud.pluginDrop.linkedCopy": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "LINKED COPY"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "COPIA VINCULADA"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "COPIE LIÉE"
-          }
-        }
-      }
-    },
     "hud.pluginDrop.outOfBin": {
       "extractionState": "manual",
       "localizations": {
@@ -8462,29 +8393,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "HORS DU FX LINK, POUR TOUS LES OBJETS"
-          }
-        }
-      }
-    },
-    "hud.pluginDrop.sameChainNoLink": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ links only onto another object"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ vincula solo hacia otro objeto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ lie seulement vers un autre objet"
           }
         }
       }
@@ -18444,98 +18352,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Instrument"
-          }
-        }
-      }
-    },
-    "synoptic.link.linked": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked instance — click to unlink"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instancia vinculada — clic para desvincular"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instance liée — clic pour délier"
-          }
-        }
-      }
-    },
-    "synoptic.link.linkedWithOthers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked to %d other instance(s) — click to unlink"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vinculada a %d otra(s) instancia(s) — clic para desvincular"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Liée à %d autre(s) instance(s) — clic pour délier"
-          }
-        }
-      }
-    },
-    "synoptic.link.unlinked": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unlinked — click to rejoin its group"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desvinculada — clic para volver a su grupo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déliée — clic pour rejoindre son groupe"
-          }
-        }
-      }
-    },
-    "synoptic.link.unlinkedWithOthers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unlinked from %d other instance(s) — click to link back (it will take their settings)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desvinculada de %d otra(s) instancia(s) — clic para vincular (tomará sus ajustes)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déliée de %d autre(s) instance(s) — clic pour relier (elle reprendra leurs réglages)"
           }
         }
       }

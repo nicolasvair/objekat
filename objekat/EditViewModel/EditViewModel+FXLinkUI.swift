@@ -29,7 +29,7 @@ extension EditViewModel {
     }
 
     /// True if `pluginIDs` — plugins of `hostID`'s chain — can become the definition of a NEW bin:
-    /// plain plugins, none of them in a bin already or carrying a manual link, all in ONE series.
+    /// plain plugins, none of them in a bin already, all in ONE series.
     /// The very test `createFXLink` applies, asked without doing anything.
     func canCreateFXLink(host hostID: UUID, pluginIDs: [UUID]) -> Bool {
         guard !pluginIDs.isEmpty, let chain = chainPlugins(hostID) else { return false }

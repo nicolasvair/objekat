@@ -253,7 +253,7 @@ struct SendCardView: View {
 // line under a short stub of wire, whose '+' shows while the hand is over the line or the stub.
 //
 // A plugin is let go anywhere on the column: the '+' nearest the pointer says where it lands (the line = the
-// end): nothing = move, ⌥ = copy, ⌘ = copy as well — a send's plugin is never linked. A send card let go
+// end): nothing = move, ⌥ = copy (a send's plugin is never linked). A send card let go
 // here is refused (a send takes plugins, not sends). The drop layer is ONE view under the column (@see
 // SendColumnDropView); the cards and the line take no drop of their own.
 
@@ -425,10 +425,10 @@ struct SendColumnDropDelegate: DropDelegate {
         let flags = NSEvent.modifierFlags
         let i = index(info)
         guard let o = outcome(i, flags) else {
-            // No drag in flight to read: the legacy reading (⌥ / ⌘ copy, anything else moves).
+            // No drag in flight to read: the legacy reading (⌥ copies, anything else moves).
             dropIndex.wrappedValue = i
             PluginDropHint.shared.present(hintKey, context: .sendChain)
-            return DropProposal(operation: flags.contains(.option) || flags.contains(.command) ? .copy : .move)
+            return DropProposal(operation: flags.contains(.option) ? .copy : .move)
         }
         switch o {
         case .refuse(let why):

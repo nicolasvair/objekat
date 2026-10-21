@@ -90,17 +90,6 @@ extension EditViewModel {
         return SendChain.refusal(count: chainPlugins(hostID)?.count ?? 0, adding: adding, instrument: instrument)
     }
 
-    /// The transfer a drag really performs between two chain hosts: a LINK (⌘) falls back on a plain
-    /// COPY as soon as a send's mini-chain is the source or the target — a send's plugin is never
-    /// linked, and "copy + link" without the link is a copy. The ONE definition: the drop's banner
-    /// reads it too, so that it never shows the link's glyph over a gesture that will not link.
-    func effectiveTransferMode(_ mode: PluginTransferMode, from source: UUID?, to target: UUID) -> PluginTransferMode {
-        guard mode == .link else { return mode }
-        if isSendChainHost(target) && find(id: target) == nil { return .copy }
-        if let source, isSendChainHost(source), find(id: source) == nil { return .copy }
-        return mode
-    }
-
     /// What a send's plugins leave behind when the send goes: their touch watches, what was known
     /// of their parameters, and the plugin selection if it was that send's box.
     func forgetSendPlugins(sender: UUID, aux: UUID) {

@@ -204,8 +204,7 @@ extension EditViewModel {
     /// written and the plugin's own key cleared, so the choice has one home. The head of a stereo audio
     /// clip's chain is the file's own channel choice: `channelMode` is written there, never a pick.
     /// A cable inside an ATTACHED bin is the bin's: the definition is written and every member follows; a
-    /// detached bin's cable is the host's own. A manual ⌘-link does not carry a cable's choice (the cable
-    /// belongs to its host's chain). Nothing is refused while playing: it is a service plugin laid or
+    /// detached bin's cable is the host's own. Nothing is refused while playing: it is a service plugin laid or
     /// removed.
     @discardableResult
     func setCableChannels(host hostID: UUID, location: SeriesLocation, index: Int, choice: CableChoice,

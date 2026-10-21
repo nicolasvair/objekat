@@ -286,8 +286,6 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     var isRack: Bool { rack != nil }
 
     var isLinked: Bool { linkGroupID != nil }
-    /// Out of its group but able to come back. @see detachedLinkGroupID
-    var isLinkDetached: Bool { linkGroupID == nil && detachedLinkGroupID != nil }
     /// The group this plugin belongs to, whether it is active in it or merely able to rejoin.
     var effectiveLinkGroupID: UUID? { linkGroupID ?? detachedLinkGroupID }
     var isBuiltIn: Bool { formatName == "TracktionInternal" }

@@ -50,16 +50,12 @@ struct SynopticPlugin: Identifiable, Equatable {
     // Static information carried over from the chips (see ObjectPlugin), purely for display.
     var isBuiltIn: Bool = false
     var formatLabel: String = ""     // "VST3" / "AU" / "Built-in"
-    var isLinked: Bool = false
-    /// Out of its group but able to come back: the icon stays, muted, and the click links
-    /// instead of unlinking. @see ObjectPlugin.detachedLinkGroupID
-    var isLinkDetached: Bool = false
     /// The instance's identity colour (@see ObjectPlugin.color): its on/off, the card's
     /// halo/border and the link badge all derive from it, so that a glance is enough to tie
     /// a card in the signal view to its plugin.
     var color: Color = .gray
     /// True for an instance held by a bin's block (an FX link): the BLOCK carries the link (its frame,
-    /// its header's badge), so the card shows no link badge of its own and no linked emphasis.
+    /// its header's badge), the card shows none of its own.
     var inFXBlock: Bool = false
     /// True while the bin's common on/off is OFF: the card keeps its own on/off state and its
     /// identity colours but is drawn greyed, like any state inherited from a disabled container.
@@ -76,15 +72,10 @@ struct SynopticPlugin: Identifiable, Equatable {
     /// The compensation after the output trim (the gain match's), said by the same tag.
     var trimCompDb: Float = 0
 
-    /// The card's link badge (solid = follows its group, hollow = left it): never inside a bin.
-    var showsLinkBadge: Bool { !inFXBlock && (isLinked || isLinkDetached) }
-    /// The card's "these move together" emphasis (thicker line + glow): never inside a bin.
-    var showsLinkedStyle: Bool { !inFXBlock && isLinked }
-
     init(id: UUID = UUID(), name: String, category: PluginCategory,
          isEnabled: Bool = true, vu: Double = 0,
          isBuiltIn: Bool = false, formatLabel: String = "",
-         isLinked: Bool = false, isLinkDetached: Bool = false, color: Color = .gray,
+         color: Color = .gray,
          inFXBlock: Bool = false, greyedByBlock: Bool = false,
          gainStage: SynopticGainStageFace? = nil,
          trimInDb: Float = 0, trimOutDb: Float = 0, trimCompDb: Float = 0) {
@@ -98,8 +89,6 @@ struct SynopticPlugin: Identifiable, Equatable {
         self.vu = vu
         self.isBuiltIn = isBuiltIn
         self.formatLabel = formatLabel
-        self.isLinked = isLinked
-        self.isLinkDetached = isLinkDetached
         self.color = color
         self.inFXBlock = inFXBlock
         self.greyedByBlock = greyedByBlock

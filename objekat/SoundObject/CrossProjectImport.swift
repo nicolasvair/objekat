@@ -18,9 +18,8 @@ import Foundation
 ///
 /// Rules this function encodes (the full list is the INC2 spec, memory `project_multi_project_tabs_plan`):
 /// - every object, plugin/instrument and MIDI note gets a FRESH id;
-/// - a plugin `linkGroupID` is remapped to a NEW group, but ONLY within the pasted batch — never
-///   attached to a group that exists on the target side, and never invented for a plugin that had
-///   none (no "link by default" backfill);
+/// - an FX link's instances are recreated under a NEW bin (never attached to a bin of the target
+///   side); a plain plugin carries no link of its own (the single-instance link no longer exists);
 /// - `stemID` is always forced to `nil` (INC2 rule: everything pasted lands on the Main);
 /// - a send whose aux exists inside the batch is remapped; a send to an aux NOT in the batch is
 ///   DROPPED, automation curve (and `automationTouchOrder` entry) included, rather than left
@@ -91,7 +90,6 @@ enum CrossProjectImport {
         }
         for o in clipboard.clips { registerIDs(o) }
 
-        var linkGroupMap: [UUID: UUID] = [:]
         // Source bin id -> its new copy, and the definition plugins' old id -> new id (the members'
         // `linkGroupID` names a DEFINITION plugin, so it follows the second table).
         var fxLinkMap: [UUID: UUID] = [:]
@@ -124,9 +122,7 @@ enum CrossProjectImport {
         /// anything (@see the file's own header comment for why). Recursive: a rack carrier
         /// clones its voices with new ids too, and every LEAF's old→new id lands in the same
         /// `pluginIDMap`, rack-nested or not, since a `ParamRef.plugin` automation ref can name
-        /// any leaf. A link group is remapped to a NEW, batch-scoped one only when the plugin
-        /// ALREADY had one — never invented (no "link by default" backfill, unlike the
-        /// intra-project `copiedPlugins`, which does not apply across a paste this cold).
+        /// any leaf. A leaf carries no link of its own (the bins' instances are rebuilt by `cloneBlock`).
         /// A sidechain key follows its source into the batch when the source was pasted too; a key
         /// naming anything else (another project's object, a stem — everything lands on Main) is
         /// dropped: it would name nothing of this project. @see SidechainSource
@@ -140,19 +136,10 @@ enum CrossProjectImport {
             func cloneLeaf(_ p: ObjectPlugin) -> ObjectPlugin {
                 let newID = UUID()
                 pluginIDMap[p.id] = newID
-                var newGroup: UUID? = nil
-                if let g = p.linkGroupID {
-                    if let mapped = linkGroupMap[g] {
-                        newGroup = mapped
-                    } else {
-                        newGroup = UUID()
-                        linkGroupMap[g] = newGroup
-                    }
-                }
                 return ObjectPlugin(id: newID, name: p.name, manufacturer: p.manufacturer,
                                     identifier: p.identifier, formatName: p.formatName,
                                     isEnabled: p.isEnabled, stateXML: p.stateXML,
-                                    linkGroupID: newGroup, colorIndex: p.colorIndex,
+                                    colorIndex: p.colorIndex,
                                     sidechain: remapSidechain(p.sidechain),
                                     monoFold: p.monoFold).withTrims(of: p)
             }

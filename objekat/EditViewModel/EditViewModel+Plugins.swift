@@ -467,12 +467,8 @@ extension EditViewModel {
     /// convention as `copyPlugin` / `movePlugin` for the FX chain. The instance's current state
     /// is captured along the way: the target sounds as the source sounded.
     /// No effect if the target is not a MIDI clip (nothing else has an instrument slot).
-    ///
-    /// `linked` (⌘): the copy joins the source's LINK GROUP — setting one sets
-    /// the other, like two linked FX (@see linkAcrossObjects). Ignored if `copy` is false: a
-    /// move has nobody to link itself to, it simply carries the existing group with it.
     func transferInstrument(sourceObjectID: UUID, pluginID: UUID, targetObjectID: UUID,
-                            copy: Bool, linked: Bool = false) {
+                            copy: Bool) {
         guard let engine,
               let inst = find(id: sourceObjectID)?.instruments.first(where: { $0.id == pluginID }),
               find(id: targetObjectID)?.isMIDI == true,
@@ -480,15 +476,11 @@ extension EditViewModel {
         let live = engine.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : inst.stateXML
         // The link membership of the instance laid down, one per gesture:
-        //  • a move — the same logical instance elsewhere: it carries its group, active or
-        //    dormant (a detached instrument stays reattachable after a move);
-        //  • ⌘ copy+link — it joins the source's group, or the group the source
-        //    had LEFT rather than opening another (the same rule as linkAcrossObjects);
+        //  • a move — the same logical instance elsewhere: it carries its group, if it has one;
         //  • ⌥ copy — an INDEPENDENT instance, no group (the same rule as copyPlugin).
         let gid: UUID?
         let detached: UUID?
         if !copy                { gid = inst.linkGroupID; detached = inst.detachedLinkGroupID }
-        else if linked          { gid = inst.effectiveLinkGroupID ?? UUID(); detached = nil }
         else                    { gid = nil; detached = nil }
         // A BRAND-NEW UUID: the engine's `_pluginMap` key is the model's id — reusing the
         // source's would make both slots point at the same entry (@see copiedInstruments).
@@ -499,10 +491,6 @@ extension EditViewModel {
                                   colorIndex: inst.colorIndex, sidechain: inst.sidechain,
                                   monoFold: inst.monoFold).withTrims(of: inst)
         pushUndo()
-        if copy && linked, let gid, inst.linkGroupID == nil {
-            // The source was not linked yet: it enters the group with the copy.
-            setLinkGroups(objectID: sourceObjectID, pluginID: pluginID, link: gid, detached: nil)
-        }
         if !copy {
             update(id: sourceObjectID) { $0.instruments = [] }
             engine.removeInstrument(forObjectID: sourceObjectID.uuidString)
@@ -512,9 +500,6 @@ extension EditViewModel {
         // (setPluginLinkGroup returns doing nothing if the key is not in the `_pluginMap`).
         if let updated = find(id: targetObjectID) { syncInstruments(updated) }
         if let gid {
-            if copy && linked {
-                engine.setPluginLinkGroup(pluginID.uuidString, groupID: gid.uuidString)
-            }
             engine.setPluginLinkGroup(placed.id.uuidString, groupID: gid.uuidString)
         }
         isDirty = true
@@ -806,11 +791,8 @@ extension EditViewModel {
     /// frozen at copy/cut time through `withCapturedPluginStates`).
     /// Without this, `syncPlugins` recreates the plugins at their default values.
     ///
-    /// LINKED BY DEFAULT: the copy joins the source's link group. If the source
-    /// was not linked yet AND it is alive in the model, a group is created
-    /// and the source is registered in it too (a backfill) → original + copy become linked.
-    /// (For a clipboard fragment whose original has gone, the backfill fails
-    /// silently → the copy stays independent: there is nobody to link itself to.)
+    /// LINKED BY DEFAULT through an FX link: a run of plain plugins is copied into a bin shared
+    /// with the source (@see copiedRun). Plugins that cannot join one stay independent.
     func copiedPlugins(of object: SoundObject) -> [ObjectPlugin] {
         // The states re-read from the engine, put back into the ORIGINAL's model in ONE write. Without
         // it the source kept a stale `stateXML` — its setting lived only in the engine instance —
@@ -823,14 +805,14 @@ extension EditViewModel {
             if let xml { capturedStates.append((p.id, xml)) }
             return xml ?? p.stateXML
         }
-        // A plugin that lives on its own (manual ⌘-link kept, or a voice of a parallel block).
-        // NOTHING is linked by default any more: an automatic copy of plain plugins joins an FX
-        // link (a bin) instead of writing a `linkGroupID`, @see copiedRun.
+        // A plugin that lives on its own (a voice of a parallel block, say), outside every bin.
+        // It carries NO link: an automatic copy of plain plugins joins an FX link (a bin) instead
+        // of writing a `linkGroupID`, @see copiedRun.
         func copyLeaf(_ p: ObjectPlugin) -> ObjectPlugin {
             ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
                          identifier: p.identifier, formatName: p.formatName,
                          isEnabled: p.isEnabled, stateXML: liveState(p),
-                         linkGroupID: p.linkGroupID, colorIndex: p.colorIndex,
+                         colorIndex: p.colorIndex,
                          sidechain: p.sidechain,
                          monoFold: p.monoFold).withTrims(of: p)
         }
@@ -897,18 +879,18 @@ extension EditViewModel {
     // MARK: - LINK between plugin instances
 
     /// The data for the overlay when a plugin's editor is open. Always: the source clip
-    /// is highlighted (an "active" halo). If the plugin is linked: the group's other clips
-    /// are highlighted too + joined by the star. If not linked: a single clip.
+    /// is highlighted (an "active" halo). If the plugin belongs to an FX link's bin: the hosts
+    /// sharing the bin are highlighted too + joined by the star. Otherwise: a single clip.
     struct LinkOverlayInfo {
         let sourceObjectID: UUID        // the clip whose editor is open (an emphasised halo)
         let memberObjectIDs: [UUID]     // the clips to highlight (the source included; >1 if linked)
         /// The colour of the link: the BIN's (`FXLink.color`) for a plugin held by an FX link's
         /// block, whose members are the hosts sharing the bin; otherwise the identity colour OF
-        /// THIS plugin (@see ObjectPlugin.color), as the old manual ⌘-links always had.
+        /// THIS plugin (@see ObjectPlugin.color).
         let color: Color
         /// The palette index behind `color` (the bin's, or the plugin's own) — readable by a script.
         let colorIndex: Int
-        /// The bin the source plugin belongs to, nil for a plain or ⌘-linked plugin.
+        /// The bin the source plugin belongs to, nil for a plain plugin.
         let fxLinkID: UUID?
     }
 
@@ -920,8 +902,7 @@ extension EditViewModel {
 
     /// The overlay a plugin would arm while its editor is open. A plugin held by an FX link's block
     /// takes the BIN's colour and joins the hosts that share the bin (attached blocks: a detached
-    /// block has left the group, so it stands alone); a ⌘-linked plugin keeps its own colour and
-    /// its link group's clips.
+    /// block has left the group, so it stands alone); any other plugin stands alone, in its own colour.
     func linkOverlayInfo(forPlugin pid: UUID) -> LinkOverlayInfo? {
         let refs = allPluginRefs()
         guard let src = refs.first(where: { $0.plugin.id == pid }) else { return nil }
@@ -938,13 +919,8 @@ extension EditViewModel {
             return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
                                    color: ObjekatPalette.plugin(idx), colorIndex: idx, fxLinkID: fb.linkID)
         }
-        let members: [UUID]
-        if let gid = src.plugin.linkGroupID {
-            members = Array(Set(refs.filter { $0.plugin.linkGroupID == gid }.map { $0.objectID }))
-        } else {
-            members = [src.objectID]   // not linked → highlight the single edited clip
-        }
-        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: members,
+        // Not in a bin → highlight the single edited clip.
+        return LinkOverlayInfo(sourceObjectID: src.objectID, memberObjectIDs: [src.objectID],
                                color: src.plugin.color, colorIndex: src.plugin.colorIndex, fxLinkID: nil)
     }
 
@@ -967,7 +943,7 @@ extension EditViewModel {
         }
         walk(items)
         // The buses' chains: an FX link can sit on one, and its instances are mirrors like any
-        // other. (The legacy manual link never reached them — left as it was.)
+        // other.
         for s in stems {
             for p in Self.flattenLeaves(s.plugins) {
                 if let g = p.linkGroupID, Self.enclosingFXBlock(of: p.id, in: s.plugins) != nil {
@@ -1007,91 +983,12 @@ extension EditViewModel {
         return SendChain.sendPlugins(of: o).first { $0.id == pluginID }     // on one of its sends (INC 3)
     }
 
-    /// Writes both link memberships of an instance in one go, wherever it lives:
-    /// in the host's FX chain (recursive over the branches) or in its instrument slot.
-    func setLinkGroups(objectID: UUID, pluginID: UUID, link: UUID?, detached: UUID?) {
-        if isInstrument(pluginID, of: objectID) {
-            update(id: objectID) { o in
-                o.instruments = o.instruments.map { p in
-                    guard p.id == pluginID else { return p }
-                    var q = p
-                    q.linkGroupID         = link
-                    q.detachedLinkGroupID = detached
-                    return q
-                }
-            }
-        } else {
-            // A plugin on a SEND is never linked (@see SendChain.sanitised): nothing to write.
-            let host = chainHost(holding: pluginID, on: objectID)
-            guard !isSendChainHost(host) else { return }
-            updateChainPlugins(host) { p in
-                p = Self.settingLinkGroup(pluginID, link, in: p)
-                p = Self.settingDetachedLinkGroup(pluginID, detached, in: p)
-            }
-        }
-    }
-
-    /// The other instances of `pluginID`'s group, ACTIVE OR DETACHED. A detached member
-    /// stays part of the group — that is what makes it countable in the labels and lets it find
-    /// its peers again when it comes back (@see ObjectPlugin.detachedLinkGroupID).
-    func linkSiblings(of pluginID: UUID) -> [(objectID: UUID, plugin: ObjectPlugin)] {
-        guard let gid = allPluginRefs().first(where: { $0.plugin.id == pluginID })?
-                            .plugin.effectiveLinkGroupID
-        else { return [] }
-        return allPluginRefs().filter { $0.plugin.effectiveLinkGroupID == gid && $0.plugin.id != pluginID }
-    }
-
-    /// Takes an instance out of its link group — without LOSING the group: its identity is
-    /// recorded in `detachedLinkGroupID`, so that a second click on the icon (still
-    /// visible, muted) brings it back. @see relinkPlugin
-    ///
-    /// Dissolution: if the departure leaves fewer than two active members, the last is detached
-    /// too — a group of one synchronises nothing. It keeps the same identity, so the
-    /// two stay reunitable with each other.
-    func unlinkPlugin(objectID: UUID, pluginID: UUID) {
-        guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.linkGroupID,
-              fxDefinition(ofInstance: pluginID, on: objectID) == nil else { return }   // a bin's member detaches through its block
-        pushUndo()
-        detachLink(objectID: objectID, pluginID: pluginID, group: gid)
-        let remaining = allPluginRefs().filter { $0.plugin.linkGroupID == gid }
-        if remaining.count < 2 {
-            for r in remaining { detachLink(objectID: r.objectID, pluginID: r.plugin.id, group: gid) }
-        }
-        isDirty = true
-    }
-
-    /// Brings a detached instance back into its group. It ADOPTS the group's settings: it is the one
-    /// that aligns on the others, never the reverse — coming back into a group must not
-    /// crush what the members who stayed have set in the meantime.
-    func relinkPlugin(objectID: UUID, pluginID: UUID) {
-        guard let plug = hostedPlugin(pluginID, of: objectID),
-              let gid = plug.detachedLinkGroupID,
-              !isInFXBlock(pluginID, of: objectID) else { return }   // a bin's copy rejoins through its block
-        pushUndo()
-        setLinkGroups(objectID: objectID, pluginID: pluginID, link: gid, detached: nil)
-        engine?.relinkPluginAdoptingGroup(pluginID.uuidString, groupID: gid.uuidString)
-        isDirty = true
-    }
-
-    /// Cuts the synchronisation on the engine side and switches the group from active to "dormant".
-    private func detachLink(objectID: UUID, pluginID: UUID, group: UUID) {
-        engine?.clearPluginLinkGroup(pluginID.uuidString)
-        setLinkGroups(objectID: objectID, pluginID: pluginID, link: nil, detached: group)
-    }
-
-    // The three gestures a dragged card speaks when it lands on ANOTHER object — nothing = move,
-    // ⌥ = an independent copy, ⌘ = a copy that stays linked. They are the one-card doors onto
-    // `transferPlugins`, which is where the rules really live: a selection of several cards takes
-    // exactly the same three, and two implementations of "carry a plugin across" would be two
-    // places for the link, the colour and the live state to be got subtly wrong.
+    // The two gestures a dragged card speaks when it lands on ANOTHER object — nothing = move,
+    // ⌥ = an independent copy. They are the one-card doors onto `transferPlugins`, which is where
+    // the rules really live: a selection of several cards takes exactly the same two, and two
+    // implementations of "carry a plugin across" would be two places for the colour and the live
+    // state to be got subtly wrong. (Sharing parameters between objects is the FX link's job.)
     // @see EditViewModel+PluginSelection
-
-    /// An alt-drop: instantiates the SAME plugin on the target object (with the source's current
-    /// state) and links it to the source. Creates the group if the source was not linked yet.
-    func linkAcrossObjects(sourceObjectID: UUID, sourcePluginID: UUID, targetObjectID: UUID) {
-        transferPlugins([sourcePluginID], from: sourceObjectID, to: targetObjectID, mode: .link)
-    }
 
     /// A drag with NO modifier: moves the plugin from one clip to another (removed from the source).
     /// Keeps `linkGroupID` (the same logical plugin, another clip).

@@ -117,8 +117,6 @@ enum ObjectFeatureBadgesTest {
         check("a plugin down a rack branch → FX", badges(clip(plugins: [rack([[gain()], [plugin()]])])) == [.fx])
         check("a rack of gain stages only is not FX", badges(clip(plugins: [rack([[gain()], [gain()]])])).isEmpty)
         check("an instrument alone is not FX", badges(clip(instruments: [plugin(name: "Synth")])).isEmpty)
-        check("a plugin able to REJOIN a legacy link (detached) counts as FX",
-              badges(clip(plugins: [plugin(detached: UUID())])) == [.fx])
 
         // MARK: 3. FX link
 
@@ -134,10 +132,6 @@ enum ObjectFeatureBadgesTest {
               badges(clip(plugins: [plugin(), block(instances: [plugin()])])) == [.fx, .fxLink])
         check("a bin down a rack branch → FX link",
               badges(clip(plugins: [rack([[block(instances: [plugin()])], []])])) == [.fxLink])
-        check("a legacy ⌘-linked plugin → FX link, not FX",
-              badges(clip(plugins: [plugin(linkGroupID: UUID())])) == [.fxLink])
-        check("a legacy link + a plain plugin → FX and FX link",
-              badges(clip(plugins: [plugin(linkGroupID: UUID()), plugin()])) == [.fx, .fxLink])
         check("a LINKED instrument is not the FX link badge",
               badges(clip(instruments: [plugin(linkGroupID: UUID())])).isEmpty)
 

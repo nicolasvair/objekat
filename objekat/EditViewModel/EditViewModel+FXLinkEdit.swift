@@ -50,14 +50,13 @@ extension EditViewModel {
         }
     }
 
-    /// The top-level entries a bin can be made of: plain plugins, with no manual ⌘-link of their own
-    /// (a legacy link stays what it is — the two mechanisms cohabit, they do not merge).
+    /// The top-level entries a bin can be made of: plain plugins (anything that is not a container).
     static func isFXLinkEligible(_ p: ObjectPlugin) -> Bool {
-        !p.isContainer && p.linkGroupID == nil && p.detachedLinkGroupID == nil
+        !p.isContainer
     }
 
     /// The runs of consecutive eligible plugins of the ROOT series, each a list of ids in chain
-    /// order. What an automatic creation turns into bins: a rack, a legacy-linked plugin or a
+    /// order. What an automatic creation turns into bins: a rack or a
     /// block breaks a run, so that no plugin ever changes its place in the signal path.
     static func fxLinkEligibleRuns(in plugins: [ObjectPlugin]) -> [[UUID]] {
         var runs: [[UUID]] = []
@@ -281,7 +280,7 @@ extension EditViewModel {
 
     /// Turns plugins of one host into a NEW bin: they become its definition, and the host's own
     /// instances (same ids — nothing is reloaded) form its block, at the place of the first one.
-    /// All the plugins must be plain, in ONE series, and free of any manual link.
+    /// All the plugins must be plain, in ONE series.
     @discardableResult
     func createFXLink(from hostID: UUID, pluginIDs: [UUID], name: String? = nil,
                       nameSource: UUID? = nil, undo: Bool = true) -> UUID? {
@@ -670,7 +669,7 @@ extension EditViewModel {
     /// aimed at them): they leave their place in the chain and enter the block at `index`, in the chain's
     /// reading order. Returns the definition plugins' ids.
     ///
-    /// Refuses (nothing touched) what cannot be a bin's plugin: a container, a legacy-linked plugin, one
+    /// Refuses (nothing touched) what cannot be a bin's plugin: a container, one
     /// already in a block; and a host without an attached block of this bin.
     @discardableResult
     func fxAdoptPlugins(hostID: UUID, pluginIDs: [UUID], linkID: UUID, at index: Int? = nil,

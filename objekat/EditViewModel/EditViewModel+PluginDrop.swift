@@ -24,15 +24,13 @@ enum PluginDrop {
     }
 
     /// What the CURSOR must say while a plugin drag hovers a target that accepts it: a bare drag
-    /// MOVES, so no badge, and ⌥ as well as ⌘ COPY, so a '+'. One definition because the two
-    /// doors must not drift — a gesture that reads '+' over a timeline object and nothing over a
-    /// bus's strip is a gesture one stops trusting, and the convenience `.onDrop` answers `.copy`
-    /// to everything, which is how the strip came to badge a move.
-    ///
-    /// ⌘ is a COPY here as it is on the timeline: what makes it a LINK is said by the badge the
-    /// target draws, not by the operation — AppKit's `.link` draws an arrow that means an alias.
+    /// MOVES, so no badge, and ⌥ COPIES, so a '+'. ⌘ means nothing here (it used to link, until
+    /// 22 October 2026). One definition because the two doors must not drift — a gesture that reads
+    /// '+' over a timeline object and nothing over a bus's strip is a gesture one stops trusting,
+    /// and the convenience `.onDrop` answers `.copy` to everything, which is how the strip came to
+    /// badge a move.
     static func operation(for flags: NSEvent.ModifierFlags) -> DropOperation {
-        (flags.contains(.option) || flags.contains(.command)) ? .copy : .move
+        flags.contains(.option) ? .copy : .move
     }
 
     /// Reads the payload and lays it down on the host `host()` names.
@@ -80,16 +78,11 @@ enum PluginDropOutcome: Equatable {
     case move
     /// Independent copies: new identities, no link of any kind.
     case copy
-    /// Copies that share the source's link group (the legacy ⌘-link).
-    case link
-    // — an instance of an FX link, dragged onto another host with ⌘ —
-    /// The target JOINS the bin (it gets a block of it, attached): the whole bin, not the one plugin.
-    case joinBin(UUID)
     // — a whole bin's block, grabbed by its header —
     /// The block moves: the target joins the bin and the source loses its block (a DETACHED block
     /// travels as it is, local output and all, with fresh instance ids). Within one host it is a reorder.
     case moveBlock
-    /// ⌥ / ⌘: the target joins the bin and the source KEEPS its block — every copy of a bin is a link.
+    /// ⌥: the target joins the bin and the source KEEPS its block — every copy of a bin is a link.
     case copyBlock
     // — plugins and FX link blocks —
     /// A plain plugin of the target host moves INTO an attached bin (its instance on this host keeps
@@ -115,36 +108,24 @@ enum PluginDropOutcome: Equatable {
         }
     }
 
-    /// What the drop LINKS: the ⌘ maillon and the band's linked-copy line are shown for these, and
-    /// only these.
-    var isLinking: Bool {
-        switch self {
-        case .link, .joinBin: return true
-        default: return false
-        }
-    }
-
     /// The cursor's verdict: `.forbidden` for a refusal, a bare MOVE where something is carried over
-    /// or reordered, a COPY (the '+') where a copy is made. A link also answers `.copy` — AppKit's own
-    /// `.link` draws an alias arrow, which is not what a ⌘ drop means; the band and the maillon say it.
+    /// or reordered, a COPY (the '+') where a copy is made.
     var operation: DropOperation {
         switch self {
         case .refuse, .sendRefused: return .forbidden
         case .sendTaken: return .move
         case .move, .moveBlock, .adoptIntoBin, .extractFromBin: return .move
-        case .copy, .link, .joinBin, .copyBlock, .copyIntoBin: return .copy
+        case .copy, .copyBlock, .copyIntoBin: return .copy
         }
     }
 
-    /// The band's context for this outcome (@see PluginDropHint.Context); `chain` is what a plain
-    /// move / copy means where the target is a place of the signal view rather than a host. nil for a
-    /// refusal: nothing is promised.
-    func hintContext(plainContext: PluginDropHint.Context) -> PluginDropHint.Context? {
+    /// The band's context for this outcome (@see PluginDropHint.Context). nil for a refusal: nothing
+    /// is promised.
+    func hintContext() -> PluginDropHint.Context? {
         switch self {
         case .refuse: return nil
         case .sendTaken(let b), .sendRefused(let b): return .send(b)
-        case .move, .copy: return plainContext
-        case .link, .joinBin: return .host
+        case .move, .copy: return .host
         case .adoptIntoBin, .copyIntoBin: return .intoBin
         case .extractFromBin: return .outOfBin
         case .moveBlock, .copyBlock: return .blockMove
@@ -159,8 +140,6 @@ enum PluginDropOutcome: Equatable {
         switch self {
         case .move: return "move"
         case .copy: return "copy"
-        case .link: return "link"
-        case .joinBin: return "join_bin"
         case .moveBlock: return "move_block"
         case .copyBlock: return "copy_block"
         case .adoptIntoBin: return "adopt_into_bin"
@@ -179,24 +158,24 @@ extension EditViewModel {
     /// it changes nothing, so it can be asked on every mouse movement (the cursor and the band) and by a
     /// dry run of the API, and the drop then carries out exactly what it answered.
     ///
-    /// The rules, from the decisions on the FX link rework:
-    ///  • a PLAIN plugin: nothing = move, ⌥ = independent copy, ⌘ = linked copy (inside one chain ⌘ is a
-    ///    plain move: two linked instances in one chain are refused on purpose). Aimed INSIDE an
-    ///    attached bin: nothing = adopt it into the bin (only a plain plugin with no manual link), ⌥ = an
-    ///    independent copy added to the bin, ⌘ = refused;
+    /// The rules, from the decisions on the FX link rework and the modifiers rework (⌘ means nothing
+    /// to a plugin drop any more — it used to link, a job that belongs to the FX link alone):
+    ///  • a PLAIN plugin: nothing = move, ⌥ = independent copy. Aimed INSIDE an attached bin: nothing =
+    ///    adopt it into the bin (only a plain plugin not already in a block), ⌥ = an independent copy
+    ///    added to the bin;
     ///  • an INSTANCE of an attached bin: inside its own bin a move reorders the definition; outside it
     ///    (same host), nothing = it leaves the bin for every member and stays here, ⌥ = an independent
-    ///    copy, ⌘ = refused; onto ANOTHER host, nothing = refused (a move would empty the bin for this
-    ///    host alone), ⌥ = an independent copy, ⌘ = that host joins the bin;
-    ///  • a whole BLOCK: nothing = it moves (the target joins the bin, the source loses it), ⌥ / ⌘ = the
-    ///    target joins and the source keeps its own; refused if the target already holds the bin, if
-    ///    it is the source itself, or aimed inside another block (a bin does not hold a bin);
-    ///  • an INSTRUMENT: its slot, on another MIDI object, under the three gestures.
+    ///    copy; onto ANOTHER host, nothing = refused (a move would empty the bin for this host alone),
+    ///    ⌥ = an independent copy;
+    ///  • a whole BLOCK: nothing (or ⌘) = it moves (the target joins the bin, the source loses it),
+    ///    ⌥ = the target joins and the source keeps its own; refused if the target already holds the
+    ///    bin, if it is the source itself (⌥ on the same host), or aimed inside another block (a bin
+    ///    does not hold a bin);
+    ///  • an INSTRUMENT: its slot, on another MIDI object, nothing = move, ⌥ = copy.
     func pluginDropOutcome(_ payload: PluginDragPayload, toHost targetID: UUID,
                            at site: PluginDropSite = .hostEnd,
                            flags: NSEvent.ModifierFlags) -> PluginDropOutcome {
         let sourceID = payload.sourceObjectID
-        let cmd = flags.contains(.command)
         let alt = flags.contains(.option)
         guard let targetChain = chainPlugins(targetID) else { return .refuse("unknown target host") }
         // A SEND's mini-chain (INC 3) on either side: plain plugins only, in ONE series, never linked.
@@ -215,7 +194,7 @@ extension EditViewModel {
             guard case .hostEnd = site else { return .refuse("an instrument only goes to an object's instrument slot") }
             guard find(id: targetID)?.isMIDI == true else { return .refuse("the target is not a MIDI object") }
             guard sourceID != targetID else { return .refuse("source and target are the same object") }
-            return cmd ? .link : (alt ? .copy : .move)
+            return alt ? .copy : .move
         }
         guard let sourceChain = chainPlugins(sourceID) else { return .refuse("unknown source host") }
         let sameHost = sourceID == targetID
@@ -238,7 +217,7 @@ extension EditViewModel {
             default: return .refuse("a bin does not hold a bin")
             }
             if sameHost {
-                if alt || cmd { return .refuse("this host already holds the FX link") }
+                if alt { return .refuse("this host already holds the FX link") }
                 guard case .series = site else { return .refuse("source and target are the same host") }
                 return .moveBlock
             }
@@ -246,7 +225,7 @@ extension EditViewModel {
                 return .refuse("the target already holds this FX link")
             }
             guard fxLink(fb.linkID) != nil else { return .refuse("the FX link is no longer in the registry") }
-            return (alt || cmd) ? .copyBlock : .moveBlock
+            return alt ? .copyBlock : .moveBlock
         }
 
         // CARDS: leaves of the source chain.
@@ -258,8 +237,8 @@ extension EditViewModel {
         // A parallel block's carrier never enters a send (its leaves may, one by one).
         if targetIsSend {
             if found.contains(where: { !SendChain.accepts($0) }) { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }
-            // An FX link's instance: only its independent copy (⌥, and ⌘ which cannot link here).
-            if !binned.isEmpty { return (alt || cmd) ? sendCapacity(found.count, targetID) ?? .copy
+            // An FX link's instance: only its independent copy (⌥).
+            if !binned.isEmpty { return alt ? sendCapacity(found.count, targetID) ?? .copy
                                                     : .refuse("an FX link's plugin does not move to a send (⌥ copies it)") }
         }
 
@@ -274,26 +253,17 @@ extension EditViewModel {
             }
             switch binSite {
             case .attached(let siteLink):
-                if cmd { return .refuse("⌘ cannot link into an FX link") }
                 if siteLink == linkID && sameHost { return alt ? .copyIntoBin(siteLink) : .move }   // reordering its own bin
                 if alt { return .copyIntoBin(siteLink) }
                 return .refuse("a plugin does not move from one FX link to another")
             case .outside, .detachedBlock:
                 if sameHost {
-                    if cmd { return .refuse("⌘ cannot link an FX link's plugin") }
                     if alt { return .copy }
                     guard case .series = site else { return .refuse("source and target are the same host") }
                     return .extractFromBin(linkID)
                 }
-                if cmd {
-                    if case .detachedBlock = binSite { return .refuse("a bin does not hold a bin") }
-                    if Self.fxBlocks(in: targetChain).contains(where: { $0.fxBlock?.linkID == linkID }) {
-                        return .refuse("the target already holds this FX link")
-                    }
-                    return .joinBin(linkID)
-                }
                 if alt { return .copy }
-                return .refuse("an FX link's plugin does not move to another host (⌥ copies it, ⌘ joins the FX link)")
+                return .refuse("an FX link's plugin does not move to another host (⌥ copies it)")
             case .unknown:
                 return .refuse("unknown block at the drop site")
             }
@@ -301,7 +271,6 @@ extension EditViewModel {
 
         // — plain plugins (possibly the instances of a DETACHED block, which are plain ones) —
         if case .attached(let siteLink) = binSite {
-            if cmd { return .refuse("⌘ cannot link into an FX link") }
             if alt { return .copyIntoBin(siteLink) }
             guard found.allSatisfy(Self.isFXLinkEligible),
                   found.allSatisfy({ Self.enclosingFXBlock(of: $0.id, in: sourceChain) == nil }) else {
@@ -312,14 +281,12 @@ extension EditViewModel {
         if sameHost {
             if alt { return sendCapacity(found.count, targetID) ?? .copy }
             guard case .series = site else { return .refuse("source and target are the same host") }
-            return .move      // ⌘ inside one chain is a plain move
+            return .move
         }
-        // NO LINK ON A SEND: ⌘ to or from a mini-chain is the plain copy (@see effectiveTransferMode)
-        // — answered HERE, so that the cursor and the band never promise a link.
         if targetIsSend || sourceIsSend {
-            return sendCapacity(found.count, targetID) ?? ((cmd || alt) ? .copy : .move)
+            return sendCapacity(found.count, targetID) ?? (alt ? .copy : .move)
         }
-        return cmd ? .link : (alt ? .copy : .move)
+        return alt ? .copy : .move
     }
 
     /// `.refuse(chainFull)` if `adding` more plugins do not fit in the send's mini-chain `hostID`
@@ -329,8 +296,8 @@ extension EditViewModel {
     }
 
     /// Lays a dragged payload down on a chain HOST — a timeline object or a bus, which are the
-    /// same thing to a chain (@see chainPlugins). Three gestures, as everywhere a plugin is
-    /// dragged: nothing = move, ⌥ = an independent copy, ⌘ = a copy that stays linked.
+    /// same thing to a chain (@see chainPlugins). Two gestures, as everywhere a plugin is
+    /// dragged: nothing = move, ⌥ = an independent copy.
     ///
     /// @return true if something was laid down.
     @discardableResult
@@ -350,16 +317,15 @@ extension EditViewModel {
             // (a send card never comes through here: @see SendDrop)
             return false
 
-        case .move, .copy, .link:
+        case .move, .copy:
             // AN INSTRUMENT (the MIDI zone): it does not join the target's FX chain — it needs MIDI at
-            // its input — but its instrument SLOT. The same three gestures.
+            // its input — but its instrument SLOT. The same two gestures.
             // @see EditViewModel.transferInstrument
             if isInstrument(payload.pluginID, of: payload.sourceObjectID) {
                 transferInstrument(sourceObjectID: payload.sourceObjectID,
                                    pluginID: payload.pluginID,
                                    targetObjectID: targetID,
-                                   copy: outcome != .move,
-                                   linked: outcome == .link)
+                                   copy: outcome != .move)
                 return true
             }
             var place: (SeriesLocation, Int)? = nil
@@ -372,10 +338,10 @@ extension EditViewModel {
                 }
                 return synopticReorder(objectID: targetID, pluginID: payload.pluginID, to: loc, at: idx)
             }
-            // ONE card or a whole SELECTION, the same three gestures either way and the same single
+            // ONE card or a whole SELECTION, the same two gestures either way and the same single
             // undo point: the payload says what it carries (@see PluginDragPayload.ids), the transfer
             // says what it does.
-            let mode: PluginTransferMode = outcome == .link ? .link : (outcome == .copy ? .copy : .move)
+            let mode: PluginTransferMode = outcome == .copy ? .copy : .move
             // Was it the selection itself that was taken? Asked BEFORE the transfer, which is about to
             // move the ids it names.
             let wasSelection = selectedPluginHostID == payload.sourceObjectID
@@ -394,11 +360,6 @@ extension EditViewModel {
                 }
             }
             return !placed.isEmpty
-
-        case .joinBin(let linkID):
-            var place: (SeriesLocation, Int)? = nil
-            if case .series(let loc, let idx) = site { place = (loc, idx) }
-            return attachFXLink(linkID, to: targetID, at: place) != nil
 
         case .moveBlock:
             // Within one host: the block changes place, as one piece.

@@ -56,11 +56,11 @@ enum SynopticLayout {
     /// is `fxMixW` wide (the old mix box as a card).
     static let gainStageW: CGFloat = 96
 
-    /// A card's width: wide enough for its whole name and its link badge, from `cardW` (the old
-    /// fixed width, which truncated a name beside the badge to a few letters) up to the
-    /// 'audio file' zone's width at the head of the chain — never wider than that header.
+    /// A card's width: wide enough for its whole name, from `cardW` (the old fixed width, which
+    /// truncated a long name to a few letters) up to the 'audio file' zone's width at the head of
+    /// the chain — never wider than that header.
     /// Measured on the card's own name font; the rest is the card's fixed chrome (on/off button,
-    /// paddings, ✕, and the badge when there is one). @see SynopticCardView.
+    /// paddings, ✕). @see SynopticCardView.
     static func cardWidth(for p: SynopticPlugin) -> CGFloat {
         switch p.gainStage {
         case .gain?:        return gainStageW
@@ -68,9 +68,8 @@ enum SynopticLayout {
         case nil:           break
         }
         let nameW = ceil((p.name as NSString).size(withAttributes: [.font: cardNameFont]).width)
-        let hasBadge = p.showsLinkBadge
-        // on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · badge 18+6 · 4 of slack so the tail never ellipsises
-        let chrome: CGFloat = 26 + 16 + 15 + (hasBadge ? 24 : 0) + 4
+        // on/off 26 · padding 8+8 · ✕ ~9 + gap 6 · 4 of slack so the tail never ellipsises
+        let chrome: CGFloat = 26 + 16 + 15 + 4
         return min(audioZoneW, max(cardW, nameW + chrome))
     }
 

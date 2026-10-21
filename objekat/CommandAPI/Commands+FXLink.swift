@@ -147,7 +147,7 @@ extension CommandRegistry {
                         + "others receive a block of it at the end of their chain.",
                  params: [ParamSpec("host", "uuid", required: false, "Carrying object or stem."),
                           ParamSpec("plugins", "array<uuid>", required: false,
-                                    "Plain plugins of that chain, in ONE series, with no manual link."),
+                                    "Plain plugins of that chain, in ONE series."),
                           ParamSpec("objects", "array<uuid>", required: false,
                                     "Alternative to host+plugins: several timeline objects."),
                           ParamSpec("name", "string", required: false,
@@ -169,7 +169,7 @@ extension CommandRegistry {
             }
             guard let linkID, let link = vm.fxLink(linkID) else {
                 throw self.refused("no FX link could be made of that (plugins must be plain, in one "
-                                 + "series, free of any manual link and not already in a bin)")
+                                 + "series, and not already in a bin)")
             }
             return self.fxLinkJSON(link, in: vm)
         }
@@ -442,8 +442,8 @@ extension CommandRegistry {
 
         register("synoptic.cards",
                  summary: "How the signal view draws each plugin card of a host, in reading order: "
-                        + "own on/off, link badge, linked emphasis, whether it sits in an FX link's block, and "
-                        + "whether it is drawn greyed (its bin is off).",
+                        + "own on/off, whether it sits in an FX link's block, and whether it is drawn "
+                        + "greyed (its bin is off).",
                  params: [ParamSpec("host", "uuid", "The object or bus.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let host = try p.uuid("host")
@@ -456,8 +456,6 @@ extension CommandRegistry {
                                          "name": .string(c.name),
                                          "enabled": .bool(c.isEnabled),
                                          "in_fx_block": .bool(c.inFXBlock),
-                                         "link_badge": .bool(c.showsLinkBadge),
-                                         "linked_style": .bool(c.showsLinkedStyle),
                                          "greyed": .bool(c.greyedByBlock)])
                             })])
         }
@@ -537,7 +535,7 @@ extension CommandRegistry {
                  summary: "What the timeline's link overlay (halo + star) would show while this plugin's "
                         + "editor is open: the source object, the objects joined to it and the colour "
                         + "(palette index) of the link — the BIN's for a plugin in an FX link's block, "
-                        + "the plugin's own for a ⌘-link.",
+                        + "the plugin's own (and the object alone) for any other plugin.",
                  params: [ParamSpec("plugin", "uuid", "Any plugin instance of an object.")]) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("plugin")

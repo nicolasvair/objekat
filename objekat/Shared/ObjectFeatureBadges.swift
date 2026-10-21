@@ -21,10 +21,8 @@ import Foundation
 //   send's own plugins (they are the send's, shown by the send badge — conservative reading of "the
 //   object's chain"), and any plugin that is part of a link (below).
 // - FX link: the trunk holds an FX link bin's block, attached OR detached (a detached block is the
-//   host's own copy of the bin, still framed as the bin), or a legacy ⌘-linked plugin
-//   (`linkGroupID` set; a plugin merely ABLE to rejoin, `detachedLinkGroupID`, is an independent
-//   plugin and counts as FX). Whatever a bin's block holds counts for the link and never for FX —
-//   gain stages and plain plugins alike; a bin holding only a gain stage still shows the link.
+//   host's own copy of the bin, still framed as the bin). Whatever a bin's block holds counts for the link and never
+//   for FX — gain stages and plain plugins alike; a bin holding only a gain stage still shows the link.
 // - Aux sends: at least one send, whatever its state (off, silent, refused by the scope) — the
 //   conservative reading: the send exists, the signal view shows it, so the badge says it.
 // - Sidechain send: the object is the KEY SOURCE of at least one plugin's sidechain anywhere in the
@@ -90,7 +88,7 @@ enum ObjectFeatureBadges {
         var link = false
         var reception = false
 
-        /// `trunk`: the object's own chain (the only root FX and the legacy link are read from).
+        /// `trunk`: the object's own chain (the only root FX is read from).
         /// `inBin`: below an FX link bin's block.
         func walk(_ chain: [ObjectPlugin], trunk: Bool, inBin: Bool) {
             for p in chain {
@@ -107,7 +105,6 @@ enum ObjectFeatureBadges {
                 // A leaf.
                 if p.sidechain != nil { reception = true }
                 guard trunk, !inBin else { continue }
-                if p.linkGroupID != nil { link = true; continue }   // a legacy ⌘-link
                 if !p.isGainStage { fx = true }
             }
         }

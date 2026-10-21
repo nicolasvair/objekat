@@ -70,8 +70,7 @@ enum SynopticMapping {
                 var node = buildSeries(block.plugins, seriesID: p.id, location: .block(blockID: p.id),
                                        locations: &locations, levels: levels, fxLinkInfo: fxLinkInfo)
                 node.fxLink = fxLinkInfo?(p)
-                // The block carries the link and the common on/off: its cards show no badge of their
-                // own, and are drawn greyed (their own on/off untouched) while the bin is off.
+                // The block carries the link and the common on/off: its cards are drawn greyed (their own on/off untouched) while the bin is off.
                 let greyed = node.fxLink.map { !$0.isEnabled } ?? false
                 if case .series(let kids) = node.kind {
                     node.kind = .series(kids.map { kid in
@@ -109,7 +108,6 @@ enum SynopticMapping {
         SynopticPlugin(id: p.id, name: p.name, category: .infer(from: p),
                        isEnabled: p.isEnabled, vu: vu,
                        isBuiltIn: p.isBuiltIn, formatLabel: p.formatLabel,
-                       isLinked: p.isLinked, isLinkDetached: p.isLinkDetached,
                        color: p.color,
                        gainStage: synopticFace(of: p),
                        trimInDb: p.trims.input, trimOutDb: p.trims.output, trimCompDb: p.compensation)
@@ -596,24 +594,6 @@ extension EditViewModel {
             }
         }
         return nil
-    }
-
-    /// Sets a plugin's `linkGroupID` (recursive over the voices). nil = unlink.
-    static func settingLinkGroup(_ id: UUID, _ gid: UUID?, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
-        plugins.map { p in
-            if p.id == id { var np = p; np.linkGroupID = gid; return np }
-            if p.isContainer { return p.mappingChildSeries { settingLinkGroup(id, gid, in: $0) } }
-            return p
-        }
-    }
-
-    /// Sets `detachedLinkGroupID` — the dormant group (recursive over the voices).
-    static func settingDetachedLinkGroup(_ id: UUID, _ gid: UUID?, in plugins: [ObjectPlugin]) -> [ObjectPlugin] {
-        plugins.map { p in
-            if p.id == id { var np = p; np.detachedLinkGroupID = gid; return np }
-            if p.isContainer { return p.mappingChildSeries { settingDetachedLinkGroup(id, gid, in: $0) } }
-            return p
-        }
     }
 
     /// Writes a plugin's `stateXML` into the tree (recursive over the voices).

@@ -159,7 +159,7 @@ extension CommandRegistry {
                  means that answer is best-effort (a VST3 once the playback context is allocated): a \
                  refusal met when applying is remembered and shows as `supported: false` afterwards. \
                  `linked` is how many OTHER instances change together with this one (an FX link's \
-                 mirrors, a manual link's peers): a variant is `supported` only if EVERY member takes it. \
+                 mirrors): a variant is `supported` only if EVERY member takes it. \
                  `playing` true = the change would be refused now. Reads only. Instruments (a MIDI \
                  object's virtual instrument) are not supported: only leaf plugins of a chain.
                  """,
@@ -297,8 +297,8 @@ extension CommandRegistry {
                  `sum`. Saved with the plugin, carried by copies, undone. \
                  ALIAS of `chain.set_cable` since format 31: for a loaded one-input plugin of an object or a \
                  bus, fed by a cable that is still stereo, the choice is written as a PICK on the cable that \
-                 enters it (the plugin's own key is cleared; a manual ⌘-link's peers are not carried, an FX \
-                 link's bin is). Anywhere else (a send's mini-chain, a plugin not loaded, a cable already \
+                 enters it (the plugin's own key is cleared; an FX \
+                 link's bin is carried). Anywhere else (a send's mini-chain, a plugin not loaded, a cable already \
                  mono) it writes the plugin's own record as before, to its whole link group and the FX \
                  link's definition, with no audible effect while the plugin is not mono-in or the signal is \
                  mono. One undo step; none when nothing changes. Answers `{ok, changed, instances, fold}`.
@@ -557,31 +557,7 @@ extension CommandRegistry {
                             "count": .int(placed.count)])
         }
 
-        register("plugin.link",
-                 summary: "Copies a plugin to another host AND LINKS IT: from then on the two "
-                        + "instances share their parameters.",
-                 params: [ParamSpec("from", "uuid", "Source host."),
-                          ParamSpec("plugin", "uuid", required: false, "Source plugin."),
-                          ParamSpec("plugins", "uuid[]", required: false,
-                                    "Several plugins at once, each linked to its own copy. "
-                                  + "Replaces 'plugin'."),
-                          ParamSpec("to", "uuid", "Receiving host.")],
-                 undo: .handled) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let from = try p.uuid("from")
-            let to = try p.uuid("to")
-            let ids = try CommandAdapters.transferTargets(p, on: from, in: vm)
-            guard vm.chainPlugins(to) != nil else {
-                throw CommandError(code: .not_found, message: "unknown host: \(to.uuidString)")
-            }
-            try CommandAdapters.refuseLinkOnSend([from, to], in: vm)
-            let placed = vm.transferPlugins(ids, from: from, to: to, mode: .link)
-            return .object(["links": .int(vm.linkSiblings(of: ids[0]).count),
-                            "plugins": .array(placed.map { .string($0.uuidString) }),
-                            "count": .int(placed.count)])
-        }
-
-        // The DROP itself, and not merely what it ends up calling. `plugin.move|copy|link` reach
+        // The DROP itself, and not merely what it ends up calling. `plugin.move|copy` reach
         // `transferPlugins` directly; a hand reaches it through `performPluginDrop`, which is the
         // one door every place the hand can let go of shares — a timeline object, a bus's strip in the
         // toolbar, a cable / a card / a bin's header of the signal view. What only these commands can
@@ -598,7 +574,7 @@ extension CommandRegistry {
                                     "Several plugins at once. Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Host the drag is released over."),
                           ParamSpec("mode", "string", required: false,
-                                    "move (default, no modifier) | copy (⌥) | link (⌘).")],
+                                    "move (default, no modifier) | copy (⌥).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
@@ -638,7 +614,7 @@ extension CommandRegistry {
                           ParamSpec("at", "int", required: false,
                                     "Index in that series where the first card lands (default: the end)."),
                           ParamSpec("mode", "string", required: false,
-                                    "move (default, no modifier) | copy (⌥) | link (⌘)."),
+                                    "move (default, no modifier) | copy (⌥)."),
                           ParamSpec("dry_run", "bool", required: false,
                                     "Only resolve: return the outcome, change nothing (default false).")],
                  undo: .handled) { p in
@@ -728,22 +704,6 @@ extension CommandRegistry {
                             "empty_branch": .bool(made.isEmpty),
                             "block": block.map { .string($0.uuidString) } ?? .null,
                             "plugins": .array(after.map { CommandAdapters.pluginPayload($0) })])
-        }
-
-        register("plugin.unlink",
-                 summary: "Detaches a plugin from its link group (it becomes independent again).",
-                 params: [ParamSpec("host", "uuid", "Carrying host."),
-                          ParamSpec("plugin", "uuid", "Plugin to detach.")],
-                 undo: .handled) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let host = try p.uuid("host")
-            let pluginID = try p.uuid("plugin")
-            let plugin = try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
-            guard plugin.isLinked else {
-                throw CommandError(code: .invalid_state, message: "plugin already independent")
-            }
-            vm.unlinkPlugin(objectID: host, pluginID: pluginID)
-            return .object(["plugin": .string(pluginID.uuidString), "linked": .bool(false)])
         }
 
         // MARK: a selection of cards

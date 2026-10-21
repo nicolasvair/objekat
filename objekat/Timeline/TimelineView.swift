@@ -1062,17 +1062,6 @@ struct TimelineView: View {
                 // Pure drawing: the canvas resolves its clicks (@see handleFXTap).
                 FXStripOverlayView(viewModel: viewModel, store: fxStripStore)
                     .zIndex(2.95)
-
-                // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
-                if let loc = viewModel.pluginLinkDropLocation {
-                    // ABOVE the carried card, not beside the cursor: the drag image is drawn by the
-                    // system over every window, so a badge under it is simply hidden — at +18/-18 it
-                    // sat inside the card and was never seen.
-                    LinkBadge(color: LinkColor.plugin)
-                        .position(x: loc.x, y: loc.y - PluginDragPreview.height / 2 - 14)
-                        .allowsHitTesting(false)
-                        .zIndex(3)
-                }
             }
             .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
             .contentShape(Rectangle())
@@ -1114,7 +1103,6 @@ struct TimelineView: View {
                             DispatchQueue.main.async { refreshHover(at: loc) }
                             return ok
                         },
-                        onLinkIndicator: { viewModel.pluginLinkDropLocation = $0 },
                         onFileHint: { beginFileDropPreview(providers: $0, location: $1) },
                         onFileHintEnd: { viewModel.endFileDropHint() },
                         onDropHover: { active in
@@ -4077,10 +4065,8 @@ struct TimelineView: View {
     }
 
     /// The same band as the object move, for a plugin card being dragged (@see PluginDropHint):
-    /// what a release would do NOW, and the two modifiers lit as they are held. Shown only while
-    /// the card hovers a place that takes it — a system drag has no other signal to be read.
-    /// Within a chain (the synoptic's cards and cables), ⌘ does not link: the chip is replaced
-    /// by a line saying where it does.
+    /// what a release would do NOW, and ⌥ lit as it is held. Shown only while the card hovers a
+    /// place that takes it — a system drag has no other signal to be read.
     @ViewBuilder
     private var pluginDropHUD: some View {
         if let s = PluginDropHint.shared.state, case .send(let line) = s.context {
@@ -4114,38 +4100,15 @@ struct TimelineView: View {
             .allowsHitTesting(false)
         } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
-                Image(systemName: s.isLink ? FeatureIcons.fxLink
-                                  : s.isCopy ? "plus.square.on.square"
+                Image(systemName: s.isCopy ? "plus.square.on.square"
                                   : s.context == .intoBin ? "tray.and.arrow.down"
                                   : s.context == .outOfBin ? "tray.and.arrow.up"
                                   : "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(s.isLink ? LinkColor.plugin : Color.accentColor)
+                    .foregroundStyle(Color.accentColor)
                 Text(pluginDropTitle(s))
                     .font(.system(size: 11, weight: .bold))
-                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy && s.alt, locked: false)
-                switch s.context {
-                case .host:
-                    modifierChip("⌘", L("hud.pluginDrop.chip.link"), on: s.isLink, locked: false)
-                case .blockMove:
-                    // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
-                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
-                case .sendChain:
-                    // To or from a send's box ⌘ is a plain copy: a send's plugin is never linked.
-                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
-                case .refusal:
-                    EmptyView()    // drawn by the branch above
-                case .intoBin, .outOfBin:
-                    Text(L("hud.pluginDrop.binNoCmd"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                case .sameChain:
-                    Text(L("hud.pluginDrop.sameChainNoLink"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                case .send:
-                    EmptyView()    // drawn by the branch above
-                }
+                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy, locked: false)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
@@ -4159,8 +4122,8 @@ struct TimelineView: View {
     /// The band's title for what a release would do (@see PluginDropHint.Context).
     private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
         switch s.context {
-        case .host, .sameChain, .sendChain:
-            return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .host, .sendChain:
+            return s.isCopy ? L("hud.move.copy") : L("hud.move.move")
         case .refusal(let key):
             return L(key)
         case .intoBin:
@@ -4187,8 +4150,8 @@ struct TimelineView: View {
 
     /// An explanatory rectangle shown while one or more files hover the timeline.
     /// It shows BOTH layouts and highlights the one that would apply if one released now. The
-    /// preview follows ⌘ live, even without moving the mouse — that is the intended gesture
-    /// (arrive over the timeline, read the band, press ⌘). Tracking the modifier is on the
+    /// preview follows ⌥ live, even without moving the mouse — that is the intended gesture
+    /// (arrive over the timeline, read the band, press ⌥). Tracking the modifier is on the
     /// view-model's side (`beginFileDropHint`): `dropUpdated` only speaks on movement.
     @ViewBuilder
     private var fileDropHintOverlay: some View {
@@ -4200,7 +4163,7 @@ struct TimelineView: View {
                         .foregroundStyle(Color.accentColor)
                     Text(Ln("hud.drop.fileCount", hint.count, hint.count))
                         .font(.system(size: 11, weight: .bold))
-                    Text(L("hud.drop.cmdHint"))
+                    Text(L("hud.drop.optHint"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }

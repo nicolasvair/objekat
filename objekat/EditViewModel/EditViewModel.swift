@@ -568,10 +568,6 @@ final class EditViewModel {
     /// the band to light its pencil.
     var automationWriteTarget: AutomationWriteTarget? = nil
 
-    /// The position (in timeline canvas coords) of the "link" indicator during a plugin drag
-    /// with ⌘ held. nil otherwise. Updated live by the timeline's DropDelegate.
-    var pluginLinkDropLocation: CGPoint? = nil
-
     // MARK: - Dropping several files (banner + mode)
 
     /// How to lay down several files dropped at once onto the timeline.
@@ -675,20 +671,20 @@ final class EditViewModel {
 
     var fileDropHint: FileDropHint? = nil
 
-    /// Reads the drop mode from the current state of the modifiers. ⌘ = end to end.
+    /// Reads the drop mode from the current state of the modifiers. ⌥ = end to end.
     static func fileDropMode(for flags: NSEvent.ModifierFlags) -> FileDropMode {
-        flags.contains(.command) ? .sequential : .stacked
+        flags.contains(.option) ? .sequential : .stacked
     }
 
-    /// A probe that follows ⌘ during the hover. `dropUpdated` is only called on a MOUSE
+    /// A probe that follows ⌥ during the hover. `dropUpdated` is only called on a MOUSE
     /// MOVE: without it, pressing ⌘ without moving would change nothing on screen — yet that is
     /// exactly the expected gesture (you arrive over the timeline, you read the banner, you
-    /// press ⌘). An ordinary `Timer` would not do: the drag loop runs in
+    /// press ⌥). An ordinary `Timer` would not do: the drag loop runs in
     /// `NSEventTrackingRunLoopMode`, where a timer in `.default` mode never fires; the
     /// resumptions of `Task.sleep`, on the other hand, go through the main queue, served in every mode.
     @ObservationIgnored private var fileDropModifierWatch: Task<Void, Never>? = nil
 
-    /// Opens (or updates) the banner for `count` files and arms the ⌘ tracking.
+    /// Opens (or updates) the banner for `count` files and arms the ⌥ tracking.
     /// `location` is the cursor's position in the canvas: it lays the ghost preview.
     func beginFileDropHint(count: Int, location: CGPoint) {
         // An update IN PLACE rather than a replacement: `dropUpdated` calls this method again on

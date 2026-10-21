@@ -145,7 +145,7 @@ extension EditViewModel {
     // MARK: The model's mirror (the drawn waveform)
 
     /// Writes `values` into the MODEL's stored state of the stage `pluginID` — and of every stage
-    /// LINKED to it (same `linkGroupID`: an FX link's members, a ⌘-link), which the engine's mirror
+    /// LINKED to it (same `linkGroupID`: an FX link's members), which the engine's mirror
     /// makes follow by index. ONE write of `items`, so ONE invalidation: the same path the fader's
     /// value takes to the drawn waveform (@see GainStageDisplay). Objects only — their chains and their
     /// sends' mini-chains; a stem's chain is not drawn, and its state is captured from the engine at
