@@ -50,6 +50,14 @@ extension EditViewModel {
         return lo
     }
 
+    /// The time remapping an INSERTION applies (the mirror of `rippleMap`): what precedes `at` does
+    /// not move, what is AT or after it slides forward by `length`. Read on a START or a point —
+    /// an END that falls exactly on `at` belongs to what precedes the blank and stays (the callers
+    /// that map an end say so, @see `rippleGrowContainer`).
+    static func rippleInsertMap(_ x: Double, at: Double, length: Double) -> Double {
+        x >= at ? x + length : x
+    }
+
     /// The container a ripple acts in — `nil` = the whole timeline. The SHALLOWEST entry it
     /// touches decides (@see the header): that entry's parent is the scope.
     ///
@@ -84,7 +92,7 @@ extension EditViewModel {
     }
 
     /// Every entry belonging to `container`'s sub-tree — `nil` = every entry there is.
-    private func rippleScopeEntries(in container: UUID?) -> [LaneEntry] {
+    func rippleScopeEntries(in container: UUID?) -> [LaneEntry] {
         guard let container else { return laneEntries }
         var parentOf: [UUID: UUID?] = [:]
         for e in laneEntries { parentOf[e.item.id] = e.parentID }
@@ -102,7 +110,7 @@ extension EditViewModel {
     /// What a ripple aimed at `onLanes` really takes, inside `scope`: the entries on those lanes,
     /// and everything under one of them — an object whose row is selected is a unit, and the carve
     /// reaches its whole content (@see `carveTimeRange`, `_cutGroupChildren`).
-    private func rippleTaken(scope: [LaneEntry], onLanes: Set<Int>, container: UUID?) -> [LaneEntry] {
+    func rippleTaken(scope: [LaneEntry], onLanes: Set<Int>, container: UUID?) -> [LaneEntry] {
         let byID = Dictionary(scope.map { ($0.item.id, $0) }, uniquingKeysWith: { a, _ in a })
         return scope.filter { e in
             var cur: LaneEntry? = e
@@ -116,7 +124,7 @@ extension EditViewModel {
     }
 
     /// The display lanes of `scope` the rows name.
-    private func rippleOnLanes(scope: [LaneEntry], rows: Set<RippleRow>) -> Set<Int> {
+    func rippleOnLanes(scope: [LaneEntry], rows: Set<RippleRow>) -> Set<Int> {
         Set(scope.filter { rows.contains(RippleRow(parent: $0.parentID, lane: $0.item.lane)) }
             .map(\.displayLane))
     }
@@ -214,7 +222,7 @@ extension EditViewModel {
 
     /// The objects a ripple slides: the DIRECT children of the scope (their own descendants travel
     /// with them). `nil` = the top-level objects.
-    private func rippleDirectChildren(of container: UUID?) -> [SoundObject] {
+    func rippleDirectChildren(of container: UUID?) -> [SoundObject] {
         guard let container else { return items }
         guard let obj = find(id: container), case .group(let children, _) = obj.kind else { return [] }
         return children
@@ -278,9 +286,15 @@ extension EditViewModel {
         let marksFollow = timeSelectionFromRuler && container == nil
         pushUndo()
         let rippled = rippleRemoveTimeRange(lo: lo, hi: hi, container: container, rows: rows)
-        // `||` in this order on purpose: the marks move even when no object did (a ruler range
-        // over an empty stretch with only marks after it is still time being removed).
-        let marksMoved = marksFollow && rippleMarkerLanes(removing: lo, hi)
+        // The marks move even when no object did (a ruler range over an empty stretch with only
+        // marks after it is still time being removed). The timeline's comments are laid beside the
+        // same material as the band's marks and travel with them.
+        var marksMoved = false
+        if marksFollow {
+            let band = rippleMarkerLanes(removing: lo, hi)
+            let notes = rippleComments(removing: lo, hi)     // both run: no short-circuit
+            marksMoved = band || notes
+        }
         guard rippled || marksMoved else {
             _ = undoStack.popLast()
             return
@@ -319,6 +333,21 @@ extension EditViewModel {
             if pruned != selectedAnnotations { selectedAnnotations = pruned }
         }
         return changed
+    }
+
+    /// The timeline's comments' share of a ruler ripple (@see `splicedInTime` on comments): one that
+    /// starts after the hole slides back by its length, one that starts inside it goes, one that
+    /// starts before it stays. Pushes no undo — the ripple's own transaction holds it (comments are
+    /// in the undo snapshot). Returns true if anything changed.
+    @discardableResult
+    func rippleComments(removing lo: Double, _ hi: Double) -> Bool {
+        guard hi - lo > 0.001 else { return false }
+        let spliced = comments.splicedInTime(removing: lo, to: hi)
+        guard spliced != comments else { return false }
+        comments = spliced
+        // A comment swallowed by the hole must not stay selected (⌫ would aim at nothing).
+        pruneAnnotationSelection()
+        return true
     }
 
     /// The scope of a ripple laid on OBJECTS.
