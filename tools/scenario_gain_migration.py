@@ -476,7 +476,7 @@ def run_pass(tag, channels):
         new.idle()
         with open(new_proj) as f:
             saved = json.load(f)
-        check("%s: the new app saves format 31" % tag, saved.get("version") == 31, saved.get("version"))
+        check("%s: the new app saves format 32" % tag, saved.get("version") == 32, saved.get("version"))
         # The API has no automation door: the curve is read from the saved file.
         s2_doc = find_object(saved, ids["s2"])
         lanes = (s2_doc or {}).get("automation") or []

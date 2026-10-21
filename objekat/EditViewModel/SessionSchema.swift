@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 31
+    static let formatVersion = 32
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -173,6 +173,13 @@ enum SessionSchema {
         "  Editing the definition edits every ATTACHED member; a detached block (fxBlock.isDetached)",
         "  keeps an independent copy of the chain (and its own on/off, fxBlock.local.isEnabled).",
         "  Only the bins some block still refers to are written. Absent = none.",
+        "  A bin is the ONLY way plugins of several objects share their parameters. Up to format 31 a",
+        "  plugin could also be linked on its own to instances elsewhere (a linkGroupID on a plugin that",
+        "  is NOT inside an fxBlock, or on an instrument, naming no definition): that link is gone. Opening",
+        "  such a file clears linkGroupID and detachedLinkGroupID on every plugin outside a block (the",
+        "  plugin stays, with its settings, and plays on its own); the members of a bin are untouched. A",
+        "  file written since never carries them outside a block. A build from before format 32 reads the",
+        "  file whole (forward compatibility: the formerly linked plugins are simply independent).",
         "",
         "automation — an object's curves, one entry per parameter: { param, points }.",
         "  param names the target: {type:volume|pan} (chainInGain|chainOutGain before format 25),",

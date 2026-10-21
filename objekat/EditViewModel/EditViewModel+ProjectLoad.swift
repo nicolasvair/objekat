@@ -216,8 +216,15 @@ extension EditViewModel {
         let docStems = doc.stems ?? []
         let duplicates = PluginIDUniqueness.duplicateDetails(items: doc.items, stems: docStems,
                                                              fxLinks: doc.fxLinks ?? [])
-        let fixed = Self.repairedForLoad(items: doc.items, stems: docStems,
+        var fixed = Self.repairedForLoad(items: doc.items, stems: docStems,
                                          duplicates: duplicates, repair: repairPluginIDs)
+        // The single-instance manual link no longer exists (format 32): a plugin outside every FX link
+        // bin loses its link fields. Not a reason to mark the project modified (@see LegacyManualLinkMigration).
+        let unlinked = LegacyManualLinkMigration.migrate(items: &fixed.items, stems: &fixed.stems)
+        if !unlinked.isEmpty {
+            NSLog("[LOAD] manual plugin links removed (format 32): %d plugin(s) on %d host(s)",
+                  unlinked.unlinkedPlugins, unlinked.hosts)
+        }
         consolidateDefinitions = Dictionary(uniqueKeysWithValues: (doc.consolidateDefinitions ?? []).map { ($0.id, $0) })
         fxLinks = doc.fxLinks ?? []
         clearPendingFXSources()
