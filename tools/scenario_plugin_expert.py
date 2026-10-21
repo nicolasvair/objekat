@@ -199,7 +199,7 @@ try:
             text = f.read()
         import json
         doc = json.loads(text)
-        check("the session is written in format 30", doc.get("version") == 30, str(doc.get("version")))
+        check("the session is written in format 31", doc.get("version") == 31, str(doc.get("version")))
         check("the file carries outputTrimDb", '"outputTrimDb"' in text)
         check("no compensationDb while it is 0", '"compensationDb"' not in text)
         cmd("project.new")

@@ -207,10 +207,10 @@ struct FXLinkBlock: Codable, Equatable {
 extension ObjectPlugin {
 
     /// True for the entries that are not a plugin: a parallel block (`rack`) and a bin's block
-    /// (`fxBlock`), which hold a chain of their own, and a send's marker (`sendMarker`), which holds
-    /// none. A marker answers "container" so that every walk that skips leaves skips it too, and
-    /// `childSeries` is empty so that no walk descends into it.
-    var isContainer: Bool { rack != nil || fxBlock != nil || sendMarker != nil }
+    /// (`fxBlock`), which hold a chain of their own, a send's marker (`sendMarker`) and a channel choice
+    /// on a cable (`channelPick`), which hold none. A marker or a pick answers "container" so that every
+    /// walk that skips leaves skips it too, and `childSeries` is empty so that no walk descends into it.
+    var isContainer: Bool { rack != nil || fxBlock != nil || sendMarker != nil || channelPick != nil }
 
     /// True if this entry is the place of a send on the trunk (@see SendMarker).
     var isSendMarker: Bool { sendMarker != nil }

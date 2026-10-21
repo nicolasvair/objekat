@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 30
+    static let formatVersion = 31
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -128,6 +128,17 @@ enum SessionSchema {
         "  is written \"sum\". An explicit \"left\" now cuts the right channel too. A copy keeps the",
         "  key of its original. Format 27 was never released (an unmerged branch took the number). A build",
         "  from before format 28 ignores the key and plays \"left\"; saving from it drops the key.",
+        "channelPick — an entry of a chain (`plugins`, a rack's branch, a bin's `fxBlock.plugins`) that is none of",
+        "  the above either: { mode } with mode \"left\", \"right\" or \"sum\" = (L + R) / 2. It is the choice of",
+        "  channel written on a CABLE of the signal view: where it stands, the stereo signal is reduced to that",
+        "  channel and played on both sides. It has an id of its own and no plugin identity (name, identifier and",
+        "  format empty); the id is unique in the file like any plugin id. \"Stereo\" is the absence of an entry.",
+        "  It stands immediately BEFORE the entry that follows it, ahead of the send markers of the same gap, and",
+        "  there is at most one per gap (when two meet the upstream one wins). Never in `instruments`, nor in a",
+        "  send's `plugins`. The choice of a cable that enters a plugin with ONE input used to be that plugin's",
+        "  `monoFold`; a `monoFold` is still read when the cable carries no entry. The cable that leaves the audio",
+        "  FILE of a stereo clip keeps its own key, `channelMode`, and has no entry. A build from before format 31",
+        "  reads the entry as a plugin it cannot find and drops it: forward incompatibility.",
         "GAIN STAGES (format 25) — a plugin entry with formatName \"TracktionInternal\" and identifier",
         "  \"objGainStage\" (a gain) or \"objGainPanMute\" (gain + pan + mute) is a gain stage: an ordinary",
         "  leaf of a chain, whose stateXML <PLUGIN type=… gainDb=… pan=… muted=…/> holds its setting",

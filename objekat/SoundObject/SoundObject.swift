@@ -217,6 +217,12 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     /// by this build is born `sum` (the `init`'s default), and every copy carries its source's value (copy
     /// sites pass `monoFold:`). Meaningless for a plugin with two inputs: kept, never read.
     var monoFold: MonoFold? = .sum
+    /// Non-nil ⇒ this entry is NOT a plugin but a CHANNEL CHOICE written on a cable: the place in a series
+    /// where the signal is reduced to its left channel, its right one or their sum (both sides). A fourth
+    /// kind of container, beside `rack`, `fxBlock` and `sendMarker`, with no series of its own; its `id`
+    /// is the key of its engine instance. Any series of a chain, never `instruments` nor a send's plugins.
+    /// Session format 31. @see ChannelPick.swift
+    var channelPick: ChannelPick? = nil
 
     /// The TRIMS around the plugin, in dB (nil = 0, neutral): a gain before it and a gain after it,
     /// which the editor bar's coupled gesture moves together (+n in, −n out) and the gain match sets
@@ -242,7 +248,8 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
          colorIndex: Int = Int.random(in: 0..<ObjekatPalette.plugins.count),
          sidechain: SidechainSource? = nil,
          sendMarker: SendMarker? = nil,
-         monoFold: MonoFold? = .sum) {
+         monoFold: MonoFold? = .sum,
+         channelPick: ChannelPick? = nil) {
         self.id = id
         self.name = name
         self.manufacturer = manufacturer
@@ -258,6 +265,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         self.sidechain = sidechain
         self.sendMarker = sendMarker
         self.monoFold = monoFold
+        self.channelPick = channelPick
     }
 
     /// The fold the engine plays (@see monoFold): no key = `MonoFold.whenUnset` (and, were that switch put
@@ -298,7 +306,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, identifier, formatName, isEnabled, stateXML,
              linkGroupID, detachedLinkGroupID, rack, fxBlock, colorIndex, sidechain, sendMarker, monoFold,
-             inputTrimDb, outputTrimDb, compensationDb
+             inputTrimDb, outputTrimDb, compensationDb, channelPick
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -322,6 +330,7 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
         // No key = written before format 28 (or by a plugin that never had one): the LEFT channel, what
         // it sounded like — never the new default (@see monoFold).
         monoFold = try c.decodeIfPresent(MonoFold.self, forKey: .monoFold)
+        channelPick = try c.decodeIfPresent(ChannelPick.self, forKey: .channelPick)
         inputTrimDb = try c.decodeIfPresent(Float.self, forKey: .inputTrimDb).flatMap { $0 == 0 ? nil : $0 }
         outputTrimDb = try c.decodeIfPresent(Float.self, forKey: .outputTrimDb).flatMap { $0 == 0 ? nil : $0 }
         compensationDb = try c.decodeIfPresent(Float.self, forKey: .compensationDb).flatMap { $0 == 0 ? nil : $0 }
