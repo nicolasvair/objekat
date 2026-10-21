@@ -36,8 +36,8 @@ What it is out to prove:
   E. a change DURING PLAYBACK is put off and applied at the stop, not under the hand listening;
   F. two tabs sharing the file: each tab is brought up to date against what IT knew, the one in
      front at once, the other when it comes back to the front;
-  G. what the app writes itself (`samples/sources|consolidate|objects`) is never scanned, and an
-     opening catches a file changed while the project was closed.
+  G. what the app writes itself (`samples/sources`) is never scanned, a PLAIN clip whose file lies
+     in `samples/consolidate` is, and an opening catches a file changed while the project was closed.
 
 Exit: 0 if every assertion passes, 1 otherwise.
 """
@@ -536,6 +536,16 @@ try:
         rewrite_with(mine, [(2.0, 0.3, 440.0)])
         r = scan()
         check("…and when it changes nothing is reloaded", r["changed"] == [] and r["reloaded_objects"] == 0, str(r))
+        cons = make_wav(os.path.join(pdir, "samples", "consolidate", "plain.wav"), [(1.0, 0.3, 550.0)])
+        g_cons = cmd("object.add", path=cons, lane=2, start=0.0)["id"]
+        settle()
+        r = scan()
+        check("a PLAIN clip under samples/consolidate is scanned (2 paths now)", r["scanned"] == 2, str(r))
+        rewrite_with(cons, [(1.4, 0.3, 550.0)])
+        r = scan()
+        check("…and reloaded when its file changes",
+              r["changed"] == [cons] and r["reloaded_objects"] == 1
+              and approx(obj(g_cons)["file_duration"], 1.4), str(r))
         cmd("project.save")
         cmd("project.new")                                              # the project is CLOSED…
         settle()

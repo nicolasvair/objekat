@@ -15,9 +15,10 @@ import Foundation
 //     scan after an opening), never reloaded on a guess;
 //   • a file that has gone is not "changed" either — that is `EditViewModel+MissingFiles`' business,
 //     and reloading a ghost would only fail;
-//   • what the app writes itself (the project's `samples/consolidate`, `samples/objects`,
-//     `samples/sources`) is never scanned: those files change by the app's own hand, and treating
-//     them as external edits would rebuild an object under a bake that is still landing.
+//   • what the app writes itself is never scanned: the instances of a consolidated object (the
+//     caller leaves them out) and the project's `samples/sources` (a capsule's sources). A plain
+//     clip whose file lies in `samples/consolidate|objects` IS scanned — it is the user's object,
+//     and a bake still landing is already kept off by the caller's blocker.
 
 /// A file's identity as far as this feature needs one: its size, and — when known — its
 /// modification time. `mtime == nil` means "only the size was recorded" (the model keeps a size per

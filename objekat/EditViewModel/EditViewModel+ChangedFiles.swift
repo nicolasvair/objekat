@@ -34,8 +34,12 @@ import AppKit
 //
 // **What is NOT reloaded**: an object carrying an ARA source (Melodyne) — relaunching its analysis
 // would drop the retouches; its waveform is refreshed, its engine clip is left as it is. An
-// instance of a consolidated object (the app wrote that wave itself) and anything under the
-// project's own `samples/consolidate|objects|sources` folders (`FileChangeDetection.isAppWritten`).
+// instance of a consolidated object (the app wrote that wave itself, and a bake in flight already
+// defers the scan) and anything under the project's own `samples/sources` (a capsule's embedded
+// sources, `FileChangeDetection.isAppWritten`). A PLAIN clip whose file sits in
+// `samples/consolidate|objects` IS scanned (21 October 2026): it is an ordinary object (a wave
+// taken out of a consolidation, say) and its file can be edited like any other — excluding it by
+// folder left such a file stale until the app quit.
 //
 // **When it is not the moment** — playback running, a project loading, an export or a bake in
 // flight, a consolidated object open for editing, a tab switch under way (`fileChangeBlocker`, the
@@ -313,7 +317,8 @@ extension EditViewModel {
 
     /// The distinct source paths to ask the disk about, and the sizes the model recorded for them.
     /// Excludes instances of consolidated objects (their wave is the app's own) and anything under
-    /// the project's app-written folders.
+    /// `samples/sources`. The consolidation folders are NOT excluded by folder: a plain clip there is
+    /// the user's object (@see the head of this file).
     private func fileChangeInputs() -> (paths: [String], recordedSizes: [String: Int64]) {
         var objectPaths: [String] = []
         var sizes: [String: Int64] = [:]
@@ -325,7 +330,7 @@ extension EditViewModel {
         }
         var folders: [String] = []
         if let project = projectFolder {
-            for sub in ConsolidateFolders.audioSubfolders {
+            for sub in ConsolidateFolders.audioSubfolders where sub == ProjectFileUsage.sourcesRel {
                 let folder = project.appendingPathComponent(sub, isDirectory: true)
                 folders.append(folder.path)
                 let resolved = folder.resolvingSymlinksInPath().path
