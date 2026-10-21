@@ -132,7 +132,7 @@ extension CommandRegistry {
                     }
                     return .object([
                         "id": .string(e.id.uuidString), "kind": .string(kind), "name": .string(e.name),
-                        "enabled": .bool(e.isEnabled), "toggle": .bool(e.hasToggle),
+                        "enabled": .bool(e.isEnabled),
                         "editor": .bool(e.opensEditor),
                         "bin": e.bin.map { JSONValue.int($0) } ?? .null, "branches": branches,
                         "rack": e.rack.map { JSONValue.int($0) } ?? .null,
@@ -163,7 +163,7 @@ extension CommandRegistry {
                         .object(["entry": .int(b.entry),
                                  "x": .number(Double(b.rect.minX)), "y": .number(Double(b.rect.minY)),
                                  "w": .number(Double(b.rect.width)), "h": .number(Double(b.rect.height)),
-                                 "power": .bool(b.power != nil), "folded": .bool(b.folded)])
+                                 "folded": .bool(b.folded)])
                     }),
                     "wires": .int(lay.wires.count),
                     "bins": .int(lay.bins.count),

@@ -51,16 +51,6 @@ extension EditViewModel {
         return m
     }
 
-    /// The power button of a strip box: the signal view's own functions, hence the same undo point
-    /// and, on an FX link's attached instance, the same rule (the gesture is the bin's).
-    func toggleFXStripEntry(objectID: UUID, entry: FXStripEntry) {
-        switch entry.kind {
-        case .instrument: toggleInstrumentEnabled(objectID: objectID, pluginID: entry.id)
-        case .plugin:     togglePluginEnabled(objectID: objectID, pluginID: entry.id)
-        case .gainStage, .rack: break
-        }
-    }
-
     /// The double click on a strip box: the plugin's window, through the signal view's door
     /// (`togglePluginEditor`, which opens nothing without an interface).
     func openFXStripEditor(objectID: UUID, entryID: UUID) {

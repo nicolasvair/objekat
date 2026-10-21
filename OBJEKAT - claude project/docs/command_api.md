@@ -616,19 +616,18 @@ Two things nothing headless could set before, and that decide how the timeline d
   Session state: undo policy `.none`, never saved.
 - `tool.fx_strip {id, w?, h?}` — what the FX tool's mini signal view (F, hovering an object: drawn
   INSIDE the block, over its darkened content) shows: `entries` in chain order (`{id, kind: instrument
-  | plugin | gain_stage | rack, name, enabled, toggle, editor, bin, branches, rack, branch}` — the
-  instruments first; a gain stage has no power button; a parallel block is a CARRIER entry (`rack`,
-  with its branch count, no power button) followed by its plugins, each an entry of its own carrying
+  | plugin | gain_stage | rack, name, enabled, editor, bin, branches, rack, branch}` — the
+  instruments first; a parallel block is a CARRIER entry (`rack`,
+  with its branch count) followed by its plugins, each an entry of its own carrying
   `rack` (the carrier's index) and `branch`, drawn as stacked rows between a split and a join wire;
   an FX link's plugins carry `bin`, an index into `bins: [{id, name, detached}]`, drawn framed; a
   send's place on the trunk is skipped), `tree` (the chain as nested lists: an entry index, or
   `{rack, branches: [[…]]}`), and `size {w, h}` — the smallest area the labeled reading needs
   (**changed 21 October 2026**: it was the floating strip's size). With `w` and `h`, `layout` says how
-  it is drawn in a block area of that size: `detail` (`labeled` = boxes with a power button and a
-  truncated name, `dots` = pastilles without text, `folded_dots` = each parallel block folded into one
-  pastille, `count` = "n FX", `empty` = "no plugins", `none`), `boxes [{entry, x, y, w, h, power,
-  folded}]`, and the `wires` / `bins` counts. A read: a click on a power zone is `plugin.toggle` (an
-  instrument's own toggle), a double click on a box the plugin's window (nothing opens without an
+  it is drawn in a block area of that size: `detail` (`labeled` = boxes with a
+  truncated name (no power button), `dots` = pastilles wearing the plugin's initials (rounded rectangles), `folded_dots` = each parallel block folded into one
+  pastille, `count` = "n FX", `empty` = "no plugins", `none`), `boxes [{entry, x, y, w, h,
+  folded}]`, and the `wires` / `bins` counts. A read: a double click on a box the plugin's window (nothing opens without an
   interface), any other click selects the object. The geometry is `FXStripLayout`
   (`tools/test_fx_strip_layout.swift`); `view.state.hover` reports the object whose view is up.
 - `object.set_color {color_hex?, color_index?, ids?}` — one undo point for the whole batch (`undo:

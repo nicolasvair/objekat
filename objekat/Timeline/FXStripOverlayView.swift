@@ -21,7 +21,7 @@ final class FXStripHoverStore {
 }
 
 /// The mini signal view, drawn INSIDE the hovered block (@see FXStripLayout): the content veiled,
-/// then wires, boxes, the FX link frames. Pure drawing — the canvas resolves the hover and the
+/// then wires, boxes (or pastilles with the plugin's initials), the FX link frames. Pure drawing — the canvas resolves the hover and the
 /// clicks on the same `FXStripLayout.layout` (@see TimelineView+TapHandler, `handleFXTap`).
 struct FXStripOverlayView: View {
     let viewModel: EditViewModel
@@ -83,25 +83,14 @@ struct FXStripOverlayView: View {
         for b in lay.boxes {
             let e = model.entries[b.entry]
             let hovered = hover?.entry == b.entry
-            let off = e.hasToggle && !e.isEnabled
+            let off = !e.isEnabled && (e.kind == .plugin || e.kind == .instrument)
             let rect = b.rect
             if lay.detail == .labeled {
                 let shape = Path(roundedRect: rect, cornerRadius: 3)
                 ctx.fill(shape, with: .color(Color(white: off ? 0.16 : 0.24).opacity(0.95)))
                 ctx.stroke(shape, with: .color(ink.opacity(hovered ? 0.7 : 0.28)), lineWidth: 1)
                 var textX = rect.minX + 4
-                if let p = b.power {
-                    let onPower = hovered && hover?.onPower == true
-                    if onPower {
-                        ctx.fill(Path(roundedRect: p.insetBy(dx: 1, dy: 1), cornerRadius: 2),
-                                 with: .color(ink.opacity(0.18)))
-                    }
-                    var glyph = ctx.resolve(Image(systemName: "power"))
-                    glyph.shading = .color(e.isEnabled ? .green : Color(white: 0.55))
-                    let gs = min(p.height - 4, 10)
-                    ctx.draw(glyph, in: CGRect(x: p.midX - gs / 2, y: p.midY - gs / 2, width: gs, height: gs))
-                    textX = p.maxX + 1
-                } else if e.kind == .gainStage {
+                if e.kind == .gainStage {
                     let gs = min(rect.height - 4, 10)
                     var glyph = ctx.resolve(Image(systemName: "dial.low"))
                     glyph.shading = .color(ink.opacity(0.6))
@@ -113,25 +102,24 @@ struct FXStripOverlayView: View {
                 drawFitted(&ctx, label, in: tr, size: 9.5,
                            color: ink.opacity(off ? 0.4 : 0.9), centred: false)
             } else {
-                let shape = Path(roundedRect: rect, cornerRadius: min(rect.height, rect.width) / 2)
-                if e.kind == .gainStage {
-                    ctx.fill(shape, with: .color(ink.opacity(0.3)))
-                } else if b.folded {
-                    ctx.stroke(shape, with: .color(ink.opacity(0.8)), lineWidth: 1)
-                    let inner = rect.insetBy(dx: 1.5, dy: 1.5)
+                // A pastille: a rounded rectangle like the signal view's cards (not a capsule), the
+                // plugin's INITIALS inside. A parallel block folded into one wears a doubled outline.
+                let radius = min(rect.height * 0.3, 4)
+                let shape = Path(roundedRect: rect, cornerRadius: radius)
+                ctx.fill(shape, with: .color(Color(white: off ? 0.12 : 0.24).opacity(0.95)))
+                ctx.stroke(shape, with: .color(ink.opacity(off ? 0.35 : 0.6)), lineWidth: 1)
+                if b.folded {
+                    let inner = rect.insetBy(dx: 1.75, dy: 1.75)
                     if inner.width > 1, inner.height > 1 {
-                        ctx.stroke(Path(roundedRect: inner, cornerRadius: min(inner.height, inner.width) / 2),
-                                   with: .color(ink.opacity(0.5)), lineWidth: 0.75)
+                        ctx.stroke(Path(roundedRect: inner, cornerRadius: max(1, radius - 1.5)),
+                                   with: .color(ink.opacity(0.4)), lineWidth: 0.75)
                     }
-                } else if off {
-                    ctx.fill(shape, with: .color(.black))
-                    ctx.stroke(shape, with: .color(ink.opacity(0.55)), lineWidth: 1)
-                } else {
-                    ctx.fill(shape, with: .color(ink.opacity(0.85)))
                 }
+                let label = b.folded ? "∥" : (e.kind == .gainStage ? "dB" : FXStripLayout.initials(e.name))
+                drawFitted(&ctx, label, in: rect.insetBy(dx: 1, dy: 0), size: max(6, rect.height * 0.55),
+                           color: ink.opacity(off ? 0.4 : 0.95), centred: true)
                 if hovered {
-                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1.5, dy: -1.5),
-                                    cornerRadius: min(rect.height, rect.width) / 2 + 1.5),
+                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1.5, dy: -1.5), cornerRadius: radius + 1.5),
                                with: .color(.accentColor), lineWidth: 1)
                 }
             }

@@ -8,9 +8,10 @@ import Foundation
 // parallel block splits the wire into one ROW per branch, its plugins stacked vertically, and joins
 // it again after them. A reading of the signal view with the plugins only: no VU, no sends, no mixer.
 //
-// It degrades with the room the block leaves it, in this order: boxes with a power button and a
-// truncated name → dots with no text (the branches still stacked) → dots with each parallel block
-// folded into one dot → a bare "n FX" → nothing.
+// It degrades with the room the block leaves it, in this order: boxes with a truncated name →
+// PASTILLES (rounded rectangles like the signal view's cards, carrying the plugin's INITIALS, the
+// branches still stacked) → pastilles with each parallel block folded into one → a bare "n FX" →
+// nothing. A box has no power button: a click selects the object, a double click opens the plugin.
 //
 // This file is the half with nothing behind it — no view, no model, no engine — so that it can be
 // compiled alone and asserted (`tools/test_fx_strip_layout.swift`), for the reason `SendColumns`
@@ -43,7 +44,6 @@ struct FXStripEntry: Equatable {
     var rack: Int? = nil
     var branch: Int? = nil
 
-    var hasToggle: Bool { kind == .instrument || kind == .plugin }
     /// A box whose double click opens a plugin window (a rack has none of its own).
     var opensEditor: Bool { kind == .instrument || kind == .plugin }
     var isRack: Bool { if case .rack = kind { return true }; return false }
@@ -78,11 +78,11 @@ enum FXStripLayout {
 
     /// How much of the chain the room allows.
     enum Detail: Equatable {
-        /// Boxes with a power button and a (truncated) name, branches stacked.
+        /// Boxes with a (truncated) name, branches stacked.
         case labeled
-        /// Dots with no text, branches stacked.
+        /// Pastilles with the plugin's initials, branches stacked.
         case dots
-        /// Dots, every parallel block folded into ONE dot.
+        /// Pastilles, every parallel block folded into ONE pastille.
         case foldedDots
         /// "n FX".
         case count
@@ -92,11 +92,10 @@ enum FXStripLayout {
         case none
     }
 
-    /// One box. `folded` = a rack's carrier drawn as one box; `power` = its power button's zone.
+    /// One box. `folded` = a rack's carrier drawn as one box.
     struct Box: Equatable {
         let entry: Int
         let rect: CGRect
-        var power: CGRect? = nil
         var folded: Bool = false
     }
     struct BinFrame: Equatable {
@@ -118,7 +117,6 @@ enum FXStripLayout {
     /// What the hand is on.
     struct Hit: Equatable {
         let entry: Int
-        let onPower: Bool
     }
 
     // MARK: - Metrics
@@ -128,13 +126,14 @@ enum FXStripLayout {
         let minBox: CGFloat, maxBox: CGFloat
         let gap: CGFloat, rowGap: CGFloat
         let binPad: CGFloat
-        /// A box's width as a function of its row height (a dot), or nil (a free width).
+        /// A box's width as a function of its row height (a pastille), or nil (a free width).
         let dotAspect: CGFloat?
     }
     static let labeledMetrics = Metrics(minRow: 13, maxRow: 18, minBox: 44, maxBox: 120,
                                         gap: 9, rowGap: 3, binPad: 3, dotAspect: nil)
-    static let dotMetrics = Metrics(minRow: 5, maxRow: 11, minBox: 5, maxBox: 20,
-                                    gap: 6, rowGap: 2, binPad: 2, dotAspect: 1.6)
+    /// The pastilles carry two letters: they need a row tall enough to read them (about 9 pt).
+    static let dotMetrics = Metrics(minRow: 9, maxRow: 14, minBox: 14, maxBox: 24,
+                                    gap: 5, rowGap: 2, binPad: 2, dotAspect: 1.7)
     /// The room around the drawing, inside the area.
     static let padding: CGFloat = 3
     /// The smallest area the "n FX" / "no plugins" text is written in.
@@ -167,10 +166,34 @@ enum FXStripLayout {
                       height: seriesHeight(model.root, row: m.minRow, m: m) + 2 * padding)
     }
 
-    /// What lies under `p`: a box, and whether on its power button.
+    /// What lies under `p`: a box.
     static func hit(_ p: CGPoint, in r: Result) -> Hit? {
         guard let b = r.boxes.first(where: { $0.rect.insetBy(dx: -1, dy: -1).contains(p) }) else { return nil }
-        return Hit(entry: b.entry, onPower: b.power?.insetBy(dx: -1, dy: -1).contains(p) ?? false)
+        return Hit(entry: b.entry)
+    }
+
+    /// The initials a pastille wears: the first letters of the first two words of the name (split on
+    /// spaces, punctuation and lower→upper case changes: "Pro-Q 3" → "PQ", "ChannelStrip" → "CS"); one
+    /// word of one hump gives its first two letters ("Reverb" → "Re"). Empty name → "?".
+    static func initials(_ name: String) -> String {
+        var words: [String] = []
+        var cur = ""
+        var prev: Character? = nil
+        for ch in name {
+            let isWord = ch.isLetter || ch.isNumber
+            if !isWord { if !cur.isEmpty { words.append(cur); cur = "" }; prev = nil; continue }
+            if let p = prev, p.isLowercase, ch.isUppercase { words.append(cur); cur = "" }
+            cur.append(ch)
+            prev = ch
+        }
+        if !cur.isEmpty { words.append(cur) }
+        // A word that is only a number after letters ("Pro-Q 3" → Pro, Q, 3): the number is not an initial
+        // unless it is all there is.
+        let letters = words.filter { $0.first?.isLetter == true }
+        let use = letters.isEmpty ? words : letters
+        guard let first = use.first else { return "?" }
+        if use.count >= 2 { return String(first.prefix(1)).uppercased() + String(use[1].prefix(1)).uppercased() }
+        return String(first.prefix(1)).uppercased() + String(first.dropFirst().prefix(1)).lowercased()
     }
 
     // MARK: - Internals
@@ -266,11 +289,7 @@ enum FXStripLayout {
                 case .leaf(let i):
                     let rect = CGRect(x: x, y: yc - row / 2, width: box, height: row)
                     let e = model.entries[i]
-                    var b = Box(entry: i, rect: rect, folded: e.isRack)
-                    if detail == .labeled, e.hasToggle {
-                        b.power = CGRect(x: x, y: rect.minY, width: min(row, box / 2), height: row)
-                    }
-                    r.boxes.append(b)
+                    r.boxes.append(Box(entry: i, rect: rect, folded: e.isRack))
                     x += box
                 case .rack(_, let branches):
                     let rw = nodeWidth(n, box: box, m: m)

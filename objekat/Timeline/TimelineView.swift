@@ -1727,7 +1727,7 @@ struct TimelineView: View {
             lines.append(e.name); lines.append(L("fx.strip.gainStage.help"))
         case .instrument, .plugin:
             lines.append(e.name)
-            lines.append(hit.onPower ? L("synoptic.bypass") : L("fx.strip.openEditor.help"))
+            lines.append(L("fx.strip.openEditor.help"))
         }
         return lines.joined(separator: " ")
     }

@@ -501,18 +501,13 @@ extension TimelineView {
     }
 
     /// A click under the FX tool, resolved on the SAME layout the overlay draws
-    /// (@see fxStripPlacement): a power button toggles its plugin (the signal view's own function,
-    /// same undo point), a double click on a box opens its window, any other click selects the block.
+    /// (@see fxStripPlacement): a double click on a box opens its window, any other click selects the block.
     func handleFXTap(at point: CGPoint, isDoubleTap: Bool) {
         guard let e = blockEntry(at: point) else { return }
         let id = e.item.id
         let (_, model, lay) = fxStripPlacement(for: e)
         if let hit = FXStripLayout.hit(point, in: lay), hit.entry < model.entries.count {
             let entry = model.entries[hit.entry]
-            if hit.onPower {
-                viewModel.toggleFXStripEntry(objectID: id, entry: entry)
-                return
-            }
             if isDoubleTap, entry.opensEditor {
                 viewModel.openFXStripEditor(objectID: id, entryID: entry.id)
                 return
