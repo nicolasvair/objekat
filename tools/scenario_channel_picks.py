@@ -18,6 +18,10 @@ the steps of docs/plan_canaux_cables (E2 .. E6); what is asserted TODAY:
     its model id, laid where the model says (before the plugin it feeds, in the user segment); a card
     removed / a branch / a bin move them with it; against an external one-input plugin a pick right
     before it leaves only the OUT half of the fold.
+  * E4, the view model and the API: `chain.cables` (every cable point: width, choice, what is offered),
+    `chain.set_cable` (a pick written / taken away as ONE undo step, the file's own channel mode at the head
+    of a stereo clip, a bin's cable written through its definition, the refusals) and `plugin.set_mono_fold`
+    as an alias writing a pick on the cable in front of a one-input plugin.
 
     ./scenario_channel_picks.py /path/to/objekat.app [socket]
 
@@ -398,6 +402,154 @@ try:
             retouch(manifest, drop_pick)
 
         section("E3: end")
+        audit_ok("end")
+
+        # ═══════════════════════════════════════════════════════════════ E4 : view model + API
+        def cables(host, series=None):
+            send("wait_idle")
+            rows = send("chain.cables", {"host": host})["cables"]
+            return [r for r in rows if series is None or r["series"] == series]
+
+        def refused(cmd, params, code, reason):
+            try:
+                send(cmd, params)
+            except ObjekatError as e:
+                return e.code == code and reason in (str(e) + str(e.details))
+            return False
+
+        section("E4: chain.cables reads every cable point of a chain")
+        manifest = fresh("cables")
+        obj = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        A, B, C = tag(obj, ["A", "B", "C"])
+        cs = cables(obj, "root")
+        check("four cable points (three cards + the tail): 0..3", [c["index"] for c in cs] == [0, 1, 2, 3], cs)
+        check("every cable is stereo, 2 wide, nothing written",
+              all(c["width_in"] == 2 and c["choice"] == "stereo" and not c["explicit"] for c in cs), cs)
+        check("the head is the file's own cable (a stereo clip): file_level, offers all four",
+              cs[0]["file_level"] and cs[0]["offered"] == ["stereo", "left", "right", "sum"], cs[0])
+        check("a card's cable offers all four too (built-in plugin: not a one-input one)",
+              cs[2]["offered"] == ["stereo", "left", "right", "sum"] and not cs[2]["file_level"] and cs[2]["entering"] == C, cs[2])
+
+        section("E4: chain.set_cable writes a pick — one undo step, the engine follows")
+        r = send("chain.set_cable", {"host": obj, "index": 2, "choice": "left"})
+        check("answers ok / changed", r["ok"] and r["changed"] and r["choice"] == "left", r)
+        word = shape(obj)
+        check("the pick stands on the cable of C: A B p:left C", word == "A B p:left C", word)
+        cs = cables(obj, "root")
+        check("the cable reads left, explicit, with the pick's id and the engine's mode",
+              cs[2]["choice"] == "left" and cs[2]["explicit"] and cs[2]["pick"] and cs[2].get("engine_mode") == "left", cs[2])
+        check("the cable after it is MONO (1 wide) and offers nothing", cs[3]["width_in"] == 1 and cs[3]["offered"] == [], cs[3])
+        check("the cables before it are untouched (2 wide)", cs[0]["width_in"] == 2 and cs[1]["width_in"] == 2, cs)
+        got = lite(engine_chain(obj))
+        check("the engine chain: A B p:left C", got == [("fx", "A"), ("fx", "B"), ("pick", "left"), ("fx", "C")], got)
+        audit_ok("after set_cable left")
+        pid = cs[2]["pick"]
+        r = send("chain.set_cable", {"host": obj, "index": 2, "choice": "left"})
+        check("the same choice again: nothing changes", r["ok"] and not r["changed"], r)
+        r = send("chain.set_cable", {"host": obj, "index": 2, "choice": "sum"})
+        check("another choice replaces the mode, keeping the pick's id",
+              r["changed"] and cables(obj, "root")[2]["choice"] == "sum" and cables(obj, "root")[2]["pick"] == pid, r)
+        send("edit.undo")
+        send("wait_idle")
+        check("ONE undo gives the previous mode back (left)", cables(obj, "root")[2]["choice"] == "left", cables(obj, "root")[2])
+        send("edit.undo")
+        send("wait_idle")
+        check("a second undo takes the pick away", shape(obj) == "A B C", shape(obj))
+        send("edit.redo")
+        send("edit.redo")
+        send("wait_idle")
+        check("two redos: the pick is back, sum", cables(obj, "root")[2]["choice"] == "sum", cables(obj, "root")[2])
+        r = send("chain.set_cable", {"host": obj, "index": 2, "choice": "stereo"})
+        check("stereo takes the pick away", r["changed"] and shape(obj) == "A B C", (r, shape(obj)))
+        r = send("chain.set_cable", {"host": obj, "index": 2, "choice": "stereo"})
+        check("…and nothing to take away is no change", r["ok"] and not r["changed"], r)
+
+        section("E4: a mono cable has nothing to choose; bad addresses and choices are refused")
+        send("chain.set_cable", {"host": obj, "index": 1, "choice": "right"})
+        check("after a pick on cable 1 the cable 2 is mono: refused with mono_cable",
+              refused("chain.set_cable", {"host": obj, "index": 2, "choice": "left"}, "invalid_state", "mono_cable"))
+        check("an index past the tail: bad_params / out_of_range",
+              refused("chain.set_cable", {"host": obj, "index": 9, "choice": "left"}, "bad_params", "out_of_range"))
+        check("an unknown series: bad_params / no_such_series",
+              refused("chain.set_cable", {"host": obj, "series": "block-" + uid(99), "index": 0, "choice": "left"},
+                      "bad_params", "no_such_series"))
+        check("an unknown choice: bad_params / bad_choice",
+              refused("chain.set_cable", {"host": obj, "index": 1, "choice": "centre"}, "bad_params", "bad_choice"))
+        check("an unknown host: not_found",
+              refused("chain.set_cable", {"host": uid(98), "index": 0, "choice": "left"}, "not_found", "unknown host"))
+        send("chain.set_cable", {"host": obj, "index": 1, "choice": "stereo"})
+
+        section("E4: the head of a stereo clip is the file's own channel mode — never a pick")
+        r = send("chain.set_cable", {"host": obj, "index": 0, "choice": "right"})
+        check("set_cable at the head: ok / changed", r["ok"] and r["changed"], r)
+        check("no pick in the chain: the object's channel mode says right",
+              shape(obj) == "A B C" and send("object.get", {"id": obj})["channel_mode"] == "r", shape(obj))
+        cs = cables(obj, "root")
+        check("the head reads right, explicit, file_level; the next cable is mono",
+              cs[0]["choice"] == "right" and cs[0]["explicit"] and cs[0]["file_level"] and cs[0]["width_in"] == 2
+              and cs[1]["width_in"] == 1 and cs[1]["offered"] == [], cs[:2])
+        send("edit.undo")
+        send("wait_idle")
+        check("one undo: the file reads LR again", send("object.get", {"id": obj})["channel_mode"] == "lr")
+
+        section("E4: a cable inside an attached FX bin is the bin's (definition AND every member)")
+        link = send("fxlink.create", {"host": obj, "plugins": [A, B]})
+        lid = link["id"] if "id" in link else link["link"]["id"]
+        block = [e for e in entries(obj) if e.get("is_fx_block")][0]["id"]
+        cs = cables(obj, "block-" + block)
+        check("the bin's series has three cable points (two cards + the tail)", [c["index"] for c in cs] == [0, 1, 2], cs)
+        r = send("chain.set_cable", {"host": obj, "series": "block-" + block, "index": 1, "choice": "left"})
+        check("set_cable inside the bin: ok / changed", r["ok"] and r["changed"], r)
+        g = send("fxlink.get", {"link": lid})
+        check("the DEFINITION holds the pick between its two plugins",
+              [d.get("channel_pick") for d in g["plugins"]] == [None, "left", None], g["plugins"])
+        inst = g["members"][0]["instances"]
+        check("the member's instance holds it too",
+              [i.get("channel_pick") for i in inst] == [None, "left", None], inst)
+        check("the cable reads left and the cable after it is mono",
+              cables(obj, "block-" + block)[1]["choice"] == "left" and cables(obj, "block-" + block)[2]["width_in"] == 1)
+        audit_ok("after a cable inside the bin")
+        send("edit.undo")
+        send("wait_idle")
+        g = send("fxlink.get", {"link": lid})
+        check("ONE undo takes it away from the definition and the instance",
+              all(not d.get("channel_pick") for d in g["plugins"]) and all(not i.get("channel_pick") for i in g["members"][0]["instances"]),
+              g["plugins"])
+        send("edit.undo")
+        send("wait_idle")
+
+        section("E4: plugin.set_mono_fold is an alias: a pick on the cable in front of a one-input plugin")
+        manifest = fresh("alias")
+        obj = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        send("plugin.add", {"host": obj, "identifier": "4bandEq"})
+        lp = send("plugin.add", {"host": obj, "identifier": AU_LOWPASS})["plugin"]["id"]
+        deadline = time.time() + 40
+        while not send("plugin.channel_layouts", {"host": obj, "plugin": lp}).get("loaded") and time.time() < deadline:
+            time.sleep(0.25)
+        send("plugin.set_channel_layout", {"host": obj, "plugin": lp, "variant": "mono"})
+        cs = cables(obj, "root")
+        check("the cable entering the one-input plugin says so and offers left / right / sum only",
+              cs[1]["entering"] == lp and cs[1]["into_one_input"] and cs[1]["offered"] == ["left", "right", "sum"]
+              and cs[1]["choice"] == "sum" and cs[1]["explicit"], cs[1])   # a plugin inserted since format 28 stores .sum
+        r = send("plugin.set_mono_fold", {"host": obj, "plugin": lp, "fold": "left"})
+        check("the alias answers ok / changed", r["ok"] and r["changed"] and r["fold"] == "left", r)
+        word = [("pick:" + e["channel_pick"]["mode"]) if e.get("is_channel_pick") else "card" for e in entries(obj)]
+        check("a pick (left) now stands between the two cards", word == ["card", "pick:left", "card"], word)
+        cl = send("plugin.channel_layouts", {"host": obj, "plugin": lp})
+        check("channel_layouts reports the CABLE's choice (left, chosen, from the cable)",
+              cl["mono_fold"] == "left" and cl["mono_fold_chosen"] and cl["mono_fold_from_cable"], cl)
+        ch = eng_until(obj, lambda c: any(e["role"] == "pick" for e in c) and any(e["role"] == "fold_out" for e in c))
+        got = [(e["role"], e.get("mode")) for e in ch if e["role"] in ("pick", "fold_in", "fold_out")]
+        check("the engine lays the pick and ONLY the OUT half of the fold",
+              got == [("pick", "left"), ("fold_out", "left")], got)
+        r = send("plugin.set_mono_fold", {"host": obj, "plugin": lp, "fold": "left"})
+        check("the same alias call again: nothing changes", r["ok"] and not r["changed"], r)
+        audit_ok("after the alias")
+        send("edit.undo")
+        send("wait_idle")
+        check("one undo takes the pick away", all(not e.get("is_channel_pick") for e in entries(obj)))
+
+        section("E4: end")
         audit_ok("end")
 finally:
     try:

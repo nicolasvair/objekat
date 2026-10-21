@@ -212,13 +212,33 @@ extension EditViewModel {
 
     // MARK: Stereo → mono fold
 
+    /// The old door onto the fold, kept as an ALIAS of the cable's choice (session format 31, @see
+    /// `setCableChannels`): for a loaded one-input plugin of an object or a bus, fed by a cable that is still
+    /// stereo, the choice is written as a PICK on the cable that enters it (the plugin's own key goes), so the
+    /// hand and the script say the same thing. Everywhere else (a send's mini-chain, a plugin the engine has
+    /// not loaded, a cable already mono) it keeps its old meaning and writes the plugin's own record
+    /// (`setMonoFoldRecord`). A manual ⌘-link's peers are NOT carried along on the cable path (Q4: the cable
+    /// belongs to its host's chain); an FX link's bin is, through its definition.
+    @discardableResult
+    func setMonoFold(_ fold: MonoFold, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
+        if let me = hostedPlugin(pluginID, of: host), !me.isContainer, !isInstrument(pluginID, of: host),
+           !isSendChainHost(host),
+           let chain = chainPlugins(host), let (loc, i) = Self.locate(pluginID, in: chain),
+           let info = cableInfos(host: host)?.first(where: { $0.location == loc && $0.point.index == i }),
+           info.intoOneInput, info.widthIn >= 2 {
+            return setCableChannels(host: host, location: loc, index: i, choice: CableChoice(fold))
+        }
+        return setMonoFoldRecord(fold, pluginID: pluginID, host: host)
+    }
+
+
     /// What a stereo signal is folded into for a ONE-input plugin: `left` (as before), `right`, or the sum
     /// (L + R) / 2 (@see `MonoFold`). The same members as the Channels menu — the plugin and its link group
     /// (FX link mirrors, manual link peers), all together — and the FX link's definition, so a member
     /// attached later is born with it. One undo step; none when nothing changes. Unlike a channel layout,
     /// nothing is refused while playing: it is two service plugins laid or removed around the plugin.
     @discardableResult
-    func setMonoFold(_ fold: MonoFold, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
+    func setMonoFoldRecord(_ fold: MonoFold, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
         guard let me = hostedPlugin(pluginID, of: host) else { return .refused(reason: "not_found") }
         guard !me.isContainer, !isInstrument(pluginID, of: host) else { return .refused(reason: "not_leaf") }
 

@@ -153,6 +153,9 @@ struct SynopticNode: Identifiable, Equatable {
     var voiceGainDb: Float? = nil
     /// The branch's mute (a parallel block): the sound is cut, the gain is kept.
     var voiceMuted: Bool = false
+    /// A `.series` node: the channel choices written on its cables, by cable index (the number of cards
+    /// before the pick — @see ChannelPicks.picks). Stereo = no entry.
+    var cablePicks: [Int: MonoFold] = [:]
 
     indirect enum Kind: Equatable {
         case plugin(SynopticPlugin)

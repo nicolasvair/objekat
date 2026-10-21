@@ -22,6 +22,7 @@
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \
+//         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/Shared/ObjekatPalette.swift \
 //         ../objekat/Shared/ObjectColorChoice.swift \

@@ -947,6 +947,35 @@ trim (`compensationDb`) — the coupled gesture moves the first two and keeps th
 and nothing else. A bypassed moment adds nothing to the window rather than resetting it (asked: no reset). Measuring what was played rather than rendering
 offline keeps it instant and honest about the material the hand is actually listening to.
 
+## A channel choice on each cable (October 2026, session format 31)
+
+The stereo → mono fold used to be a property of the one-input plugin it fed (`ObjectPlugin.monoFold`): one
+choice per plugin, drawn on the wire in front of it, and nowhere to say it on any other cable. It is now a
+choice of the CABLE.
+
+### Decision: the choice is an entry of the series, not a field of a plugin
+
+A **pick** (`ObjectPlugin.channelPick`, `ChannelPick {mode}`) is a fourth container entry beside a parallel
+block, an FX bin and a send marker: it has an id of its own (the engine's key) and no plugin identity, so it
+is never compiled as a plugin, never listed, never counted as a card. It stands in the GAP before the card of
+visible index `i` (`ChannelPicks`), ahead of the send markers. Reading rule for the cable entering plugin
+`P`: the pick of the gap, else the inherited `monoFold` of `P` (read only), else `MonoFold.whenUnset`. A format
+30 file opens as before; a plugin's key is only ever cleared when a pick takes over.
+
+### Decision: one pick per cable, the upstream one wins, the head of a stereo clip is the file's
+
+Gaps merge when a card goes: the upstream pick stays (`ChannelPicks.sanitised`). A pick at the head of a
+stereo audio clip's root is turned into `channelMode` (one menu, not two). A pick on a cable already made mono
+is kept silently (inert). A one-input plugin right after a pick is told `left` by `ChannelPicks.engineFold`,
+so the engine lays only the OUT half of its fold (L = R already).
+
+### Decision: the widths are computed once, the signal view and the API read the same numbers
+
+`SynopticWidthFlow` records `widthAt` / `pickAt` per `CablePoint` (series id, index);
+`EditViewModel.widthFlow` is the single computation the bound view and `chain.cables` use. FX bins carry their
+picks in the DEFINITION and every instance; a cable inside an attached bin is written through the definition
+(`reconcileFXLinkMembers`), a manual ⌘-link does not carry a cable's choice (Q4).
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

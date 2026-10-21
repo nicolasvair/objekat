@@ -51,12 +51,32 @@ struct ChannelPick: Codable, Equatable, Sendable {
     }
 }
 
-/// A point on a cable: a series (@see SynopticMapping.build for the ids) and the VISIBLE index of the
-/// card it stands before — `0` = the head of the series, `n` = its tail (n = the series' card count).
-struct CablePoint: Hashable, Sendable {
-    var seriesID: UUID
-    var index: Int
+/// What a cable can be told, as a person names it: Stereo (the cable as it is, no pick), Left, Right or
+/// Sum. `fold` is the bridge to the model's `MonoFold` (Stereo has none).
+enum CableChoice: String, CaseIterable, Sendable {
+    case stereo, left, right, sum
+
+    init(_ fold: MonoFold?) {
+        switch fold {
+        case nil:      self = .stereo
+        case .left?:   self = .left
+        case .right?:  self = .right
+        case .sum?:    self = .sum
+        }
+    }
+
+    var fold: MonoFold? {
+        switch self {
+        case .stereo: return nil
+        case .left:   return .left
+        case .right:  return .right
+        case .sum:    return .sum
+        }
+    }
 }
+
+// `CablePoint` (a series and a visible index) lives in `SynopticWidthFlow.swift`, beside `MonoFold`: the
+// width arithmetic is the one that names cable points, and stays compilable alone.
 
 // MARK: - The entry
 

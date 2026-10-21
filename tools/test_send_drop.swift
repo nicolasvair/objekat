@@ -4,6 +4,7 @@ import Foundation
 //
 //     swiftc -parse-as-library -o /tmp/t_senddrop \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
+//         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/Inspector/Synoptic/SendDrop.swift test_send_drop.swift && /tmp/t_senddrop
 
 import SwiftUI

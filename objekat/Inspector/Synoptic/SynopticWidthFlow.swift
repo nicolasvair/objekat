@@ -34,6 +34,13 @@ import Foundation
 // A bypassed plugin is transparent (nothing to say), and so is anything the engine does not report
 // channels for (gain stages, built-ins, an instance still loading): the signal passes at its width.
 
+/// A point on a cable: a series (@see SynopticMapping.build for the ids) and the VISIBLE index of the
+/// card it stands before — `0` = the head of the series, `n` = its tail (n = the series' card count).
+struct CablePoint: Hashable, Sendable {
+    var seriesID: UUID
+    var index: Int
+}
+
 /// The three ways a plugin's main bus can be set, named by what it takes in and what it puts out.
 enum ChannelVariant: String, CaseIterable, Equatable, Sendable {
     case mono                       // 1 → 1
@@ -188,6 +195,12 @@ struct SynopticWidthFlow: Equatable {
     var sourceWidth: Int = 2
     var sourceChoice: SourceChannelChoice? = nil
     var trunkOut: Int = 2
+    /// The width of the signal ARRIVING at each cable point, BEFORE the choice written there (a stereo
+    /// cable is 2 wide, one that a pick or a mono plugin made mono is 1). Every point of every series.
+    var widthAt: [CablePoint: Int] = [:]
+    /// The choice written on each cable point that carries one and whose pick IS in force (a pick inside a
+    /// bin that is switched off is not; a pick on a cable that is already mono changes nothing but is listed).
+    var pickAt: [CablePoint: MonoFold] = [:]
 
     /// The width the chain is FED with: a stereo file played other than LR is one channel.
     var chainInput: Int {
@@ -284,6 +297,19 @@ struct SynopticWidthFlow: Equatable {
         return flow
     }
 
+    /// A cable point of the series `node`: records the width arriving there and, when a pick stands on it,
+    /// applies it — the engine writes the chosen channel on both sides, so the signal after it is MONO (it
+    /// stays 1 if it already was; a pick inside a bin switched off is inert).
+    private static func cross(_ node: SynopticNode, index i: Int, width w: Int, off: Bool,
+                              into flow: inout SynopticWidthFlow) -> Int {
+        let point = CablePoint(seriesID: node.id, index: i)
+        flow.widthAt[point] = w
+        guard let mode = node.cablePicks[i] else { return w }
+        if off { return w }
+        flow.pickAt[point] = mode
+        return min(w, 1)
+    }
+
     private static func walk(_ node: SynopticNode, incoming w: Int, channels: [UUID: PluginChannels],
                              folds: [UUID: MonoFold],
                              transparent: Bool, into flow: inout SynopticWidthFlow) -> Int {
@@ -310,7 +336,11 @@ struct SynopticWidthFlow: Equatable {
         case .series(let nodes):
             // A bin that is switched off lets the signal through whatever its members are.
             let off = transparent || (node.fxLink.map { !$0.isEnabled } ?? false)
-            for n in nodes { out = walk(n, incoming: out, channels: channels, folds: folds, transparent: off, into: &flow) }
+            for (i, n) in nodes.enumerated() {
+                out = cross(node, index: i, width: out, off: off, into: &flow)
+                out = walk(n, incoming: out, channels: channels, folds: folds, transparent: off, into: &flow)
+            }
+            out = cross(node, index: nodes.count, width: out, off: off, into: &flow)
 
         case .parallel(let branches):
             // Every branch is fed the same signal; the sum is as wide as the widest branch.

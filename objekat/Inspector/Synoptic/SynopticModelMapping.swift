@@ -87,7 +87,9 @@ enum SynopticMapping {
             }
             return SynopticNode(id: p.id, kind: .plugin(leaf(p, vu: levels[p.id] ?? 0)))
         }
-        return SynopticNode(id: seriesID, kind: .series(children))
+        var node = SynopticNode(id: seriesID, kind: .series(children))
+        node.cablePicks = ChannelPicks.picks(in: plugins)
+        return node
     }
 
     /// The id of branch `voiceIndex` of the parallel block `blockID`: the block's id with a few bits

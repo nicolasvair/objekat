@@ -188,8 +188,16 @@ extension CommandRegistry {
             // (a plugin saved before format 28 has no key and plays `MonoFold.whenUnset`, the sum), whether it
             // was CHOSEN (false = no key), and the engine's two service halves when laid.
             if let plug = vm.hostedPlugin(pluginID, of: host) {
-                payload["mono_fold"] = .string(plug.effectiveMonoFold.rawValue)
-                payload["mono_fold_chosen"] = .bool(plug.monoFold != nil)
+                // Format 31: a pick on the cable that ENTERS the plugin says better than its own key.
+                if let pick = vm.enteringCablePick(of: pluginID, on: host) {
+                    payload["mono_fold"] = .string(pick.rawValue)
+                    payload["mono_fold_chosen"] = .bool(true)
+                    payload["mono_fold_from_cable"] = .bool(true)
+                } else {
+                    payload["mono_fold"] = .string(plug.effectiveMonoFold.rawValue)
+                    payload["mono_fold_chosen"] = .bool(plug.monoFold != nil)
+                    payload["mono_fold_from_cable"] = .bool(false)
+                }
             }
             for key in ["fold_in", "fold_out"] {
                 if let f = info[key] as? [String: Any] {
@@ -287,10 +295,13 @@ extension CommandRegistry {
                  mono result goes to both sides, the channel not taken is cut). A plugin saved before \
                  format 28 has no choice (`mono_fold_chosen` false in `plugin.channel_layouts`) and plays \
                  `sum`. Saved with the plugin, carried by copies, undone. \
-                 Applies to the plugin's whole link group (FX link mirrors, manual link peers) and to the FX \
-                 link's definition. Has no audible effect while the plugin is not mono-in or the signal is \
-                 mono (`plugin.channel_layouts` reports `mono_fold` and the engine's `fold_in` / `fold_out` \
-                 halves). One undo step; none when nothing changes. Answers `{ok, changed, instances, fold}`.
+                 ALIAS of `chain.set_cable` since format 31: for a loaded one-input plugin of an object or a \
+                 bus, fed by a cable that is still stereo, the choice is written as a PICK on the cable that \
+                 enters it (the plugin's own key is cleared; a manual ⌘-link's peers are not carried, an FX \
+                 link's bin is). Anywhere else (a send's mini-chain, a plugin not loaded, a cable already \
+                 mono) it writes the plugin's own record as before, to its whole link group and the FX \
+                 link's definition, with no audible effect while the plugin is not mono-in or the signal is \
+                 mono. One undo step; none when nothing changes. Answers `{ok, changed, instances, fold}`.
                  """,
                  params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
                           ParamSpec("plugin", "uuid", "Leaf plugin of the chain."),
@@ -316,6 +327,100 @@ extension CommandRegistry {
             }
             return .object(["ok": .bool(true), "changed": .bool(instances > 0), "instances": .int(instances),
                             "fold": .string(raw)])
+        }
+
+        register("chain.cables",
+                 summary: """
+                 The CABLES of a host's chain (an object or a stem / the Main; a send's mini-chain has none \
+                 and answers an empty list): every cable point of every series, in series order — the root \
+                 first, then each branch and each FX bin as met. A cable point `index` i is the wire that \
+                 ENTERS the card of visible index i of its series (the last index is the tail). Each \
+                 carries `series` (`root`, `voice-<block id>-<n>` or `block-<block id>`), `index`, \
+                 `width_in` (the channels arriving there, before the choice written there), `choice` \
+                 (`stereo` | `left` | `right` | `sum` — the pick of that cable, else the inherited fold of \
+                 the one-input plugin it enters, else stereo), `explicit` (a choice is WRITTEN: a pick, the \
+                 file's channel mode or the plugin's own key), `offered` (what a hand may choose; empty on a \
+                 mono cable, left / right / sum into a one-input plugin), `pick` (the pick's id or null), \
+                 `file_level` (the head of a stereo clip: the choice is the file's own channel mode), \
+                 `inert` (a pick on a cable already mono: kept, no effect), `entering` (the plugin id or \
+                 null) and `into_one_input`. `engine_mode` appears when the engine holds the pick \
+                 (`left` | `right` | `sum`). Reads only.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object, stem or the Main.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            guard let infos = vm.cableInfos(host: host) else {
+                throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
+            }
+            let engineModes = vm.enginePickModes(host: host)
+            let rows: [JSONValue] = infos.map { c in
+                var row: [String: JSONValue] = [
+                    "series": .string(c.location.key), "index": .int(c.point.index),
+                    "width_in": .int(c.widthIn), "choice": .string(c.choice.rawValue),
+                    "explicit": .bool(c.explicit), "offered": .array(c.offered.map { .string($0.rawValue) }),
+                    "pick": .stringOrNull(c.pickID?.uuidString), "file_level": .bool(c.fileLevel),
+                    "inert": .bool(c.inert), "entering": .stringOrNull(c.entering?.uuidString),
+                    "into_one_input": .bool(c.intoOneInput)]
+                if let id = c.pickID, let m = engineModes[id] { row["engine_mode"] = .string(m) }
+                return .object(row)
+            }
+            return .object(["host": .string(host.uuidString), "cables": .array(rows)])
+        }
+
+        register("chain.set_cable",
+                 summary: """
+                 Writes a channel CHOICE on one cable of a host's chain (session format 31): `stereo` takes \
+                 the cable's pick away, `left` / `right` / `sum` put one there (a pick already there keeps \
+                 its id). `series` names the series (`root` by default; see `chain.cables`), `index` the \
+                 cable point. A cable that enters a ONE-input plugin hands that plugin's own fold over to the \
+                 pick; the head cable of a stereo audio clip is the file's own channel mode (`channelMode`, \
+                 never a pick); a cable inside an ATTACHED FX bin is the bin's (every member follows). \
+                 One undo step, none when nothing changes. `bad_params`: unknown choice, series or index, or \
+                 a choice the cable does not offer (`details.reason` `bad_choice`, `no_such_series`, \
+                 `out_of_range`, `not_offered`: stereo into a one-input plugin). `invalid_state`: a mono \
+                 cable has nothing to choose (`mono_cable`), a send's mini-chain takes no choice \
+                 (`send_chain`). Answers `{ok, changed, instances, choice}`.
+                 """,
+                 params: [ParamSpec("host", "uuid", "Object, stem or the Main."),
+                          ParamSpec("series", "string", required: false,
+                                    "`root` (default), `voice-<block id>-<n>` or `block-<block id>`."),
+                          ParamSpec("index", "int", "The cable point: the wire entering the card of visible index i."),
+                          ParamSpec("choice", "string", "stereo | left | right | sum.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let host = try p.uuid("host")
+            let rawSeries = try p.string("series", or: "root")
+            let index = try p.int("index")
+            let rawChoice = try p.string("choice")
+            guard let choice = CableChoice(rawValue: rawChoice) else {
+                throw CommandError(code: .bad_params, message: "unknown choice '\(rawChoice)' (stereo | left | right | sum)",
+                                   details: .object(["reason": .string("bad_choice")]))
+            }
+            guard let location = SeriesLocation(key: rawSeries) else {
+                throw CommandError(code: .bad_params, message: "unknown series '\(rawSeries)'",
+                                   details: .object(["reason": .string("no_such_series")]))
+            }
+            var instances = 0
+            switch vm.setCableChannels(host: host, location: location, index: index, choice: choice) {
+            case .applied(let n): instances = n
+            case .unchanged: break
+            case .refused(let reason):
+                let details = JSONValue.object(["reason": .string(reason)])
+                switch reason {
+                case "not_found":
+                    throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)", details: details)
+                case "mono_cable":
+                    throw CommandError(code: .invalid_state, message: "the cable is mono: nothing to choose", details: details)
+                case "send_chain":
+                    throw CommandError(code: .invalid_state,
+                                       message: "a send's mini-chain takes no channel choice", details: details)
+                default:
+                    throw CommandError(code: .bad_params, message: "cable choice refused: \(reason)", details: details)
+                }
+            }
+            return .object(["ok": .bool(true), "changed": .bool(instances > 0), "instances": .int(instances),
+                            "choice": .string(rawChoice)])
         }
 
         register("plugin.add",

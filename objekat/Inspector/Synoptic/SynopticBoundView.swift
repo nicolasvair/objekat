@@ -85,23 +85,10 @@ struct SynopticBoundView: View {
         // instrument. Compared by value, so the registration follows the chain, not each render.
         let meteredIDs = meteredPluginIDs()
 
-        // The width the chain is fed with (an audio clip's file; a stereo pair for everything else), and what
-        // becomes of it along the chain — derived from the polled bus counts, so it follows the chain.
-        let sourceWidth = viewModel.sourceChannelWidth(hostID: objectID)
-        // Each plugin's stereo → mono fold (a merging wire says, and offers, which one).
-        let folds: [UUID: MonoFold] = {
-            var f = EditViewModel.monoFolds(viewModel.chainPlugins(objectID) ?? [])
-            if let obj { f.merge(EditViewModel.monoFolds(of: obj)) { a, _ in a } }
-            return f
-        }()
-        // The audio file's own channel choice, read on the wire that leaves it (right click = LR / L / R / Sum):
-        // a stereo audio clip only (@see canChooseChannelMode).
-        let sourceChoice: SourceChannelChoice? = obj.flatMap {
-            ($0.isClip && !($0.isConsolidateInstance) && viewModel.canChooseChannelMode($0))
-                ? Self.sourceChoice($0.channelMode) : nil
-        }
-        let widthFlow = SynopticWidthFlow.compute(root: root, sourceWidth: sourceWidth, sourceChoice: sourceChoice,
-                                                  channels: channelCounts, folds: folds)
+        // The width the chain is fed with and what becomes of it along the chain (the file's channel choice, each
+        // plugin's fold, every pick written on a cable) — ONE computation, shared with the command API
+        // (@see EditViewModel.widthFlow), over the polled bus counts so it follows the chain.
+        let widthFlow = viewModel.widthFlow(host: objectID, root: root, channels: channelCounts)
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).

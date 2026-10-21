@@ -1452,6 +1452,47 @@ the `lr` export of the same clip** and not against absolute levels: `l` and `r` 
 on both sides at the level that side had in `lr`, and `c` sits 6 dB under `l` for a signal that lives
 in one channel only. `tools/scenario_channel_mode.py` is the reference.
 
+### A channel choice on each cable (`chain.cables`, `chain.set_cable`; session format 31)
+
+Every wire of a chain — the one entering each card, and the tail — can carry a CHOICE of channel for a
+stereo signal: `stereo` (the cable as it is, nothing written), `left`, `right` or `sum` = `(L + R) / 2`.
+Whatever is chosen, what follows is MONO (the chosen channel on both sides). A choice is stored as a
+**pick**, a fourth container entry of an `ObjectPlugin` series (`channelPick: {mode}`, no plugin identity,
+its own id): it stands on the cable point before the card of visible index `i`, ahead of the send markers
+of that gap. The engine lays it as an `ObjChannelMode` instance keyed by that id (`debug.engine_chain`
+shows it as role `pick`). `plugin.list` marks it `is_channel_pick` / `channel_pick: {mode}`.
+
+`chain.cables {host}` reads every cable point of an object, a stem or the Main (a send's mini-chain takes
+no choice: empty list), series by series — `root`, then `voice-<block id>-<n>` for the branches of a
+parallel block and `block-<block id>` for an FX bin — each row `{series, index, width_in, choice,
+explicit, offered, pick, file_level, inert, entering, into_one_input, engine_mode?}`:
+
+| field | meaning |
+|---|---|
+| `index` | the wire entering the card of visible index `i` of its series; the last index is the tail |
+| `width_in` | channels arriving there, BEFORE the choice written there (a stereo cable is 2, a wire a pick or a mono plugin made mono is 1) |
+| `choice` | the pick of that cable; else, into a one-input plugin, its inherited fold (a plugin with no key plays `sum`); else `stereo` |
+| `explicit` | a choice is WRITTEN (a pick, the file's channel mode, or the plugin's own key) |
+| `offered` | what a hand may choose: empty on a mono cable, `left` / `right` / `sum` into a one-input plugin (it cannot receive a pair), the four elsewhere |
+| `file_level` | the head of a stereo audio clip: the choice IS the file's `channelMode` (one menu, never a pick) |
+| `inert` | a pick on a cable already made mono upstream: kept, no effect, back in force if the cable becomes stereo again |
+| `engine_mode` | present when the engine holds the pick: `left` / `right` / `sum` |
+
+`chain.set_cable {host, series?, index, choice}` writes one: `stereo` takes the pick away, the others put
+one there (a pick already there keeps its id and its place). One undo step, none when nothing changes
+(`changed: false`). A cable that enters a ONE-input plugin hands that plugin's own fold over to the pick
+(its key is cleared); the head cable of a stereo clip writes `channelMode`; a cable inside an ATTACHED FX bin
+is the bin's (the definition is written, every member follows); a manual ⌘-link does NOT carry a cable's
+choice. Refusals: `bad_params` with `details.reason` `bad_choice`, `no_such_series`, `out_of_range`,
+`not_offered` (stereo into a one-input plugin); `invalid_state` with `mono_cable` (nothing to choose on
+one wire) or `send_chain`; `not_found` for an unknown host. Nothing is refused while playing.
+
+`plugin.set_mono_fold` stays as an ALIAS: for a loaded one-input plugin of an object or a bus whose entering
+cable is still stereo it writes the pick on that cable (so a script and a hand say the same thing —
+`plugin.channel_layouts` then reports `mono_fold_from_cable: true`); anywhere else it keeps writing the
+plugin's own record. Note that at the head of a stereo clip the alias therefore writes the clip's
+`channelMode`. `tools/scenario_channel_picks.py` is the reference (E2 model, E3 engine, E4 this API).
+
 ### How a clip's file is stored (`object.get` `source_*`), and naming at `object.add`
 
 `object.get` answers three more fields on an audio clip, read from the file's OWN header (not the
