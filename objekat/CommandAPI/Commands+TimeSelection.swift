@@ -551,6 +551,34 @@ extension CommandRegistry {
                             "container": container.map { .string($0.uuidString) } ?? .null])
         }
 
+        register("timesel.insert_time",
+                 summary: "Opens a blank the length of the time selection at its START: what "
+                        + "straddles that instant is cut there (a group in depth), and what stands "
+                        + "after it slides forward, on the SELECTED lanes only, bounded by the "
+                        + "container (the container's window grows only if every one of its lanes "
+                        + "was selected). Infinite buses are neither cut nor moved: their curves take "
+                        + "the blank and their finite children slide. A selection traced in the RULER "
+                        + "(`timesel.set from_ruler`) also opens the blank in the marker band, the "
+                        + "timeline's comments and the playback loop (`markers_follow`). One undo "
+                        + "step; afterwards the selection is the blank, the caret at its start and "
+                        + "nothing else selected. `invalid_state` if there is no selection, if it "
+                        + "is refused (a consolidated object open for editing, a looping container) "
+                        + "or if nothing moved.",
+                 undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard let sel = vm.timeSelection else {
+                throw CommandError(code: .invalid_state, message: "no time selection")
+            }
+            guard let report = vm.insertTimeAtTimeSelection() else {
+                throw CommandError(code: .invalid_state, message: "nothing to insert time into")
+            }
+            return .object(["inserted": .number(sel.timeRange.upperBound - sel.timeRange.lowerBound),
+                            "cut_count": .int(report.outcome.cut),
+                            "shifted_count": .int(report.outcome.shifted),
+                            "markers_follow": .bool(report.marksFollow),
+                            "container": report.container.map { .string($0.uuidString) } ?? .null])
+        }
+
         register("timesel.group",
                  summary: "Groups the content of the time selection (objects that straddle it are cut).",
                  undo: .handled) { _ in
