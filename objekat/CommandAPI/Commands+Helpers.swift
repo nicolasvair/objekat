@@ -302,7 +302,12 @@ extension CommandAdapters {
         switch mode {
         case "move": return []
         case "copy": return .option
-        default: throw CommandError(code: .bad_params, message: "mode must be move or copy")
+        // ⌘ means nothing in a plugin drop (since 22 October 2026): these two exist so that a script can
+        // ASSERT it — the outcome of "move_command" / "copy_command" must be that of "move" / "copy".
+        case "move_command": return .command
+        case "copy_command": return [.option, .command]
+        default: throw CommandError(code: .bad_params,
+                                    message: "mode must be move, copy, move_command or copy_command")
         }
     }
 

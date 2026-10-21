@@ -574,7 +574,7 @@ extension CommandRegistry {
                                     "Several plugins at once. Replaces 'plugin'."),
                           ParamSpec("to", "uuid", "Host the drag is released over."),
                           ParamSpec("mode", "string", required: false,
-                                    "move (default, no modifier) | copy (⌥).")],
+                                    "move (default, no modifier) | copy (⌥) | move_command / copy_command (⌘ held on top: must change nothing).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let from = try p.uuid("from")
@@ -614,7 +614,7 @@ extension CommandRegistry {
                           ParamSpec("at", "int", required: false,
                                     "Index in that series where the first card lands (default: the end)."),
                           ParamSpec("mode", "string", required: false,
-                                    "move (default, no modifier) | copy (⌥)."),
+                                    "move (default, no modifier) | copy (⌥) | move_command / copy_command (⌘ held on top: must change nothing)."),
                           ParamSpec("dry_run", "bool", required: false,
                                     "Only resolve: return the outcome, change nothing (default false).")],
                  undo: .handled) { p in
