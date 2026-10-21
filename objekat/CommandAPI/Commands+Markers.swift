@@ -574,7 +574,9 @@ extension CommandRegistry {
         register("comment.create",
                  summary: "Lays a free text over a span of the timeline. The text is markdown, "
                         + "inline (bold, italic, code, links). A comment is not a sound object: it "
-                        + "has no engine object, and it does not move with a ripple or a cut.",
+                        + "has no engine object; a cut does not move it, while a ripple delete or an "
+                        + "insert of time traced in the ruler slides it (`timesel.ripple_delete`, "
+                        + "`timesel.insert_time`).",
                  params: [ParamSpec("from", "number", "Start, in ABSOLUTE seconds."),
                           ParamSpec("to", "number", "End, in ABSOLUTE seconds."),
                           ParamSpec("lane", "int", required: false,

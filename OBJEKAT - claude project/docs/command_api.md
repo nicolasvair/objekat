@@ -2122,6 +2122,33 @@ to its own id, and, if it was selected, to its own selection too. Same rule as a
 (@see "DIVIDING the matter" above): the selection follows the matter, and a ripple does not touch
 it when the object it is given was not selected to begin with.
 
+### Insert time
+
+`timesel.insert_time` is the ripple's mirror: it opens a **blank** the length of the time
+selection **at its start**, and what followed slides forward. It is the ruler's right-click entry
+"Insert time" (shown only for a range traced in the RULER); there is no shortcut. Same scope rules
+as the ripple (the shallowest container touched, the SELECTED lanes only, a container's window
+grows only if every lane of the scope was selected), plus:
+
+- An object (or MIDI clip) that **straddles the start** is cut there and its right half slides; a
+  group is cut in depth. One that merely starts at the instant slides, one that ends at it stays.
+- An **infinite** aux or group is neither cut nor moved: its curves take the blank and its finite
+  children slide.
+- With a range traced in the ruler (`timesel.set from_ruler`) and no container, the **marker
+  band** follows too (a point at or after the start slides, a region containing it is
+  lengthened), and so do the timeline's **comments** (those starting at or after it slide) and
+  the **playback loop** (it slides if it starts after the instant, is lengthened if it contains
+  it); the answer says it in `markers_follow`. A selection traced in the timeline leaves them alone.
+- Afterwards the time selection is the blank (same range, still the ruler's), the caret and the
+  cursor are at its start and no object is selected. ONE undo gives everything back (the loop is
+  not part of the undo snapshot, as ever).
+- `invalid_state` (and no undo step) if there is no selection, if nothing moved, or if the gesture
+  is refused: a consolidated object open for editing, a looping container.
+
+The answer: `inserted` (seconds), `cut_count`, `shifted_count`, `markers_follow`, `container`.
+`timesel.ripple_delete` now carries the comments the same way when the marks follow (one starting
+inside the removed span goes, one after it slides back).
+
 ### Solo, and the windows it holds open
 
 `solo.set` puts objects into the **confirmed** solo layer (`on: false` takes them out), exactly as
