@@ -505,8 +505,15 @@ Checked as still biting: `develop` still had the linear `std::find`.
   input has been copied for the bypass / latency path, so a bypass replays the untouched signal. OBJEKAT
   uses it for the editor bar's input / output trims and the gain match's K-weighted measurement
   (`OBJPluginProbe.h`). Branch `objekat-probe-0045` (`8a8b5b453c0`, NOT published on the fork), commit on top
-  of `objekat-reverse-render-0044`. Files: `tracktion_Plugin.h`, `tracktion_PluginNode.cpp`. The next
-  number is `0046`.
+  of `objekat-reverse-render-0044`. Files: `tracktion_Plugin.h`, `tracktion_PluginNode.cpp`.
+- `0046` — **a proxy clip whose played file is not there yet takes the original's channels.** Right after
+  a reverse, or after its source file is reloaded, the reversed render is being made again in the
+  background, so `getOutputChannelConfiguration()` (read from the PLAYED file) answered 0 channels and the
+  `WaveNodeRealTime` of `0043` built a 0-channel sinc resampler — an assertion in `sinc_state_new` in Debug,
+  silence otherwise. `createNodeForAudioClip` now falls back on the ORIGINAL file's channel count (the
+  render has the same), and builds no node at all if that is 0 too. Branch `objekat-patches-3.5` locally
+  (`2790081b5da`, NOT published on the fork), commit on top of `objekat-probe-0045`. File:
+  `tracktion_EditNodeBuilder.cpp`. The next number is `0047`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

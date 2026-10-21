@@ -1,0 +1,49 @@
+From 2790081b5da239e1a7088a2fb7216c60cd9ae447 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 21 Oct 2026 22:20:04 +0200
+Subject: [PATCH] fix(graph): a proxy clip whose rendered file is not there yet
+ takes the original's channels (objekat 0046)
+
+Right after a reverse or a source reload the reversed render is being made again, so the played
+file's info has 0 channels; the WaveNodeRealTime of patch 0043 then built a 0-channel sinc
+resampler (assertion in Debug, silence otherwise). The render has the original's channel count.
+---
+ .../graph/tracktion_EditNodeBuilder.cpp       | 22 ++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+index a3413c35034..68568c1e909 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_EditNodeBuilder.cpp
+@@ -528,7 +528,27 @@ std::unique_ptr<tracktion::graph::Node> createNodeForAudioClip (AudioClipBase& c
+                 speed = clip.getSpeedRatio();
+             }
+ 
+-            const auto channelConfig = clip.getOutputChannelConfiguration();
++            auto channelConfig = clip.getOutputChannelConfiguration();
++
++            // Patch local Objekat — 0046 : la configuration se lit dans le fichier JOUÉ ; pour un
++            // clip inversé c'est le rendu inversé, qui n'existe pas encore juste après une
++            // inversion ou un rechargement de la source (il est refait en tâche de fond). Elle
++            // valait alors 0 canal, et un HighQualityResamplerReader à 0 canal s'arrête sur une
++            // assertion (Debug) ou rend du silence. Le rendu a les canaux de l'original.
++            if (channelConfig.getNumChannels() == 0)
++            {
++                const auto original = AudioFile (clip.edit.engine, clip.getOriginalFile()).getInfo();
++
++                if (original.numChannels > 0)
++                {
++                    ChannelConfiguration fromOriginal;
++                    fromOriginal.setNumChannels (original.numChannels);
++                    channelConfig = fromOriginal;
++                }
++            }
++
++            if (channelConfig.getNumChannels() == 0)
++                return {};
+ 
+             // Patch local Objekat — 0043 : un clip à proxy (source compressée, clip inversé, rendu
+             // time-stretché) passait par l'ancien WaveNode / SpeedRampWaveNode, dont le
+-- 
+2.50.1 (Apple Git-155)
+
