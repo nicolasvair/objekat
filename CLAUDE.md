@@ -2641,7 +2641,7 @@ What has landed since mid-August, in order:
   drag gestures and their thresholds under a hand, and BY EAR an old project with trims and FX outputs
   opened in the new build (the null test proves the export, not the live graph).
 
-- **The plugin editor's expert functions: presets, gain reduction, trims, gain match** (19-20 October 2026,
+- **The plugin editor's expert functions: presets, gain reduction, trims, gain match** (19-20 October 2026; **the gain-reduction meter was REMOVED on 21 October 2026** — API `plugin.gain_reduction` / `plugin.choose_gain_reduction`, `GainReductionReading`, engine `pluginMeterParameters:` gone; the rest holds,
   branch `feat/plugin-expert`, NOT merged, nothing pushed; engine patch **`0045`** on the local engine branch
   `objekat-probe-0045`, `8a8b5b453c0`, **NOT published on the fork** — `engine-patches/3.5/0045-*.patch` is its
   only backup until `tools/publish-engine-forks.sh` is run; the next free number is `0046`). The decisions:

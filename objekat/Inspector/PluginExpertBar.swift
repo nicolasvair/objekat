@@ -2,10 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The bar at the bottom of a plugin's editor window, under the Sidechain strip when there is one,
-/// on every plugin: the GAIN REDUCTION the plugin publishes (one of its read-only parameters, chosen
-/// by its name unless the hand chose, remembered per plugin type — @see EditViewModel+GainReduction),
-/// the TRIMS around it moved by one coupled gesture (+n in, −n out), the COMPENSATION after them, and
-/// the GAIN MATCH, which sets the compensation (and only it) from what was played (@see
+/// on every plugin: the TRIMS around it moved by one coupled gesture (+n in, −n out), the COMPENSATION
+/// after them, and the GAIN MATCH, which sets the compensation (and only it) from what was played (@see
 /// EditViewModel+Trims). The bar measures only while it is shown; nothing it reads is polled when the
 /// window is closed.
 struct PluginExpertBar: View {
@@ -13,19 +11,13 @@ struct PluginExpertBar: View {
     let plugin: UUID
 
     static let height: CGFloat = 30
-    /// The meter's full scale: past 24 dB of reduction the bar is simply full.
-    static let grFullScaleDb: Double = 24
 
-    @State private var candidates: [PluginMeterParameter] = []
-    @State private var chosen: PluginMeterParameter?
-    @State private var reading: GainReductionValue?
     @State private var playing = false
     @State private var dragAnchor: (input: Float, output: Float)?
 
     var body: some View {
         let trims = viewModel.pluginTrims(plugin) ?? (0, 0)
         HStack(spacing: 10) {
-            if candidates.isEmpty { notPublished } else { gainReduction }
             Spacer(minLength: 4)
             trimControls(trims)
             compensationLabel(viewModel.pluginCompensation(plugin) ?? 0)
@@ -37,92 +29,18 @@ struct PluginExpertBar: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.12)).frame(height: 1) }
         .onAppear {
-            candidates = viewModel.meterParameters(of: plugin)
-            chosen = viewModel.gainReductionParameter(of: plugin, among: candidates)
             viewModel.setGainMatchMeasuring(pluginID: plugin, true)
         }
         .onDisappear { viewModel.setGainMatchMeasuring(pluginID: plugin, false) }
-        .task(id: chosen?.id) {
-            // ~30 Hz: the plugin's own text, never a value cached by the model.
-            var tick = 0
+        .task {
+            // ~30 Hz: the transport state and the plugin's own bypass, never a value cached by the model.
             while !Task.isCancelled {
-                // An instance still loading when the bar appeared publishes nothing YET: asked again
-                // once a second while nothing was found (never once something was).
-                tick += 1
-                if candidates.isEmpty, tick % 30 == 0 {
-                    let found = viewModel.meterParameters(of: plugin)
-                    if !found.isEmpty {
-                        candidates = found
-                        chosen = viewModel.gainReductionParameter(of: plugin, among: found)
-                    }
-                }
-                if let c = chosen { reading = viewModel.gainReductionValue(of: plugin, parameter: c) }
-                else { reading = nil }
                 playing = viewModel.isTransportRunning
                 // The plugin's own bypass: nothing is measured while it is on (@see OBJPluginProbe.h).
                 viewModel.refreshGainMatchBypass(pluginID: plugin)
                 try? await Task.sleep(nanoseconds: 33_000_000)
             }
         }
-    }
-
-    // MARK: Gain reduction
-
-    private var gainReduction: some View {
-        HStack(spacing: 6) {
-            Menu {
-                ForEach(candidates) { c in
-                    Button { choose(c) } label: {
-                        if c.id == chosen?.id { Label(c.name, systemImage: "checkmark") } else { Text(verbatim: c.name) }
-                    }
-                }
-                Divider()
-                Button { choose(nil) } label: {
-                    if chosen == nil { Label(L("expert.gr.none"), systemImage: "checkmark") } else { Text(L("expert.gr.none")) }
-                }
-            } label: {
-                Text(L("expert.gr.short"))
-                    .font(.system(size: 10, weight: .bold))
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help(L("expert.gr.help", chosen?.name ?? L("expert.gr.none")))
-
-            if chosen != nil {
-                let db = reading?.decibels ?? 0
-                GeometryReader { g in
-                    ZStack(alignment: .trailing) {
-                        RoundedRectangle(cornerRadius: 2).fill(Color.primary.opacity(0.1))
-                        // Reduction grows from the RIGHT, as on a console's GR meter.
-                        RoundedRectangle(cornerRadius: 2).fill(Color.orange)
-                            .frame(width: g.size.width * CGFloat(min(max(db / Self.grFullScaleDb, 0), 1)))
-                    }
-                }
-                .frame(width: 90, height: 6)
-                Text(verbatim: reading?.text ?? "—")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(minWidth: 52, alignment: .leading)
-            }
-        }
-    }
-
-    /// A plugin that publishes no meter: said, rather than an empty place (no estimate in its stead).
-    private var notPublished: some View {
-        HStack(spacing: 4) {
-            Text(L("expert.gr.short")).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
-            Text(L("expert.gr.notPublished"))
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .help(L("expert.gr.notPublished.help"))
-    }
-
-    private func choose(_ c: PluginMeterParameter?) {
-        viewModel.chooseGainReductionParameter(of: plugin, c)
-        chosen = c
     }
 
     // MARK: Trims

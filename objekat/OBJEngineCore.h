@@ -460,9 +460,6 @@
 - (int)pluginCurrentProgram:(NSString*)pluginKey;
 - (BOOL)setPluginProgram:(NSString*)pluginKey index:(int)index;
 
-// A plugin's READ-ONLY parameters — what it exposes as meters (a compressor's gain reduction): an
-// external instance only, loaded. Each: { index, id, name }; `index` is the JUCE parameter index
-// `pluginParameterReading:index:` takes (NOT the `getPluginParams` index). [] when none / not loaded.
 // The trims around a plugin, in dB (engine patch 0045): an input gain before it, an output gain after
 // it, then the compensation (the gain match's) after that; ramped over one block, applied live and in
 // renders, bypassed with the plugin.
@@ -475,9 +472,6 @@
 // Reads the plugin's OWN bypass parameter (a VST3's kIsBypass, an AU's BypassEffect; NO for a plugin
 // without one) and tells the measurement: while it is on, nothing is measured. Polled by the editor bar.
 - (BOOL)refreshProbeBypass:(NSString*)pluginKey;
-- (NSArray<NSDictionary<NSString*, id>*>*)pluginMeterParameters:(NSString*)pluginKey;
-// { value (0…1), text, label } of that parameter now, nil if unavailable.
-- (NSDictionary<NSString*, id>* _Nullable)pluginParameterReading:(NSString*)pluginKey index:(int)index;
 
 // applyPluginStateXML:forPlugin: — ré-applique un état à l'instance VIVANTE, sans la détruire
 // ni la recharger. C'est la contrepartie de getPluginStateXML: pour une annulation, et ce que

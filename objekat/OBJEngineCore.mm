@@ -7481,13 +7481,6 @@ static void objStripBridgeState(juce::ValueTree& tree) {
     return YES;
 }
 
-// MARK: - A plugin's READ-ONLY parameters (what it shows as meters: a gain reduction above all)
-
-// Read-only is the plugin's own declaration: an AU's parameter info flags (MeterReadOnly, or not
-// IsWritable — JUCE's host does not filter them), a VST3's `kCanAutomate` missing (JUCE maps
-// `isAutomatable` onto it; a read-only parameter never carries it). The index is JUCE's
-// `getParameters()` order, NOT Tracktion's automatable list (which leaves those out): this list and
-// `pluginParameterReading:index:` share it, and nothing else does.
 // MARK: Trims and gain match around a plugin (engine patch 0045, @see OBJPluginProbe.h)
 
 static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0); }
@@ -7596,95 +7589,6 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
         if (p->objInstallProbe(std::make_unique<OBJPluginProbe>(w->second, false))) ++installed;
     }
     NSLog(@"[TRIM] rendu : %d plugin(s) avec trims sur le clone", installed);
-}
-
-- (NSArray<NSDictionary*>*)pluginMeterParameters:(NSString*)pluginKey {
-    NSMutableArray<NSDictionary*>* out = [NSMutableArray array];
-    auto* pi = [self loadedExternalInstance:pluginKey];
-    if (!pi) return out;
-    AudioUnit au = nullptr;
-    if (auto* c = pi->getAudioUnitClient()) au = c->getAudioUnitHandle();
-    const auto& params = pi->getParameters();
-    for (int i = 0; i < params.size(); ++i) {
-        auto* prm = params[i];
-        if (!prm) continue;
-        juce::String pid;
-        if (auto* hosted = dynamic_cast<juce::HostedAudioProcessorParameter*>(prm)) pid = hosted->getParameterID();
-        bool readOnly = false;
-        // `meter`: the plugin DECLARES a meter (an AU's MeterReadOnly). A merely non-writable AU
-        // parameter is often a setting (FabFilter: Oversampling, Style…), and a VST3 read-only one
-        // cannot be told from a setting: those are offered only when their NAME says gain reduction
-        // (@see EditViewModel.meterParameters).
-        bool meter = false;
-        if (au) {
-            AudioUnitParameterInfo info {};
-            UInt32 size = sizeof(info);
-            if (AudioUnitGetProperty(au, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global,
-                                     (AudioUnitElement) pid.getLargeIntValue(), &info, &size) == noErr) {
-                meter = (info.flags & kAudioUnitParameterFlag_MeterReadOnly) != 0;
-                readOnly = meter || (info.flags & kAudioUnitParameterFlag_IsWritable) == 0;
-                if (info.flags & kAudioUnitParameterFlag_CFNameRelease) {
-                    if (info.cfNameString) CFRelease(info.cfNameString);
-                }
-            }
-        } else {
-            readOnly = !prm->isAutomatable();
-        }
-        if (!readOnly) continue;
-        juce::String name = prm->getName(64);
-        juce::String idStr = pid.isNotEmpty() ? pid : juce::String(i);
-        [out addObject:@{ @"index": @(i),
-                          @"id":    [NSString stringWithUTF8String:idStr.toRawUTF8()],
-                          @"name":  [NSString stringWithUTF8String:name.toRawUTF8()],
-                          @"meter": @(meter) }];
-    }
-    return out;
-}
-
-// A parameter's current value (normalised 0…1) and the text the plugin gives for it. nil if the
-// instance is not loaded or the index is out of range. Cheap: polled by the editor's bar (~30 Hz).
-- (NSDictionary* _Nullable)pluginParameterReading:(NSString*)pluginKey index:(int)index {
-    auto* pi = [self loadedExternalInstance:pluginKey];
-    if (!pi) return nil;
-    const auto& params = pi->getParameters();
-    if (index < 0 || index >= params.size() || !params[index]) return nil;
-    auto* prm = params[index];
-    float v = prm->getValue();
-    juce::String text, label;
-    // An AU: JUCE's `getValue()` is a CACHE refreshed only when the unit posts a parameter event,
-    // which a meter never does (it is polled) — the reading stayed frozen. Asked of the unit itself.
-    if (auto* c = pi->getAudioUnitClient()) {
-        juce::String pid;
-        if (auto* hosted = dynamic_cast<juce::HostedAudioProcessorParameter*>(prm)) pid = hosted->getParameterID();
-        AudioUnit au = c->getAudioUnitHandle();
-        const auto element = (AudioUnitParameterID) pid.getLargeIntValue();
-        AudioUnitParameterValue raw = 0;
-        AudioUnitParameterInfo info {};
-        UInt32 size = sizeof(info);
-        if (au && pid.isNotEmpty()
-            && AudioUnitGetParameter(au, element, kAudioUnitScope_Global, 0, &raw) == noErr
-            && AudioUnitGetProperty(au, kAudioUnitProperty_ParameterInfo, kAudioUnitScope_Global,
-                                    element, &info, &size) == noErr) {
-            if ((info.flags & kAudioUnitParameterFlag_CFNameRelease) && info.cfNameString)
-                CFRelease(info.cfNameString);
-            const float range = info.maxValue - info.minValue;
-            v = range > 0 ? juce::jlimit(0.0f, 1.0f, (raw - info.minValue) / range) : 0.0f;
-            if (info.unit == kAudioUnitParameterUnit_Decibels) {
-                text = juce::String(raw, 1);
-                label = "dB";
-            } else {
-                text = prm->getText(v, 32);
-                label = prm->getLabel();
-            }
-        }
-    }
-    if (text.isEmpty()) {
-        text = prm->getText(v, 32);
-        label = prm->getLabel();
-    }
-    return @{ @"value": @(v),
-              @"text":  [NSString stringWithUTF8String:text.toRawUTF8()],
-              @"label": [NSString stringWithUTF8String:label.toRawUTF8()] };
 }
 
 - (NSString* _Nullable)getPluginStateXML:(NSString*)pluginKey {

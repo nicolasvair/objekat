@@ -901,7 +901,7 @@ INDEX 0 / the end, so a marker keeps its side of each former trim — the same s
 audit reports `segmentStart` / `segmentEnd` instead of the trims. The engine bug this exposed (a mono chain
 doubled once the first `ObjGain` was gone: `ChannelRemappingNode` adding into its own input) is patch `0041`.
 
-## The plugin editor's expert functions: presets, gain reduction, trims, gain match (October 2026)
+## The plugin editor's expert functions: presets, trims, gain match (October 2026)
 
 Branch `feat/plugin-expert` (session format **27**, engine patch `0045` on the local engine branch
 `objekat-probe-0045`). Authority for the requests and the answers: the side-session note
@@ -915,11 +915,10 @@ are offered beside them, read-only. A type's default is laid on a FRESH insertio
 carries a state — copy, duplicate, paste, link — keeps it). A load is a state change on the live instance
 (the patched-undo path, no rebuild) propagated to every instance ACTIVELY linked to it.
 
-### Decision: the gain reduction is what the plugin PUBLISHES, never ours
+### Decision (withdrawn 21 Oct 2026): no gain-reduction meter
 
-The bar reads one of the plugin's read-only parameters, chosen by name (`GainReductionReading`, pure) unless
-the hand chose, the choice remembered per plugin type. No delta in/out of our own (asked: "only the parameter
-the plugin exposes, we will see later"). A plugin that publishes nothing shows nothing.
+A read-only gain-reduction display (the plugin's own meter parameter) was built, then removed at the user's
+request: the bar keeps trims, compensation and gain match only.
 
 ### Decision: trims are a PROBE around the plugin, inside its node (option A)
 

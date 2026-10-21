@@ -1,10 +1,9 @@
 import Foundation
 
-// MARK: - A plugin's expert bar: its gain reduction, its trims, its gain match
+// MARK: - A plugin's expert bar: its trims, its gain match
 
 /// The machine's doors onto what the editor bar of a plugin shows (@see PluginExpertBar):
-/// `plugin.gain_reduction` reads the read-only parameter the plugin publishes; `plugin.trims` /
-/// `plugin.set_trims` / `plugin.nudge_trims` are the two gains around it (engine patch 0045);
+/// `plugin.trims` / `plugin.set_trims` / `plugin.nudge_trims` are the gains around a plugin (engine patch 0045);
 /// `plugin.measure_loudness`, `plugin.loudness` and `plugin.gain_match` are the gain match, which
 /// reads what was PLAYED (the transport must run, the measurement must be on — the bar switches it
 /// on while it is shown, a script does it here).
@@ -29,47 +28,6 @@ extension CommandRegistry {
     private func lufsJSON(_ v: Double) -> JSONValue { v.isFinite ? .number(v) : .null }
 
     func registerPluginExpertCommands() {
-
-        register("plugin.gain_reduction",
-                 summary: "The read-only parameters a plugin publishes, the one its bar reads as gain reduction (remembered per plugin type), and what it says now.",
-                 params: [ParamSpec("plugin", "uuid", "A live plugin.")],
-                 undo: .none) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let id = try p.uuid("plugin")
-            guard vm.presetTarget(id) != nil else { throw self.trimError(EditViewModel.TrimError.unknownPlugin) }
-            let cands = vm.meterParameters(of: id)
-            let chosen = vm.gainReductionParameter(of: id, among: cands)
-            let value = chosen.flatMap { vm.gainReductionValue(of: id, parameter: $0) }
-            return .object([
-                "candidates": .array(cands.map { .object(["index": .number(Double($0.index)), "id": .string($0.id), "name": .string($0.name)]) }),
-                // false = the bar says "not published by this plugin" (no estimate is made in its place)
-                "published": .bool(!cands.isEmpty),
-                "chosen": chosen.map { .string($0.id) } ?? .null,
-                "text": value.map { .string($0.text) } ?? .null,
-                "db": value?.decibels.map { .number($0) } ?? .null
-            ])
-        }
-
-        register("plugin.choose_gain_reduction",
-                 summary: "Chooses which read-only parameter the bar reads as gain reduction, for every plugin of this type (`id` null = none).",
-                 params: [ParamSpec("plugin", "uuid", "A live plugin."),
-                          ParamSpec("id", "string", required: false, "A candidate's id from plugin.gain_reduction; null or absent = show nothing.")],
-                 undo: .none) { p in
-            let vm = try CommandContext.shared.requireViewModel()
-            let id = try p.uuid("plugin")
-            guard vm.presetTarget(id) != nil else { throw self.trimError(EditViewModel.TrimError.unknownPlugin) }
-            let want = try p.optionalString("id")
-            let cands = vm.meterParameters(of: id)
-            var chosen: PluginMeterParameter? = nil
-            if let want {
-                guard let c = cands.first(where: { $0.id == want }) else {
-                    throw CommandError(code: .not_found, message: "no read-only parameter '\(want)' on this plugin")
-                }
-                chosen = c
-            }
-            vm.chooseGainReductionParameter(of: id, chosen)
-            return .object(["chosen": chosen.map { .string($0.id) } ?? .null])
-        }
 
         register("plugin.trims",
                  summary: "A plugin's input and output trims and its compensation (the gain match's, after the output trim), in dB.",

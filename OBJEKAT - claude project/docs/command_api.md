@@ -1043,19 +1043,9 @@ a state changed through the plugin's own chunk only is not seen as "modified".
   and on every instance actively linked to it; one undo point; `not_found` when the type has none.
 Tested by `tools/scenario_presets.py`.
 
-### The editor's expert bar: gain reduction, trims, compensation, gain match (session formats 29 and 30, engine patch `0045`)
+### The editor's expert bar: trims, compensation, gain match (session formats 29 and 30, engine patch `0045`)
 
 A bar at the bottom of every plugin editor (under the Sidechain strip when there is one).
-
-**Gain reduction** — read ONLY from a read-only parameter the plugin publishes (nothing is measured by
-OBJEKAT, and nothing is estimated in its place: a plugin that publishes none — a built-in, FabFilter — shows
-"not published by this plugin"). The candidates are the parameters the plugin flags as METERS (an AU's
-MeterReadOnly) or whose name says gain reduction; an AU's value is read straight from the unit
-(`AudioUnitGetParameter`, JUCE's cache is never refreshed for meters). The bar picks the one whose name says
-gain reduction unless the hand chose, the choice remembered per plugin TYPE; the dB are parsed from the
-plugin's own text.
-- `plugin.gain_reduction {plugin}` → `{candidates: [{index, id, name}], chosen, text, db, published}`.
-- `plugin.choose_gain_reduction {plugin, id?}` — `null` / absent = show nothing (also remembered).
 
 **Trims and compensation** — an input gain before the plugin, an output gain after it, and a COMPENSATION
 after the output trim (`ObjectPlugin.inputTrimDb` / `outputTrimDb` / `compensationDb`, each absent when 0;
@@ -1081,8 +1071,7 @@ runs only while asked (the bar asks for it while shown) and never during an offl
 - `plugin.loudness {plugin, seconds?}` → `{blocks, total, input_lufs, output_lufs, plugin_bypassed}` (100 ms sub-blocks above the gate; `total` counts every block ever measured; a LUFS is `null` when nothing was read).
 - `plugin.gain_match {plugin}` → the gains laid (as `plugin.trims`); `invalid_state` when the transport is stopped or when fewer
   than 10 sub-blocks (1 s) above the gate were read. One undo point.
-Tested by `tools/scenario_plugin_expert.py` (an instance WITH audio: not `--no-audio`) and
-`tools/test_gain_reduction_reading.swift`.
+Tested by `tools/scenario_plugin_expert.py` (an instance WITH audio: not `--no-audio`).
 
 ### A selection of plugin cards
 
