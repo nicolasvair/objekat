@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import Perception
 
 /// The timeline's EXACT scroll position, kept out of `@State`.
 ///
@@ -13,7 +14,7 @@ import UniformTypeIdentifiers
 /// pixel: the ruler (a sticky header) and an infinite bus's band (set on the visible window).
 /// Each observes it on its own account, and it alone is re-evaluated. All the rest — the
 /// drawing's culling — goes through `cullScrollX`, which only moves in notches. @see TimelineView.cullScrollX
-@Observable final class TimelineScrollAnchor {
+@Perceptible final class TimelineScrollAnchor {
     var x: CGFloat = 0
     var y: CGFloat = 0
 }
@@ -32,7 +33,7 @@ private struct StickyToViewportTop<Content: View>: View {
         self.content = content()
     }
 
-    var body: some View { content.offset(y: anchor.y) }
+    var body: some View { WithPerceptionTracking { content.offset(y: anchor.y) } }
 }
 
 /// The red playhead line — the only view of the timeline that reads the playhead, so that a
@@ -43,7 +44,9 @@ private struct PlayheadLine: View {
     let isPlaying: Bool
     let height: CGFloat
     let top: CGFloat
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Rectangle()
             .fill(Color.red.opacity(isPlaying ? 0.85 : 0.45))
             .frame(width: 1.5, height: height)
@@ -515,7 +518,9 @@ struct TimelineView: View {
     }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ScrollView([.horizontal, .vertical], showsIndicators: true) {
             ZStack(alignment: .topLeading) {
                 // Alternating background bands: ONE Canvas that only draws the rows the viewport
@@ -561,7 +566,7 @@ struct TimelineView: View {
                 // group's drop lane, so the order between the two is not visible).
 
                 // Grid
-                Canvas { context, size in
+                PerceivedCanvas { context, size in
                     let snapOn = viewModel.effectiveSnapEnabled
                     let isBpm  = viewModel.gridMode == .bpm
                     guard snapOn || isBpm else { return }
@@ -797,18 +802,18 @@ struct TimelineView: View {
                                                               step: Self.cullStepPx))
                 }
                 let _ = TimelineRegimeMeter.recordLayer("rich_blocks", elements: richVisible.count)
-                ForEach(richVisible) { entry in
+                ForEach(richVisible) { entry in WithPerceptionTracking {
                     itemBlock(for: entry.item, displayLane: entry.displayLane,
                               sendRows: tools.sendRows)
                         .allowsHitTesting(false)
-                }
+                } }
 
                 // Piano rolls unfolded inline under the open MIDI clips. Interactive
                 // (allowsHitTesting), unlike the blocks. Positioned on the band of sub-lanes
                 // reserved by expandedSpan.
                 let pianoRolls = visibleEntries.filter { $0.item.showsPianoRollInline }
                 let _ = TimelineRegimeMeter.recordLayer("piano_rolls", elements: pianoRolls.count)
-                ForEach(pianoRolls) { entry in
+                ForEach(pianoRolls) { entry in WithPerceptionTracking {
                     // It covers the WHOLE band of sub-lanes (the clip-tinted background already fills
                     // 2·laneStep, the gap included): without the -laneGap, a 4px line in the clip's
                     // colour stuck out under the control band.
@@ -828,7 +833,7 @@ struct TimelineView: View {
                     .offset(x: entry.absStart * pixelsPerSecond,
                             y: rulerHeight + Double(entry.displayLane + 1) * laneStep)
                     .zIndex(2.55)
-                }
+                } }
 
                 // AUTOMATION bands unfolded inline under the open objects. The same overlay mechanism
                 // as the piano rolls, positioned on the band of sub-lanes reserved by expandedSpan,
@@ -839,7 +844,7 @@ struct TimelineView: View {
                 // empty almost everywhere.
                 let openAutomationBands = visibleEntries.filter { $0.item.automationOpen }
                 let _ = TimelineRegimeMeter.recordLayer("automation_bands", elements: openAutomationBands.count)
-                ForEach(openAutomationBands) { entry in
+                ForEach(openAutomationBands) { entry in WithPerceptionTracking {
                     if let r = automationBandRect(for: entry) {
                         AutomationBandView(
                             viewModel: viewModel,
@@ -872,7 +877,7 @@ struct TimelineView: View {
                         .offset(x: r.minX, y: r.minY)
                         .zIndex(2.56)
                     }
-                }
+                } }
 
                 // The crossfades, drawn ONCE above the blocks. A zone belongs to two objects at
                 // the same time — it is precisely the span they share — so neither block can draw
@@ -888,19 +893,19 @@ struct TimelineView: View {
                 // Cutting by dragging: the portion that would disappear if one released now is
                 // struck through in red. The gesture's direction decides (pulling right = keep the left).
                 if viewModel.activeTool == .toolCut, let cd = cutDrag {
-                    ForEach(Array(cutDragDoomedRects.enumerated()), id: \.offset) { _, r in
+                    ForEach(Array(cutDragDoomedRects.enumerated()), id: \.offset) { _, r in WithPerceptionTracking {
                         Rectangle()
                             .fill(Color.red.opacity(0.28))
                             .frame(width: r.width, height: r.height)
                             .offset(x: r.minX, y: r.minY)
                             .allowsHitTesting(false)
                             .zIndex(2.62)
-                    }
+                    } }
                     // ⌥ = ripple: the band says what the gesture really takes — the lanes of the
                     // objects it aims at over the hole's span, and not only the object one is
                     // holding. Struck through like the plain cut, plus the edge that shows where
                     // everything will come back.
-                    ForEach(Array(cutDragRippleBands.enumerated()), id: \.offset) { _, band in
+                    ForEach(Array(cutDragRippleBands.enumerated()), id: \.offset) { _, band in WithPerceptionTracking {
                         Rectangle()
                             .fill(Color.red.opacity(0.22))
                             .overlay(alignment: .leading) {
@@ -910,7 +915,7 @@ struct TimelineView: View {
                             .offset(x: band.minX, y: band.minY)
                             .allowsHitTesting(false)
                             .zIndex(2.62)
-                    }
+                    } }
                     Rectangle()
                         .fill(Color.yellow.opacity(0.9))
                         .frame(width: 1.5, height: canvasHeight - rulerHeight)
@@ -965,7 +970,7 @@ struct TimelineView: View {
                 // content to choose from): only groups and MIDI clips ever get here.
                 let automationBezels = visibleEntries.filter { $0.expandedSpan > 0 && viewModel.hasAutomationSelector($0.item) }
                 let _ = TimelineRegimeMeter.recordLayer("automation_bezels", elements: automationBezels.count)
-                ForEach(automationBezels) { entry in
+                ForEach(automationBezels) { entry in WithPerceptionTracking {
                     if let b = automationBezel(for: entry) {
                         let tint  = entry.item.customColor ?? viewModel.stemColor(for: entry.item.id)
                         let paint = interiorPaint(for: entry, bands: inlineBands)
@@ -977,7 +982,7 @@ struct TimelineView: View {
                         // towards the lanes below — the opposite of what it meant. The hem stops at
                         // the block's lower edge; the gutter stays empty, as under any other object.
                     }
-                }
+                } }
 
                 // Alt+drag ghosts (@see `altGhostsLayer`).
                 altGhostsLayer(selectedIDs: selectedIDs)
@@ -992,7 +997,7 @@ struct TimelineView: View {
                 // The targets are resolved HERE, in ONE walk of the entries for every id involved
                 // (it was a scan of all the entries per member, twice).
                 if let info = viewModel.linkOverlayInfo, let plan = pluginLinkPlan(info) {
-                    Canvas { ctx, _ in
+                    PerceivedCanvas { ctx, _ in
                         LinkOverlay.drawStar(in: ctx, source: plan.source, members: plan.members,
                                              color: info.color)
                     }
@@ -1013,7 +1018,7 @@ struct TimelineView: View {
                 // when the selection holds a consolidated object at all.
                 let consolidateLinks = consolidateLinkPlan()
                 if !consolidateLinks.isEmpty {
-                    Canvas { ctx, _ in
+                    PerceivedCanvas { ctx, _ in
                         for link in consolidateLinks {
                             switch link {
                             case .star(let source, let members):
@@ -1042,7 +1047,7 @@ struct TimelineView: View {
                 // The send in focus (dragging/hovering a knob) is emphasised (a vivid red plus a
                 // glow); the same clip's other wired sends stay discreet.
                 if viewModel.activeTool == .toolAux {
-                    Canvas { ctx, _ in drawSendLinks(&ctx) }
+                    PerceivedCanvas { ctx, _ in drawSendLinks(&ctx) }
                     .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
                     .allowsHitTesting(false)
                     .zIndex(2.7)
@@ -1128,7 +1133,7 @@ struct TimelineView: View {
                         }))
         }
         .scrollPosition($scrollPosition)
-        // The mirror in the view-model (`viewScrollX/Y`, @ObservationIgnored) serves only to save
+        // The mirror in the view-model (`viewScrollX/Y`, @PerceptionIgnored) serves only to save
         // the visible area with the project — it invalidates no view.
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, x in
             scrollAnchor.x = x
@@ -1151,7 +1156,7 @@ struct TimelineView: View {
         .onScrollPhaseChange { _, newPhase in
             if newPhase == .idle { reframeIfOffGridOnIdle() }
         }
-        .background(GeometryReader { geo in
+        .background(GeometryReader { geo in WithPerceptionTracking {
             Color(nsColor: .controlBackgroundColor)
                 .onAppear {
                     viewportWidth = geo.size.width
@@ -1165,7 +1170,7 @@ struct TimelineView: View {
                     viewportHeight = h
                     adjustForAvailableHeightChange()
                 }
-        })
+        } })
         // The rows' names and the button that governs them: PINNED to the viewport, in the same
         // overlay layer as the tool indicator. A row's name is its identity, and an identity that
         // scrolls off with the content stops naming anything. @see MarkerLaneHeaderView
@@ -2217,7 +2222,7 @@ struct TimelineView: View {
         }
         let visX0 = Double(cullScrollX) - 1
         let visX1 = Double(cullScrollX) + Double(cullViewportWidth) + 1
-        return Canvas { ctx, _ in
+        return PerceivedCanvas { ctx, _ in
             // A rectangle [x0, x1) × [y, y + h), cut to the visible columns.
             func fillRect(_ x0: Double, _ x1: Double, y: Double, h: Double, _ color: Color) {
                 let a = max(x0, visX0), b = min(x1, visX1)
@@ -2276,7 +2281,7 @@ struct TimelineView: View {
         let rows = LaneCulling.rows(y0: win.y0, y1: win.y1, rulerHeight: ruler, laneStep: step,
                                     count: laneRows)
         let tint = Color.black.opacity(0.02)
-        return Canvas { ctx, _ in
+        return PerceivedCanvas { ctx, _ in
             guard x1 > x0 else { return }
             for lane in rows where lane % 2 == 0 {
                 ctx.fill(Path(CGRect(x: x0, y: ruler + Double(lane) * step,
@@ -2306,7 +2311,7 @@ struct TimelineView: View {
             guard LaneCulling.meets(top: top, height: h, y0: win.y0, y1: win.y1) else { return nil }
             return Tint(y: top, h: h, color: viewModel.stemColor(for: entry.item.id).opacity(0.06))
         }
-        return Canvas { ctx, _ in
+        return PerceivedCanvas { ctx, _ in
             guard x1 > x0 else { return }
             for t in tints {
                 ctx.fill(Path(CGRect(x: x0, y: t.y, width: x1 - x0, height: t.h)),
@@ -2343,7 +2348,7 @@ struct TimelineView: View {
             masks.append(Mask(y: top, h: h, gs: gs, ge: ge))
         }
         let veil = Color.black.opacity(0.28)
-        return Canvas { ctx, _ in
+        return PerceivedCanvas { ctx, _ in
             guard x1 > x0 else { return }
             for m in masks {
                 // The part before the start [0, gs) and the part after the end [ge, totalW),
@@ -2385,7 +2390,7 @@ struct TimelineView: View {
     @ViewBuilder private func crossfadeCanvas() -> some View {
         let drawings = crossfadeDrawings()
         if !drawings.isEmpty {
-            Canvas { ctx, _ in
+            PerceivedCanvas { ctx, _ in
                 for d in drawings { d.draw(in: ctx) }
             }
             .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
@@ -2405,7 +2410,7 @@ struct TimelineView: View {
             let ys = visibleLanes(of: sel.lanes).map { rulerHeight + Double($0) * laneStep }
             if b > a, !ys.isEmpty {
                 let h = blockHeight
-                Canvas { ctx, _ in
+                PerceivedCanvas { ctx, _ in
                     for y in ys {
                         ctx.fill(Path(CGRect(x: a, y: y, width: b - a, height: h)),
                                  with: .color(TimeSelection.overlayColor))
@@ -2451,7 +2456,7 @@ struct TimelineView: View {
             let x = plan.x
             let carets = plan.carets
             let h = blockHeight
-            Canvas { ctx, _ in
+            PerceivedCanvas { ctx, _ in
                 for c in carets {
                     ctx.fill(Path(CGRect(x: x, y: c.y, width: InsertionCaret.width, height: h)),
                              with: .color(c.ink))
@@ -3189,7 +3194,7 @@ struct TimelineView: View {
                                    previews: [UUID: BlockPreviewGeometry] = [:],
                                    hidesClipMuteVeil: Bool = false,
                                    sticky: StickyLabelPass? = nil) -> some View {
-        Canvas { ctx, _ in
+        PerceivedCanvas { ctx, _ in
                 // The sticky pass is a second draw of the SAME layer's names, not a frame of the
                 // blocks: it must not count as one.
                 if !(sticky?.isStickyPass ?? false) { TimelineRegimeMeter.recordCanvasDraw() }
@@ -3810,7 +3815,7 @@ struct TimelineView: View {
     /// for all of them, `origins` being the top-left of each badge in canvas coordinates: the same
     /// 18 pt disc and 11 pt bold plus the rich ghost carried.
     private func altCopyBadgesCanvas(_ origins: [CGPoint]) -> some View {
-        Canvas { ctx, _ in
+        PerceivedCanvas { ctx, _ in
             let plus = GlyphResolveCache.shared.glyph("plus", size: 11, weight: .bold,
                                                       color: .white, in: ctx)
             for o in origins {
@@ -4234,13 +4239,13 @@ struct TimelineView: View {
         let drawnW: Double = isRow ? 16 + Double(n - 1) * 17 : 16
         let drawnH: Double = isRow ? 5 : 5 + Double(n - 1) * 7
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(0..<n), id: \.self) { i in
+            ForEach(Array(0..<n), id: \.self) { i in WithPerceptionTracking {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(color.opacity(active ? 0.9 : 0.55))
                     .frame(width: 16, height: 5)
                     .offset(x: isRow ? Double(i) * 17 : 0,
                             y: isRow ? 0 : Double(i) * 7)
-            }
+            } }
         }
         .frame(width: drawnW, height: drawnH, alignment: .topLeading)
         .frame(width: 56, height: 22)
@@ -5096,7 +5101,9 @@ private struct HUDButton: View {
 
     @Environment(\.isEnabled) private var isEnabled
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Text(title).font(.system(size: 10, weight: .semibold))

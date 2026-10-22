@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Perception
 import AppKit
 import UniformTypeIdentifiers
 
@@ -243,7 +244,9 @@ struct objekatApp: App {
         workspace.closeWithConfirmation(workspace.activeTabID)
     }
 
-    var body: some Scene {
+    var body: some Scene { WithPerceptionTracking { perceivedBody } }
+
+    @SceneBuilder private var perceivedBody: some Scene {
         WindowGroup {
             ContentView(session: session, workspace: workspace)
                 .preferredColorScheme(.dark)
@@ -391,11 +394,11 @@ struct objekatApp: App {
                     .disabled(workspace.tabs.count < 2)
                 if workspace.tabs.count >= 2 {
                     Menu(L("menu.window.goToTab")) {
-                        ForEach(Array(workspace.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
+                        ForEach(Array(workspace.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in WithPerceptionTracking {
                             Button(workspace.displayName(for: tab)) { selectTab(tab.id) }
                                 .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")),
                                                  modifiers: [.command])
-                        }
+                        } }
                     }
                 }
             }

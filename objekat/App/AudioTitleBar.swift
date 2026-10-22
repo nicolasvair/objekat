@@ -14,13 +14,14 @@ import SwiftUI
 import AppKit
 import Combine
 import CoreAudio
+import Perception
 
 // MARK: - Watching the CoreAudio devices
 
 /// Watches the system's list of audio devices and bumps `generation` on every change (a device
 /// plugged in or out, an aggregate created…). Any view that reads `generation` in its `body` is
 /// therefore rebuilt when something is plugged in — with no periodic polling.
-@Observable
+@Perceptible
 @MainActor
 final class AudioDeviceWatcher {
     static let shared = AudioDeviceWatcher()
@@ -55,7 +56,9 @@ struct AudioSettingsMenu: View {
     /// before the click that opens the menu) and on every change CoreAudio reports.
     @State private var devices: [String] = []
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Menu {
             if !devices.isEmpty {
                 Picker(L("audio.menu.device"), selection: deviceBinding) {

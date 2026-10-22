@@ -12,7 +12,7 @@ import Foundation
 //
 // OBSERVATION — every accessor reads `laneEntries` first, even on a cache hit: it is what registers
 // the dependency, so a SwiftUI body that used to read the list through `first(where:)` is still
-// invalidated when the list changes. (The cache itself is @ObservationIgnored.)
+// invalidated when the list changes. (The cache itself is @PerceptionIgnored.)
 extension EditViewModel {
 
     private func laneEntryIndex(for entries: [LaneEntry]) -> LaneEntryIndex {

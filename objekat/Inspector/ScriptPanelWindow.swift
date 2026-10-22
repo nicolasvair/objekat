@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - The window a script asked for
 
@@ -106,7 +107,9 @@ struct ScriptPanelView: View {
     /// The window's own state: whether the `advanced` controls are drawn.
     @State private var expert = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let p = store.panels[panelID] {
             VStack(alignment: .leading, spacing: 6) {
                 ScriptControlsForm(controls: p.controls, values: p.values, expert: expert,

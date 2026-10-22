@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Sends: the columns below the stems, their wires' handles, and a bus's head (received sends)
 //
@@ -37,7 +38,9 @@ struct SynopticSendRow: View {
             .help(outgoing ? L("synoptic.send.outgoing") : L("synoptic.send.incoming"))
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The glyph's SIDE says the direction: a received send comes IN to the name (glyph on its
         // left), an outgoing one leaves FROM the name towards elsewhere (glyph on its right).
         HStack(spacing: 6) {
@@ -104,7 +107,9 @@ struct AddSendButton: View {
     let action: () -> Void
     @State private var hovering = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: "plus").font(.system(size: 9, weight: .bold))
@@ -147,7 +152,9 @@ struct SendCardView: View {
         }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 5) {
             // The grip: the arrow and the name take the card in the hand (the level, the switch and the
             // menu keep their own gestures).
@@ -270,7 +277,9 @@ struct SendChainCardView: View {
     let send: SynopticSend
     let actions: SynopticActions
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let aux = send.id
         let p = card.plugin
         let selection = actions.sendPluginSelection?(aux) ?? []
@@ -303,7 +312,9 @@ struct SendColumnDropView: View {
     @State private var dropIndex: Int? = nil
     @State private var dropHintID = UUID()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let f = placement.frame
         if let onDrop = actions.onSendBoxDrop {
             let send = placement.send
@@ -372,7 +383,9 @@ struct SendTapDotView: View {
     let actions: SynopticActions
     @State private var hovering = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let send = placement.send
         let live = SendWire.state(of: send) == .live
         let tint = (live ? Color.accentColor : Color.secondary)

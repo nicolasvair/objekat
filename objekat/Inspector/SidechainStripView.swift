@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 /// The strip at the bottom of a plugin's editor window, for a plugin that has a sidechain input:
 /// which source keys it (a picker: none, the stems, the objects playing at the same time as a tree
@@ -16,7 +17,9 @@ struct SidechainStripView: View {
 
     private var picking: Bool { viewModel.sidechainPick == SidechainPick(host: host, plugin: plugin) }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let current = viewModel.sidechainCurrent(host: host, plugin: plugin)
         HStack(spacing: 8) {
             Image(systemName: FeatureIcons.sidechainReception)
@@ -43,9 +46,9 @@ struct SidechainStripView: View {
             .buttonStyle(.plain)
             .layoutPriority(2)
             .help(current?.inactiveReason.map { L("plugin.sidechain.inactive", $0) } ?? L("sidechain.strip.source.help"))
-            .popover(isPresented: $pickerShown, arrowEdge: .bottom) {
+            .popover(isPresented: $pickerShown, arrowEdge: .bottom) { WithPerceptionTracking {
                 SidechainSourcePicker(viewModel: viewModel, host: host, plugin: plugin) { pickerShown = false }
-            }
+            } }
 
             Text(verbatim: "→")
                 .font(.system(size: 11))
@@ -88,7 +91,9 @@ struct SidechainStripIfAny: View {
     let viewModel: EditViewModel
     let plugin: UUID
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let host = viewModel.chainHost(ofPlugin: plugin), viewModel.showsSidechainStrip(host: host, plugin: plugin) {
             SidechainStripView(viewModel: viewModel, host: host, plugin: plugin)
         }
@@ -109,7 +114,9 @@ struct SidechainSourcePicker: View {
     @State private var objectsOpen = true
     @State private var seeded = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let tree = viewModel.sidechainSourceTree(host: host, plugin: plugin)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -121,9 +128,9 @@ struct SidechainSourcePicker: View {
                     section(L("plugin.sidechain.stems"), open: $stemsOpen)
                     if stemsOpen {
                         if tree.stems.isEmpty { empty(L("sidechain.picker.noStems")) }
-                        ForEach(tree.stems) { s in
+                        ForEach(tree.stems) { s in WithPerceptionTracking {
                             row(name: s.name, depth: 1, checked: tree.current == s.id, refusal: s.refusal) { choose(s.id) }
-                        }
+                        } }
                     }
                     section(L("sidechain.picker.objects"), open: $objectsOpen)
                     if objectsOpen {
@@ -177,7 +184,7 @@ struct SidechainSourcePicker: View {
     }
 
     private func nodes(_ list: [SidechainSourceTree.Node], depth: Int, current: UUID?) -> AnyView {
-        AnyView(ForEach(list) { n in
+        AnyView(ForEach(list) { n in WithPerceptionTracking {
             VStack(alignment: .leading, spacing: 0) {
                 row(name: n.name, depth: depth, checked: current == n.id, refusal: n.refusal,
                     expandable: !n.children.isEmpty, isExpanded: expanded.contains(n.id),
@@ -186,7 +193,7 @@ struct SidechainSourcePicker: View {
                 }
                 if expanded.contains(n.id) { nodes(n.children, depth: depth + 1, current: current) }
             }
-        })
+        } })
     }
 
     private func section(_ title: String, open: Binding<Bool>) -> some View {

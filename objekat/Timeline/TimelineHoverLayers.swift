@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // The leaves that read the pointer's hover (@see `TimelineHoverStore`). Each one is a view of its
 // own ON PURPOSE, on the model of `FileDropGhostOverlay`: what it reads is tracked by ITS body, so
@@ -16,7 +17,9 @@ struct CutHoverLine: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             if let hover = store.cutHover,
                let entry = viewModel.laneEntry(forID: hover.id) {
@@ -48,7 +51,9 @@ struct EditZoneVeilLayer: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             if let hover = store.editZoneHover,
                let entry = viewModel.laneEntry(forID: hover.id) {
@@ -69,7 +74,7 @@ struct TimelineHoverHelp: ViewModifier {
     let store: TimelineHoverStore
 
     func body(content: Content) -> some View {
-        content.helpIf(store.toolZoneHelpText)
+        WithPerceptionTracking { content.helpIf(store.toolZoneHelpText) }
     }
 }
 

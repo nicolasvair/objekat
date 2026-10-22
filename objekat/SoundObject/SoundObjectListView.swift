@@ -1,6 +1,7 @@
 import SwiftUI
 // `MemberImportVisibility` is on for this target: NSWorkspace is named here, so AppKit is imported here.
 import AppKit
+import Perception
 
 /// The left panel's sound list: the project's TABLE OF CONTENTS.
 ///
@@ -89,7 +90,9 @@ struct SoundObjectListView: View {
         return (NSApp.keyWindow?.firstResponder as? NSTextView)?.isFieldEditor == true
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // ONE walk of the tree per pass: `rows` was evaluated for the `ForEach` and again for the
         // reveal key.
         let rows = self.rows
@@ -103,10 +106,10 @@ struct SoundObjectListView: View {
 
             Divider()
 
-            ScrollViewReader { scroller in
+            ScrollViewReader { scroller in WithPerceptionTracking {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
+                    ForEach(rows) { row in WithPerceptionTracking {
                         // The relink menu is attached only when it has something to say. An
                         // `.contextMenu` whose builder yields nothing still opens an empty box on
                         // macOS, and a group row with nothing missing anywhere offers exactly
@@ -124,7 +127,7 @@ struct SoundObjectListView: View {
                                 }
                         }
                         Divider()
-                    }
+                    } }
                 }
             }
             .simultaneousGesture(TapGesture().onEnded {
@@ -170,7 +173,7 @@ struct SoundObjectListView: View {
                 if searchFocused { searchFocused = false }
                 revealRow(new.id, in: scroller)
             }
-            }
+            } }
 
             // The disk line: only for a project that has a folder (@see `DiskUsageFooterView`).
             if viewModel.projectFolder != nil {

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - WHO OWNS THE KEYBOARD, project-wide.
 //
@@ -23,7 +24,7 @@ import SwiftUI
 // unconditionally AFTER B's claim, the owner would be wiped out from under B and the flag would
 // die right when it is needed. Checking identity first makes a late, stale release a no-op.
 @MainActor
-@Observable
+@Perceptible
 final class KeyboardClaim {
     static let shared = KeyboardClaim()
 

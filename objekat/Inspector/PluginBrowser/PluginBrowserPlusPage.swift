@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - The plugin browser's "+" page: what each zone of the signal view's "+" asks for
 
@@ -40,8 +41,10 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
 
     private static var space: String { "plusPage" }
 
-    var body: some View {
-        GeometryReader { geo in
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
+        GeometryReader { geo in WithPerceptionTracking {
             let scale = Self.scale(forHeight: geo.size.height)
             VStack(spacing: 0) {
                 circle(scale: scale)
@@ -58,7 +61,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             }
             .overlay(alignment: .topLeading) { carriedGhost }
             .coordinateSpace(name: Self.space)
-        }
+        } }
     }
 
     // MARK: Geometry
@@ -97,7 +100,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
         }
         let target = carried.flatMap { slot(at: $0.location, scale: scale) }
         let lit = target.flatMap { t in sectors.firstIndex { $0.direction == t.direction && $0.level == t.level } }
-        return GeometryReader { g in
+        return GeometryReader { g in WithPerceptionTracking {
             let c = CGPoint(x: g.size.width / 2, y: g.size.height / 2)
             ZStack(alignment: .topLeading) {
                 PlusSectorsView(center: c, sectors: sectors, highlighted: lit, showsIcons: false,
@@ -106,16 +109,16 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
                     .font(.system(size: 18))
                     .foregroundStyle(Color.accentColor)
                     .position(c)
-                ForEach(sectors.indices, id: \.self) { i in
+                ForEach(sectors.indices, id: \.self) { i in WithPerceptionTracking {
                     zoneItem(sectors[i], center: c, scale: scale)
-                }
+                } }
             }
-            .background(GeometryReader { inner in
+            .background(GeometryReader { inner in WithPerceptionTracking {
                 Color.clear
                     .onAppear { circleFrame = inner.frame(in: .named(Self.space)) }
                     .onChange(of: inner.frame(in: .named(Self.space))) { _, f in circleFrame = f }
-            })
-        }
+            } })
+        } }
     }
 
     /// What a zone shows at its centre: its item (draggable, ✕ on hover), or for an empty far zone the near

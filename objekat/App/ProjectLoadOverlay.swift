@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 /// The progress overlay shown while a project is loading — step 6 of project_load_progress_plan.
 ///
@@ -24,7 +25,9 @@ struct ProjectLoadOverlay: View {
     private static let minVisible: TimeInterval = 0.3
     private static let fadeDuration: TimeInterval = 0.15
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack {
             if showOverlay {
                 // No blur (user decision, 24 September 2026: it served no purpose) — a clear layer

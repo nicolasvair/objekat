@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - AppKit drag source (a batch of files)
 
@@ -103,7 +104,7 @@ struct FileDragSource: NSViewRepresentable {
 // MARK: - Tree node (a folder or an audio file)
 
 @MainActor
-@Observable
+@Perceptible
 final class SoundLibraryNode: Identifiable {
     let id = UUID()
     let url: URL
@@ -137,7 +138,7 @@ final class SoundLibraryNode: Identifiable {
 /// it — the tab "closed itself" each time one came back. `ContentView` owns one instance for the
 /// window's whole life and hands it to the view.
 @MainActor
-@Observable
+@Perceptible
 final class SoundLibraryViewModel {
     // The folder chosen initially: the upper bound of navigation (⌘↑ never climbs above it)
     private(set) var baseURL: URL? = nil
@@ -157,7 +158,7 @@ final class SoundLibraryViewModel {
 
     /// The row at the top of the list, kept so the scroll survives the view leaving the hierarchy
     /// (a tab change). Not observed: it is written all along a scroll, and nothing draws from it.
-    @ObservationIgnored var scrollTopID: UUID? = nil
+    @PerceptionIgnored var scrollTopID: UUID? = nil
 
     var selectedID: UUID? = nil
     private(set) var selectedNode: SoundLibraryNode? = nil
@@ -210,7 +211,7 @@ final class SoundLibraryViewModel {
     }
 
     /// The slots' memory (@see FinderSlotStore); the view reads it to draw its row.
-    @ObservationIgnored let slots = FinderSlotStore.shared
+    @PerceptionIgnored let slots = FinderSlotStore.shared
 
     /// Asks for a folder. nil if the panel is cancelled.
     private func pickFolder() -> URL? {
@@ -239,10 +240,10 @@ final class SoundLibraryViewModel {
 
     /// Where each slot was left (the folder the hand had gone down into), for the session: coming
     /// back to a slot puts the Finder back THERE, not at the slot's root. Keyed by slot id.
-    @ObservationIgnored private var slotLocations: [String: URL] = [:]
+    @PerceptionIgnored private var slotLocations: [String: URL] = [:]
     /// The slot a click has just made current, and when — so that the second click of a double
     /// click on a slot that was NOT current does not read as "fold everything back".
-    @ObservationIgnored private var lastSlotActivation: (id: String, at: TimeInterval)? = nil
+    @PerceptionIgnored private var lastSlotActivation: (id: String, at: TimeInterval)? = nil
 
     /// A click on a colour, as the bar hands it over: ⌥ removes the slot, a double click on the slot
     /// ALREADY shown folds its tree back, a plain click shows the slot.
@@ -303,7 +304,7 @@ final class SoundLibraryViewModel {
     /// The question asked before removing a slot that holds a folder. `ContentView` points it at
     /// `EditViewModel.confirm`, so the dialogue policy applies (a script's run is journalled, never
     /// shown). With no interface at all there is no hook, and nobody to ask: it goes ahead.
-    @ObservationIgnored var confirm: ((_ title: String, _ info: String, _ yes: String, _ no: String) -> Bool)? = nil
+    @PerceptionIgnored var confirm: ((_ title: String, _ info: String, _ yes: String, _ no: String) -> Bool)? = nil
 
     private func confirmRemoval(_ title: String, _ info: String, _ yes: String, _ no: String) -> Bool {
         confirm?(title, info, yes, no) ?? true
@@ -533,7 +534,7 @@ final class SoundLibraryViewModel {
     /// folder (a slot, ⌘↑, a double click into a folder), and what was unfolded comes back unfolded —
     /// switching from one colour to another must not fold everything. Only the double click on the
     /// slot shown forgets them (@see `collapseAll`).
-    @ObservationIgnored private var expandedPaths: Set<String> = []
+    @PerceptionIgnored private var expandedPaths: Set<String> = []
 
     private static func key(_ url: URL) -> String { url.standardizedFileURL.path }
 
@@ -804,7 +805,9 @@ struct SoundLibraryView: View {
 
     private var rows: [SoundLibraryNode] { vm.displayedRows }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             FinderSlotsBar(vm: vm)
             Divider()
@@ -916,14 +919,14 @@ struct SoundLibraryView: View {
     // MARK: List (tree plus keyboard navigation)
 
     private var fileList: some View {
-        ScrollViewReader { proxy in
+        ScrollViewReader { proxy in WithPerceptionTracking {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(rows) { node in
+                    ForEach(rows) { node in WithPerceptionTracking {
                         row(for: node)
                             .id(node.id)
                         Divider()
-                    }
+                    } }
                 }
                 .scrollTargetLayout()
             }
@@ -948,7 +951,7 @@ struct SoundLibraryView: View {
             }
             .onKeyPress(.leftArrow) { vm.collapseOrParent(); return .handled }
             .onKeyPress(.rightArrow) { vm.expandOrEnter(); return .handled }
-        }
+        } }
     }
 
     private func row(for node: SoundLibraryNode) -> some View {
@@ -997,11 +1000,13 @@ private struct FinderSlotsBar: View {
     @State private var optionHeld = false
     @State private var flagsMonitor: Any? = nil
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 4) {
-            ForEach(slots.slots) { slot in
+            ForEach(slots.slots) { slot in WithPerceptionTracking {
                 slotCapsule(slot)
-            }
+            } }
             addCapsule
             Spacer(minLength: 0)
         }
@@ -1125,7 +1130,9 @@ private struct SoundLibraryRowView: View {
 
     private var indent: CGFloat { indented ? CGFloat(node.depth) * 12 : 0 }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Group {
             if node.isDirectory { folderRow } else { fileRow }
         }
@@ -1264,17 +1271,19 @@ private struct SoundLibraryMiniPlayerView: View {
     @State private var draggingO = false
     @State private var draggingS = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             // Waveform with handles
-            GeometryReader { geo in
+            GeometryReader { geo in WithPerceptionTracking {
                 let w = geo.size.width
                 let h = geo.size.height
                 let dur = max(node.duration, 0.01)
 
                 ZStack(alignment: .topLeading) {
                     // Full-width waveform background
-                    Canvas { ctx, size in
+                    PerceivedCanvas { ctx, size in
                         // Outside I–O: darkened
                         let xi = vm.pointI / dur * Double(size.width)
                         let xo = vm.pointO / dur * Double(size.width)
@@ -1320,7 +1329,7 @@ private struct SoundLibraryMiniPlayerView: View {
                             .onChanged { v in vm.setS((v.location.x / w) * dur - vm.pointI) }
                             .onEnded { v in vm.setS((v.location.x / w) * dur - vm.pointI) })
                 }
-            }
+            } }
             .frame(height: 52)
             .background(Color(nsColor: .underPageBackgroundColor))
             .clipped()

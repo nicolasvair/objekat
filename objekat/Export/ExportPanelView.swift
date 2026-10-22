@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // The export panel (File ▸ Export…). A compact sheet: it leaves the timeline visible underneath,
 // which matters — setting IN and OUT here MOVES the ruler's markers, and the view reframes
@@ -92,7 +93,9 @@ struct ExportPanelView: View {
     /// flicker back to editable for the instant the next render takes to start.
     private var isRendering: Bool { job?.isRunning == true || viewModel.exportBatch?.isActive == true }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L("export.panel.title"))
                 .font(.system(size: 15, weight: .semibold))
@@ -323,9 +326,9 @@ struct ExportPanelView: View {
                         viewModel.setExportRangeMode(mode)
                         syncTimeFields()
                     })) {
-                    ForEach(ExportSettings.TimeRangeMode.allCases) { mode in
+                    ForEach(ExportSettings.TimeRangeMode.allCases) { mode in WithPerceptionTracking {
                         Text(mode.label).tag(mode)
-                    }
+                    } }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -461,9 +464,9 @@ struct ExportPanelView: View {
                         viewModel.exportSettings.format = f
                         viewModel.exportSettings.clampToFormat()
                     })) {
-                    ForEach(ExportSettings.FileFormat.allCases) { f in
+                    ForEach(ExportSettings.FileFormat.allCases) { f in WithPerceptionTracking {
                         Text(f.label).tag(f)
-                    }
+                    } }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -476,9 +479,9 @@ struct ExportPanelView: View {
 
             HStack(spacing: 12) {
                 Picker(noLabel, selection: bound(\.sampleRate)) {
-                    ForEach(settings.format.sampleRates, id: \.self) { hz in
+                    ForEach(settings.format.sampleRates, id: \.self) { hz in WithPerceptionTracking {
                         Text(ExportSettings.sampleRateLabel(hz)).tag(hz)
-                    }
+                    } }
                 }
                 .labelsHidden()
                 .frame(width: 130)

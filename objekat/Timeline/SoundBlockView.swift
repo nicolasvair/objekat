@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - Sound block
 
@@ -141,7 +142,9 @@ struct SoundBlockView: View {
                         needed: needed, content: content)
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .leading) {
             // A pale background (= white plus a faint tint) so as to carry the colour identity without saturating.
             // With no custom colour: a uniform stem tint, the behaviour unchanged. With a custom

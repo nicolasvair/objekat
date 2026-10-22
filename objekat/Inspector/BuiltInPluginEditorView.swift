@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - Built-in parameter editor (the content hosted in BuiltInPluginEditorWindowController)
 
@@ -19,7 +20,9 @@ struct BuiltInPluginEditorView: View {
 
     @State private var params: [Param] = []
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             if params.isEmpty {
                 Text(L("plugins.noParameters"))
@@ -28,9 +31,9 @@ struct BuiltInPluginEditorView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(params) { p in
+                        ForEach(params) { p in WithPerceptionTracking {
                             paramRow(p)
-                        }
+                        } }
                     }
                     .padding(16)
                 }

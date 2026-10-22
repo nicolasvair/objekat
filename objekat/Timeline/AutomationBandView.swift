@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 /// An object's AUTOMATION band, unfolded INLINE under it (in the band of sub-lanes
 /// `SoundObject.expandedSpan` reserves). Rendered as an overlay positioned by `TimelineView`,
@@ -231,9 +232,11 @@ struct AutomationBandView: View {
         var live: AutomationTransform.Request? = nil
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { ctx, _ in
+            PerceivedCanvas { ctx, _ in
                 for (i, ref) in rows.enumerated() { draw(row: i, ref: ref, in: &ctx) }
                 // The zone and the transform box, above every row and below the badge: they
                 // BELONG to no row — the rectangle is traced across them and the box spans as many
@@ -301,14 +304,14 @@ struct AutomationBandView: View {
     private func pencils(visibleX: Double, visibleWidth: Double) -> some View {
         let g = geo
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { i, ref in
+            ForEach(Array(rows.enumerated()), id: \.offset) { i, ref in WithPerceptionTracking {
                 if let r = AutomationWritePencil.rect(row: i, geo: g, visibleX: visibleX,
                                                       visibleWidth: visibleWidth) {
                     pencil(row: i, ref: ref, rect: r)
                         .padding(.leading, r.minX)
                         .padding(.top, r.minY)
                 }
-            }
+            } }
         }
         .frame(width: max(1, bandWidth), height: g.interactiveHeight, alignment: .topLeading)
     }
@@ -393,22 +396,22 @@ struct AutomationBandView: View {
     /// its own accord onto the 'future automation' row.
     @ViewBuilder
     private var newLaneMenu: some View {
-        ForEach(viewModel.automatableParams(for: object), id: \.self) { ref in
+        ForEach(viewModel.automatableParams(for: object), id: \.self) { ref in WithPerceptionTracking {
             Button(viewModel.automationLabel(ref, on: object)) {
                 viewModel.beginAutomationLane(objectID: object.id, param: ref)
             }
-        }
+        } }
         let byPlugin = viewModel.automatablePluginParams(for: object)
         if !byPlugin.isEmpty { Divider() }
-        ForEach(byPlugin, id: \.plugin.id) { entry in
+        ForEach(byPlugin, id: \.plugin.id) { entry in WithPerceptionTracking {
             Menu(entry.plugin.name) {
-                ForEach(entry.params, id: \.ref) { p in
+                ForEach(entry.params, id: \.ref) { p in WithPerceptionTracking {
                     Button(p.name) {
                         viewModel.beginAutomationLane(objectID: object.id, param: p.ref)
                     }
-                }
+                } }
             }
-        }
+        } }
     }
 
     // MARK: - Access to the model

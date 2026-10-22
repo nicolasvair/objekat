@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 /// The preset menu at the right of a plugin editor's title bar — the JUCE window of an AU / VST3
 /// (@see OBJEngineCore `setPluginEditorTitleAccessoryProvider:`) and the NSWindow of a built-in
@@ -15,7 +16,9 @@ struct PluginPresetMenu: View {
     static let width: CGFloat = 200
     static let height: CGFloat = 20
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let status = viewModel.pluginPresetStatus[plugin]
         Menu {
             menuContent(status)
@@ -46,7 +49,7 @@ struct PluginPresetMenu: View {
         if presets.isEmpty {
             Text(L("preset.menu.empty"))
         }
-        ForEach(presets, id: \.name) { p in
+        ForEach(presets, id: \.name) { p in WithPerceptionTracking {
             let title = p.name == def ? L("preset.menu.defaultTag", p.name) : p.name
             Button {
                 run { try viewModel.loadPreset(pluginID: plugin, name: p.name) }
@@ -57,7 +60,7 @@ struct PluginPresetMenu: View {
                     Text(verbatim: title)
                 }
             }
-        }
+        } }
         Divider()
         let current = (status?.isFactory == false) ? status?.name : nil
         if let current, presets.contains(where: { $0.name == current }) {

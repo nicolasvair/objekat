@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 import AVFoundation
 
 // MARK: - A canvas a script asks the app to show
@@ -277,23 +277,23 @@ struct ScriptCanvas {
 
 // MARK: - The store
 
-@Observable final class ScriptCanvasStore {
+@Perceptible final class ScriptCanvasStore {
 
     private(set) var canvases: [UUID: ScriptCanvas] = [:]
 
     /// Set by the window layer (`ScriptCanvasWindows`): called after a canvas appears / after one
     /// stops being open. The store itself knows nothing about windows.
-    @ObservationIgnored var canvasOpened: ((UUID) -> Void)?
-    @ObservationIgnored var canvasEnded: ((UUID) -> Void)?
+    @PerceptionIgnored var canvasOpened: ((UUID) -> Void)?
+    @PerceptionIgnored var canvasEnded: ((UUID) -> Void)?
     /// The view moved (a script-side change of world, `view` from the hand's door, a fit).
-    @ObservationIgnored var viewportChanged: ((UUID) -> Void)?
+    @PerceptionIgnored var viewportChanged: ((UUID) -> Void)?
     /// Anything the audio layer must follow: play, stop, seek, a listen change, a slot.
-    @ObservationIgnored var transportChanged: ((UUID) -> Void)?
+    @PerceptionIgnored var transportChanged: ((UUID) -> Void)?
     /// Starting a canvas's playback stops the PROJECT's (set by the view-model).
-    @ObservationIgnored var stopProjectTransport: (() -> Void)?
+    @PerceptionIgnored var stopProjectTransport: (() -> Void)?
     /// A REMEMBERING canvas's monitoring level moved: (its `remember` key, the level, dB). The
     /// view-model keeps it in the project (@see CanvasProjectSettings).
-    @ObservationIgnored var monitorChanged: ((String, Double) -> Void)?
+    @PerceptionIgnored var monitorChanged: ((String, Double) -> Void)?
 
     /// A headless canvas has no window to measure: this is the plot it nominally has.
     static let nominalWidth = 1000.0
@@ -306,10 +306,10 @@ struct ScriptCanvas {
     /// second. `rev` is bumped at most this often, with a trailing bump so the FINAL value is
     /// never left unannounced.
     static let coalesceInterval: TimeInterval = 1.0 / 30.0
-    @ObservationIgnored private var lastBump: [UUID: Date] = [:]
-    @ObservationIgnored private var trailing: Set<UUID> = []
+    @PerceptionIgnored private var lastBump: [UUID: Date] = [:]
+    @PerceptionIgnored private var trailing: Set<UUID> = []
     /// The visible window of each canvas. Not observed: the plot redraws on `viewportChanged`.
-    @ObservationIgnored private var viewports: [UUID: CanvasViewport] = [:]
+    @PerceptionIgnored private var viewports: [UUID: CanvasViewport] = [:]
 
     private static func bad(_ m: String) -> CommandError { CommandError(code: .bad_params, message: m) }
     private static func invalid(_ m: String) -> CommandError { CommandError(code: .invalid_state, message: m) }

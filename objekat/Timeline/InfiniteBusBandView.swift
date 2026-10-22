@@ -11,6 +11,7 @@
 //
 
 import SwiftUI
+import Perception
 
 struct InfiniteBusBandView: View {
     let item: SoundObject
@@ -73,7 +74,9 @@ struct InfiniteBusBandView: View {
                                  gain: WaveformShaping.linearGain(dB: item.waveformDisplayGainDb(offBins: offBins)))
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: cornerRadius)
                 .fill(Color.white)

@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - A third-party script's manifest
 
@@ -115,7 +115,7 @@ private final class StderrTail: @unchecked Sendable {
 /// `@Observable`: the 'Scripts' menu rebuilds itself after a reload, without the view having to
 /// subscribe to anything.
 @MainActor
-@Observable
+@Perceptible
 final class ScriptPluginRegistry {
 
     static let shared = ScriptPluginRegistry()

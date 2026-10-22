@@ -5,6 +5,7 @@
 
 import SwiftUI
 import Combine
+import Perception
 
 struct ContentView: View {
     /// The view OBSERVES the session, it does not own it: the transport state has to outlive the
@@ -41,7 +42,12 @@ struct ContentView: View {
     /// definition to another set.
     @State private var listMadeSelection: Set<UUID>? = nil
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
+        // Read here, inside the tracked body: a `Binding(get:)` is evaluated by SwiftUI OUTSIDE it,
+        // where the Perception backport would see nothing and never refresh the sheet.
+        let exportPanelPresented = viewModel.exportPanelPresented
         VStack(spacing: 0) {
             TransportView(
                 isPlaying: $session.isPlaying,
@@ -128,10 +134,10 @@ struct ContentView: View {
         // underneath, which is what lets you SEE the I/O markers move as you set the range.
         // An explicit binding: `viewModel` is a computed shorthand on the session here, and you
         // cannot project a `$` from it.
-        .sheet(isPresented: Binding(get: { session.viewModel.exportPanelPresented },
-                                    set: { session.viewModel.exportPanelPresented = $0 })) {
+        .sheet(isPresented: Binding(get: { exportPanelPresented },
+                                    set: { session.viewModel.exportPanelPresented = $0 })) { WithPerceptionTracking {
             ExportPanelView(viewModel: session.viewModel)
-        }
+        } }
         // An export rendering directly suspends playback on the engine side: the SESSION's transport
         // state has to follow, otherwise the button would stay on 'stop' and the playhead would
         // freeze while claiming to play. @see EditViewModel.pendingPlaybackStop

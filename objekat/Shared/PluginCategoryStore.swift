@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - The colour category of each plugin (plugin browser)
 
@@ -22,7 +22,7 @@ import Observation
 /// A test never touches the real domain: under `--no-recent` or `--headless` the entries live in a
 /// dictionary that dies with the process (same discretion as `ScriptPanelMemory`). The behaviour is
 /// identical, so a scenario can still assert it.
-@Observable
+@Perceptible
 final class PluginCategoryStore {
 
     /// The one store of the app.
@@ -77,11 +77,11 @@ final class PluginCategoryStore {
     private(set) var showsVST3: Bool
 
     /// How many times the storage was written: a change of nothing must write nothing.
-    @ObservationIgnored private(set) var writeCount = 0
+    @PerceptionIgnored private(set) var writeCount = 0
 
-    @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let storageKey: String
-    @ObservationIgnored private let isEphemeral: Bool
+    @PerceptionIgnored private let defaults: UserDefaults
+    @PerceptionIgnored private let storageKey: String
+    @PerceptionIgnored private let isEphemeral: Bool
 
     init(defaults: UserDefaults = .standard,
          storageKey: String = PluginCategoryStore.defaultsKey,

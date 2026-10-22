@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 struct GroupBlockView: View {
     let group: SoundObject   // was SoundGroup — the same top-level interface
@@ -136,7 +137,9 @@ struct GroupBlockView: View {
             offBins: offBins)
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white)

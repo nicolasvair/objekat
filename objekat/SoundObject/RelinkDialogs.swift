@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - The relink, as a hand performs it
 //
@@ -473,7 +474,9 @@ struct RelinkContextMenuItems: View {
         }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let plan = RelinkUI.MenuPlan(vm: viewModel, object: object)
         if plan.canReplace {
             let targets = replaceTargets

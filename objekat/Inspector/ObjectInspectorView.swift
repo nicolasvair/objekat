@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Main inspector (the left panel's "Object" tab)
 //
@@ -44,7 +45,9 @@ struct ObjectInspectorView: View {
     @State private var sendAnchors: [UUID: Float] = [:]
     @State private var sendOrigin: Double = 0
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 0) {
             Group {
                 if viewModel.selectedIDs.count > 1 {
@@ -144,7 +147,7 @@ struct ObjectInspectorView: View {
         let shown = Array(snap.objects.prefix(Self.maxChips))
         let hidden = Array(snap.objects.dropFirst(Self.maxChips))
         return ItemFlowLayout(spacing: 4) {
-            ForEach(shown) { obj in
+            ForEach(shown) { obj in WithPerceptionTracking {
                 SelectionChip(
                     id: obj.id,
                     name: viewModel.displayName(of: obj),
@@ -159,7 +162,7 @@ struct ObjectInspectorView: View {
                         viewModel.select(id, additive: NSEvent.modifierFlags.contains(.command))
                     })
                 .equatable()
-            }
+            } }
             if !hidden.isEmpty {
                 overflowChip(hidden)
             }
@@ -477,9 +480,9 @@ struct ObjectInspectorView: View {
         zone(dashed: true) {
             VStack(alignment: .leading, spacing: 4) {
                 zoneTitle(L("synoptic.zone.aux"))
-                ForEach(snap.sendAuxes) { aux in
+                ForEach(snap.sendAuxes) { aux in WithPerceptionTracking {
                     multiSendRow(aux)
-                }
+                } }
             }
         }
     }
@@ -578,7 +581,7 @@ struct ObjectInspectorView: View {
             HStack(spacing: 8) {
                 zoneTitle(L("synoptic.zone.stems"))
                 Menu {
-                    ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in
+                    ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
                         let itemIsMain = stem.id == viewModel.mainStemID
                         let prefix = idx < 9 ? "\(idx + 1)  " : ""
                         let name = itemIsMain ? L("stem.main.name") : stem.name
@@ -591,7 +594,7 @@ struct ObjectInspectorView: View {
                             if current == stem.id { Label(title, systemImage: "checkmark") }
                             else { Text(verbatim: title) }
                         }
-                    }
+                    } }
                 } label: {
                     HStack(spacing: 6) {
                         Text(label)

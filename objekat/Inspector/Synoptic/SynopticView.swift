@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Signal view (pure rendering)
 
@@ -92,7 +93,9 @@ struct SynopticView: View {
         var translation: CGSize
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let d = currentDiagram
         Group {
             if scrolls {
@@ -111,7 +114,7 @@ struct SynopticView: View {
         let names = SynopticPlusPresentation.seriesNames(of: root)
         let alwaysShown = Set(d.alwaysVisiblePlusKeys.map { stablePlus($0, names: names) })
         ZStack(alignment: .topLeading) {
-            Canvas { ctx, _ in draw(ctx, diagram: d) }
+            PerceivedCanvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
 
             if let cp = contentPill {
@@ -171,35 +174,35 @@ struct SynopticView: View {
             // branch's axis inserts it there — even an empty parallel branch. A hovered card keeps
             // priority (inserting just before it) since it is drawn on top.
             if let onDrop = actions.onDrop {
-                ForEach(d.placement.cableDrops) { z in
+                ForEach(d.placement.cableDrops) { z in WithPerceptionTracking {
                     let target = SynopticDropTarget.series(z.seriesID, z.insertIndex)
                     CableDropView(rect: z.rect, previewFrame: z.previewFrame,
                                   outcome: { actions.dropOutcome?(target, $0) },
                                   onDrop: { payload, flags in onDrop(target, payload, flags) },
                                   onSendDrop: actions.onSendDrop.map { f in { payload in f(.place(target), payload) } })
-                }
+                } }
             }
 
             // The three fixed slots of the sends (input, pre-fader, post-fader): where a send card can be
             // taken to besides the trunk's own insert points.
             if actions.onSendDrop != nil {
-                ForEach(d.sendSlotDrops) { z in
+                ForEach(d.sendSlotDrops) { z in WithPerceptionTracking {
                     SendSlotDropView(zone: z, outcome: { actions.sendDropOutcome?(.slot(z.slot)) },
                                      onSendDrop: { payload in actions.onSendDrop?(.slot(z.slot), payload) })
-                }
+                } }
             }
 
             // A bin's block: its header card (on/off · name · link badge · ✕) straddling the top of the
             // body. The wire stops at it and starts again at its foot, so it is never laid over it (@see
             // draw). No mix box any more (§B.8): a gain on a bin is a stage dragged out of the bin's '+'.
-            ForEach(d.placement.fxBlocks) { b in
+            ForEach(d.placement.fxBlocks) { b in WithPerceptionTracking {
                 FXBlockHeaderView(link: b.link, rect: b.headerRect, pluginCount: b.pluginCount,
                                   actions: actions,
                                   onSelect: { selectedInstrumentID = nil; selection = [b.link.blockID] })
                     .position(x: b.headerRect.midX, y: b.headerRect.midY)
-            }
+            } }
 
-            ForEach(d.placement.cards) { c in
+            ForEach(d.placement.cards) { c in WithPerceptionTracking {
                 pluginCard(c, cards: d.placement.cards)
                     .contextMenu {
                         // A card outside the selection speaks for itself alone (the drag's own rule).
@@ -215,7 +218,7 @@ struct SynopticView: View {
                         }
                     }
                     .position(x: c.frame.midX, y: c.frame.midY)
-            }
+            } }
 
             // '+' on the wire (§B.2, §B.3): shown while its line is hovered, always in an empty series, and
             // while a drag leaves from it. A CLICK opens the plugin browser (as before); a DRAG asks for the
@@ -223,7 +226,7 @@ struct SynopticView: View {
             // (down-right) or a send (left) (@see SynopticPlusGesture, PlusShortcutMap), with a ghost under way.
             // Drawn OPAQUE over the wire, which runs through it. Laid after the cable drop zones, so that a
             // shown '+' is what the hand grabs; no `.onDrop` on it (the `CableDropView` under it receives).
-            ForEach(d.placement.inserts, id: \.key) { z in
+            ForEach(d.placement.inserts, id: \.key) { z in WithPerceptionTracking {
                 let sk = stablePlus(z.key, names: names)
                 let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
                                                              alwaysVisible: alwaysShown)
@@ -234,19 +237,19 @@ struct SynopticView: View {
                     .opacity(shown ? 1 : 0)
                     .allowsHitTesting(shown)
                     .position(z.center)
-            }
+            } }
 
             // The dB gain at the end of each parallel branch (drag ↑/↓).
-            ForEach(d.placement.voiceGains) { vg in
+            ForEach(d.placement.voiceGains) { vg in WithPerceptionTracking {
                 GainDbControl(dB: vg.dB, muted: vg.muted,
                               onToggleMute: { actions.onSetVoiceMute?(vg.blockID, vg.voiceIndex, !vg.muted) },
                               onBegin: { actions.onBeginGainEdit?() }) { newDB in
                     actions.onSetVoiceGain?(vg.blockID, vg.voiceIndex, newDB)
                 }
                 .position(vg.center)
-            }
+            } }
             // 🗑 removing a branch, to the RIGHT of the gain (offset enough not to overlap the value).
-            ForEach(d.placement.voiceGains) { vg in
+            ForEach(d.placement.voiceGains) { vg in WithPerceptionTracking {
                 Button { actions.onRemoveVoice?(vg.blockID, vg.voiceIndex) } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 9))
@@ -257,7 +260,7 @@ struct SynopticView: View {
                 .buttonStyle(.plain)
                 .help(L("synoptic.removeBranch"))
                 .position(x: vg.center.x + 48, y: vg.center.y)
-            }
+            } }
             }   // Group FX
 
             // The '+' on the wire mixer → stems: a send taken after the fader, its only gesture (D2) — a
@@ -281,19 +284,19 @@ struct SynopticView: View {
             // a '+' on each segment of the wire, and the send's LINE at the bottom. Not in the FX group: a closed
             // consolidated object keeps its sends interactive, as it keeps its mix. Laid over the slots' drop
             // bands; outside the trunk's selection, and ignored by the marquee.
-            ForEach(d.sendCards) { c in
+            ForEach(d.sendCards) { c in WithPerceptionTracking {
                 // The column's drop layer first (under the cards and the line, never their ancestor).
                 SendColumnDropView(placement: c, actions: actions)
                 SendCardView(send: c.send, actions: actions)
                     .frame(width: c.lineRect.width, height: c.lineRect.height)
                     .position(x: c.lineRect.midX, y: c.lineRect.midY)
-                ForEach(c.chain.cards) { card in
+                ForEach(c.chain.cards) { card in WithPerceptionTracking {
                     SendChainCardView(card: card, send: c.send, actions: actions)
                         .position(x: card.frame.midX, y: card.frame.midY)
-                }
+                } }
                 // The '+' of the send's mini-chain: shown on hover only (even a plugin-less send's), the
                 // canvas' own button — a click = the picker aimed at the send, a drag right = a gain stage.
-                ForEach(c.chain.inserts, id: \.key) { z in
+                ForEach(c.chain.inserts, id: \.key) { z in WithPerceptionTracking {
                     let sk = stablePlus(z.key, names: names)
                     let shown = SynopticPlusPresentation.isShown(sk, hovered: hoveredPlus, dragging: plusDrag?.key,
                                                                  alwaysVisible: alwaysShown)
@@ -304,16 +307,16 @@ struct SynopticView: View {
                         .opacity(shown ? 1 : 0)
                         .allowsHitTesting(shown)
                         .position(z.center)
-                }
-            }
+                } }
+            } }
 
             // The HANDLES: where each send is taken on the trunk. A handle is grabbed like the line (§B.6):
             // dragged onto another place of the chain it moves where the send is taken (the same payload as
             // the line's, @see sendDragProvider). It sits on the wire just LEFT of the '+' ring it stands for,
             // never under it, and sends taken at one point fan out by their rank (@see SendWire.handleCenter).
-            ForEach(d.sendCards) { c in
+            ForEach(d.sendCards) { c in WithPerceptionTracking {
                 SendTapDotView(placement: c, rank: SendWire.rank(of: c, in: d.sendCards), actions: actions)
-            }
+            } }
 
             // "+ Send to…", at the bottom of the stack of columns: a send made there is post-fader.
             if let b = d.addSendButton, actions.sendTargetSections != nil {
@@ -384,21 +387,21 @@ struct SynopticView: View {
     @ViewBuilder
     private func cableChannelMenu(point: CablePoint, menu: CableMenu,
                                   set: @escaping (CablePoint, CableChoice) -> Void) -> some View {
-        ForEach(menu.offered, id: \.self) { c in
+        ForEach(menu.offered, id: \.self) { c in WithPerceptionTracking {
             Toggle(Self.cableChoiceLabel(c),
                    isOn: Binding(get: { menu.current == c },
                                  set: { _ in if menu.current != c { set(point, c) } }))
-        }
+        } }
     }
 
     /// Both / Left / Right / Sum for the audio file, the current one ticked.
     @ViewBuilder
     private func sourceChannelMenu(current: SourceChannelChoice,
                                    set: @escaping (SourceChannelChoice) -> Void) -> some View {
-        ForEach([SourceChannelChoice.both, .left, .right, .sum], id: \.self) { c in
+        ForEach([SourceChannelChoice.both, .left, .right, .sum], id: \.self) { c in WithPerceptionTracking {
             Toggle(Self.sourceChoiceLabel(c),
                    isOn: Binding(get: { current == c }, set: { _ in if current != c { set(c) } }))
-        }
+        } }
     }
 
     // MARK: - The '+' (§B.2, §B.3)
@@ -565,14 +568,14 @@ struct SynopticView: View {
     @ViewBuilder
     private func channelsMenu(_ m: ChannelMenuState, plugin id: UUID) -> some View {
         Menu(L("synoptic.menu.channels")) {
-            ForEach(m.entries, id: \.variant) { e in
+            ForEach(m.entries, id: \.variant) { e in WithPerceptionTracking {
                 // A Toggle, not a Label with a "checkmark" image: macOS menus drop a Label's image, so the
                 // current format was never shown. The toggle's state is the native menu-item tick.
                 Toggle(Self.variantTitle(e.variant), isOn: Binding(
                     get: { e.isCurrent },
                     set: { _ in if !e.isCurrent { actions.onSetChannelVariant?(id, e.variant) } }))
                 .disabled(!e.supported || m.blockedByPlayback)
-            }
+            } }
             if m.blockedByPlayback || m.linkedCount > 0 || !m.exact {
                 Divider()
                 if m.blockedByPlayback { Text(L("synoptic.menu.channels.playing")) }
@@ -600,9 +603,9 @@ struct SynopticView: View {
         let joinable = actions.joinableFXLinks?() ?? []
         if !joinable.isEmpty {
             Menu(L("fxlink.menu.join")) {
-                ForEach(joinable, id: \.id) { j in
+                ForEach(joinable, id: \.id) { j in WithPerceptionTracking {
                     Button(j.name) { actions.onJoinFXLink?(j.id) }
-                }
+                } }
             }
         }
     }

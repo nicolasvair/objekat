@@ -11,7 +11,7 @@ import Foundation
 // lookup. The `Canvas` takes the whole dictionary as a VALUE once per pass (its nested drawing
 // functions are not MainActor-isolated and must not ask the view model anything).
 //
-// The memo is not observed (`@ObservationIgnored`), on purpose: every reader already depends on
+// The memo is not observed (`@PerceptionIgnored`), on purpose: every reader already depends on
 // `items` (the object it draws comes from there) and on `stems` (its stem colour), so a change that
 // can move a badge re-evaluates it anyway, and a lookup costs no observation-registrar access.
 // ⚠️ As with `displayName(of:)`: only for an item TAKEN FROM `items` / `laneEntries` — the memo is

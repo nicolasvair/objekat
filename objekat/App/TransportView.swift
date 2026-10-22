@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import Perception
 
 struct TransportView: View {
     @Binding var isPlaying: Bool
@@ -72,7 +73,9 @@ struct TransportView: View {
         if let m = bpmCommandArrowMonitor { NSEvent.removeMonitor(m); bpmCommandArrowMonitor = nil }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 12) {
             // The 'audio settings' icon (device + sample rate + buffer) lives on the RIGHT of the
             // toolbar (after the Spacer, further down). The status label 'audio device —
@@ -314,7 +317,7 @@ struct TransportView: View {
 private struct PlayheadTimeText: View {
     let position: () -> Double
     let format: (Double) -> String
-    var body: some View { Text(verbatim: format(position())) }
+    var body: some View { WithPerceptionTracking { Text(verbatim: format(position())) } }
 }
 
 private enum ZoomHandleAxis { case horizontal, vertical }
@@ -439,7 +442,9 @@ private struct ZoomDragHandles: View {
     @State private var baseWaveformDB: Double = 0
     @State private var waveformDBAccum: Double = 0   // scroll accumulation → 1 dB steps
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 2) {
             handle(icon: "arrow.left.and.right",
                    axis: .horizontal,
@@ -605,9 +610,11 @@ private struct ToolPickerButtons: View {
     /// a target of some 19 pt.
     private var minButtonWidth: CGFloat { initialsOnly ? 26 : 18 }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 2) {
-            ForEach(items, id: \.key) { item in
+            ForEach(items, id: \.key) { item in WithPerceptionTracking {
                 let isActive = viewModel.activeTool == item.tool
                 Button {
                     viewModel.activeTool = item.tool
@@ -630,7 +637,7 @@ private struct ToolPickerButtons: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.help)
-            }
+            } }
 
             // Solo: NOT an `ActiveTool`, but the same button, in the same place. The 'click =
             // listen' mode lives on `soloKeyHeld`, which the keyboard arms with a HELD 's'; the

@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - A block's visible portion, read LIVE
 //
@@ -62,7 +63,7 @@ struct LiveVisibleSpan<Content: View>: View {
     var needed: Bool = true
     @ViewBuilder let content: ((x: Double, width: Double)) -> Content
 
-    var body: some View { content(span) }
+    var body: some View { WithPerceptionTracking { content(span) } }
 
     private var span: (x: Double, width: Double) {
         if needed, let live {
@@ -93,7 +94,9 @@ struct VisibleSpanCentered<Content: View>: View {
     var alignment: Alignment = .center
     @ViewBuilder let content: () -> Content
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         LiveVisibleSpan(live: live, blockX: blockX, blockWidth: blockWidth,
                         scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth) { span in
             content()

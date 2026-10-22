@@ -3,7 +3,7 @@ import AppKit
 import AVFoundation
 import Accelerate
 import UniformTypeIdentifiers
-import Observation
+import Perception
 import SwiftUI
 
 /// Times an interface gesture, separating the two costs that always get confused: the
@@ -36,7 +36,7 @@ enum UIPerf {
 }
 
 @MainActor
-@Observable
+@Perceptible
 final class EditViewModel {
     var items: [SoundObject] = [] {
         didSet {
@@ -66,45 +66,45 @@ final class EditViewModel {
     /// frame that lays N writes down one at a time costs N rebuilds, and one wrapped in
     /// `batchItemsMutation` costs one (`debug.crossfade_drag`, `perf.census`) — and a gesture that
     /// only previews, as every edge drag now does, costs none.
-    @ObservationIgnored var itemsWriteCount = 0
-    @ObservationIgnored var laneEntriesRebuildCount = 0
-    @ObservationIgnored var undoPushCount = 0
+    @PerceptionIgnored var itemsWriteCount = 0
+    @PerceptionIgnored var laneEntriesRebuildCount = 0
+    @PerceptionIgnored var undoPushCount = 0
     /// > 0 while a `singleUndoStep` runs (@see EditViewModel+UndoRedo).
-    @ObservationIgnored var undoTransactionDepth = 0
+    @PerceptionIgnored var undoTransactionDepth = 0
     /// @see find(id:) — `nil` = not built since the last change to `items`.
-    @ObservationIgnored var findIndex: [UUID: SoundObject]? = nil
-    @ObservationIgnored var findsSinceMutation = 0
+    @PerceptionIgnored var findIndex: [UUID: SoundObject]? = nil
+    @PerceptionIgnored var findsSinceMutation = 0
     /// @see parentIDMap() / parentGroup(for:) — child id → parent group id, built by the next
     /// reader after a change to `items` and dropped by the same `didSet` as `findIndex`.
-    @ObservationIgnored var parentIDCache: [UUID: UUID]? = nil
-    @ObservationIgnored var parentLookupsSinceMutation = 0
+    @PerceptionIgnored var parentIDCache: [UUID: UUID]? = nil
+    @PerceptionIgnored var parentLookupsSinceMutation = 0
     /// @see allAuxes — the flat list of auxes (absolute lanes), dropped with `items`.
-    @ObservationIgnored var allAuxesCache: [SoundObject]? = nil
+    @PerceptionIgnored var allAuxesCache: [SoundObject]? = nil
     /// The send rules over the current tree (@see `sendScopeIndex`), invalidated with `items` and `stems`.
-    @ObservationIgnored var sendScopeIndexCache: BridgeScope.SendIndex? = nil
+    @PerceptionIgnored var sendScopeIndexCache: BridgeScope.SendIndex? = nil
     /// Derived chain-host id → send (@see `sendChainHosts`, INC 3), invalidated with `items`.
-    @ObservationIgnored var sendChainHostsCache: [UUID: SendKey]? = nil
+    @PerceptionIgnored var sendChainHostsCache: [UUID: SendKey]? = nil
     /// @see multiSelectionSnapshot — everything the inspector reads about a MULTIPLE selection,
     /// computed once per (items, selectedIDs) instead of once per SwiftUI pass. Dropped by `items`,
     /// `selectedIDs` and `rebuildLaneEntries` (the lane order of the sends comes from there).
-    @ObservationIgnored var multiSelectionCache: MultiSelectionSnapshot? = nil
+    @PerceptionIgnored var multiSelectionCache: MultiSelectionSnapshot? = nil
     /// @see crossfadePartners(of:) — `nil` = to rebuild on the next read.
-    @ObservationIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
+    @PerceptionIgnored var crossfadePartnersCache: [UUID: CrossfadePartners]? = nil
     /// @see contentEnd / maxOccupiedLane — `nil` = to rebuild on the next read.
-    @ObservationIgnored var itemsExtentCache: (end: Double, maxLane: Int)? = nil
+    @PerceptionIgnored var itemsExtentCache: (end: Double, maxLane: Int)? = nil
     /// @see visibleCrossfadeZones — the zones of `laneEntries`, indexed. Emptied wherever
     /// `laneEntries` is rebuilt (`rebuildLaneEntries`), since that is the list it is built from.
-    @ObservationIgnored var crossfadeZoneIndexCache: CrossfadeZoneIndex? = nil
+    @PerceptionIgnored var crossfadeZoneIndexCache: CrossfadeZoneIndex? = nil
     /// @see displayName(of:) — a group's composed name by group id, emptied on EVERY write to
     /// `items` (the name is a function of the group's subtree, which lives in `items`).
-    @ObservationIgnored private var composedNameCache: [UUID: String] = [:]
+    @PerceptionIgnored private var composedNameCache: [UUID: String] = [:]
     /// @see featureBadgeMap — every object's feature badges by id (the badge-less left out), `nil` =
     /// to rebuild on the next read. Dropped by `items` and `stems` (the sidechain-send badge reads the
     /// stems' chains too).
-    @ObservationIgnored var featureBadgeMapCache: [UUID: [FeatureBadge]]? = nil
+    @PerceptionIgnored var featureBadgeMapCache: [UUID: [FeatureBadge]]? = nil
     /// @see chainSilencedIDs — the objects whose chain's mutes cut every path to the output, with the
     /// off-bins it was computed for. `nil` = to rebuild on the next read. Dropped by `items`.
-    @ObservationIgnored var chainSilencedCache: (offBins: Set<UUID>, ids: Set<UUID>)? = nil
+    @PerceptionIgnored var chainSilencedCache: (offBins: Set<UUID>, ids: Set<UUID>)? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
@@ -165,7 +165,7 @@ final class EditViewModel {
     /// The mark a ⇧-click extends FROM (@see handleMarkBandClick). Set by a plain or ⌘ click, read
     /// by ⇧, and dropped the moment the selection empties or the mark goes — so it can never aim at
     /// something that no longer exists.
-    @ObservationIgnored var annotationAnchor: AnnotationSel? = nil
+    @PerceptionIgnored var annotationAnchor: AnnotationSel? = nil
     /// The ONE selected mark, or nil when there are none or several — the question a caller that
     /// can only deal with a single mark (the inline rename, ⌘R) asks. Writing it REPLACES the
     /// selection, which is what the dozen historical writers (`= nil` to deselect, `= sel` to pick
@@ -244,7 +244,7 @@ final class EditViewModel {
     var fxLinks: [FXLink] = []
     /// What `copiedPlugins` promised for the plain plugins of an object it copied: to be adopted into
     /// their bin by the end of the gesture (@see EditViewModel+FXLinkAuto). Transient, never saved.
-    @ObservationIgnored var fxPendingSources: [UUID: [FXPendingSource]] = [:]
+    @PerceptionIgnored var fxPendingSources: [UUID: [FXPendingSource]] = [:]
     /// The definitions whose AUTOMATIC re-bake (a transitive cascade after a dependency has
     /// changed) is UNDER WAY in the background. Drives a "recomputing" indicator on their
     /// instances, replacing the manual "Refresh" action. See
@@ -257,11 +257,11 @@ final class EditViewModel {
     /// actually rendered (`rebakeConsolidateInBackground` instantiates the sidecar under fresh
     /// ids): the indicator is keyed by the definition, the engine knows only the temporary.
     /// Laid before the render, removed in its completion. @see pollRenderProgress
-    @ObservationIgnored var recomputeRenderKeys: [UUID: UUID] = [:]
+    @PerceptionIgnored var recomputeRenderKeys: [UUID: UUID] = [:]
     /// For a bake whose veil is worn by one object and whose render runs under ANOTHER id: the
     /// closing of an editing session renders the content root, while the circle sits on the open
     /// placement (the stage). Laid before the render, removed in its completion. @see pollRenderProgress
-    @ObservationIgnored var bakeRenderKeys: [UUID: UUID] = [:]
+    @PerceptionIgnored var bakeRenderKeys: [UUID: UUID] = [:]
     /// How far each consolidated render on screen has got, read by the filling circle on the
     /// blocks. A `let` holding its OWN observable object, so that the ten ticks a second reach the
     /// circles and not the timeline's body. @see RenderProgressStore
@@ -289,7 +289,7 @@ final class EditViewModel {
     }()
     /// The timer reading the engine's render progress while `bakingIDs` or
     /// `recomputingConsolidateIDs` is non-empty. @see updateRenderProgressPolling
-    @ObservationIgnored var renderProgressTimer: Timer? = nil
+    @PerceptionIgnored var renderProgressTimer: Timer? = nil
     /// The definitions one of whose instances has just been RESYNCHRONISED (a re-bake finished: a
     /// transitive cascade or a closing propagated to the other instances). Drives a transient ✓
     /// (~15 s) on their instances, taking over from the recomputing spinner. See
@@ -298,7 +298,7 @@ final class EditViewModel {
     /// The ✓'s clearing deadline per definition: guarantees a full duration even if several
     /// re-bakes overlap (each marking pushes the deadline back; the clearing only happens
     /// if the current deadline is reached). See `markConsolidateResynced`.
-    @ObservationIgnored var resyncedBadgeDeadline: [UUID: Date] = [:]
+    @PerceptionIgnored var resyncedBadgeDeadline: [UUID: Date] = [:]
     /// The stack of NESTED consolidated openings: opening a consolidated object B located INSIDE a
     /// consolidated object A already open stacks a child session on the parent. The top = the "current"
     /// session (the one closing/cancelling resolves, whose content is materialised
@@ -327,26 +327,26 @@ final class EditViewModel {
     // put back in their own place — they all refer to the same origin, with no render at all.
     // Every mutation of the sub-tree being edited (structure, fades, gain, speed, plugins, live knob
     // params) arms the debounced re-mirroring. See EditViewModel+Consolidate
-    // (`scheduleLiveMirror`). The driving state is below (@ObservationIgnored: purely
+    // (`scheduleLiveMirror`). The driving state is below (@PerceptionIgnored: purely
     // mechanical, it must not invalidate the views).
 
     /// True when at least one other instance follows the open object live — drives the indicator
     /// carried by the origin.
     var hasLiveMirrors: Bool { !(consolidateEditStack.last?.mirrorSnapshots.isEmpty ?? true) }
     /// The pending debounce before laying the mirrors again.
-    @ObservationIgnored var liveMirrorWorkItem: DispatchWorkItem? = nil
+    @PerceptionIgnored var liveMirrorWorkItem: DispatchWorkItem? = nil
     /// Suspends the arming of the re-mirroring (a session opening, a closing/cancel under way).
-    @ObservationIgnored var liveMirrorSuppressed: Bool = false
+    @PerceptionIgnored var liveMirrorSuppressed: Bool = false
     /// True while a transitive re-bake cascade is running (a re-entrance guard). See
     /// EditViewModel+Consolidate (`cascadeRebakeStaleFixpoint`).
-    @ObservationIgnored var isCascadingRebake: Bool = false
+    @PerceptionIgnored var isCascadingRebake: Bool = false
     /// The definitions whose re-bake FAILED during the current cascade: excluded from the selection
     /// so as not to pick them again in a loop (they stay out of date). Reset at every
     /// new cascade.
-    @ObservationIgnored var cascadeFailedDefs: Set<UUID> = []
+    @PerceptionIgnored var cascadeFailedDefs: Set<UUID> = []
     /// The number of re-bakes done in the current cascade: a safety ceiling against loops
     /// (abnormal cyclic dependencies). Reset at every new cascade.
-    @ObservationIgnored var cascadeRebakeCount: Int = 0
+    @PerceptionIgnored var cascadeRebakeCount: Int = 0
     var renamingID: UUID? = nil
     var activeTool: ActiveTool = .toolSelection
     var isToolPermanent: Bool = true
@@ -360,7 +360,7 @@ final class EditViewModel {
     var routePick: RoutePick? = nil
     /// The host each native editor was opened FOR — the engine names a plugin by its key alone, and
     /// the Sidechain strip it asks for at the window's creation needs the host.
-    @ObservationIgnored var nativeEditorHosts: [UUID: UUID] = [:]
+    @PerceptionIgnored var nativeEditorHosts: [UUID: UUID] = [:]
     /// The send brought forward by the Send tool (a drag/hover on a knob) — drives the visual accent.
     var sendToolFocus: SendFocus? = nil
     /// The cheatsheet shown (a tool key or a modifier held ~0.6 s); nil = hidden.
@@ -387,18 +387,18 @@ final class EditViewModel {
     var sendRouteStatus: [SendKey: BridgeScope.Refusal] = [:]
     /// The sends the last sync laid in the engine (alive, accepted by the plan AND confirmed by the
     /// engine): what the knob's per-frame path compares a send's alive-state with.
-    @ObservationIgnored var bridgeLaidSends: Set<SendKey> = []
+    @PerceptionIgnored var bridgeLaidSends: Set<SendKey> = []
     /// When the hand last beeped for a refused send (@see handMayCreateSend).
-    @ObservationIgnored var lastSendRefusalBeep: CFAbsoluteTime = 0
+    @PerceptionIgnored var lastSendRefusalBeep: CFAbsoluteTime = 0
     /// An aux went from the engine: the next bridge sync sweeps the sends that named it (@see pruneOrphanSends).
-    @ObservationIgnored var sendPrunePending = false
-    @ObservationIgnored var bridgeSyncScheduled = false
+    @PerceptionIgnored var sendPrunePending = false
+    @PerceptionIgnored var bridgeSyncScheduled = false
     /// The engine holds taps OR sends laid by a previous sync: a sync with no route must still run
     /// once, to take them away.
-    @ObservationIgnored var bridgeEngineHasTaps = false
+    @PerceptionIgnored var bridgeEngineHasTaps = false
     /// The topology the last sync laid down and the plan it gave: an equal topology reuses the plan
     /// (the engine is pushed all the same, @see syncBridge).
-    @ObservationIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
+    @PerceptionIgnored var bridgeLastTopology: (nodes: [BridgeScope.Node], routes: [BridgeScope.Route],
                                                  plan: BridgeScope.Plan)? = nil
 
     var mainStemID: UUID { stems.first?.id ?? UUID() }
@@ -504,20 +504,20 @@ final class EditViewModel {
     /// The editors put away by the F + Esc chord (@see togglePluginEditorsVisibility): the native
     /// ones by key (their `ObjectPlugin.id` string), the built-in ones by plugin id. Both are still OPEN,
     /// only off the screen. Empty = nothing is hidden by the chord.
-    @ObservationIgnored var chordHiddenNativeEditors: [String] = []
-    @ObservationIgnored var chordHiddenBuiltInEditors: [UUID] = []
+    @PerceptionIgnored var chordHiddenNativeEditors: [String] = []
+    @PerceptionIgnored var chordHiddenBuiltInEditors: [UUID] = []
 
     /// The placement under way of several editors opened TOGETHER (a double click on a multiple
     /// selection), native and built-in alike. Each window is laid as it appears — a native one only
     /// exists once its instance is loaded, so its size is not known before. nil = no batch: a
     /// single editor opens where it always did (@see openPluginEditors).
-    @ObservationIgnored var editorTiling: EditorTiling? = nil
+    @PerceptionIgnored var editorTiling: EditorTiling? = nil
 
     /// The names and ranges of the automatable parameters, by plugin (@see pluginParamInfos). A PURE cache:
     /// outside observation, because it fills lazily FROM the rendering — an automation
     /// band drawing a plugin parameter's row asks for its name in the middle of `body`.
     /// Observing it would have the view invalidated by its own read.
-    @ObservationIgnored var pluginParamInfoCache: [UUID: [String: PluginParamInfo]] = [:]
+    @PerceptionIgnored var pluginParamInfoCache: [UUID: [String: PluginParamInfo]] = [:]
 
     /// A plugin parameter's last KNOWN value, normalised 0…1 (the model's convention,
     /// @see ParamRef.valueRange). Fed by the bridge at every touch while an editor is
@@ -533,7 +533,7 @@ final class EditViewModel {
     /// Transient: not saved, not in the undo snapshot.
     var pluginPresetStatus: [UUID: PluginPresetStatus] = [:]
     /// Until when a plugin's parameter touches are a preset being laid, not the hand.
-    @ObservationIgnored var presetTouchQuietUntil: [UUID: Date] = [:]
+    @PerceptionIgnored var presetTouchQuietUntil: [UUID: Date] = [:]
     /// Bumped each time a state is laid on a plugin from outside its editor (a preset, a program):
     /// what a built-in's SwiftUI editor watches to re-read its parameters.
     var pluginStateRevision: [UUID: Int] = [:]
@@ -558,17 +558,17 @@ final class EditViewModel {
     /// never notch by notch (@see adjustAutomationCurvature, AutomationCurveShape.detented).
     /// `written` is the last curvature it laid: anything else found there (an undo, another
     /// gesture) re-anchors. Outside observation: nothing draws it.
-    @ObservationIgnored var automationCurveWheelAnchor: AutomationCurveWheelAnchor? = nil
+    @PerceptionIgnored var automationCurveWheelAnchor: AutomationCurveWheelAnchor? = nil
 
     /// The PLUGIN PARAMETER curves already pushed to the engine, per object. A session memory, outside
     /// observation: it serves only to know what to ERASE when a row disappears from the model
     /// (@see pushAutomation, which explains why those targets are not swept on every
     /// push the way the fader or the sends are).
-    @ObservationIgnored var pushedPluginParams: [UUID: Set<ParamRef>] = [:]
+    @PerceptionIgnored var pushedPluginParams: [UUID: Set<ParamRef>] = [:]
 
     /// The live automation write in progress (the band's pencil, @see EditViewModel+AutomationWrite).
     /// Outside observation: it is driven at 30 Hz.
-    @ObservationIgnored var automationWrite: AutomationWriteSession? = nil
+    @PerceptionIgnored var automationWrite: AutomationWriteSession? = nil
 
     /// The row the pencil is writing, if any — the one observed slice of the live write, read by
     /// the band to light its pencil.
@@ -688,7 +688,7 @@ final class EditViewModel {
     /// press ⌥). An ordinary `Timer` would not do: the drag loop runs in
     /// `NSEventTrackingRunLoopMode`, where a timer in `.default` mode never fires; the
     /// resumptions of `Task.sleep`, on the other hand, go through the main queue, served in every mode.
-    @ObservationIgnored private var fileDropModifierWatch: Task<Void, Never>? = nil
+    @PerceptionIgnored private var fileDropModifierWatch: Task<Void, Never>? = nil
 
     /// Opens (or updates) the banner for `count` files and arms the ⌥ tracking.
     /// `location` is the cursor's position in the canvas: it lays the ghost preview.
@@ -718,7 +718,7 @@ final class EditViewModel {
 
     /// True once per hover only. Resolving the previews costs one file read
     /// per element: it is armed on entry, not on every mouse move.
-    @ObservationIgnored private var fileDropPreviewClaimed = false
+    @PerceptionIgnored private var fileDropPreviewClaimed = false
 
     func claimFileDropPreviewLoad() -> Bool {
         guard !fileDropPreviewClaimed else { return false }
@@ -870,12 +870,12 @@ final class EditViewModel {
     /// Listening to the file while it is being written. @see ExportAudition.
     let exportAudition = ExportAudition()
     /// The timer reading the engine's progress during the render phase.
-    @ObservationIgnored var exportProgressTimer: Timer? = nil
+    @PerceptionIgnored var exportProgressTimer: Timer? = nil
     /// The cancel flag consulted by the MP3 encoder, which runs on a background queue: it cannot
     /// read the view-model's state (isolated to the main actor), hence this locked box.
-    @ObservationIgnored var exportCancelFlag: ExportCancelFlag? = nil
+    @PerceptionIgnored var exportCancelFlag: ExportCancelFlag? = nil
     /// The deferred clearing of the banner after an export has finished.
-    @ObservationIgnored var exportStatusClearWork: DispatchWorkItem? = nil
+    @PerceptionIgnored var exportStatusClearWork: DispatchWorkItem? = nil
 
     /// The time range the timeline must REVEAL (zoom + scroll to show it in
     /// full), laid down by the export window when the I/O markers are set. The TimelineView
@@ -904,7 +904,7 @@ final class EditViewModel {
     /// The sound list asking the timeline to show a selection (@see `revealInTimeline`). Same
     /// protocol as `pendingLaneReveal`: the view applies it and sets it back to nil.
     var timelineRevealRequest: TimelineRevealRequest? = nil
-    @ObservationIgnored var timelineRevealSerial = 0
+    @PerceptionIgnored var timelineRevealSerial = 0
     /// Bumped by every EXPLICIT selection of a single object (`select`, `selectIDs`), wherever it
     /// comes from. The sound list observes `(row, token)`, not the row alone: clicking again the
     /// object that is already the only one selected changes nothing in `selectedIDs`, and a list
@@ -926,11 +926,11 @@ final class EditViewModel {
     // MARK: - The timeline's visible area (persisted with the project)
     //
     // The scroll position lives in the TimelineView (ScrollPosition); it is copied here
-    // at every change so that it can be saved. `@ObservationIgnored`: a plain scroll
+    // at every change so that it can be saved. `@PerceptionIgnored`: a plain scroll
     // must invalidate no view.
 
-    @ObservationIgnored var viewScrollX: Double = 0
-    @ObservationIgnored var viewScrollY: Double = 0
+    @PerceptionIgnored var viewScrollX: Double = 0
+    @PerceptionIgnored var viewScrollY: Double = 0
 
     /// The view to restore after loading a project — the TimelineView observes it, applies the
     /// scroll then sets it back to nil. nil = nothing to restore.
@@ -954,7 +954,7 @@ final class EditViewModel {
     /// the tempo and time signature are then RESTORED data, not user actions.
     /// They are pushed to the engine WITH NO remap (the restored model is already the authority on the positions)
     /// and without marking the project modified.
-    @ObservationIgnored var isRestoringTransport = false
+    @PerceptionIgnored var isRestoringTransport = false
 
     /// Changes the tempo as a user ACTION: undoable (the snapshot captures the old
     /// tempo, since `pushUndo` precedes the write) and marks the project modified. Every
@@ -1016,21 +1016,21 @@ final class EditViewModel {
         }
     }
 
-    @ObservationIgnored var applyHorizontalZoom: ((Double) -> Void)?
-    @ObservationIgnored var applyVerticalZoom: ((Double) -> Void)?
-    @ObservationIgnored var beginHorizontalZoomDrag: (() -> Void)?
-    @ObservationIgnored var endHorizontalZoomDrag: (() -> Void)?
-    @ObservationIgnored var beginVerticalZoomDrag: (() -> Void)?
-    @ObservationIgnored var endVerticalZoomDrag: (() -> Void)?
+    @PerceptionIgnored var applyHorizontalZoom: ((Double) -> Void)?
+    @PerceptionIgnored var applyVerticalZoom: ((Double) -> Void)?
+    @PerceptionIgnored var beginHorizontalZoomDrag: (() -> Void)?
+    @PerceptionIgnored var endHorizontalZoomDrag: (() -> Void)?
+    @PerceptionIgnored var beginVerticalZoomDrag: (() -> Void)?
+    @PerceptionIgnored var endVerticalZoomDrag: (() -> Void)?
     /// The vertical lane snap's current state, read by `view.state.vsnap`. nil with no interface
     /// or before the timeline has appeared (@see VerticalSnapProbe).
-    @ObservationIgnored var verticalSnapProbe: (() -> VerticalSnapProbe)?
+    @PerceptionIgnored var verticalSnapProbe: (() -> VerticalSnapProbe)?
     /// The horizontal zoom's current bounds, read by `view.state.min_pps` / `max_pps`. nil with
     /// no interface or before the timeline has appeared.
-    @ObservationIgnored var zoomBoundsProbe: (() -> (min: Double, max: Double))?
+    @PerceptionIgnored var zoomBoundsProbe: (() -> (min: Double, max: Double))?
     /// What the timeline's hover has resolved, read by `view.state.hover`. nil with no interface
     /// or before the timeline has appeared (@see TimelineHoverProbe).
-    @ObservationIgnored var hoverProbe: (() -> TimelineHoverProbe)?
+    @PerceptionIgnored var hoverProbe: (() -> TimelineHoverProbe)?
 
     /// Asks the timeline to compute the waveforms of these files now, whether or not their
     /// blocks are on screen. The ONLY door a script has onto the peaks: `ensureWaveformsLoaded`
@@ -1038,18 +1038,18 @@ final class EditViewModel {
     /// scrolled elsewhere — would ever trigger it. nil when there is no interface (@see
     /// `waveform.preload`, whose `available: false` in `--headless` is the guard that keeps
     /// a script from measuring an empty cache and concluding there is nothing to fix).
-    @ObservationIgnored var preloadWaveforms: (([String]) -> Void)?
+    @PerceptionIgnored var preloadWaveforms: (([String]) -> Void)?
 
     /// Forgets the waveform of these files (peaks, overview levels, decoded regions, the `.wfc`)
     /// and reads them again — the view side of a source file rewritten on disk. Same shape and
     /// same reason as `preloadWaveforms`: the cache lives in the timeline view (absent in
     /// `--headless`), so the view model reaches it through a closure. nil with no interface.
     /// @see EditViewModel+ChangedFiles
-    @ObservationIgnored var invalidateWaveforms: (([String]) -> Void)?
+    @PerceptionIgnored var invalidateWaveforms: (([String]) -> Void)?
     /// The identity (size + mtime) each path had when the memory waveform cache decoded it, for
     /// the paths it holds — what this PROCESS has already read, whatever document it was for.
     /// nil with no interface. @see EditViewModel+ChangedFiles
-    @ObservationIgnored var waveformStamps: (([String]) -> [String: SourceFileIdentity])?
+    @PerceptionIgnored var waveformStamps: (([String]) -> [String: SourceFileIdentity])?
 
     /// True while the transport is RUNNING (set by `ObjekatSession.isPlaying`'s `didSet`). A source
     /// file that changed under a playing engine is reloaded at the stop, not under the hand that
@@ -1061,7 +1061,7 @@ final class EditViewModel {
     /// Everything the file-change detection remembers (@see EditViewModel+ChangedFiles). One
     /// reference so the stored state stays in one place — an extension cannot carry any — and
     /// invisible to the observation: no view draws it.
-    @ObservationIgnored let fileChanges = FileChangeTracker()
+    @PerceptionIgnored let fileChanges = FileChangeTracker()
 
 
     var clipboard: ClipboardContent? = nil
@@ -1144,7 +1144,7 @@ final class EditViewModel {
     private var laneEntriesRebuildDepth = 0
     /// @see EditViewModel+LaneEntryIndex — the spatial index over `laneEntries`, built lazily by the
     /// first hit-test and DROPPED in `rebuildLaneEntries`, in the same breath as the list itself.
-    @ObservationIgnored var laneEntryIndexCache: LaneEntryIndex? = nil
+    @PerceptionIgnored var laneEntryIndexCache: LaneEntryIndex? = nil
 
     func rebuildLaneEntries() {
         laneEntriesRebuildCount &+= 1
@@ -1514,7 +1514,7 @@ final class EditViewModel {
     /// recent projects, Finder, tab, reload, Save As). It is what an UNTITLED project's Save As
     /// panel starts beside (@see SaveAsStartFolder). Kept even under `--no-recent`: it is memory
     /// of the session, written nowhere.
-    @ObservationIgnored var lastProjectFolder: URL? = nil
+    @PerceptionIgnored var lastProjectFolder: URL? = nil
 
     var undoStack: [EditSnapshot] = []
     var redoStack: [EditSnapshot] = []
@@ -1527,7 +1527,7 @@ final class EditViewModel {
     /// holds the focus in it — otherwise ⌫ / space / digits go to the timeline the moment the focus leaves
     /// the search field (and ⌫ deletes the selected object). A class member on purpose: a copy captured
     /// from a View struct would be frozen. Set by `PluginBrowserView` (appear / disappear).
-    @ObservationIgnored var pluginBrowserOpen: Bool = false
+    @PerceptionIgnored var pluginBrowserOpen: Bool = false
 
     /// An accumulator of the plugins that could not be found during a LOAD (a project or an object).
     /// `compileRack` drops into it the name of the plugins the engine could not resolve for as long as it is
@@ -1598,7 +1598,7 @@ final class EditViewModel {
     /// The last pass's final state (for a script: `project.flac_progress`).
     var lastFlacArchiveProgress: FlacArchiveProgress? = nil
     /// The run the progress belongs to: a late report of an older run is dropped.
-    @ObservationIgnored var flacArchiveRunID: UUID? = nil
+    @PerceptionIgnored var flacArchiveRunID: UUID? = nil
     /// What stopped the last scan from being computed (an i18n key), nil if it was. Read by the
     /// popover so the figures on display are never mistaken for current ones.
     var diskUsageBlockedKey: String? = nil
@@ -1607,12 +1607,12 @@ final class EditViewModel {
     /// `saveAsURLConflictCheck`. Pure values: the scan runs off the main thread.
     var diskUsageExtraRootsHook: (() -> [DiskUsageRoots])? = nil
     /// Drops the answer of a scan that a newer one has overtaken.
-    @ObservationIgnored var diskUsageGeneration = 0
+    @PerceptionIgnored var diskUsageGeneration = 0
     /// What a clean-up sent to the Trash, by the folder-relative path of each unit's primary file,
     /// so that an undo / redo (or a paste) that puts such a file back in play can fetch it back
     /// BEFORE the engine loads it (@see `EditViewModel+DiskCleanup.swift`). Session-long, never
     /// persisted: a Trash that was emptied simply leaves the usual missing-file path to act.
-    @ObservationIgnored var trashedFileUnits: [String: TrashedFileUnit] = [:]
+    @PerceptionIgnored var trashedFileUnits: [String: TrashedFileUnit] = [:]
     /// Cross-project paste (tabs INC2) fallback folders for a consolidated object's wave, keyed by
     /// the FRESH `consolidateID` a paste just minted — @see `ConsolidateFolders.resolve(extraDirs:)`
     /// and `consolidateFallbackDirs`. Transient, never persisted: media stays at its ORIGIN
@@ -1631,15 +1631,15 @@ final class EditViewModel {
     /// Reset by `currentSnapshot`, which journals it with the time spent — an AU's `getState`
     /// (a binary chunk + XML + string copies) is not free, and the capture sweeps
     /// the WHOLE project on every undoable gesture. @see EditViewModel+UndoRedo.
-    @ObservationIgnored var pluginStateCaptureCount = 0
+    @PerceptionIgnored var pluginStateCaptureCount = 0
 
     // MARK: ARA (Melodyne) — session memory, see EditViewModel+ARA.swift
     /// The freshest archive known per object, as last read from (or handed to) the engine. The MODEL
     /// may lag behind it by the debounce of `scheduleARAModelRefresh`; every consumer that needs the
     /// truth asks `liveARAArchive(for:fallback:)`, which reads this before going back to the engine.
-    @ObservationIgnored var araArchiveCache: [UUID: ARAArchive] = [:]
+    @PerceptionIgnored var araArchiveCache: [UUID: ARAArchive] = [:]
     /// Objects whose ARA source has been pushed to the engine (successfully or not).
-    @ObservationIgnored var araSynced: Set<UUID> = []
+    @PerceptionIgnored var araSynced: Set<UUID> = []
     /// Why an object's source is NOT playing (plugin missing, engine refusal): the object sounds dry,
     /// its model and archive stay intact. Machine reason of `OBJEngineCore.setARASource`.
     var araSyncFailures: [UUID: String] = [:]
@@ -1647,9 +1647,9 @@ final class EditViewModel {
     /// declare ARA (a false positive of the pre-filter: RX, Ozone...). Session memory: the picker
     /// stops offering them as a source. @see `confirmedARASource`.
     var araDisprovedIdentifiers: Set<String> = []
-    @ObservationIgnored var araRefreshWork: DispatchWorkItem? = nil
+    @PerceptionIgnored var araRefreshWork: DispatchWorkItem? = nil
     /// Timings of the last captures, for `debug.ara_report` and the cost measurements (section O).
-    @ObservationIgnored var araCaptureStats: (count: Int, totalMs: Double, lastMs: Double, bytes: Int) = (0, 0, 0, 0)
+    @PerceptionIgnored var araCaptureStats: (count: Int, totalMs: Double, lastMs: Double, bytes: Int) = (0, 0, 0, 0)
 
     // MARK: - Selection
 
@@ -1884,7 +1884,7 @@ final class EditViewModel {
     /// rebuild an index per iteration for a single read.
     func find(id: UUID) -> SoundObject? {
         // Read through the observable property, index or not: a view that finds its object here
-        // must keep depending on `items` (the index itself is @ObservationIgnored).
+        // must keep depending on `items` (the index itself is @PerceptionIgnored).
         let roots = items
         if let findIndex { return findIndex[id] }
         findsSinceMutation += 1
@@ -1962,11 +1962,11 @@ final class EditViewModel {
     /// touched (JUCE's `OBJPluginEditorWindow`, or ours @see
     /// `BuiltInPluginEditorWindowController`), which would then wear the project's name and its
     /// proxy icon.
-    @ObservationIgnored weak var titledWindow: NSWindow? = nil
+    @PerceptionIgnored weak var titledWindow: NSWindow? = nil
 
     /// The identifier SwiftUI gave that window, READ and never written (it is what SwiftUI
     /// restores frames by). Only there to find the window again if the weak reference has gone.
-    @ObservationIgnored private var documentWindowIdentifier: NSUserInterfaceItemIdentifier? = nil
+    @PerceptionIgnored private var documentWindowIdentifier: NSUserInterfaceItemIdentifier? = nil
 
     /// The window to title: the one remembered, or the one bearing the identifier noted at the
     /// time of adoption. Nil before the adoption — and with no window at all (`--headless`).
@@ -2014,7 +2014,7 @@ final class EditViewModel {
     /// The one owner of the grey device label (@see `TitleBarDeviceLabel`) for this window's
     /// whole life — a document has exactly one titled window (@see `titledWindow`), so one
     /// instance is all this ever needs.
-    @ObservationIgnored private let audioDeviceLabel = TitleBarDeviceLabel()
+    @PerceptionIgnored private let audioDeviceLabel = TitleBarDeviceLabel()
 
     /// The audio device really in use, in grey, beside the title (`TitleBarDeviceLabel`, a
     /// SECOND text field laid by hand — @see plan_titlebar_audio_device.md §4a/4b: measured

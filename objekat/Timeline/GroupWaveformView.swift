@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 struct GroupWaveformView: View {
     var waveformCache: WaveformCache
@@ -29,8 +30,10 @@ struct GroupWaveformView: View {
     /// gain (@see EditViewModel.offFXLinkIDs, GainStageDisplay).
     let offBins: Set<UUID>
 
-    var body: some View {
-        Canvas { ctx, size in
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
+        PerceivedCanvas { ctx, size in
             GroupWaveformDrawing.draw(
                 into: ctx, size: size, waveformCache: waveformCache, children: children,
                 groupStartTime: groupStartTime, pixelsPerSecond: pixelsPerSecond,

@@ -1,11 +1,12 @@
 import AppKit
 import SwiftUI
+import Perception
 
 /// The FX tool's hover: WHICH object shows its mini signal view, in which part of its block, and
 /// what the hand is on. A store of its own, written by the canvas's hover handler and read by the
 /// overlay alone — so a hover under the FX tool redraws one small Canvas, never the timeline
 /// (@see TimelineHoverStore for the same reasoning).
-@MainActor @Observable
+@MainActor @Perceptible
 final class FXStripHoverStore {
     struct Shown: Equatable {
         let objectID: UUID
@@ -30,11 +31,13 @@ struct FXStripOverlayView: View {
     /// The block's content shows through at about a quarter.
     static let veilOpacity: Double = 0.75
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if viewModel.activeTool == .toolFX, let s = store.shown, s.area.width > 0, s.area.height > 0 {
             let model = viewModel.fxStripModel(objectID: s.objectID)
             let area = s.area
-            Canvas { ctx, _ in
+            PerceivedCanvas { ctx, _ in
                 ctx.translateBy(x: -area.minX, y: -area.minY)
                 Self.draw(&ctx, model: model, area: area, hover: s.hover)
             }

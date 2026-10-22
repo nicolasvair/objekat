@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 /// What the pointer is aiming at on the timeline, kept OUT of `TimelineView`'s state.
 ///
@@ -29,7 +29,7 @@ import Observation
 ///
 /// Every setter writes only on a CHANGE: a notification that carries nothing is exactly what this
 /// type exists to prevent.
-@Observable
+@Perceptible
 final class TimelineHoverStore {
 
     /// The cut position under the Cut tool: the block, and the snapped offset INSIDE it.

@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - How far a consolidated render has got
 //
@@ -28,7 +29,7 @@ import SwiftUI
 ///
 /// Written by one place only, `EditViewModel.pollRenderProgress`, and only when something changed:
 /// an equal dictionary reassigned every tick would invalidate the rings for nothing.
-@Observable final class RenderProgressStore {
+@Perceptible final class RenderProgressStore {
     private(set) var fractions: [UUID: Double] = [:]
 
     /// nil = nothing known yet for this key (the engine has not started the job, or no render of
@@ -51,7 +52,9 @@ struct RenderProgressRing: View {
     let key: UUID
     var diameter: CGFloat = 14
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The one read of the store, HERE and not in the block that hosts this view: it is what
         // keeps a tick from reaching further than this small subtree. @see RenderProgressStore
         let fraction = store.fraction(for: key) ?? 0

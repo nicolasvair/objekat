@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - The feature badges as views (the rich block views and the sound list)
 //
@@ -38,7 +39,9 @@ struct NameWithFeatureBadges<Name: View>: View {
     var spacing: CGFloat = 3
     @ViewBuilder let name: () -> Name
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if badges.isEmpty {
             name()
         } else {

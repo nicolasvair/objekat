@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import AppKit
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Stem mixer in the toolbar (INC 1 VU + INC 2 FX)
 //
@@ -72,7 +73,9 @@ struct StemStripsToolbarView: View {
     // Blinking at ~2 Hz: it flips every ~6 ticks (6 × 0.07 s ≈ 0.42 s).
     private var blinkOn: Bool { (pollTick / 6) % 2 == 0 }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // ONE view carries the VU poll whatever the mode: `bar` is a single conditional view, so
         // the `onReceive` below is attached once and survives a switch between the two modes
         // (the timer itself being @State).
@@ -120,7 +123,7 @@ struct StemStripsToolbarView: View {
     /// space laid on the scroll view itself would move the frames under the pointer as it scrolls.
     private var stripsRow: some View {
         HStack(spacing: 4) {
-            ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in
+            ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
                 StemStripButton(
                     stem: stem,
                     isMain: stem.id == viewModel.mainStemID,
@@ -172,12 +175,12 @@ struct StemStripsToolbarView: View {
                 .popover(isPresented: Binding(
                     get: { openStemID == stem.id },
                     set: { if !$0 && openStemID == stem.id { openStemID = nil } }
-                ), arrowEdge: .bottom) {
+                ), arrowEdge: .bottom) { WithPerceptionTracking {
                     StemFXPopover(viewModel: viewModel, stem: stem,
                                   isMain: stem.id == viewModel.mainStemID,
                                   number: idx < 9 ? idx + 1 : nil)
-                }
-            }
+                } }
+            } }
 
             // '+': creates a new stem (Main = stem 1 → the first addition = 'Stem 2'). The signal
             // popover does NOT open in its wake: creating a bus is a routing gesture, not an act of
@@ -571,7 +574,9 @@ private struct StemFXPopover: View {
     // A width fitted to the VERTICAL signal view (the old 540 was sized for the horizontal one).
     private let popoverWidth: CGFloat = 300
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 if let number {

@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - What a script shows over the objects
 
@@ -43,11 +44,13 @@ struct ScriptOverlayLayer: View {
         }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The one read of the store, HERE: a script rewriting its zones invalidates this Canvas and
         // nothing else (@see ScriptOverlayStore).
         let overlays = store.overlays
-        Canvas { context, _ in
+        PerceivedCanvas { context, _ in
             guard !overlays.isEmpty else { return }
             let visX0 = Double(scrollOffsetX) - 50
             let visX1 = viewportWidth > 0

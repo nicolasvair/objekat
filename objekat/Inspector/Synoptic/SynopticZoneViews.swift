@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - dB gain control (a parallel branch's gain, the clip's volume)
 
@@ -188,7 +189,9 @@ struct DragValueBox: View {
         DispatchQueue.main.async { focused = true }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Group {
             if typing != nil {
                 TextField(noLabel, text: Binding(get: { typing ?? "" }, set: { typing = $0 }))
@@ -368,7 +371,9 @@ struct AudioFileZoneView: View {
         else { SynopticUIState.shared.toggleClipOptions() }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         zone
             .frame(width: rect.width, height: rect.height)
             .contentShape(RoundedRectangle(cornerRadius: 10))
@@ -407,9 +412,9 @@ struct AudioFileZoneView: View {
             if isFolded {
                 // A hidden setting that is not neutral says so (§B.7). Passive: a double click on one opens
                 // the zone like anywhere else.
-                ForEach(Array(file.hiddenNonNeutralSettings.enumerated()), id: \.offset) { _, setting in
+                ForEach(Array(file.hiddenNonNeutralSettings.enumerated()), id: \.offset) { _, setting in WithPerceptionTracking {
                     hiddenPill(setting)
-                }
+                } }
             }
             Spacer(minLength: 0)
             loopButton
@@ -609,7 +614,9 @@ struct ClipMixZoneView: View {
         return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             // OPAQUE: the mixer straddles the object frame's lower edge (@see SynopticZoneBox).
             SynopticZoneBox()
@@ -710,7 +717,9 @@ struct BusHeadZoneView: View {
     let received: [SynopticSend]
     let actions: SynopticActions
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(nsColor: .controlBackgroundColor))
@@ -729,9 +738,9 @@ struct BusHeadZoneView: View {
                     if let inf = infinite { infiniteToggle(inf) }
                 }
                 .frame(height: SynopticLayout.pillH)
-                ForEach(received) { s in
+                ForEach(received) { s in WithPerceptionTracking {
                     SynopticSendRow(send: s, outgoing: false, actions: actions)
-                }
+                } }
             }
             .padding(.horizontal, 10)
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
@@ -808,7 +817,7 @@ struct StemsZoneView: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 Menu {
-                    ForEach(Array(stems.enumerated()), id: \.element.id) { idx, stem in
+                    ForEach(Array(stems.enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
                         // The number prefix = the keyboard shortcut (1 = Main, 2 = the 2nd stem…).
                         let prefix = idx < 9 ? "\(idx + 1)  " : ""
                         // A `String` and not a literal: see `ObjectInspectorView`, same trap.
@@ -817,7 +826,7 @@ struct StemsZoneView: View {
                             if stem.isCurrent { Label(title, systemImage: "checkmark") }
                             else { Text(verbatim: title) }
                         }
-                    }
+                    } }
                 } label: {
                     HStack(spacing: 6) {
                         Circle()

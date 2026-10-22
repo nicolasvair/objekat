@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - What a script lays over an object
 
@@ -52,7 +52,7 @@ struct ScriptOverlay: Equatable, Sendable {
     var maxTextSpan: Double = 0
 }
 
-@Observable final class ScriptOverlayStore {
+@Perceptible final class ScriptOverlayStore {
 
     /// A script that sends more than this has a bug, and the drawing would pay for it.
     static let maxElements = 20_000

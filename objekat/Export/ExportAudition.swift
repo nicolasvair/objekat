@@ -1,7 +1,7 @@
 import AVFoundation
 import AudioToolbox
 import CoreAudio
-import Observation
+import Perception
 
 // LISTENING TO AN EXPORT WHILE IT IS BEING MADE.
 //
@@ -38,7 +38,7 @@ import Observation
 // card changes while one listens, the pass stops, is reconfigured and picks up at the same
 // position.
 @MainActor
-@Observable
+@Perceptible
 final class ExportAudition {
 
     /// Is a pass under way? (True even while starved — the render is simply behind.)
@@ -50,24 +50,24 @@ final class ExportAudition {
     /// The play head has caught the render up: nothing more to schedule, we are waiting.
     private(set) var starved = false
 
-    @ObservationIgnored private let engine = AVAudioEngine()
-    @ObservationIgnored private let player = AVAudioPlayerNode()
-    @ObservationIgnored private var attached = false
+    @PerceptionIgnored private let engine = AVAudioEngine()
+    @PerceptionIgnored private let player = AVAudioPlayerNode()
+    @PerceptionIgnored private var attached = false
 
-    @ObservationIgnored private var source: URL?
-    @ObservationIgnored private var format: AVAudioFormat?
+    @PerceptionIgnored private var source: URL?
+    @PerceptionIgnored private var format: AVAudioFormat?
     /// The frame this pass started at: `AVAudioPlayerNode` counts its own time from `play()`,
     /// so the position on screen is this plus what the node says.
-    @ObservationIgnored private var startFrame: AVAudioFramePosition = 0
+    @PerceptionIgnored private var startFrame: AVAudioFramePosition = 0
     /// How far the file has been handed to the player. What lies beyond has not been flushed yet.
-    @ObservationIgnored private var scheduledFrames: AVAudioFramePosition = 0
-    @ObservationIgnored private var ticker: Timer?
-    @ObservationIgnored private var lastProbe: Date = .distantPast
+    @PerceptionIgnored private var scheduledFrames: AVAudioFramePosition = 0
+    @PerceptionIgnored private var ticker: Timer?
+    @PerceptionIgnored private var lastProbe: Date = .distantPast
     /// A restart for a device change is under way: our own stop/start must not re-enter it.
-    @ObservationIgnored private var restarting = false
+    @PerceptionIgnored private var restarting = false
     /// An observation of `AudioDeviceStatus` is armed (it fires ONCE per arming).
-    @ObservationIgnored private var observingDevice = false
-    @ObservationIgnored private var configObserver: NSObjectProtocol?
+    @PerceptionIgnored private var observingDevice = false
+    @PerceptionIgnored private var configObserver: NSObjectProtocol?
 
     /// The longest slice handed over at once. Short enough that the play head never lags far
     /// behind what is on disk, long enough that the top-up is four times a second at most.
@@ -283,7 +283,7 @@ final class ExportAudition {
         }
         guard !observingDevice else { return }
         observingDevice = true
-        withObservationTracking {
+        withPerceptionTracking {
             _ = AudioDeviceStatus.shared.generation
         } onChange: { [weak self] in
             // Called on `willSet`: hop, so that the new snapshot is what is read.

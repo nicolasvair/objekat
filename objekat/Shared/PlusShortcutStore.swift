@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - The directions of the signal view's "+" (an app preference)
 
@@ -17,7 +17,7 @@ import Observation
 ///
 /// A test never touches the real domain: under `--no-recent` or `--headless` the map lives in the process
 /// and dies with it (same discretion as `PluginCategoryStore`).
-@Observable
+@Perceptible
 final class PlusShortcutStore {
 
     /// The one store of the app.
@@ -39,9 +39,9 @@ final class PlusShortcutStore {
     /// The map as it stands. Read it to draw and to classify; write it through the methods below.
     private(set) var map: PlusShortcutMap
 
-    @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let storageKey: String
-    @ObservationIgnored private let isEphemeral: Bool
+    @PerceptionIgnored private let defaults: UserDefaults
+    @PerceptionIgnored private let storageKey: String
+    @PerceptionIgnored private let isEphemeral: Bool
 
     init(defaults: UserDefaults = .standard,
          storageKey: String = PlusShortcutStore.defaultsKey,

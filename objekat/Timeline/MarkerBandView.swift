@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // MARK: - Geometry of the marker band
 //
@@ -344,7 +345,9 @@ struct MarkerLaneHeaderView: View {
         return min(Self.nameMaxWidth, max(0, wall - Self.nameX - 5 - 3))
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(lanes) { lane in

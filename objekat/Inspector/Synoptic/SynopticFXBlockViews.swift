@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - FX link block (header card)
 
@@ -39,7 +40,9 @@ struct FXBlockHeaderView: View {
     private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 0) {
             // on/off — a REAL button, full height, square edges (the bin's colour = on)
             Button { actions.onFXToggleEnabled?(link.blockID) } label: {

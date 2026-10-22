@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Real model → graph adapter (step 1: a pure series)
 
@@ -70,7 +71,9 @@ struct SynopticBoundView: View {
     private static let vuInterval: TimeInterval = 1.0 / 30.0
     private let vuPoll = Timer.publish(every: SynopticBoundView.vuInterval, on: .main, in: .common).autoconnect()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // Builds the graph plus the seriesID→location table from the real model. The closures below
         // capture `locations` from THIS build (consistent with the series ids being rendered).
         // The host = a timeline object OR a stem/master bus (INC 2). `obj` is nil for a bus:
@@ -559,7 +562,7 @@ struct SynopticBoundView: View {
         .onChange(of: meteredIDs) { _, ids in registerMeters(ids) }
         .onReceive(poll) { _ in refreshStates(); refreshReceived() }
         .onReceive(vuPoll) { _ in refreshLevels() }
-        .sheet(item: $activeSheet) { kind in
+        .sheet(item: $activeSheet) { kind in WithPerceptionTracking {
             switch kind {
             case .insert(let location, let index, let category):
                 pickerSheet(insertion: PluginBrowserInsertion(location: location, index: index),
@@ -582,7 +585,7 @@ struct SynopticBoundView: View {
                                              at: min(max(0, index ?? count), count))
                 }
             }
-        }
+        } }
     }
 
     /// A plugin selection sheet reused by '+' (insert), '//' (branch) and the instruments zone.
@@ -883,7 +886,9 @@ struct SynopticEditorView: View {
     let objectID: UUID
     let title: String
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(L("synoptic.window.title", title)).font(.headline)
@@ -922,7 +927,9 @@ struct SynopticSheet: View {
     @State private var selection: Set<UUID> = []
     @State private var selectedInstrumentID: UUID? = nil
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             HStack {
                 Text(L("synoptic.demo.title", title)).font(.headline)

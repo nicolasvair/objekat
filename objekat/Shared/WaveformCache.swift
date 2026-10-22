@@ -1,7 +1,7 @@
 import Foundation
 import AVFoundation
 import Accelerate
-import Observation
+import Perception
 
 // A mipmap of audio peaks at several resolutions, defined in peaks per second
 // (and not in peaks per file) so that the visual detail stays constant whatever
@@ -9,7 +9,7 @@ import Observation
 // the current pixelsPerSecond.
 
 @MainActor
-@Observable
+@Perceptible
 final class WaveformCache {
 
     // Target densities (peaks per second of file), from coarse to fine.
@@ -123,7 +123,7 @@ final class WaveformCache {
     /// if the path has moved on — otherwise a decode of the old file, in flight when the file
     /// changed, would land after the invalidation and put the old waveform back for good.
     /// Ignored by the observation: it is bookkeeping, no view draws it.
-    @ObservationIgnored private var generations: [String: Int] = [:]
+    @PerceptionIgnored private var generations: [String: Int] = [:]
     private func generation(of path: String) -> Int { generations[path, default: 0] }
 
     /// A decoded region's key. Keying on the PATH alone was enough while the samples mode only

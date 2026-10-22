@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - What a drag carries, read off the provider
 //
@@ -118,7 +119,9 @@ struct FileDropGhostOverlay: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             if let hint = viewModel.fileDropHint, let loc = hint.location {
                 let baseLane  = max(0, Int((loc.y - rulerHeight) / laneStep))
@@ -126,7 +129,7 @@ struct FileDropGhostOverlay: View {
                 let slots = EditViewModel.fileDropLayout(durations: hint.previewDurations,
                                                          mode: hint.mode,
                                                          baseLane: baseLane, baseStart: baseStart)
-                ForEach(slots) { slot in
+                ForEach(slots) { slot in WithPerceptionTracking {
                     let preview = slot.index < hint.previews.count ? hint.previews[slot.index] : nil
                     let w = max(3, slot.duration * pixelsPerSecond)
                     RoundedRectangle(cornerRadius: 4)
@@ -156,7 +159,7 @@ struct FileDropGhostOverlay: View {
                         .offset(x: slot.startTime * pixelsPerSecond,
                                 y: rulerHeight + Double(slot.lane) * laneStep)
                         .animation(.easeOut(duration: 0.12), value: hint.mode)
-                }
+                } }
             }
         }
     }
