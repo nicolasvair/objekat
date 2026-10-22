@@ -16,7 +16,7 @@ import Perception
 /// than a veil held a beat too long — and it fades OUT over 150 ms. There is no blur: tried (the
 /// system material, whole or partial) and dropped as serving no purpose.
 struct ProjectLoadOverlay: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     @State private var showOverlay = false
     @State private var pendingShowWork: DispatchWorkItem?

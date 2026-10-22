@@ -10,7 +10,7 @@ import Perception
 struct ContentView: View {
     /// The view OBSERVES the session, it does not own it: the transport state has to outlive the
     /// view and stay readable from outside (see ObjekatSession).
-    @Bindable var session: ObjekatSession
+    @Perception.Bindable var session: ObjekatSession
     /// Project tabs (INC 1) — observed for the tab strip alone; every gesture beneath it keeps
     /// reading `session`/`viewModel` exactly as before, a tab switch being nothing more than the
     /// SAME session pointed at a different document.

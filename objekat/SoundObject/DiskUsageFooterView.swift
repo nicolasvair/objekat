@@ -16,7 +16,7 @@ import Perception
 /// `project.clean_unused` calls: the same recomputation right before, the same refusals, and the
 /// Trash — nothing here ever deletes.
 struct DiskUsageFooterView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @State private var isOpen = false
 
     var body: some View { WithPerceptionTracking { perceivedBody } }
@@ -80,7 +80,7 @@ enum DiskUsageFormat {
 // MARK: - The popover
 
 struct DiskUsagePopoverView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @State private var scope: DiskCleanScope = .session
     /// What the user UNTICKED among the orphans (nobody reads them): they are ticked until said
     /// otherwise, so a list that is recomputed under the pointer never loses or invents a choice.

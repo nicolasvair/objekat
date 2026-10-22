@@ -68,5 +68,13 @@ ARA SDK 2.3.0 (ARA_API and ARA_Library)
     ARA_SDK/ — not redistributed in this repository. "ARA" and "Audio Random
     Access" are trademarks of Celemony Software GmbH.
 
+swift-perception 1.6.0 (and its dependency xctest-dynamic-overlay)
+    https://github.com/pointfreeco/swift-perception
+    https://github.com/pointfreeco/xctest-dynamic-overlay
+    Copyright (c) Point-Free, Inc.
+    MIT License, which is compatible with the AGPLv3. Swift packages resolved by
+    Xcode at build time — not redistributed in this repository. They provide the
+    Observation backport that lets the interface run on macOS 12 and 13.
+
 The complete text of the licence covering OBJEKAT is in LICENSE, at the root of
 this repository.

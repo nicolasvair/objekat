@@ -800,7 +800,7 @@ final class SoundLibraryViewModel {
 
 struct SoundLibraryView: View {
     /// Owned by `ContentView`, never by this view (@see SoundLibraryViewModel).
-    @Bindable var vm: SoundLibraryViewModel
+    @Perception.Bindable var vm: SoundLibraryViewModel
     @FocusState private var listFocused: Bool
 
     private var rows: [SoundLibraryNode] { vm.displayedRows }

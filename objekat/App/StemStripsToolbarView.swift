@@ -14,7 +14,7 @@ import Perception
 // title) and detaching it from the Main (the 'route to main' checkbox).
 
 struct StemStripsToolbarView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// The toolbar's LAST degradation step on a narrow window (@see TransportView): each strip
     /// keeps only its number and its VU dot, and the whole bar — '+' included — goes inside a
     /// horizontal scroll view that can be squeezed below its natural width. The stem's name is
@@ -561,7 +561,7 @@ private struct StemStripButton: View {
 // MARK: - A bus's FX chain popover (the signal view, reused)
 
 private struct StemFXPopover: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     let stem: Stem
     let isMain: Bool
     /// The keyboard shortcut's number (a reminder of the key → stem link). nil beyond 9.

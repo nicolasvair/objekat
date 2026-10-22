@@ -16,7 +16,7 @@ import Perception
 /// carries the explanation (an AppKit LOCAL monitor runs ahead of the responder chain, so a
 /// focused SwiftUI view's `.onKeyPress` never sees an arrow unless the monitor lets it through).
 struct SoundObjectListView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
 

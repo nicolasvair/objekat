@@ -20,7 +20,7 @@ import Perception
 // reports its own outcome. @see EditViewModel+ExportRegions
 
 struct ExportRegionPicker: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// The settings the window is showing (the running job's own while a render runs).
     let settings: ExportSettings
 

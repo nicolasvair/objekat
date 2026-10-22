@@ -50,7 +50,7 @@ final class AudioDeviceWatcher {
 // on every click.
 
 struct AudioSettingsMenu: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     /// The list of audio devices, re-enumerated on appearance, on hovering the icon (so just
     /// before the click that opens the menu) and on every change CoreAudio reports.

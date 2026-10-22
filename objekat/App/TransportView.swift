@@ -11,7 +11,7 @@ struct TransportView: View {
     /// stopped (@see ObjekatSession.displayedPosition) — so a click answers here at once.
     let displayedPosition: () -> Double
     let totalDuration: Double
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     let onPlay: () -> Void
     let onStop: () -> Void
 
@@ -425,7 +425,7 @@ private struct LockedDragSurface: NSViewRepresentable {
 }
 
 private struct ZoomDragHandles: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// Level 2 of the bar's density: the waveform pill drops its dB value and takes the width of
     /// its two neighbours. The value stays one drag away — and the waveform itself shows it.
     let waveformIconOnly: Bool
@@ -571,7 +571,7 @@ private struct ZoomDragHandles: View {
 }
 
 private struct ToolPickerButtons: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// Level 1 of the bar's density: each button keeps only its bold initial — which IS the tool's
     /// key, so what is left is still the thing one presses. The Solo button follows: it sits in the
     /// same row and reads as one of them. The tooltips keep naming the tools in full.

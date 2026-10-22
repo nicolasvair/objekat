@@ -22,7 +22,7 @@ import Perception
 //   • Done / Failed — the strip stays a few seconds, with access to the file.
 
 struct ExportProgressBar: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     var body: some View { WithPerceptionTracking { perceivedBody } }
 

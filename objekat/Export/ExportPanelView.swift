@@ -17,7 +17,7 @@ import Perception
 // a render one cannot judge. Ticking "in the background" is what gives the strip its turn.
 
 struct ExportPanelView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     @State private var inText: String = ""
     @State private var outText: String = ""
