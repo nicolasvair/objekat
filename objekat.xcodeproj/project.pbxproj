@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		DA0B5E1D2FC5B00000C4E5B3 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = DA0B5E1B2FC5B00000C4E5B1 /* LICENSE */; };
 		DA0B5E1E2FC5B00000C4E5B4 /* NOTICE in Resources */ = {isa = PBXBuildFile; fileRef = DA0B5E1C2FC5B00000C4E5B2 /* NOTICE */; };
+		DA0B5E202FC5C00000C4E5C1 /* Perception in Frameworks */ = {isa = PBXBuildFile; productRef = DA0B5E212FC5C00000C4E5C2 /* Perception */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +50,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				DA0B5E202FC5C00000C4E5C1 /* Perception in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +98,7 @@
 			);
 			name = objekat;
 			packageProductDependencies = (
+				DA0B5E212FC5C00000C4E5C2 /* Perception */,
 			);
 			productName = objekat;
 			productReference = DA7F47832FBA52C1004F3E72 /* objekat.app */;
@@ -128,6 +131,9 @@
 			);
 			mainGroup = DA7F477A2FBA52C1004F3E72;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				DA0B5E222FC5C00000C4E5C3 /* XCRemoteSwiftPackageReference "swift-perception" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DA7F47842FBA52C1004F3E72 /* Products */;
 			projectDirPath = "";
@@ -528,6 +534,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		DA0B5E222FC5C00000C4E5C3 /* XCRemoteSwiftPackageReference "swift-perception" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pointfreeco/swift-perception";
+			requirement = {
+				kind = exactVersion;
+				version = 1.6.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DA0B5E212FC5C00000C4E5C2 /* Perception */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DA0B5E222FC5C00000C4E5C3 /* XCRemoteSwiftPackageReference "swift-perception" */;
+			productName = Perception;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = DA7F477B2FBA52C1004F3E72 /* Project object */;
 }
