@@ -395,7 +395,7 @@ struct SynopticGainStageControls: View {
                      format: { v == nil ? "–" : dbLabel($0) },
                      range: Self.gainRange,
                      pointsPerStep: 6, snap: true, width: face == .gain ? 46 : 44,
-                     keyStep: 1,
+                     keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
                      help: L("help.drag.volume"),
                      onTouch: { touch(GainStageValues.gainParamID) },
                      onBegin: { actions?.onBeginGainEdit?() },

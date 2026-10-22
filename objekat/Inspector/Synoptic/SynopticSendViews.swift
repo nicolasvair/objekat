@@ -69,7 +69,7 @@ struct SynopticSendRow: View {
             DragValueBox(value: Double(send.levelDb),
                          format: { levelLabel($0) },
                          range: Double(sendMinDb)...Double(sendMaxDb),
-                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
                          help: L("help.drag.sendLevel"),
                          onTouch: { actions.onTouchParam?(.send(auxID: send.id)) },
                          onBegin: { actions.onBeginSendEdit?() },
@@ -172,7 +172,7 @@ struct SendCardView: View {
             DragValueBox(value: Double(send.levelDb),
                          format: { levelLabel($0) },
                          range: Double(sendMinDb)...Double(sendMaxDb),
-                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                         pointsPerStep: 6, snap: true, width: 52, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
                          // The level acts AFTER the send's plugins (Q-U17): said where there are some.
                          help: send.plugins.isEmpty ? L("help.drag.sendLevel") : L("synoptic.send.level.afterPlugins"),
                          onTouch: { actions.onTouchParam?(.send(auxID: send.id)) },

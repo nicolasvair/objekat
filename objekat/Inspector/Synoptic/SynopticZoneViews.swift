@@ -53,7 +53,7 @@ struct GainDbControl: View {
                      format: { _ in label },           // a signed label with its unit
                      range: Double(minDb)...Double(maxDb),
                      pointsPerStep: 6, snap: true, width: 46,
-                     keyStep: 1,
+                     keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
                      help: L("help.drag.volume"),
                      onTouch: onTouch,
                      onBegin: onBegin,

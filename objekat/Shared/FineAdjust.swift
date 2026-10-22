@@ -24,6 +24,10 @@ struct FineAdjust: Equatable {
     /// all read it, so "fine" cannot mean one thing here and another there.
     static let factor: Double = 0.1
 
+    /// The big step (⌘↑/↓) of a LEVEL in dB — the Volume tool and the volume, gain and send boxes
+    /// alike: 3 dB. Not the generic ×10: ±10 dB on one key was refused as too easy to mistake.
+    static let dbBigStep: Double = 3
+
     /// The effective travel earned before the last time ⇧ changed.
     private var banked: Double = 0
     /// The raw travel at the last time ⇧ changed (the re-anchored origin).

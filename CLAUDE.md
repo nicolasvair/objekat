@@ -2681,7 +2681,7 @@ What has landed since mid-August, in order:
   automation band, the plugin trims, the piano-roll velocity (⌘⇧). A box of whole semitones has no fine
   mode (`allowsFine: false`); a pan drag keeps its detent on the tenth and ⇧ lifts it to the percent.
   **⌘ = the other side**: grid snap inversion on a drag, ZOOM on the wheel (`cmdZoomLock`), the BIG step on
-  an arrow (box ×10, Volume ±3 dB, Pan ±0.5, BPM ±10) and the piano-roll octave (⌘↑/↓; ⇧↑/↓ on notes is a
+  an arrow (box ×10, but ±3 dB on every dB box and on the Volume tool — `FineAdjust.dbBigStep`; Pan ±0.5, BPM ±10) and the piano-roll octave (⌘↑/↓; ⇧↑/↓ on notes is a
   semitone). **⌥** takes what ⇧ used to carry in the transport: ⌥space = pause / resume, ⌥R / ⌥T = vertical
   zoom. In a plugin drop ⌘ does NOTHING and ⌥ copies; in a file drop the end-to-end layout is ⌥. ⌃ is no
   longer excluded from the digits (stems) and the F key. **Arrows**: Volume ↑ ±1 dB / ⇧ ±0.5 / ⌘ ±3, Pan

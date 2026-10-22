@@ -52,7 +52,7 @@ extension TimelineView {
     /// The Volume tool's ↑/↓ step, in dB: 1 bare, ⇧ = the fine step (half a dB), ⌘ = the big step (3).
     /// ⌘ wins if both are held — the big step is the explicit ask.
     static func volumeArrowStep(_ flags: NSEvent.ModifierFlags) -> Float {
-        if flags.contains(.command) { return 3 }
+        if flags.contains(.command) { return Float(FineAdjust.dbBigStep) }
         return Float(FineAdjust.step(1, fine: flags.contains(.shift), fineStep: 0.5))
     }
 

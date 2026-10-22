@@ -382,7 +382,7 @@ struct ObjectInspectorView: View {
             },
             // Relative: at most +40 dB up per gesture (already enormous), enough down to take
             // anything to −∞; each object is clamped on its own.
-            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
+            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
             help: L("help.drag.volume"),
             // Touching the control: the fader becomes the 'future automation' row of EVERY object
             // in the batch, without any value having to move.
@@ -516,7 +516,7 @@ struct ObjectInspectorView: View {
                 // send is clamped on its own, from where it stood when the gesture began.
                 range: rel ? -Double(sendMaxDb - sendMinDb)...Double(sendMaxDb - sendMinDb)
                            : Double(sendMinDb)...Double(sendMaxDb),
-                pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                pointsPerStep: 6, snap: true, width: 52, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
                 help: L("help.drag.send"),
                 onBegin: {
                     viewModel.pushUndo()
