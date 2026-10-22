@@ -583,11 +583,12 @@ def main():
     section("9 — what leaves the session is the CLOSED instance")
     def_id, i1, i2, i3 = build("s9")
     fxa = pid(cmd("plugin.add_gain_stage", host=i1, face="gain", gain_db=-1.0))
-    cmd("plugin.link", **{"from": i1, "plugin": fxa, "to": i3}); settle()
+    cmd("plugin.copy", **{"from": i1, "plugin": fxa, "to": i3}); settle()   # (the manual link is gone, 22 Oct 2026)
     # Room for the copies (a duplicate lands right after its original and would overwrite its neighbour).
     cmd("object.move", id=i2, start=20.0); cmd("object.move", id=i3, start=30.0); settle()
-    link0 = [p.get("linkGroupID") for p in find(i1).get("plugins", [])]
-    check("setup: the FX of I1 is linked to I3's copy", len(link0) == 1 and link0[0] is not None, str(link0))
+    link0 = [p.get("id") for p in find(i1).get("plugins", [])]
+    check("setup: I1 holds its FX, and I3 an independent copy of it",
+          len(link0) == 1 and len(find(i3).get("plugins", [])) >= 1, str(link0))
     cmd("consolidate.edit_begin", placement=i1); settle()
     stage = find(i1); a = children(stage)[0]["id"]
 
@@ -647,9 +648,9 @@ def main():
     check("the time-selection fragment pasted at 9 s is a CLOSED linked clip",
           len(frag) == 1 and clip_of(frag[0]) is not None and frag[0].get("definitionID") == def_id,
           str([(kind(o).get("type"), o.get("definitionID")) for o in frag]))
-    linked = [o for o in copies if o.get("plugins") and o["plugins"][0].get("linkGroupID") == link0[0]]
-    check("...the FX of those taken from I1 (and from its mirror I3) keep the link group by default",
-          len(linked) >= 2, str([[x.get("linkGroupID") for x in o.get("plugins", [])] for o in copies]))
+    linked = [o for o in copies if o.get("plugins")]
+    check("...the FX of those taken from I1 (and from its mirror I3) travel with the copies",
+          len(linked) >= 2, str([[x.get("id") for x in o.get("plugins", [])] for o in copies]))
 
     # ── 10 — un-make ──
     section("10 — de-consolidate: an ordinary group G holding the content")

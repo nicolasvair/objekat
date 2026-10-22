@@ -28,7 +28,7 @@ What is asserted, with Apple's own AudioUnits (installed with macOS):
   * an OLD-FORMAT file (no `monoFold` key, version 26): reads `sum` (not chosen), lays both halves,
     nothing passes round the plugin, and its export is bit-exact with the same project set to `sum`
     through the API;
-  * undo / redo, save / reopen, plugin.copy, object.duplicate, a manual link (both change together)
+  * undo / redo, save / reopen, plugin.copy, object.duplicate
     and an FX link bin (members and definition: a member attached afterwards is born with the fold);
   * no window opens on the headless instance.
 
@@ -484,19 +484,7 @@ try:
                                       max_diff_lsb(channel_bytes(old2["raw"], 1), channel_bytes(again["raw"], 1))))
 
         # ═══════════════════════════════════════════════════════════════ links
-        section("a manual link, and an FX link bin")
-        _, a = fresh("link")
-        b = send("object.add", {"path": STEREO, "lane": 1, "start": 0.0})["id"]
-        pa = add_plugin(a, AU_LOWPASS)
-        placed = send("plugin.link", {"from": a, "plugin": pa, "to": b})
-        pb = placed["plugins"][0]
-        wait_loaded(b, pb)
-        res2 = fold(a, pa, "right")
-        check("a linked pair changes together (instances 2)", res2["instances"] == 2, res2)
-        check("the peer reads `right`", layouts(b, pb)["mono_fold"] == "right")
-        send("edit.undo")
-        check("ONE undo takes both back to `sum`", layouts(a, pa)["mono_fold"] == "sum" and layouts(b, pb)["mono_fold"] == "sum")
-
+        section("an FX link bin")
         _, a = fresh("bin")
         b = send("object.add", {"path": STEREO, "lane": 1, "start": 0.0})["id"]
         c3 = send("object.add", {"path": STEREO, "lane": 2, "start": 0.0})["id"]

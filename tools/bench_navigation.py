@@ -19,7 +19,7 @@ the same way (50 objects against 500, a build against the next, Debug against Re
     ./bench_navigation.py --compare before.json after.json
 
 The walk (every step through `input.*`, so through the hand's own path): scroll right, down, left,
-up; zoom in and out horizontally (⇧ + swipe); zoom in and out vertically. Each step is repeated
+up; zoom in and out horizontally (⌘ + swipe); zoom in and out vertically. Each step is repeated
 `--repeat` times (default 3) from the same starting view, and the MEDIAN of each metric is kept —
 a first cold pass (waveforms to compute) would otherwise weigh on the comparison.
 

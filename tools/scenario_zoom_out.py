@@ -11,7 +11,7 @@ a 600 px window whatever the session lasted). A short project still stops at a m
 
   • a clip placed at 3000 s, `view.set pps=0.0001` → the zoom lands on viewport / (end × 1.05);
   • a short project → the 60 s floor (viewport / 60);
-  • every other door reaches the same bound: ⇧-scroll and the `t` / `r` keys, a session saved
+  • every other door reaches the same bound: ⌘-scroll and the `t` / `r` keys, a session saved
     and reopened;
   • the bound follows the content (a longer session zooms out further) and never drags the
     CURRENT zoom along when it moves;
@@ -123,7 +123,7 @@ check(near(v["pps"], want), "and back when the clip goes (%s)" % v["pps"])
 print("the other doors reach the same bound")
 c.send("view.set", {"pps": want * 4, "scroll_x": 0})
 d = c.send("input.zoom", {"axis": "horizontal", "factor": 0.001})
-check(near(d["view_after"]["pps"], want), "⇧-scroll far out stops at the bound (%s)" % d["view_after"]["pps"])
+check(near(d["view_after"]["pps"], want), "⌘-scroll far out stops at the bound (%s)" % d["view_after"]["pps"])
 c.send("view.set", {"pps": want * 4, "scroll_x": 0})
 d = c.send("input.zoom", {"via": "keys", "factor": 1 / 1.5 ** 8})
 check(near(d["view_after"]["pps"], want), "r × 8 stops at the bound (%s)" % d["view_after"]["pps"])

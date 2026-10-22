@@ -19,7 +19,7 @@ What it is really out to prove, beyond the commands answering:
   • ONE undo step per gesture, not one per card;
   • an object and a STEM are the same host, in every one of these gestures;
   • ⌘D and ⌘V land just after the LAST selected card, in ITS series, and not at the chain's end;
-  • a MOVE really empties the source, where a copy and a link leave it whole;
+  • a MOVE really empties the source, where a copy leaves it whole (and ⌘ changes nothing);
   • a DROP lands on a BUS's strip — the only place a stem can be aimed at with the hand — and
     the selection follows its cards there;
   • a PARALLEL BRANCH (`plugin.branch`, the '+' and the card's menu) takes the run the selection says,
@@ -254,18 +254,15 @@ with ObjekatClient(SOCK) as c:
           and all(p["linked"] is False for p in cmd("plugin.list", host=B)["plugins"]),
           str(idents(B)))
 
-    fill(B, [])
-    cmd("plugin.link", **{"from": A, "plugins": [eq, rev], "to": B})
-    src = {p["identifier"]: p for p in cmd("plugin.list", host=A)["plugins"]}
-    dst = {p["identifier"]: p for p in cmd("plugin.list", host=B)["plugins"]}
-    check("a link of several ties each card to ITS OWN copy",
-          src["4bandEq"]["link_group"] == dst["4bandEq"]["link_group"]
-          and src["reverb"]["link_group"] == dst["reverb"]["link_group"], str(dst))
-    check("two cards linked in one gesture do NOT end up in the same group",
-          src["4bandEq"]["link_group"] != src["reverb"]["link_group"],
-          "otherwise an EQ and a reverb would share their parameters")
-    check("the cards not named are left unlinked",
-          src["compressor"]["linked"] is False and src["chorus"]["linked"] is False)
+    # The single-instance manual link is gone (22 October 2026): the command no longer exists.
+    try:
+        cmd("plugin.link", **{"from": A, "plugins": [eq, rev], "to": B})
+        check("plugin.link no longer exists", False, "no error raised")
+    except ObjekatError as e:
+        check("plugin.link no longer exists", "unknown_command" in str(e), str(e))
+    check("...and nothing was linked by the attempt",
+          all(p["linked"] is False for p in cmd("plugin.list", host=A)["plugins"]
+              + cmd("plugin.list", host=B)["plugins"]))
 
     # ── a STEM is a host like any other ─────────────────────────────────────
     s1, s2, s3, s4 = fill(STEM)
@@ -319,11 +316,22 @@ with ObjekatClient(SOCK) as c:
           cmd("plugin.list", host=STEM)["plugins"][0]["linked"] is False)
 
     fill(STEM, [])
-    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "link"})
+    try:
+        cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "link"})
+        check("a drop in `link` mode is refused (the mode is gone)", False, "no error raised")
+    except ObjekatError as e:
+        check("a drop in `link` mode is refused (the mode is gone)", "bad_params" in str(e), str(e))
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "copy_command"})
     src = cmd("plugin.list", host=A)["plugins"][0]
     dst = cmd("plugin.list", host=STEM)["plugins"][0]
-    check("⌘ over a strip links the bus's copy to the card dragged",
-          src["link_group"] is not None and src["link_group"] == dst["link_group"], str(dst))
+    check("⌥⌘ over a strip is a plain ⌥ copy: ⌘ does nothing, nothing is linked",
+          idents(A) == BUILTINS and idents(STEM) == ["4bandEq"]
+          and not src.get("link_group") and not dst.get("link_group") and dst["linked"] is False, str(dst))
+    fill(STEM, [])
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": STEM, "mode": "move_command"})
+    check("⌘ alone over a strip is a plain MOVE", idents(STEM) == ["4bandEq"] and "4bandEq" not in idents(A),
+          "%s / %s" % (idents(STEM), idents(A)))
+    cmd("edit.undo")
 
     # The other way round: a bus's card carried back down onto an object.
     fill(STEM, ["reverb"])
@@ -374,10 +382,10 @@ with ObjekatClient(SOCK) as c:
     cmd("edit.undo")
     check("one undo takes the copies back", idents(SH) == ["4bandEq", "chorus"], str(idents(SH)))
     eq = chain(A)[0][0]
-    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": SH, "mode": "link"})
+    cmd("plugin.drop", **{"from": A, "plugin": eq, "to": SH, "mode": "copy_command"})
     on_send = cmd("plugin.list", host=SH)["plugins"]
     on_trunk = cmd("plugin.list", host=A)["plugins"]
-    check("⌘ onto a send is a plain COPY: the source stays, the send gains one",
+    check("⌥⌘ onto a send is a plain COPY (⌘ does nothing): the source stays, the send gains one",
           len(on_send) == 3 and [p["identifier"] for p in on_trunk] == BUILTINS, str(on_send))
     check("...and nothing is linked, on either side",
           all(not p.get("link_group") for p in on_send + on_trunk), str(on_send + on_trunk))

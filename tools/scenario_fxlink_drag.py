@@ -22,10 +22,10 @@ out to prove, beyond the commands answering:
   • D5  a plain plugin let go INSIDE a bin joins the definition (same host or another): its instance keeps
         its id, every other member gets one;
   • D6  with ⌥ an independent copy is added to the bin, the source untouched;
-  • D7  ⌘ into a bin is refused;
+  • D7  ⌘ does nothing: into a bin the outcome is the one of the bare drop;
   • D8  an instance let go OUTSIDE its bin leaves it for EVERY member and stays a plain plugin here; ⌥ takes
-        an independent copy, ⌘ is refused;
-  • D9  an instance dropped on ANOTHER host: a move is refused, ⌥ copies, ⌘ makes that host join the bin;
+        an independent copy, ⌘ changes nothing;
+  • D9  an instance dropped on ANOTHER host: a move is refused, ⌥ copies, ⌘ changes nothing;
   • D10 a bus can receive a block and plugins, like an object;
   • D11 the bins survive a save and a reopen;
   • D12 the ENGINE followed, not just the model: an export re-read at RMS (24 bit) after the block moved.
@@ -217,8 +217,8 @@ try:
         rb = [p for p in block_of(B)["plugins"] if p["identifier"] == "reverb"][0]["id"]
         cmd("plugin.set_param", plugin=ra, index=WET, value=0.35); idle()
         check("D2 the copy is a LINK: A's parameter reaches B", abs(param(rb, WET) - 0.35) < 1e-3)
-        check("D2 ⌘ is a copy too (same bin), and is refused where B already holds it",
-              dry(**{"from": A, "plugin": blockA, "host": B, "mode": "link"})["refused"] is True)
+        check("D2 ⌥⌘ is a ⌥ (⌘ does nothing), refused where B already holds the bin",
+              dry(**{"from": A, "plugin": blockA, "host": B, "mode": "copy_command"})["refused"] is True)
         cmd("edit.undo"); idle()
         check("D2 ONE undo takes B's block away, A untouched",
               member_hosts(LID) == {A, C} and inst_ids(A) == old_ids)
@@ -348,11 +348,13 @@ try:
         cmd("edit.undo"); idle()
         check("D6 ONE undo takes the copy out everywhere", len(defs(LID)) == n_def and len(inst_ids(C)) == n_def)
 
-        # D7 — ⌘
-        d = dry(**{"from": A, "plugin": tail, "host": A, "series": {"block": blockA}, "mode": "link"})
-        check("D7 ⌘ into a bin is refused", d["refused"] is True, str(d))
-        d = dry(**{"from": G, "plugin": gG, "host": A, "series": {"block": blockA}, "mode": "link"})
-        check("D7 ...from another host too", d["refused"] is True, str(d))
+        # D7 — ⌘ does NOTHING (it used to be refused into a bin; the manual link is gone, 22 October 2026)
+        for src, plug, label in ((A, tail, "same host"), (G, gG, "another host")):
+            for plain, with_cmd in (("move", "move_command"), ("copy", "copy_command")):
+                d0_ = dry(**{"from": src, "plugin": plug, "host": A, "series": {"block": blockA}, "mode": plain})
+                d1_ = dry(**{"from": src, "plugin": plug, "host": A, "series": {"block": blockA}, "mode": with_cmd})
+                check("D7 into a bin (%s): %s = %s (⌘ changes nothing)" % (label, with_cmd, plain),
+                      d0_["outcome"] == d1_["outcome"] and d0_["refused"] == d1_["refused"], "%s / %s" % (d0_, d1_))
         audit_clean("after D6 / D7")
 
         # ═════════════════════════════════════════════════════════════════
@@ -384,7 +386,10 @@ try:
               r["outcome"] == "copy" and r["placed"] and len(defs(LID)) == n_def and revA in inst_ids(A)
               and chain(A)[0]["id"] != revA and chain(A)[0]["linked"] is False, str(r))
         cmd("edit.undo"); idle()
-        check("D8 ⌘ is refused", dry(**{"from": A, "plugin": revA, "host": A, "series": "root", "mode": "link"})["refused"])
+        d_plain = dry(**{"from": A, "plugin": revA, "host": A, "series": "root", "at": 0})
+        d_cmd = dry(**{"from": A, "plugin": revA, "host": A, "series": "root", "at": 0, "mode": "move_command"})
+        check("D8 ⌘ changes nothing (same outcome as a bare drop)",
+              d_cmd["outcome"] == d_plain["outcome"] == "extract_from_bin" and not d_cmd["refused"], "%s / %s" % (d_plain, d_cmd))
         # reordering inside the own bin is still a reorder of the definition, for everyone
         d0 = depth()
         r = drop_at(**{"from": A, "plugin": inst_ids(A)[0], "host": A,
@@ -409,13 +414,18 @@ try:
               and len(chain(H)) == 1 and chain(H)[0]["linked"] is False and not chain(H)[0].get("is_fx_block"), str(r))
         check("D9 ...the bin is untouched", len(defs(LID)) == n_def and revA in inst_ids(A))
         cmd("edit.undo"); idle()
-        r = drop(**{"from": A, "plugin": revA, "to": H, "mode": "link"})
+        d0 = depth()
+        r = drop(**{"from": A, "plugin": revA, "to": H, "mode": "move_command"})
         idle()
-        check("D9 ⌘ makes H JOIN the bin (the whole bin, not the one plugin)",
-              r["outcome"] == "join_bin" and r["placed"] and member(LID, H) is not None
-              and len(inst_ids(H)) == n_def, str(r))
+        check("D9 ⌘ changes nothing: refused like a bare move, H does not join the bin, no undo point",
+              r["placed"] is False and r["refused"] is True and member(LID, H) is None and len(chain(H)) == 0
+              and depth() == d0, str(r))
+        r = drop(**{"from": A, "plugin": revA, "to": H, "mode": "copy_command"})
+        idle()
+        check("D9 ⌥⌘ is a ⌥ (an independent copy)", r["outcome"] == "copy" and r["placed"]
+              and chain(H)[0]["linked"] is False and not chain(H)[0].get("is_fx_block"), str(r))
         cmd("edit.undo"); idle()
-        check("D9 ONE undo takes H out again", member(LID, H) is None and len(chain(H)) == 0)
+        check("D9 ONE undo takes it away", len(chain(H)) == 0)
         audit_clean("after D9")
 
         # ═════════════════════════════════════════════════════════════════

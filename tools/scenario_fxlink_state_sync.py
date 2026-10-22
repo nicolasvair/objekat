@@ -535,27 +535,33 @@ check("clips: two ticks push the first clip", r1["pushed"] == [] and r2["pushed"
 check("clips: the first clip reflects the change", all(close(floats(i1)[i], v) for i, v in new.items()))
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-# (11) ⌘-link classique (plugin.link)
+# (11) the classic ⌘-link (plugin.link) is gone (22 October 2026): a bin of two objects stands in, and
+#      (12) below still needs a linked pair (pd1, pd2) whose sync lies outside any snapshot
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-print("\n-- (11) classic link (plugin.link)")
+print("\n-- (11) a bin of two objects (plugin.link no longer exists)")
 d1 = cmd("object.add", path=BIP, lane=6, start=0)["id"]
 d2 = cmd("object.add", path=BIP, lane=7, start=0)["id"]
-pd1 = pro_q(d1)
-wait_loaded(pd1)
-placed = cmd("plugin.link", **{"from": d1, "plugin": pd1, "to": d2})["plugins"]
+pd0 = pro_q(d1)
+wait_loaded(pd0)
+try:
+    cmd("plugin.link", **{"from": d1, "plugin": pd0, "to": d2})
+    check("plugin.link no longer exists", False, "no error raised")
+except Exception as e:
+    check("plugin.link no longer exists", "unknown_command" in str(e), str(e))
+cmd("fxlink.create", objects=[d1, d2], name="pair")
 idle()
-pd2 = placed[0] if placed else None
-check("plugin.link laid a linked copy on the other host", pd2 is not None and pd2 != pd1)
+pd1, pd2 = instance(d1), instance(d2)
+check("the pair holds two instances of one bin", pd1 is not None and pd2 is not None and pd2 != pd1)
 wait_loaded(pd2)
 settle()
 drain(pd1, pd2)
 f1 = floats(pd1)
 new = hidden_change(pd2, other=pd1)
 time.sleep(1.0)
-check("linked: no tick, the other side is unchanged", all(close(floats(pd1)[i], f1[i]) for i in HIDDEN))
+check("bin pair: no tick, the other side is unchanged", all(close(floats(pd1)[i], f1[i]) for i in HIDDEN))
 r1, r2 = tick(pd2), tick(pd2)
-check("linked: two ticks push the other side", r1["pushed"] == [] and r2["pushed"] == [pd1], str((r1, r2)))
-check("linked: it reflects the change", all(close(floats(pd1)[i], v) for i, v in new.items()))
+check("bin pair: two ticks push the other side", r1["pushed"] == [] and r2["pushed"] == [pd1], str((r1, r2)))
+check("bin pair: it reflects the change", all(close(floats(pd1)[i], v) for i, v in new.items()))
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
 # (12) undo après sync : pas de reconstruction

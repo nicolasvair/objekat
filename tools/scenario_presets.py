@@ -11,7 +11,7 @@ What it proves, on a built-in plugin (its parameters are readable with no window
   • `preset.load` lays it back on the LIVE instance (same id, no rebuild), as ONE undo point, and
     keeps the instance's own bypass;
   • a DEFAULT preset is laid on a FRESH insertion only: a duplicate keeps its own state;
-  • loading on a linked plugin carries the state to the linked instance;
+  • loading on an FX link member carries the state to the other member;
   • delete takes the default with it; refusals answer `not_found`.
 Exit: 0 if every assertion passes, 1 otherwise.
 """
@@ -158,20 +158,6 @@ with ObjekatClient(SOCK) as c:
     cmd("preset.load", plugin=P, name="Bright")
     check("a load on an FX link member carries to the other member", bool(dp) and near(value(dp[0]["id"]), v1),
           dp and value(dp[0]["id"]))
-
-    # a ⌘-linked instance follows a load
-    C = cmd("object.add", path=SRC, lane=3, start=0)["id"]
-    R = cmd("object.add", path=SRC, lane=4, start=0)["id"]
-    idle()
-    PC = cmd("plugin.add", host=C, identifier=ident, format="TracktionInternal")["plugin"]["id"]
-    idle()
-    L = cmd("plugin.link", **{"from": C, "plugin": PC, "to": R})["plugins"][0]
-    idle()
-    cmd("plugin.set_param", plugin=PC, index=k, value=v2)
-    cmd("plugin.set_param", plugin=L, index=k, value=v2)
-    cmd("preset.load", plugin=PC, name="Bright")
-    check("a load on a linked plugin carries to the linked instance", near(value(L), v1), value(L))
-    check("...whose status names it too", (cmd("preset.list", plugin=L)["status"] or {}).get("name") == "Bright")
 
     # an EXTERNAL plugin (Apple's AULowpass): its state carries `base64:layout`, which XMLDocument alone
     # refuses — "Save as" answered noState on every AU / VST3 until the prefix was masked.

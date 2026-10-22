@@ -3296,20 +3296,21 @@ def section_U3(c):
           r.get("outcome") == "copy" and len(ids) == 3 and t2 not in ids
           and [p_["id"] for p_ in c.send("plugin.list", {"host": x})["plugins"]] == [t2], (r, ids))
     undo_redo("alt copy trunk -> send", -18.0, -21.0)
-    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "link", "dry_run": True})
-    check("U3 cmd: the resolver answers a plain COPY (no link on a send)", r.get("outcome") == "copy", r)
-    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "link"})
+    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "copy_command", "dry_run": True})
+    check("U3 alt+cmd: the resolver answers a plain COPY (⌘ does nothing)", r.get("outcome") == "copy", r)
+    r = c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "copy_command"})
     settle(c)
     ids4 = send_plugins3(c, x, a)
     lst = c.send("plugin.list", {"host": h})["plugins"]
-    check("U3 cmd copy: a fourth plugin, fresh id, NOT linked; the trunk's original not linked either",
+    check("U3 alt+cmd copy: a fourth plugin, fresh id, NOT linked; the trunk's original not linked either",
           len(ids4) == 4 and t2 not in ids4 and all(not p_.get("linked") for p_ in lst)
           and all(not p_.get("linked") for p_ in c.send("plugin.list", {"host": x})["plugins"]), (ids4, lst))
-    undo_redo("cmd copy trunk -> send", -21.0, -24.0)
-    refused("U3: plugin.link towards a send", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": t2}),
-            reason="send_plugins_never_linked")
-    refused("U3: plugin.link from a send", lambda: c.send("plugin.link", {"from": h, "to": x, "plugin": pid}),
-            reason="send_plugins_never_linked")
+    undo_redo("alt+cmd copy trunk -> send", -21.0, -24.0)
+    # The single-instance manual link is gone (22 October 2026): the command and the `link` mode no longer exist.
+    refused("U3: plugin.link no longer exists", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": t2}),
+            code="unknown_command")
+    refused("U3: mode link is refused on plugin.drop_at", lambda: c.send("plugin.drop_at", {"from": x, "host": h, "plugin": t2, "mode": "link"}),
+            code="bad_params")
     # 4. reorder inside the box
     order0 = send_plugins3(c, x, a)
     c.send("plugin.drop_at", {"from": h, "host": h, "plugin": order0[-1], "series": "root", "at": 0})
@@ -4550,8 +4551,8 @@ def section_H3(c):
         refused("H3: fxlink.attach on a send host", lambda: c.send("fxlink.attach", {"link": blk["id"], "host": h}),
                 reason="send_plugins_never_linked")
     check("H3: the send's chain is untouched by the refusals", send_plugins3(c, x, a) == [g], send_plugins3(c, x, a))
-    refused("H3: plugin.link from a send", lambda: c.send("plugin.link", {"from": h, "to": x, "plugin": g}), reason="send_plugins_never_linked")
-    refused("H3: plugin.link to a send", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": tk}), reason="send_plugins_never_linked")
+    refused("H3: plugin.link no longer exists (from a send)", lambda: c.send("plugin.link", {"from": h, "to": x, "plugin": g}), code="unknown_command")
+    refused("H3: plugin.link no longer exists (to a send)", lambda: c.send("plugin.link", {"from": x, "to": h, "plugin": tk}), code="unknown_command")
     ghost = "00000000-0000-4000-8000-00000000BEEF"
     for cmd, prm in (("plugin.list", {"host": ghost}), ("plugin.add", {"host": ghost, "identifier": "lowpass"}),
                      ("plugin.move", {"from": h, "to": ghost, "plugin": g}), ("plugin.copy", {"from": h, "to": ghost, "plugin": g}),

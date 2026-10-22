@@ -19,9 +19,9 @@ timeline's own law says it should.
   • a trackpad swipe moves the scroll in the direction named, and the same swipe twice from the
     same start lands on the same place (to a few points: the scroll view reads the events'
     timing, and the pump's is exact to a millisecond or two, not to the microsecond);
-  • ⇧-scroll zooms by the timeline's own law, e^(0.01·dx), short of the requested factor by no
+  • ⌘-scroll zooms by the timeline's own law, e^(0.01·dx), short of the requested factor by no
     more than its 3-point dead zone accounts for — and only UNDER A HOVER, as for a hand;
-  • `t` / `r` zoom by exactly 1.5 per press, ⇧ for the vertical;
+  • `t` / `r` zoom by exactly 1.5 per press, ⌥ for the vertical;
   • a recorded sequence replayed from the same start lands on the same zoom, and on the same
     scroll to within 5 % — measured on 24 September 2026: plain swipes land on the same pixel
     5 times in 6, but a swipe WITH inertia spreads by ±3.5 %, in steps of exactly one finger
@@ -107,7 +107,7 @@ for key in ("frames", "expected_frame_ms", "frame_ms", "late_frames", "dropped_f
     check(key in f, "frame report carries %s" % key)
 check(f["frame_ms"]["p50"] <= f["frame_ms"]["p95"] <= f["frame_ms"]["max"], "p50 ≤ p95 ≤ max")
 
-print("⇧-scroll zoom (the timeline's own law)")
+print("⌘-scroll zoom (the timeline's own law)")
 for axis, factor, key in (("horizontal", 2.0, "pps"), ("horizontal", 0.5, "pps"),
                           ("vertical", 0.5, "block_height"), ("vertical", 1.6, "block_height")):
     c.send("view.set", START)
@@ -120,7 +120,7 @@ for axis, factor, key in (("horizontal", 2.0, "pps"), ("horizontal", 0.5, "pps")
     check(d["view_after"][key] != d["view_before"][key], "%s moved" % key)
 c.send("view.set", START)
 c.send("input.hover", {"leave": True})
-d = c.send("input.scroll", {"dx": 60, "modifiers": ["shift"], "hover": False})
+d = c.send("input.scroll", {"dx": 60, "modifiers": ["cmd"], "hover": False})
 check(d["view_after"]["pps"] == 100, "no hover, no zoom — as for a hand off the timeline")
 check(d["events_seen"] == d["events_posted"], "…though the monitor did see every event")
 
@@ -129,7 +129,7 @@ c.send("view.set", START)
 d = c.send("input.zoom", {"via": "keys", "factor": 2.25})
 check(d["presses"] == 2 and abs(d["achieved_factor"] - 2.25) < 1e-6, "t ×2 = ×2.25 (%s)" % d["achieved_factor"])
 d = c.send("input.zoom", {"via": "keys", "factor": 1 / 1.5, "axis": "vertical"})
-check(abs(d["achieved_factor"] - 1 / 1.5) < 1e-6, "⇧r = ÷1.5 vertical (%s)" % d["achieved_factor"])
+check(abs(d["achieved_factor"] - 1 / 1.5) < 1e-6, "⌥r = ÷1.5 vertical (%s)" % d["achieved_factor"])
 d = c.send("input.key", {"key": "t"})
 check(d["claimed"] is False and d["events_seen"] == 2, "a bare t reaches the timeline, down and up")
 try:
@@ -143,7 +143,7 @@ c.send("view.set", START)
 c.send("input.record.start")
 c.send("input.scroll", {"direction": "right", "distance_px": 600, "duration_ms": 300, "momentum": True})
 c.send("input.zoom", {"factor": 1.8})
-c.send("input.key", {"key": "t", "modifiers": ["shift"]})
+c.send("input.key", {"key": "t", "modifiers": ["alt"]})
 rec = c.send("input.record.stop")
 a = state()
 check(rec["count"] > 50 and rec["duration_ms"] > 300, "recorded %d events over %s ms" % (rec["count"], rec["duration_ms"]))

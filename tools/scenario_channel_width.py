@@ -18,8 +18,7 @@ What is asserted, with Apple's own AudioUnits (installed with macOS, so the scen
   * applying: the engine's bus follows, a second identical request changes nothing and leaves no undo
     point, ONE edit.undo takes it back and ONE edit.redo gives it again, engine side;
   * persistence: the width survives a save and a reopening of the project;
-  * linked instances change together (and come back together on the undo); an FX link bin's members
-    too, and a member attached afterwards is born in the new width (the definition carries it);
+  * an FX link bin's members change together (and come back together on the undo), and a member attached afterwards is born in the new width (the definition carries it);
   * refusal while PLAYING (`invalid_state`, reason `playing`);
   * the SOUND, on a 24-bit export of a stereo file whose two sides carry two different tones (L 1 kHz,
     R 3 kHz): what becomes of each side through a stereo plugin, a mono one (1 -> 1) and a mono -> stereo
@@ -295,27 +294,6 @@ try:
         r = wait_loaded(oid, lp2)
         check("reopened: the plugin is back", r.get("loaded") is True, r)
         check("reopened: still mono (1 -> 1)", r.get("current") == "mono" and r.get("inputs") == 1, r)
-
-        # ═══════════════════════════════════════════════════════════════ an FX link changes together
-        section("linked instances change together")
-        _, a = fresh(name="link")
-        b = send("object.add", {"path": STEREO, "lane": 1, "start": 0.0})["id"]
-        pa = add_plugin(a, AU_LOWPASS)
-        wait_loaded(a, pa)
-        placed = send("plugin.link", {"from": a, "plugin": pa, "to": b})
-        pb = placed["plugins"][0]
-        wait_loaded(b, pb)
-        ra = layouts(a, pa)
-        check("the menu data says one other instance changes with it", ra["linked"] == 1, ra)
-        res = set_layout(a, pa, "mono")
-        check("both instances changed", res["changed"] is True and res["instances"] == 2, res)
-        check("the mirror is mono too", layouts(b, pb)["current"] == "mono", layouts(b, pb))
-        send("edit.undo")
-        check("ONE undo takes both back",
-              layouts(a, pa)["current"] == "stereo" and layouts(b, pb)["current"] == "stereo",
-              (layouts(a, pa)["current"], layouts(b, pb)["current"]))
-        send("edit.redo")
-        check("redo gives both again", layouts(a, pa)["current"] == "mono" and layouts(b, pb)["current"] == "mono")
 
         # ═══════════════════════════════════════════════════════════════ an FX link bin
         section("an FX link bin: its mirrors AND its definition change together")
