@@ -273,8 +273,10 @@ extension EditViewModel {
     /// (`automationCurveWheelAnchor`) for as long as the curve is the one the wheel last laid on
     /// that segment — a pause in the wheel opens a new undo point (`newGesture`), not a new
     /// detent; anything else that moved the curve meanwhile re-reads it.
+    ///
+    /// `fine` (⌥⇧ + the wheel): each notch moves the knob by `FineAdjust.factor` of its step.
     func adjustAutomationCurvature(objectID: UUID, param: ParamRef, at index: Int, steps: Int,
-                                   newGesture: Bool = true) {
+                                   newGesture: Bool = true, fine: Bool = false) {
         let pts = automationPoints(objectID, param)
         guard pts.indices.contains(index) else { return }
         // The segment's right-hand end = the next point in TIME, not in storage.
@@ -295,7 +297,7 @@ extension EditViewModel {
         // A notch moves the KNOB, not `c` (@see AutomationCurveShape.knob): even steps to the
         // eye, fine near the straight line, the near-step only at the end of the travel.
         a.detent = AutomationCurveShape.wheelStep(a.detent, notches: steps * sign,
-                                                  step: Self.automationCurveScrollStep)
+                                                  step: FineAdjust.step(Self.automationCurveScrollStep, fine: fine))
         let raw = a.detent.knob == 0 ? 0 : AutomationCurveShape.curvature(forKnob: a.detent.knob)
         let c: Float = abs(raw) < 1e-6 ? 0 : Float(raw)
         updateAutomationPoints(objectID: objectID, param: param) { p in

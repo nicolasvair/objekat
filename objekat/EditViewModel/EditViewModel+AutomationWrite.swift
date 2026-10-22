@@ -120,7 +120,7 @@ extension EditViewModel {
     /// transport is not playing (the caller lets the event through).
     @discardableResult
     func automationWriteWheel(objectID: UUID, param: ParamRef, origin: Double, maxT: Double,
-                              steps: Int) -> Bool {
+                              steps: Double) -> Bool {
         let target = AutomationWriteTarget(objectID: objectID, param: param)
         if automationWrite?.target != target || automationWrite?.source != .wheel {
             guard beginAutomationWrite(objectID: objectID, param: param, origin: origin,

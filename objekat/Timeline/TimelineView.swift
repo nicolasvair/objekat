@@ -320,9 +320,16 @@ struct TimelineView: View {
         /// dead zone (a diagonal swipe's first events are ambiguous); with `wheelDecidesAtOnce`, a
         /// notch wheel decides on its single event, because a dead zone would EAT notches.
         mutating func decide(_ event: NSEvent, wheelDecidesAtOnce: Bool) -> ScrollZoomAxis? {
+            decide(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                   precise: event.hasPreciseScrollingDeltas, wheelDecidesAtOnce: wheelDecidesAtOnce)
+        }
+
+        /// The same on explicit deltas: the caller may have normalised them (⇧ + a mouse wheel arrives
+        /// sideways and means the value's vertical, @see TimelineView.automationWheelDeltas).
+        mutating func decide(dx: CGFloat, dy: CGFloat, precise: Bool,
+                             wheelDecidesAtOnce: Bool) -> ScrollZoomAxis? {
             if let axis { return axis }
-            let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
-            if wheelDecidesAtOnce && !event.hasPreciseScrollingDeltas {
+            if wheelDecidesAtOnce && !precise {
                 guard dx != 0 || dy != 0 else { return nil }
                 axis = abs(dx) >= abs(dy) ? .horizontal : .vertical
                 return axis
@@ -1986,6 +1993,9 @@ struct TimelineView: View {
         let geo: AutomationBandGeometry
         let bandRect: CGRect
         var steps: Int = 0
+        /// The steps as the line is carried by them: each one weighs `FineAdjust.factor` if ⇧ was held at
+        /// its notch (so `steps` stays the count the travel mapping needs, and this is the distance).
+        var effectiveSteps: Double = 0
         /// The gesture's undo point is pushed at its first EFFECTIVE notch, not at its first event.
         var undoPushed = false
     }

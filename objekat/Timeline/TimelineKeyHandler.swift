@@ -12,12 +12,16 @@ extension TimelineView {
     /// for five notches and fast ones leapt several steps at once (the vertical lane snap's own rule,
     /// one lane per notch). A trackpad keeps its continuous accumulation, 10 pt per step (the ⌥
     /// curvature wheel; a LINE's value goes through `AutomationHandTravel.wheelSteps`).
-    static func automationWheelSteps(_ event: NSEvent, accumulator: inout Float) -> Int {
+    ///
+    /// `deltaY`: the vertical delta to read when the caller has normalised it (⇧ + a mouse wheel arrives
+    /// sideways, @see automationWheelDeltas); nil = the event's own.
+    static func automationWheelSteps(_ event: NSEvent, accumulator: inout Float,
+                                     deltaY: CGFloat? = nil) -> Int {
+        let dy = deltaY ?? event.scrollingDeltaY
         guard event.hasPreciseScrollingDeltas else {
-            let dy = event.scrollingDeltaY
             return dy > 0 ? -1 : (dy < 0 ? 1 : 0)
         }
-        accumulator -= Float(event.scrollingDeltaY * 0.1)
+        accumulator -= Float(dy * 0.1)
         let n = Int(accumulator.rounded())
         accumulator -= Float(n)
         return n
@@ -31,6 +35,18 @@ extension TimelineView {
         let dy = event.scrollingDeltaY
         if dy != 0 || !fine { return dy }
         return event.scrollingDeltaX
+    }
+
+    /// The (sideways, vertical) deltas an AUTOMATION wheel gesture reads. With ⇧ held (the fine adjustment)
+    /// a MOUSE wheel reports its notch SIDEWAYS — `scrollingDeltaY` is 0, the notch is in
+    /// `scrollingDeltaX` — and the axis lock would then hand the gesture to the timeline's horizontal
+    /// scroll: over an editable line, curve or pencil the notch is the VALUE's. So when ⇧ is held and
+    /// the vertical delta is 0, the sideways one is read as the vertical (and nothing is left sideways,
+    /// so nothing scrolls). Without ⇧ the event is read as it came.
+    static func automationWheelDeltas(_ event: NSEvent, fine: Bool) -> (dx: CGFloat, dy: CGFloat) {
+        let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        if fine && dy == 0 && dx != 0 { return (0, dx) }
+        return (dx, dy)
     }
 
     /// The Volume tool's ↑/↓ step, in dB: 1 bare, ⇧ = the fine step (half a dB), ⌘ = the big step (3).
@@ -125,11 +141,15 @@ extension TimelineView {
             if !flags.contains(.option), !flags.contains(.command), vm.canWriteAutomation,
                let hit = self.automationPencilHit(at: pos) {
                 if !event.momentumPhase.isEmpty { return nil }
-                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationWriteScrollAccumulator)
+                // ⇧ = fine: a notch is worth a tenth of a step (@see FineAdjust.factor).
+                let fine = flags.contains(.shift)
+                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationWriteScrollAccumulator,
+                                                      deltaY: Self.automationWheelDeltas(event, fine: fine).dy)
                 if steps != 0 {
+                    let amount = FineAdjust.scaled(Double(steps), fine: fine)
                     DispatchQueue.main.async {
                         vm.automationWriteWheel(objectID: hit.objectID, param: hit.param,
-                                                origin: hit.origin, maxT: hit.maxT, steps: steps)
+                                                origin: hit.origin, maxT: hit.maxT, steps: amount)
                     }
                 }
                 return nil
@@ -149,14 +169,17 @@ extension TimelineView {
             // never asked for. One modifier, one meaning: ⌥ over a curve bends it, whatever the
             // hand is doing.
             if flags.contains(.option), let hit = self.automationCurveHit(at: pos) {
-                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationScrollAccumulator)
+                // ⌥⇧ = the FINE curvature: each notch moves the knob by a tenth of its step.
+                let fine = flags.contains(.shift)
+                let steps = Self.automationWheelSteps(event, accumulator: &hs.automationScrollAccumulator,
+                                                      deltaY: Self.automationWheelDeltas(event, fine: fine).dy)
                 if steps != 0 {
                     let newGesture = opensNewValueGesture(event)
                     DispatchQueue.main.async {
                         if newGesture { vm.beginAutomationEdit() }
                         vm.adjustAutomationCurvature(objectID: hit.objectID, param: hit.param,
                                                      at: hit.pointIndex, steps: steps,
-                                                     newGesture: newGesture)
+                                                     newGesture: newGesture, fine: fine)
                     }
                 }
                 return nil
@@ -195,7 +218,13 @@ extension TimelineView {
                     }()
                     if (held != nil || hs.automationLineWheelEngaged), !event.momentumPhase.isEmpty { return nil }
                     if let w = held ?? self.automationLineWheelHit(at: pos) {
-                        guard let axis = hs.automationLineWheelLock.decide(event, wheelDecidesAtOnce: true)
+                        // ⇧ = fine; a mouse's ⇧ + wheel arrives SIDEWAYS and is read as the value's
+                        // (@see automationWheelDeltas) — otherwise the lock would give it to the scroll.
+                        let fine = flags.contains(.shift)
+                        let wd = Self.automationWheelDeltas(event, fine: fine)
+                        guard let axis = hs.automationLineWheelLock.decide(
+                            dx: wd.dx, dy: wd.dy, precise: event.hasPreciseScrollingDeltas,
+                            wheelDecidesAtOnce: true)
                         else { return nil }   // inside the dead zone: nothing moves yet
                         if axis == .vertical {
                             hs.automationLineWheelEngaged = true
@@ -208,7 +237,7 @@ extension TimelineView {
                             // still and then ran off (read off the hand, 4 October 2026).
                             let n: Int
                             if event.hasPreciseScrollingDeltas {
-                                hs.automationLineWheelTravel -= Double(event.scrollingDeltaY)
+                                hs.automationLineWheelTravel -= Double(wd.dy)
                                 // Every event of the gesture keeps it held, not only those that
                                 // step: at 8 pt per step a slow finger can go half a second between
                                 // two, and the hold would lapse into a fresh grab and a second undo.
@@ -216,11 +245,16 @@ extension TimelineView {
                                 n = AutomationHandTravel.wheelStepDelta(
                                     travel: hs.automationLineWheelTravel, applied: w.steps)
                             } else {
-                                n = Self.automationWheelSteps(event, accumulator: &hs.automationLineScrollAccumulator)
+                                n = Self.automationWheelSteps(event, accumulator: &hs.automationLineScrollAccumulator,
+                                                              deltaY: wd.dy)
                             }
                             if n != 0 {
                                 _ = opensNewValueGesture(event)     // only to keep the gesture's clock
                                 hs.automationLineWheel?.steps += n  // up = raise, like the volume wheel
+                                // What the line is carried by: each step weighs what ⇧ says AT ITS NOTCH
+                                // (a tenth under ⇧), so flipping ⇧ mid-gesture changes the slope and never
+                                // moves the line (a wheel notch has no travel to re-anchor).
+                                hs.automationLineWheel?.effectiveSteps += FineAdjust.scaled(Double(n), fine: fine)
                                 let needsUndo = !(hs.automationLineWheel?.undoPushed ?? true)
                                 hs.automationLineWheel?.undoPushed = true
                                 let snap = hs.automationLineWheel!
@@ -232,7 +266,7 @@ extension TimelineView {
                                     }
                                     vm.wheelShiftAutomationLine(snap.grab, objectID: snap.objectID,
                                                                 param: snap.param, row: snap.row,
-                                                                steps: snap.steps, geo: snap.geo)
+                                                                steps: snap.effectiveSteps, geo: snap.geo)
                                 }
                             }
                             return nil   // vertical-locked: the sideways component never reaches the timeline

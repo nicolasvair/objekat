@@ -218,6 +218,9 @@ struct AutomationBandView: View {
         /// hand relatively use it (`.point`, `.segment`, `.curve`, `.staticValue`).
         var fineX = FineAdjust()
         var fineY = FineAdjust()
+        /// The same for a `.transform` grip, which reads the pointer's ABSOLUTE place rather than a travel
+        /// (@see AutomationTransform.FineTravel): ⇧ flipping mid-gesture leaves the box where it is.
+        var fineGrip = AutomationTransform.FineTravel()
         /// The last known cursor position: it allows REPLAYING the gesture without a mouse movement,
         /// when ⌘ flips the snap along the way.
         var last: CGPoint
@@ -1223,6 +1226,9 @@ struct AutomationBandView: View {
             // no point has a say in it (@see AutomationTransform.boxFactor).
             let pulled   = handle.pullsTop ? box.minY : box.maxY
             let opposite = handle.pullsTop ? box.maxY : box.minY
+            // ⇧ is read at every frame and RE-ANCHORED when it flips (`fineGrip`): the box stays where the
+            // hand had taken it, only its slope changes (@see AutomationTransform.FineTravel).
+            var grip = d.fineGrip
             let req = AutomationTransform.request(
                 handle,
                 span: transformSpan(trows),
@@ -1231,7 +1237,8 @@ struct AutomationBandView: View {
                 // The snap applies to the TARGET OF THE GRIP and not to the points one by one:
                 // snapping each of them would flatten the curve's internal rhythm onto the grid.
                 targetT: snappedT(atX: location.x),
-                fineTune: NSEvent.modifierFlags.contains(.shift))
+                fine: NSEvent.modifierFlags.contains(.shift), travel: &grip)
+            drag?.fineGrip = grip
             drag?.live = req
             viewModel.applyAutomationTransform(
                 objectID: object.id,
@@ -1431,6 +1438,7 @@ struct AutomationBandView: View {
                         anchor: anchor,
                         badgeBelow: p.y - Self.readoutHeightGuess - Self.readoutOffset.drag.gap < 3,
                         fineX: FineAdjust(fine: shiftHeld), fineY: FineAdjust(fine: shiftHeld),
+                        fineGrip: AutomationTransform.FineTravel(fine: shiftHeld),
                         last: p)
     }
 

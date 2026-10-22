@@ -228,6 +228,44 @@ enum AutomationTransformTest {
     check("⇧ reaches the request's own valueK",
           near(vertical(.top, rampSpan, 3, fine: true).valueK, 1.2))
 
+    // ⇧ read LIVE (the `travel:` form): pressed or released in the middle of a grip's drag, the
+    // request stays where it was and only the slope changes — the stateless `fine` above would jump.
+    do {
+        var travel = AutomationTransform.FineTravel(fine: false)
+        func vk(_ k: Double, _ fine: Bool) -> Double {
+            AutomationTransform.request(.top, span: rampSpan, verticalK: k, targetT: 0,
+                                        fine: fine, travel: &travel).valueK
+        }
+        check("live ⇧, bare all along: the request is the factor itself", near(vk(3, false), 3))
+        check("live ⇧ pressed at k = 3: NO jump (still 3, not 1.2)", near(vk(3, true), 3),
+              "the stateless form would answer 1.2 here")
+        check("live ⇧ held, k from 3 to 4: only a tenth of the new travel", near(vk(4, true), 3.1))
+        check("live ⇧ released at k = 4: still no jump", near(vk(4, false), 3.1))
+        check("live ⇧ released, k from 4 to 5: the travel counts whole again", near(vk(5, false), 4.1))
+    }
+    do {
+        // The time-scale case: held from the first pixel, the request equals the stateless one.
+        var travel = AutomationTransform.FineTravel(fine: true)
+        let live = AutomationTransform.request(.right, span: .init(t0: 0, t1: 4), verticalK: 1,
+                                               targetT: 8, fine: true, travel: &travel)
+        let stateless = AutomationTransform.request(.right, span: .init(t0: 0, t1: 4), verticalK: 1,
+                                                    targetT: 8, fineTune: true)
+        check("live ⇧ held since the grab = the stateless request (time scale)",
+              live.time == stateless.time, "\(live.time) vs \(stateless.time)")
+        // …and a time scale cannot fall below zero by banking (no mirror of the curve).
+        var back = AutomationTransform.FineTravel(fine: true)
+        _ = AutomationTransform.request(.right, span: .init(t0: 0, t1: 4), verticalK: 1,
+                                        targetT: 8, fine: true, travel: &back)
+        let past = AutomationTransform.request(.right, span: .init(t0: 0, t1: 4), verticalK: 1,
+                                               targetT: -40, fine: false, travel: &back)
+        if case .scale(_, let k) = past.time {
+            check("a fine stretch banked, then a bare hand far past the anchor: k is bounded at 0",
+                  k >= 0, "k = \(k)")
+        } else {
+            check("the time case came back as a scale", false)
+        }
+    }
+
     // MARK: - boxFactor, the guard rail
     //
     // `k` is a ratio of PIXELS between the edge pulled and the edge anchored. It reads no point at
