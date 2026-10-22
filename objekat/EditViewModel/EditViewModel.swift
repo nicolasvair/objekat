@@ -501,6 +501,12 @@ final class EditViewModel {
     /// The counterpart of `_editorWindows` on the JUCE side (@see openBuiltInPluginEditor).
     var builtInEditorWindows: [UUID: BuiltInPluginEditorWindowController] = [:]
 
+    /// The editors put away by the F + Esc chord (@see togglePluginEditorsVisibility): the native
+    /// ones by key (their `ObjectPlugin.id` string), the built-in ones by plugin id. Both are still OPEN,
+    /// only off the screen. Empty = nothing is hidden by the chord.
+    @ObservationIgnored var chordHiddenNativeEditors: [String] = []
+    @ObservationIgnored var chordHiddenBuiltInEditors: [UUID] = []
+
     /// The placement under way of several editors opened TOGETHER (a double click on a multiple
     /// selection), native and built-in alike. Each window is laid as it appears — a native one only
     /// exists once its instance is loaded, so its size is not known before. nil = no batch: a

@@ -111,14 +111,18 @@ enum ShortcutCheatsheet {
         case .toolAux:
             return []
         // The list was removed on 2026-08-31: the tool has its OWN band (@see
-        // TimelineView.stemAssignHUD), carrying the target stem's colour, its muted state, ⏎ and M.
+        // TimelineView.stemAssignHUD), carrying the target stem's colour, its muted state, ⏎, M and S.
         // Two bands for one tool was one too many. Empty ⇒ no panel (@see
         // CheatsheetPanel).
         case .toolStemAssign:
             return []
-        // FX: the mouse only, and the strip says it on its boxes (their tooltips).
+        // FX: the mouse, whose strip says it on its boxes (their tooltips), and ONE key: Esc, held
+        // with F, puts every plugin editor away (or brings them back).
         case .toolFX:
             return [
+                ShortcutSection(title: L("cheatsheet.section.keyboard"), rows: [
+                    ShortcutRow(keys: "⎋", label: L("cheatsheet.fx.hideEditors")),
+                ]),
                 ShortcutSection(title: L("cheatsheet.section.mouse"), rows: [
                     ShortcutRow(keys: L("cheatsheet.keys.hoverObject"), label: L("cheatsheet.fx.strip")),
                     ShortcutRow(keys: L("cheatsheet.keys.clickPower"), label: L("cheatsheet.fx.toggle")),

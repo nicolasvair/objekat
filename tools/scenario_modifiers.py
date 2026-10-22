@@ -16,9 +16,12 @@ vertical zoom. What it proves, through the same door a hand uses:
   • M5  ⌥space pauses / resumes in place, ⇧space does not (it is not the transport's any more);
   • M6  ↑/↓ on the time selection ignore ⌘ (a lane step has no big step);
   • M7  ⌥T / ⌥R = the VERTICAL zoom, bare T / R = the horizontal one, ⇧T no longer vertical;
-  • M8  ⌘ + wheel zooms (`input.zoom` default `via`), ⇧ + wheel does not.
+  • M8  ⌘ + wheel zooms (`input.zoom` default `via`), ⇧ + wheel does not;
+  • M9  the held-key chords: a stem digit + S = stem N's solo (no temporary solo), S + Esc = leave the solo and
+        nothing else, F + Esc = hide / show the plugin editors and nothing else.
 
-What it cannot reach (and says so): the piano roll's ⌘↑ octave (no door selects notes), the BPM / dB boxes' arrow
+What it cannot reach (and says so): whether F + Esc really hides the editors' windows (no command opens or
+reads a plugin editor, by the API's contract: only the negative half of the chord is asserted), the piano roll's ⌘↑ octave (no door selects notes), the BPM / dB boxes' arrow
 steps (a box claims the keyboard by a click), the re-anchoring of ⇧ pressed in the middle of a drag (a synthetic
 drag cannot change the HARDWARE modifiers the drag handlers read).
 
@@ -301,6 +304,110 @@ check(not d.get("contaminated", False), "no real input interfered")
 d = c.send("input.scroll", {"direction": "down", "distance_px": 200, "style": "wheel", "modifiers": ["shift"]})
 after = d["view_after"]
 check(approx(after["pps"], c.send("view.state")["pps"], 0.01), "shift + wheel leaves the zoom alone")
+
+# ── M9 — the held-key chords: F+Esc, N+S, S+Esc ────────────────────────────────────────────────────
+print("M9  held-key chords")
+
+
+def during_hold(hold_key, second_key, mods=(), after=0.4, hold=1200, probe=None):
+    """Holds `hold_key` for `hold` ms on connection `c`, presses `second_key` on `c2` once `after` seconds
+    have passed, and returns whatever `probe()` reads while the first key is STILL down (and once more after
+    its release)."""
+    seen = []
+
+    def presser():
+        try:
+            key(hold_key, hold_ms=hold)
+        except Exception as e:  # pragma: no cover
+            seen.append("err:" + str(e))
+
+    th = threading.Thread(target=presser)
+    th.start()
+    time.sleep(after)
+    p = {"key": second_key}
+    if mods:
+        p["modifiers"] = list(mods)
+    c2.send("input.key", p)
+    time.sleep(0.15)
+    seen.append(probe() if probe else None)
+    th.join()
+    time.sleep(0.25)
+    seen.append(probe() if probe else None)
+    return seen
+
+
+def sel_ids(cl=None):
+    return (cl or c).send("selection.get").get("ids", [])
+
+
+def tool2():
+    return c2.send("tool.get")["tool"]
+
+
+stems = c.send("stem.list")["stems"]
+c.send("solo.clear")
+c.send("tool.set", {"tool": "selection"})
+if len(stems) >= 2:
+    stem2 = stems[1]["id"]
+
+    # N + S: digit FIRST, then S → stem N's solo is toggled, and S arms nothing else.
+    select_obj()
+    seen = during_hold("2", "s", probe=lambda: c2.send("solo.get"))
+    st = seen[0]
+    check(stem2 in st["stems"], "2 held + S soloes stem 2", st["stems"])
+    check(st["temporary"] is None, "... and S armed NO temporary solo (beginHeldSolo)", st["temporary"])
+    check(st["confirmed"] == [], "... nor a confirmed one", st["confirmed"])
+    seen = during_hold("2", "s", probe=lambda: c2.send("solo.get"))
+    check(stem2 not in seen[0]["stems"], "2 held + S again un-soloes it (a toggle)", seen[0]["stems"])
+    c.send("solo.clear")
+
+    # The OLDER chord keeps working: S first, then the digit.
+    seen = during_hold("s", "2", probe=lambda: c2.send("solo.get"))
+    check(stem2 in seen[0]["stems"], "S held + 2 still soloes stem 2 (the older chord)", seen[0]["stems"])
+    check(seen[0]["temporary"] is not None, "... on top of the temporary solo of the held S", seen[0]["temporary"])
+    c.send("solo.clear")
+
+    # The control: S ALONE does arm the temporary solo (what N + S must not do), and it ends on release.
+    select_obj()
+    seen = []
+    th = threading.Thread(target=lambda: key("s", hold_ms=700))
+    th.start()
+    time.sleep(0.35)
+    seen.append(c2.send("solo.get"))
+    th.join()
+    time.sleep(0.25)
+    seen.append(c2.send("solo.get"))
+    check(seen[0]["temporary"] is not None, "S alone arms the temporary solo (control)", seen[0]["temporary"])
+    check(seen[1]["temporary"] is None and not seen[1]["active"], "... and releasing it lifts it", seen[1])
+else:
+    check(False, "the project has at least 2 stems (Main + 1)", len(stems))
+
+# S + Esc: leaves the solo and does NOTHING else (the selection and the tool stay).
+select_obj()
+c.send("tool.set", {"tool": "volume"})
+seen = during_hold("s", "escape", probe=lambda: (c2.send("solo.get"), sel_ids(c2), tool2()))
+solo_now, sel_now, tool_now = seen[0]
+check(not solo_now["active"], "S held + Esc turns every solo off", solo_now)
+check(oid in sel_now, "... and leaves the selection alone (Esc alone would clear it)", sel_now)
+check(tool_now == "volume", "... and the tool", tool_now)
+c.send("solo.clear")
+
+# F + Esc: the plugin editors' toggle — and Esc does NOTHING else. No door opens or reads a plugin editor
+# (the API's contract), so what is asserted is the negative half: the bare Esc's own effects do not happen.
+select_obj()
+c.send("tool.set", {"tool": "selection"})
+seen = during_hold("f", "escape", probe=lambda: (sel_ids(c2), tool2()))
+sel_now, tool_now = seen[0]
+check(oid in sel_now, "F held + Esc leaves the selection alone", sel_now)
+check(tool_now == "fx", "... and the FX tool stays armed while F is held", tool_now)
+check(seen[1][1] == "selection", "... then F's release gives the selection tool back", seen[1])
+# The control: a bare Esc still does its usual reset.
+select_obj()
+c.send("tool.set", {"tool": "volume"})
+key("escape")
+time.sleep(0.2)
+check(sel_ids() == [] and tool() == "selection", "a bare Esc still clears the selection and the tool",
+      (sel_ids(), tool()))
 
 c.send("tool.set", {"tool": "selection"})
 print("")

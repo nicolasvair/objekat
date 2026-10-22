@@ -1520,6 +1520,29 @@
         }
       }
     },
+    "cheatsheet.fx.hideEditors": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides / shows every plugin editor"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta / muestra todos los editores de plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque / montre tous les éditeurs de plugin"
+          }
+        }
+      }
+    },
     "cheatsheet.fx.openEditor": {
       "extractionState": "manual",
       "localizations": {
@@ -9175,6 +9198,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "· M = mute"
+          }
+        }
+      }
+    },
+    "hud.stem.soloHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
           }
         }
       }

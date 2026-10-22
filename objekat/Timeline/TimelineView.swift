@@ -4299,6 +4299,8 @@ struct TimelineView: View {
             // A reminder of the mute shortcut (unavailable on the Main, which is not mutable). A single
             // label both ways: the key TOGGLES, and the muted state already reads on the struck-through name.
             let muteHint = isMain ? "" : " " + L("hud.stem.muteHint")
+            // …and of the solo one (digit held + S toggles THIS stem's solo; the Main can be soloed too).
+            let soloHint = " " + L("hud.stem.soloHint")
             let stemLabel = "\(n) \(isMain ? L("stem.main.name") : stem.name)"
             HStack(spacing: 7) {
                 Circle()
@@ -4317,7 +4319,7 @@ struct TimelineView: View {
                 }
                 Text((locked
                      ? L("hud.stem.lockedHint", stemLabel)
-                     : L("hud.stem.hint", stemLabel)) + muteHint)
+                     : L("hud.stem.hint", stemLabel)) + muteHint + soloHint)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 // A keyboard counterpart of digit+⏎: it assigns the selection to that stem without

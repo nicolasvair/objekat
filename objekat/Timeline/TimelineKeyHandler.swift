@@ -553,6 +553,8 @@ extension TimelineView {
                                object: nil, queue: .main) { _ in
                 cheat.schedule(nil, in: vm)
                 chord.keyCode = nil
+                chord.fKeyCode = nil
+                chord.digit = nil
                 MainActor.assumeIsolated {
                     vm.cmdKeyHeld = false
                     vm.optKeyHeld = false
@@ -685,6 +687,22 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.removeSelected() } }
                 }
             case 53:  // Escape
+                // The HELD-KEY chords come first, ahead of every other branch of Esc: holding a key
+                // while pressing Esc is an explicit combination, whereas the branches below answer a
+                // bare Esc by what the app happens to be in the middle of. In particular the
+                // cancellation of a consolidated object's edit rolls back, which is not something to
+                // do by the side of a chord meant for the solo or the plugin windows.
+                // 's' held + Esc = leaves the solo and does NOTHING else (like s + ⌫: no selection
+                // reset, no tool reset). 'f' held + Esc = hides / shows every plugin editor and
+                // does NOTHING else. A chord only fires on the first press, never on key repeat.
+                if chord.keyCode != nil {
+                    if !event.isARepeat { DispatchQueue.main.async { vm.clearAllSolo() } }
+                    return nil
+                }
+                if chord.fKeyCode != nil {
+                    if !event.isARepeat { DispatchQueue.main.async { vm.togglePluginEditorsVisibility() } }
+                    return nil
+                }
                 // "Choose object" armed (the Sidechain strip): Esc leaves THAT mode and nothing else.
                 if vm.routePick != nil {
                     DispatchQueue.main.async { vm.endRoutePick() }
@@ -847,6 +865,8 @@ extension TimelineView {
                     }
                     return nil
                 }
+                // The digit is physically down: N + S (below, in the 's' case) toggles stem N's solo.
+                chord.digit = (event.keyCode, n)
                 if !event.isARepeat {
                     DispatchQueue.main.async {
                         vm.stemAssignIndex = n
@@ -994,6 +1014,7 @@ extension TimelineView {
                 case "f":
                     // 'F' = the FX tool: hovering an object shows its plugins (@see FXStripLayout).
                     if flags.contains(.command) || flags.contains(.option) { break }
+                    chord.fKeyCode = event.keyCode   // F + Esc (see the Escape case)
                     guard !event.isARepeat else { return nil }
                     let permanent = flags.contains(.shift)
                     DispatchQueue.main.async {
@@ -1029,6 +1050,17 @@ extension TimelineView {
                 case "s":
                     // 'S' is no longer a tool shortcut: the Aux tool moved to 'A'.
                     if flags.contains(.command) { break }   // Cmd+S = Save (the menu)
+                    // A stem digit N already held → N + S toggles stem N's solo (the same call as
+                    // s + N, the other way round) and arms NOTHING else: no solo chord, no
+                    // temporary solo (`beginHeldSolo`), no click-to-listen mode. The 's' keyUp then
+                    // finds no chord to lift.
+                    if let held = chord.digit, held.n <= vm.stems.count {
+                        if !event.isARepeat {
+                            let stemID = vm.stems[held.n - 1].id
+                            DispatchQueue.main.async { vm.toggleStemSolo(stemID) }
+                        }
+                        return nil
+                    }
                     // 's' held arms the solo chords (s+Return, s+N, s+⌫), independently of ⇧.
                     // The release is caught on keyUp by the same keyCode.
                     chord.keyCode = event.keyCode
@@ -1096,6 +1128,8 @@ extension TimelineView {
                         vm.endHeldSolo()
                     }
                 }
+                if chord.fKeyCode == event.keyCode { chord.fKeyCode = nil }
+                if chord.digit?.keyCode == event.keyCode { chord.digit = nil }
                 if let held = vm.heldToolKeyCode, held == event.keyCode {
                     DispatchQueue.main.async {
                         vm.heldToolKeyCode = nil
@@ -1479,6 +1513,14 @@ final class SoloChordState {
     /// is arming the solo chords (s+Return, s+N, s+⌫) — space is no longer one of them, solo no
     /// longer pilots the transport.
     var keyCode: UInt16? = nil
+    /// The keyCode of 'f' while it is physically down (any 'f': a locked ⇧F too), nil otherwise. It
+    /// arms F + Esc (hide / show every plugin editor). Kept HERE, synchronously, rather than read from
+    /// `heldToolKeyCode` which the monitor only sets on the next main-queue turn.
+    var fKeyCode: UInt16? = nil
+    /// The stem digit held (its keyCode and N, 1 = Main) while it is physically down, nil otherwise.
+    /// It arms N + S (solo / unsolo of stem N). Only recorded when 's' was NOT already held: S first
+    /// then a digit is the older chord (s+N) and keeps its own branch.
+    var digit: (keyCode: UInt16, n: Int)? = nil
 }
 
 // MARK: - Action proxy for NSMenuItem

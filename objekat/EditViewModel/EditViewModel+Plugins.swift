@@ -634,6 +634,32 @@ extension EditViewModel {
         }
     }
 
+    /// F held + Esc: hides every open plugin editor (native AND built-in) from the screen, or brings
+    /// them back. A TOGGLE read off what is on screen and not off a flag: if any editor is visible
+    /// they all go (and are remembered), otherwise the remembered ones return. So an editor opened
+    /// while the others are put away does not leave the chord one press out of step, and one that
+    /// was closed meanwhile does not come back to life. The editors stay OPEN throughout (a double
+    /// click on their card still closes them, `isPluginEditorOpen` is unchanged), and returning
+    /// them gives no keyboard focus away from the timeline, the chord being typed there.
+    /// With `--headless` there is no window, hence nothing to do (@see hasInterface).
+    func togglePluginEditorsVisibility() {
+        guard hasInterface else { return }
+        let visibleBuiltIn = builtInEditorWindows.filter { $0.value.window?.isVisible == true }
+        let anyVisible = !visibleBuiltIn.isEmpty || (engine?.isAnyPluginEditorVisible() ?? false)
+        if anyVisible {
+            chordHiddenBuiltInEditors = Array(visibleBuiltIn.keys)
+            for controller in visibleBuiltIn.values { controller.window?.orderOut(nil) }
+            chordHiddenNativeEditors = engine?.hideVisiblePluginEditors() ?? []
+        } else {
+            for id in chordHiddenBuiltInEditors {
+                builtInEditorWindows[id]?.window?.orderFront(nil)
+            }
+            engine?.showPluginEditors(chordHiddenNativeEditors)
+            chordHiddenBuiltInEditors = []
+            chordHiddenNativeEditors = []
+        }
+    }
+
     /// Lowers (false) or restores (true) the "always in front" level of the editors,
     /// native AND built-in. Called by the plugin browser for as long as it is shown: an
     /// AppKit popover lives at the normal level and cannot come in front of a floating window,

@@ -2140,6 +2140,41 @@ static BOOL gOBJAudioDisabled = NO;
     }
 }
 
+// F + Échap (la bascule « masquer / montrer tous les éditeurs »). Même geste que la mise à l'abri
+// au passage en arrière-plan, mais DÉCIDÉ par la main et sur une liste à part : les deux ne
+// s'écrasent pas (une fenêtre masquée ici n'est plus visible, donc le passage en arrière-plan ne la
+// retient pas, et le retour ne la rétablit pas).
+- (BOOL)isAnyPluginEditorVisible {
+    for (auto& kv : _editorWindows) {
+        auto* win = kv.second.get();
+        if (win && win->isVisible()) return YES;
+    }
+    return NO;
+}
+
+- (NSArray<NSString*>* _Nonnull)hideVisiblePluginEditors {
+    NSMutableArray<NSString*>* keys = [NSMutableArray array];
+    for (auto& kv : _editorWindows) {
+        auto* win = kv.second.get();
+        if (win && win->isVisible()) {
+            [keys addObject:[NSString stringWithUTF8String:kv.first.c_str()]];
+            win->setVisible(false);
+        }
+    }
+    return keys;
+}
+
+// Seuls les éditeurs encore OUVERTS reviennent : un éditeur fermé entre-temps ne ressuscite pas.
+- (void)showPluginEditors:(NSArray<NSString*>* _Nonnull)keys {
+    for (NSString* key in keys) {
+        auto it = _editorWindows.find(std::string([key UTF8String]));
+        if (it != _editorWindows.end() && it->second) {
+            it->second->setVisible(true);
+            it->second->setAlwaysOnTop(_pluginEditorsFloating);
+        }
+    }
+}
+
 - (void)restorePluginEditorsOnActivate {
     for (const auto& key : _editorsHiddenOnResign) {
         auto it = _editorWindows.find(key);

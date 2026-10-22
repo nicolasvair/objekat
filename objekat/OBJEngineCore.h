@@ -745,6 +745,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // franchir le niveau flottant. Le réglage vaut aussi pour les éditeurs ouverts ensuite.
 - (void)setPluginEditorsFloating:(BOOL)floating;
 
+// Bascule « masquer / montrer tous les éditeurs » (F tenu + Échap, @see EditViewModel
+// `togglePluginEditorsVisibility`). Un éditeur masqué reste OUVERT (isPluginEditorOpen le dit
+// toujours) : seule sa fenêtre est retirée de l'écran.
+- (BOOL)isAnyPluginEditorVisible;
+// Masque tous les éditeurs natifs visibles ; rend les clés (ObjectPlugin.id.uuidString) de ceux-là.
+- (NSArray<NSString*>* _Nonnull)hideVisiblePluginEditors;
+// Ré-affiche ceux de ces éditeurs qui sont encore ouverts, sans leur donner le focus clavier.
+- (void)showPluginEditors:(NSArray<NSString*>* _Nonnull)keys;
+
 // YES quand le focus clavier est dans un champ de SAISIE DE TEXTE d'une fenêtre de plugin.
 // Il y a deux familles d'éditeurs, donc deux détections — celle-ci ne couvre que la seconde :
 //  - vue Cocoa native (AU d'Apple, plugins non-JUCE) : le premier répondant est un NSTextView
