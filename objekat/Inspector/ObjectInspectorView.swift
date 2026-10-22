@@ -142,11 +142,24 @@ struct ObjectInspectorView: View {
     private static let maxChips = 40
 
     /// The items flow and wrap, a block each; what they are worth is in the tooltip.
+    @ViewBuilder
     private var selectionItems: some View {
+        // `ItemFlowLayout` is a macOS 13 `Layout`; below, the same blocks in an adaptive grid
+        // (they wrap, but no longer pack by their own width).
+        if #available(macOS 13, *) {
+            ItemFlowLayout(spacing: 4) { selectionChips }
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 4)],
+                      alignment: .leading, spacing: 4) { selectionChips }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionChips: some View {
         let snap = self.snap
         let shown = Array(snap.objects.prefix(Self.maxChips))
         let hidden = Array(snap.objects.dropFirst(Self.maxChips))
-        return ItemFlowLayout(spacing: 4) {
+        Group {
             ForEach(shown) { obj in WithPerceptionTracking {
                 SelectionChip(
                     id: obj.id,
@@ -827,6 +840,7 @@ private struct SelectionChip: View, Equatable {
 /// The blocks' own sizes are measured ONCE per set of subviews (`makeCache` / `updateCache`):
 /// `sizeThatFits` and `placeSubviews` each used to measure every block again, and SwiftUI asks for
 /// several of the first for one of the second.
+@available(macOS 13, *)
 private struct ItemFlowLayout: Layout {
     var spacing: CGFloat
 

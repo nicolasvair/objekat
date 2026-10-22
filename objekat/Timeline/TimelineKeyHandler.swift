@@ -1093,7 +1093,7 @@ extension TimelineView {
             return event
         }
 
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+        let monitorBody: (NSEvent) -> NSEvent? = { event in
             // A script canvas's window has its own keys (⌘Z walks ITS history, Space plays its audio):
             // this monitor is app-wide, and ⌘Z there would have undone the PROJECT.
             if event.window is ScriptCanvasPanel { return event }
@@ -1151,6 +1151,16 @@ extension TimelineView {
             if vm.engine?.isPluginEditorWindowKey() == true { return event }
             return handleKeyDown(event)
         }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            let passedThrough = monitorBody(event)
+            // Below macOS 14 SwiftUI has no `.onKeyPress`: the key an event leaves alone here is
+            // offered to the handlers of the focused views (@see KeyPressFallbackHub).
+            if let passedThrough, passedThrough.type != .flagsChanged, Self.keyPressFallbackActive,
+               KeyPressFallbackHub.shared.dispatch(passedThrough) {
+                return nil
+            }
+            return passedThrough
+        }
 
         // The end of the chain for plugin windows: what the plugin let through.
         vm.engine?.setPluginKeyFallback { event in
@@ -1162,6 +1172,13 @@ extension TimelineView {
     /// than that: an arrow key is stamped `.function` and `.numericPad` by macOS itself, a caps lock
     /// stays on — so "no modifier held" is this intersection being empty, never `flags.isEmpty`.
     static let heldModifiers: NSEvent.ModifierFlags = [.command, .shift, .option, .control]
+
+    /// True when `.onKeyPress` is not the system's (macOS < 14), or when a DEBUG run forces the legacy
+    /// paths (@see CompatPolicy). Never true on a recent system in Release.
+    static var keyPressFallbackActive: Bool {
+        if #available(macOS 14, *), !CompatPolicy.forceLegacy { return false }
+        return true
+    }
 
     /// The physical keyCode of a digit key → the digit 1…9 (0 unmapped: there is no stem 0).
     /// It covers the top row (layout-independent) and the numeric keypad.

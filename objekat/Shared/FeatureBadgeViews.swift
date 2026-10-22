@@ -45,12 +45,21 @@ struct NameWithFeatureBadges<Name: View>: View {
         if badges.isEmpty {
             name()
         } else {
-            ViewThatFits(in: .horizontal) {
+            if #available(macOS 13, *) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: spacing) {
+                        name().fixedSize()
+                        FeatureBadgeGlyphs(badges: badges, size: size, color: color)
+                    }
+                    name()
+                }
+            } else {
+                // No `ViewThatFits` below macOS 13: the name and the badges side by side, the name
+                // keeping priority for the room (it truncates before the badges are squeezed).
                 HStack(spacing: spacing) {
-                    name().fixedSize()
+                    name().layoutPriority(1)
                     FeatureBadgeGlyphs(badges: badges, size: size, color: color)
                 }
-                name()
             }
         }
     }

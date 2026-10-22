@@ -237,16 +237,32 @@ struct CheatsheetPanel: View {
                             .font(.system(size: 9, weight: .bold))
                             .foregroundStyle(.secondary)
                             .padding(.bottom, 1)
-                        Grid(alignment: .leadingFirstTextBaseline,
-                             horizontalSpacing: 8, verticalSpacing: 3) {
-                            ForEach(section.rows) { row in
-                                GridRow {
-                                    Text(row.keys)
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .gridColumnAlignment(.trailing)
-                                    Text(row.label)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
+                        if #available(macOS 13, *) {
+                            Grid(alignment: .leadingFirstTextBaseline,
+                                 horizontalSpacing: 8, verticalSpacing: 3) {
+                                ForEach(section.rows) { row in
+                                    GridRow {
+                                        Text(row.keys)
+                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                            .gridColumnAlignment(.trailing)
+                                        Text(row.label)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        } else {
+                            // No `Grid` below macOS 13: a row per line, the keys in a fixed column.
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(section.rows) { row in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Text(row.keys)
+                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                            .frame(width: 96, alignment: .trailing)
+                                        Text(row.label)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
