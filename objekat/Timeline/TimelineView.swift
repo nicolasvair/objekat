@@ -59,10 +59,10 @@ struct TimelineView: View {
     var playheadPosition: () -> Double = { 0 }
     var selectionCursor: Double = 0
     var isPlaying: Bool = false
-    /// Playback suspended (⇧space): the playhead stays where it is and resuming starts from there.
+    /// Playback suspended (⌥space): the playhead stays where it is and resuming starts from there.
     var isPaused: Bool = false
     var onTogglePlayback: () -> Void = {}
-    /// ⇧space: suspend / resume in the same place (without going back to the cursor).
+    /// ⌥space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
     /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).
@@ -156,7 +156,7 @@ struct TimelineView: View {
     @State private var vZoomAnchorLaneCentre: Double? = nil
     @State private var vZoomHeld: Bool = false
     /// D8 — the end-of-zoom-session settle: cancelled and rearmed on every notch of the wheel /
-    /// ⇧-scroll / ⇧R / ⇧T, fires `VerticalLaneSnap.zoomSettleDebounce` after the last one.
+    /// ⌘-scroll / ⌥R / ⌥T, fires `VerticalLaneSnap.zoomSettleDebounce` after the last one.
     @State private var vZoomSettleWork: DispatchWorkItem? = nil
     @State private var vZoomLastEventTime: TimeInterval = 0
 
@@ -296,7 +296,7 @@ struct TimelineView: View {
 
     /// The axis lock of a scroll GESTURE (a trackpad's fingers AND its inertia, or a mouse wheel's
     /// run of notches): decided from its first events, then held until the next gesture. Shared by
-    /// ⇧-zoom and the wheel over an automation line, so the two cannot drift apart.
+    /// ⌘-zoom and the wheel over an automation line, so the two cannot drift apart.
     struct ScrollAxisLock {
         var axis: ScrollZoomAxis? = nil
         private var lastEventTime: TimeInterval = 0
@@ -320,9 +320,16 @@ struct TimelineView: View {
         /// dead zone (a diagonal swipe's first events are ambiguous); with `wheelDecidesAtOnce`, a
         /// notch wheel decides on its single event, because a dead zone would EAT notches.
         mutating func decide(_ event: NSEvent, wheelDecidesAtOnce: Bool) -> ScrollZoomAxis? {
+            decide(dx: event.scrollingDeltaX, dy: event.scrollingDeltaY,
+                   precise: event.hasPreciseScrollingDeltas, wheelDecidesAtOnce: wheelDecidesAtOnce)
+        }
+
+        /// The same on explicit deltas: the caller may have normalised them (⇧ + a mouse wheel arrives
+        /// sideways and means the value's vertical, @see TimelineView.automationWheelDeltas).
+        mutating func decide(dx: CGFloat, dy: CGFloat, precise: Bool,
+                             wheelDecidesAtOnce: Bool) -> ScrollZoomAxis? {
             if let axis { return axis }
-            let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
-            if wheelDecidesAtOnce && !event.hasPreciseScrollingDeltas {
+            if wheelDecidesAtOnce && !precise {
                 guard dx != 0 || dy != 0 else { return nil }
                 axis = abs(dx) >= abs(dy) ? .horizontal : .vertical
                 return axis
@@ -355,14 +362,14 @@ struct TimelineView: View {
         /// Two notches less than `valueScrollUndoGap` apart belong to the same gesture and share ONE
         /// undo — otherwise the wheel was not undoable at all.
         var lastValueScrollTime: TimeInterval = 0
-        var shiftZoomLock = ScrollAxisLock()
+        var cmdZoomLock = ScrollAxisLock()
         /// The same lock for the wheel over a highlighted automation line, and whether the current
         /// gesture was identified as a VERTICAL one there (the sideways component is then swallowed).
         var automationLineWheelLock = ScrollAxisLock()
         var automationLineWheelEngaged = false
 
         // MARK: Vertical lane snap (D6) — the scroll monitor's own axis lock and step state,
-        // independent of the ⇧-zoom fields above (a different gesture: no modifier held).
+        // independent of the ⌘-zoom fields above (a different gesture: no modifier held).
         var vSnapAxis: ScrollZoomAxis? = nil
         var vSnapAccumX: Double = 0
         var vSnapAccumY: Double = 0
@@ -705,7 +712,7 @@ struct TimelineView: View {
                         .zIndex(3.05)
                 }
 
-                // While paused (⇧space), the playhead stays where playback stopped — that is where it
+                // While paused (⌥space), the playhead stays where playback stopped — that is where it
                 // will start again — but in a muted red to say 'stopped'.
                 if isPlaying || isPaused {
                     PlayheadLine(position: playheadPosition, pixelsPerSecond: pixelsPerSecond,
@@ -1062,17 +1069,6 @@ struct TimelineView: View {
                 // Pure drawing: the canvas resolves its clicks (@see handleFXTap).
                 FXStripOverlayView(viewModel: viewModel, store: fxStripStore)
                     .zIndex(2.95)
-
-                // A live 'link' hint during a plugin drag with ⌘ (it follows the cursor).
-                if let loc = viewModel.pluginLinkDropLocation {
-                    // ABOVE the carried card, not beside the cursor: the drag image is drawn by the
-                    // system over every window, so a badge under it is simply hidden — at +18/-18 it
-                    // sat inside the card and was never seen.
-                    LinkBadge(color: LinkColor.plugin)
-                        .position(x: loc.x, y: loc.y - PluginDragPreview.height / 2 - 14)
-                        .allowsHitTesting(false)
-                        .zIndex(3)
-                }
             }
             .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
             .contentShape(Rectangle())
@@ -1114,7 +1110,6 @@ struct TimelineView: View {
                             DispatchQueue.main.async { refreshHover(at: loc) }
                             return ok
                         },
-                        onLinkIndicator: { viewModel.pluginLinkDropLocation = $0 },
                         onFileHint: { beginFileDropPreview(providers: $0, location: $1) },
                         onFileHintEnd: { viewModel.endFileDropHint() },
                         onDropHover: { active in
@@ -1998,6 +1993,9 @@ struct TimelineView: View {
         let geo: AutomationBandGeometry
         let bandRect: CGRect
         var steps: Int = 0
+        /// The steps as the line is carried by them: each one weighs `FineAdjust.factor` if ⇧ was held at
+        /// its notch (so `steps` stays the count the travel mapping needs, and this is the distance).
+        var effectiveSteps: Double = 0
         /// The gesture's undo point is pushed at its first EFFECTIVE notch, not at its first event.
         var undoPushed = false
     }
@@ -4077,10 +4075,8 @@ struct TimelineView: View {
     }
 
     /// The same band as the object move, for a plugin card being dragged (@see PluginDropHint):
-    /// what a release would do NOW, and the two modifiers lit as they are held. Shown only while
-    /// the card hovers a place that takes it — a system drag has no other signal to be read.
-    /// Within a chain (the synoptic's cards and cables), ⌘ does not link: the chip is replaced
-    /// by a line saying where it does.
+    /// what a release would do NOW, and ⌥ lit as it is held. Shown only while the card hovers a
+    /// place that takes it — a system drag has no other signal to be read.
     @ViewBuilder
     private var pluginDropHUD: some View {
         if let s = PluginDropHint.shared.state, case .send(let line) = s.context {
@@ -4114,38 +4110,15 @@ struct TimelineView: View {
             .allowsHitTesting(false)
         } else if let s = PluginDropHint.shared.state {
             HStack(spacing: 7) {
-                Image(systemName: s.isLink ? FeatureIcons.fxLink
-                                  : s.isCopy ? "plus.square.on.square"
+                Image(systemName: s.isCopy ? "plus.square.on.square"
                                   : s.context == .intoBin ? "tray.and.arrow.down"
                                   : s.context == .outOfBin ? "tray.and.arrow.up"
                                   : "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(s.isLink ? LinkColor.plugin : Color.accentColor)
+                    .foregroundStyle(Color.accentColor)
                 Text(pluginDropTitle(s))
                     .font(.system(size: 11, weight: .bold))
-                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy && s.alt, locked: false)
-                switch s.context {
-                case .host:
-                    modifierChip("⌘", L("hud.pluginDrop.chip.link"), on: s.isLink, locked: false)
-                case .blockMove:
-                    // A block's ⌘ is a copy like ⌥: every copy of a bin stays on the bin.
-                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
-                case .sendChain:
-                    // To or from a send's box ⌘ is a plain copy: a send's plugin is never linked.
-                    modifierChip("⌘", L("hud.move.chip.copy"), on: s.cmd, locked: false)
-                case .refusal:
-                    EmptyView()    // drawn by the branch above
-                case .intoBin, .outOfBin:
-                    Text(L("hud.pluginDrop.binNoCmd"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                case .sameChain:
-                    Text(L("hud.pluginDrop.sameChainNoLink"))
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                case .send:
-                    EmptyView()    // drawn by the branch above
-                }
+                modifierChip("⌥", L("hud.move.chip.copy"), on: s.isCopy, locked: false)
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
@@ -4159,8 +4132,8 @@ struct TimelineView: View {
     /// The band's title for what a release would do (@see PluginDropHint.Context).
     private func pluginDropTitle(_ s: PluginDropHint.State) -> String {
         switch s.context {
-        case .host, .sameChain, .sendChain:
-            return s.isLink ? L("hud.pluginDrop.linkedCopy") : s.isCopy ? L("hud.move.copy") : L("hud.move.move")
+        case .host, .sendChain:
+            return s.isCopy ? L("hud.move.copy") : L("hud.move.move")
         case .refusal(let key):
             return L(key)
         case .intoBin:
@@ -4187,8 +4160,8 @@ struct TimelineView: View {
 
     /// An explanatory rectangle shown while one or more files hover the timeline.
     /// It shows BOTH layouts and highlights the one that would apply if one released now. The
-    /// preview follows ⌘ live, even without moving the mouse — that is the intended gesture
-    /// (arrive over the timeline, read the band, press ⌘). Tracking the modifier is on the
+    /// preview follows ⌥ live, even without moving the mouse — that is the intended gesture
+    /// (arrive over the timeline, read the band, press ⌥). Tracking the modifier is on the
     /// view-model's side (`beginFileDropHint`): `dropUpdated` only speaks on movement.
     @ViewBuilder
     private var fileDropHintOverlay: some View {
@@ -4200,7 +4173,7 @@ struct TimelineView: View {
                         .foregroundStyle(Color.accentColor)
                     Text(Ln("hud.drop.fileCount", hint.count, hint.count))
                         .font(.system(size: 11, weight: .bold))
-                    Text(L("hud.drop.cmdHint"))
+                    Text(L("hud.drop.optHint"))
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
@@ -4326,6 +4299,8 @@ struct TimelineView: View {
             // A reminder of the mute shortcut (unavailable on the Main, which is not mutable). A single
             // label both ways: the key TOGGLES, and the muted state already reads on the struck-through name.
             let muteHint = isMain ? "" : " " + L("hud.stem.muteHint")
+            // …and of the solo one (digit held + S toggles THIS stem's solo; the Main can be soloed too).
+            let soloHint = " " + L("hud.stem.soloHint")
             let stemLabel = "\(n) \(isMain ? L("stem.main.name") : stem.name)"
             HStack(spacing: 7) {
                 Circle()
@@ -4344,7 +4319,7 @@ struct TimelineView: View {
                 }
                 Text((locked
                      ? L("hud.stem.lockedHint", stemLabel)
-                     : L("hud.stem.hint", stemLabel)) + muteHint)
+                     : L("hud.stem.hint", stemLabel)) + muteHint + soloHint)
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
                 // A keyboard counterpart of digit+⏎: it assigns the selection to that stem without

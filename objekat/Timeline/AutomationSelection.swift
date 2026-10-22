@@ -161,11 +161,28 @@ enum AutomationTransform {
         lo + n * (hi - lo)
     }
 
-    /// ⇧ = fine adjustment: the factor is brought back towards 1 by a factor of four. Not a
-    /// comfort on this gesture — a row is some sixteen pixels tall, so `k = 2` sits sixteen pixels
-    /// above the box's edge, and without this the grip would be unusable on anything but a coarse
-    /// move. `k == 1` stays `1`, so ⇧ never moves anything by itself.
-    static func fine(_ k: Double) -> Double { 1 + (k - 1) / 4 }
+    /// ⇧ = fine adjustment: the factor is brought back towards 1 by `FineAdjust.factor` (a tenth,
+    /// the one coefficient of every fine gesture). Not a comfort on this gesture — a row is some
+    /// sixteen pixels tall, so `k = 2` sits sixteen pixels above the box's edge, and without this
+    /// the grip would be unusable on anything but a coarse move. `k == 1` stays `1`, so ⇧ never
+    /// moves anything by itself.
+    ///
+    /// This is the STATELESS form: ⇧ as if held from the first pixel of the gesture. A grip dragged
+    /// live reads ⇧ in the middle of the gesture, and this form would JUMP at the instant it flips
+    /// (`k = 2` suddenly worth 1.1) — it goes through `FineTravel` below instead.
+    static func fine(_ k: Double) -> Double { 1 + (k - 1) * FineAdjust.factor }
+
+    /// What a grip dragged LIVE keeps of ⇧ between two frames: one `FineAdjust` per axis, fed with
+    /// the factor's distance from rest (`k - 1`, which is what a hand travels) on the vertical axis
+    /// and on the time-scale case, and with the shift itself (seconds) on the degenerate time case
+    /// that can only be moved. Re-anchored when ⇧ flips, so the request is continuous there and only
+    /// its slope changes (@see FineAdjust). A grip never changes between scale and shift during one
+    /// gesture (the span is frozen at the grab), so ONE time tracker serves both.
+    struct FineTravel: Equatable {
+        var time: FineAdjust
+        var value: FineAdjust
+        init(fine: Bool = false) { time = FineAdjust(fine: fine); value = FineAdjust(fine: fine) }
+    }
 
     /// WHAT the gesture asks for, decided from the grip and the pointer; `apply` is what carries
     /// it out.
@@ -173,8 +190,21 @@ enum AutomationTransform {
     /// `verticalK` comes from `boxFactor` and is bounded to >= 0 HERE, so that the ratio itself
     /// stays pure: a negative factor would mirror the curve about its anchor, and the mirror is
     /// another gesture.
+    ///
+    /// Stateless: ⇧ (`fineTune`) is taken as held since the gesture's first pixel.
     static func request(_ handle: Handle, span: TimeSpan,
                         verticalK: Double, targetT: Double, fineTune: Bool) -> Request {
+        var travel = FineTravel(fine: fineTune)
+        return request(handle, span: span, verticalK: verticalK, targetT: targetT,
+                       fine: fineTune, travel: &travel)
+    }
+
+    /// The same, with ⇧ read LIVE: `travel` is the gesture's own memory of it, passed back at every
+    /// frame, so that pressing or releasing ⇧ in the middle of the drag leaves the request where it
+    /// was (no jump) and only changes how fast it follows the hand from then on.
+    static func request(_ handle: Handle, span: TimeSpan,
+                        verticalK: Double, targetT: Double,
+                        fine: Bool, travel: inout FineTravel) -> Request {
         var r = Request()
 
         if handle.movesTime {
@@ -183,17 +213,19 @@ enum AutomationTransform {
             let pulledT   = handle == .left ? span.t0 : span.t1
             let anchorT   = handle == .left ? span.t1 : span.t0
             if let k = timeFactor(extreme: pulledT, target: targetT, anchor: anchorT) {
-                r.time = .scale(anchor: anchorT, k: fineTune ? fine(k) : k)
+                // Bounded to >= 0 again: re-anchored, the effective factor can fall below zero (a
+                // fine stretch banked, then a bare hand coming back past the anchor) and would MIRROR.
+                r.time = .scale(anchor: anchorT, k: max(0, 1 + travel.time.effective(k - 1, fine: fine)))
             } else {
                 let d = targetT - pulledT
-                r.time = .shift(fineTune ? d / 4 : d)
+                r.time = .shift(travel.time.effective(d, fine: fine))
             }
             return r
         }
 
         // Every other grip is a VERTICAL scale. Its anchor is semantic and per row: the top grip
         // and the two top corners leave normalised 0 alone, the bottom ones leave normalised 1.
-        r.valueK = max(0, fineTune ? fine(verticalK) : verticalK)
+        r.valueK = max(0, 1 + travel.value.effective(verticalK - 1, fine: fine))
         r.anchorHigh = !handle.pullsTop
 
         switch handle {

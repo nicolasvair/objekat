@@ -146,7 +146,8 @@ enum ToolOverlayGeometry {
     /// ("-∞") because its label is a few pixels wide.
     static func volumeLabel(db: Float, compact: Bool) -> String {
         if db <= -96 { return compact ? "-∞" : "-∞ dB" }
-        return String(format: "%.0f dB", db)
+        // A tenth only when the model holds one (the fine ⇧ steps): "-3 dB", "-2.5 dB".
+        return abs(db - db.rounded()) < 0.05 ? String(format: "%.0f dB", db) : String(format: "%.1f dB", db)
     }
 
     /// The Pan tool's reading: "C", then "L n%" / "R n%" — the percentage TRUNCATED, not rounded.

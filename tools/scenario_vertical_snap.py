@@ -89,7 +89,7 @@ check(d["view_after"]["vsnap"]["ratio"] <= 0.901, "…and the ratio after is sti
 
 set_bh(AVAIL * 0.3)
 d = c.send("input.zoom", {"axis": "vertical", "factor": 6, "via": "keys"})
-check(d["view_after"]["vsnap"]["ratio"] <= 0.901, "…same clamp via ⇧T presses (%.4f)" % d["view_after"]["vsnap"]["ratio"])
+check(d["view_after"]["vsnap"]["ratio"] <= 0.901, "…same clamp via ⌥T presses (%.4f)" % d["view_after"]["vsnap"]["ratio"])
 
 print("below 70% — free, continuous scroll")
 set_bh(AVAIL * 0.5, scroll_y=500)
@@ -163,11 +163,11 @@ d = c.send("input.scroll", {"direction": "up", "distance_px": 60, "style": "trac
 time.sleep(0.3)
 check(vsnap()["lane"] == 0, "going up from lane 0 stays at lane 0")
 
-print("⇧ still zooms in snap mode (priority intact)")
+print("⌘ still zooms in snap mode (priority intact)")
 set_bh(AVAIL * 0.8, scroll_y=0)
 before = state()
 d = c.send("input.zoom", {"axis": "vertical", "factor": 1.1})
-check(d["view_after"]["block_height"] != before["block_height"], "⇧-scroll still zoomed, not stepped a lane")
+check(d["view_after"]["block_height"] != before["block_height"], "⌘-scroll still zoomed, not stepped a lane")
 
 print("crossing 70% while zooming (D8)")
 set_bh(AVAIL * 0.5, scroll_y=300)

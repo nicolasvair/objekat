@@ -752,7 +752,7 @@ def section_C(rig):
     check("…without a monoFold key (the pick on its cable says it)", nodes and "monoFold" not in nodes[0], nodes[0].keys() if nodes else None)
     picks = json_nodes(doc, lambda d: "channelPick" in d)
     check("…and the pick is written: channelPick {mode: left}", len(picks) == 1 and picks[0]["channelPick"].get("mode") == "left", picks)
-    check("the file is format 31", doc.get("version") == 31, doc.get("version"))
+    check("the file is format 32", doc.get("version") == 32, doc.get("version"))
 
     section("C: the same plugin as a STEREO plugin: all four choices again")
     rig.send("plugin.set_channel_layout", {"host": o, "plugin": lp, "variant": "stereo"})
@@ -1115,8 +1115,8 @@ def section_H(rig):
     audits(rig, "before the save")
     rig.send("project.save")
     doc = json.load(open(manifest))
-    check("the file is format 31 and holds two channelPick entries (one in the bin's definition, one in the member)",
-          doc.get("version") == 31 and len(json_nodes(doc, lambda d: "channelPick" in d)) >= 2,
+    check("the file is format 32 and holds two channelPick entries (one in the bin's definition, one in the member)",
+          doc.get("version") == 32 and len(json_nodes(doc, lambda d: "channelPick" in d)) >= 2,
           (doc.get("version"), len(json_nodes(doc, lambda d: "channelPick" in d))))
     rig.send("project.open", {"path": manifest})
     rig.idle()

@@ -58,9 +58,6 @@ struct SynopticActions {
     // Carried over from the chips (step 1.x):
     var instanceState: ((UUID) -> Int)? = nil       // 0 unknown · 1 loading · 2 ready · 3 error
     var loadError: ((UUID) -> String?)? = nil
-    var onUnlink: ((UUID) -> Void)? = nil
-    var onRelink: ((UUID) -> Void)? = nil
-    var linkSiblingCount: ((UUID) -> Int)? = nil
 
     // The audio bridge (sidechain): a card's key, as one line (nil = none). The key is CHOSEN in the
     // plugin editor's Sidechain strip (@see SidechainStripView), not from the card.

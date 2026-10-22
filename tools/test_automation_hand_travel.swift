@@ -7,7 +7,8 @@
 // re-anchored at the parameter's bounds.
 //
 //     swiftc -parse-as-library \
-//         ../objekat/Shared/AutomationHandTravel.swift test_automation_hand_travel.swift \
+//         ../objekat/Shared/AutomationHandTravel.swift ../objekat/Shared/FineAdjust.swift \
+//         test_automation_hand_travel.swift \
 //         -o /tmp/ahandtravel && /tmp/ahandtravel
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -91,6 +92,28 @@ enum AutomationHandTravelTest {
         check("pencil: clamped at the bottom", bottom == -96)
         check("pencil: no dead travel at the bottom either",
               near(d.value(handDy: 5000 - 2 * pp, step: 1, range: range), -94))
+    }
+    do {
+        // ⇧ (fine): a tenth of the travel, and no jump when it flips mid-gesture.
+        var d = H.PencilDrag(startValue: 0)
+        let range: ClosedRange<Double> = -96...40
+        let a = d.value(handDy: -4 * pp, step: 1, range: range)
+        let atPress = d.value(handDy: -4 * pp, step: 1, range: range, fine: true)
+        check("pencil ⇧: pressing at rest does not jump", near(a, atPress), "\(a) vs \(atPress)")
+        let f = d.value(handDy: -14 * pp, step: 1, range: range, fine: true)
+        check("pencil ⇧: ten steps of travel are worth one", near(f, 4 + 1), "\(f)")
+        let r = d.value(handDy: -14 * pp, step: 1, range: range, fine: false)
+        check("pencil ⇧: releasing at rest does not jump", near(r, f), "\(r)")
+        var held = H.PencilDrag(startValue: 0, fine: true)
+        check("pencil ⇧: held from the press, the whole drag is fine",
+              near(held.value(handDy: -10 * pp, step: 1, range: range, fine: true), 1))
+        // Overshooting a bound while fine: the first pixel back answers at the fine rate.
+        var top = H.PencilDrag(startValue: 39.5, fine: true)
+        let clamped = top.value(handDy: -100 * pp, step: 1, range: range, fine: true)
+        check("pencil ⇧: clamped at the top", clamped == 40)
+        check("pencil ⇧: no dead travel after the bound",
+              near(top.value(handDy: -100 * pp + 10 * pp, step: 1, range: range, fine: true), 39),
+              "\(top.value(handDy: -100 * pp + 10 * pp, step: 1, range: range, fine: true))")
     }
     do {
         // The rate is the parameter's STEP per pencilPxPerStep, never the row's height.

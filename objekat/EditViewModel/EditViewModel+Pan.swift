@@ -28,11 +28,19 @@ extension EditViewModel {
     // frame, so a slow drag simply waits until the total crosses the half-step — which is what a
     // detent IS. Its accepted cost, on a multiple selection: an object whose pan was not on a tenth
     // is brought onto one, so the spread between the objects can shift by up to half a step.
+    //
+    // ⇧ LIFTS THE DETENT (22 October 2026, the one exception): ⇧ is the fine adjustment of every
+    // value a hand lays down (@see FineAdjust), and a fine pan that the tenth swallowed would be no
+    // fine adjustment at all. Under ⇧ the pan lands on the HUNDREDTH (one percent, the unit the
+    // boxes show). It is still a detent — the file never holds 0.1337 — only a finer one; and it is
+    // the caller that says so (`fine:`), read off the modifier at the door the hand comes in by.
 
     /// A pan brought onto its detent — the tenth. The ONE definition: every gesture goes through it,
     /// so no two controls can disagree about where the pan clicks.
-    static func detentedPan(_ v: Float) -> Float {
-        ((v * 10).rounded() / 10).clamped(to: -1...1)
+    /// `fine` (⇧ held): the hundredth instead, the exception that lifts the tenth.
+    static func detentedPan(_ v: Float, fine: Bool = false) -> Float {
+        let q: Float = fine ? 100 : 10
+        return ((v * q).rounded() / q).clamped(to: -1...1)
     }
 
     func updatePan(id: UUID, pan: Float) {
@@ -43,8 +51,8 @@ extension EditViewModel {
 
     /// The door a HAND comes in by when it SETS a pan rather than adding to it (the synoptic's box,
     /// a knob, a direct entry): the value lands on the detent.
-    func setPanFromHand(id: UUID, pan: Float) {
-        updatePan(id: id, pan: Self.detentedPan(pan))
+    func setPanFromHand(id: UUID, pan: Float, fine: Bool = false) {
+        updatePan(id: id, pan: Self.detentedPan(pan, fine: fine))
     }
 
     /// The selection's pans, as they stand. The ORIGIN a continuous gesture works from: see
@@ -55,8 +63,8 @@ extension EditViewModel {
     }
 
     /// A one-shot relative step (the arrow keys, a menu): read the current value, add, write.
-    func adjustPanSelected(_ delta: Float) {
-        applyPanDelta(delta, from: panSnapshot())
+    func adjustPanSelected(_ delta: Float, fine: Bool = false) {
+        applyPanDelta(delta, from: panSnapshot(), fine: fine)
     }
 
     /// Applies to every anchored object the TOTAL travel since `anchors` was taken. A continuous
@@ -65,7 +73,7 @@ extension EditViewModel {
     /// reaches the edge in one flick, and a compounded delta would leave it there with its offset
     /// LOST — coming back would collapse the selection onto the edge instead of restoring the
     /// spread it started with.
-    func applyPanDelta(_ delta: Float, from anchors: [UUID: Float]) {
+    func applyPanDelta(_ delta: Float, from anchors: [UUID: Float], fine: Bool = false) {
         guard !anchors.isEmpty else { return }
         // The whole thing in ONE batch: every `update` writes `items`, and each write alone rebuilt the lane entries
         // (O(N)) — K objects cost K rebuilds per step. Nothing in here reads `laneEntries`.
@@ -75,7 +83,7 @@ extension EditViewModel {
             // tree and copied the enclosing groups' children K times each.
             updateMany(Set(anchors.keys)) { o in
                 guard let anchor = anchors[o.id] else { return }
-                o.pan = Self.detentedPan((anchor + delta).clamped(to: -1...1))
+                o.pan = Self.detentedPan((anchor + delta).clamped(to: -1...1), fine: fine)
                 o.recordAutomationTouch(.pan)
             }
             for id in anchors.keys { pushMix(id) }

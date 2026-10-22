@@ -740,7 +740,7 @@ extension CommandRegistry {
 
         register("object.set_gain",
                  summary: "Sets the gain (dB) of the given objects, absolute or relative.",
-                 params: [ParamSpec("db", "number", "Value, in dB (-96…40)."),
+                 params: [ParamSpec("db", "number", "Value, in dB (-96…40), kept to the tenth of a dB."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Target objects; default = current selection."),
                           ParamSpec("relative", "bool", required: false,

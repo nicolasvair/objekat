@@ -90,6 +90,8 @@ enum ShortcutCheatsheet {
             return [
                 ShortcutSection(title: L("cheatsheet.section.keyboard"), rows: [
                     ShortcutRow(keys: "↑ · ↓", label: "± 1 dB"),
+                    ShortcutRow(keys: "⇧ ↑ · ↓", label: "± 0.5 dB"),
+                    ShortcutRow(keys: "⌘ ↑ · ↓", label: "± 3 dB"),
                     ShortcutRow(keys: "M", label: L("cheatsheet.volume.mute")),
                     ShortcutRow(keys: "⌫", label: L("cheatsheet.volume.reset")),
                 ]),
@@ -109,14 +111,18 @@ enum ShortcutCheatsheet {
         case .toolAux:
             return []
         // The list was removed on 2026-08-31: the tool has its OWN band (@see
-        // TimelineView.stemAssignHUD), carrying the target stem's colour, its muted state, ⏎ and M.
+        // TimelineView.stemAssignHUD), carrying the target stem's colour, its muted state, ⏎, M and S.
         // Two bands for one tool was one too many. Empty ⇒ no panel (@see
         // CheatsheetPanel).
         case .toolStemAssign:
             return []
-        // FX: the mouse only, and the strip says it on its boxes (their tooltips).
+        // FX: the mouse, whose strip says it on its boxes (their tooltips), and ONE key: Esc, held
+        // with F, puts every plugin editor away (or brings them back).
         case .toolFX:
             return [
+                ShortcutSection(title: L("cheatsheet.section.keyboard"), rows: [
+                    ShortcutRow(keys: "⎋", label: L("cheatsheet.fx.hideEditors")),
+                ]),
                 ShortcutSection(title: L("cheatsheet.section.mouse"), rows: [
                     ShortcutRow(keys: L("cheatsheet.keys.hoverObject"), label: L("cheatsheet.fx.strip")),
                     ShortcutRow(keys: L("cheatsheet.keys.clickPower"), label: L("cheatsheet.fx.toggle")),
@@ -158,20 +164,24 @@ enum ShortcutCheatsheet {
                 ShortcutRow(keys: "⌘L", label: L("cheatsheet.loopSelection")),
                 ShortcutRow(keys: "⌘R", label: L("cheatsheet.rename")),
                 ShortcutRow(keys: L("cheatsheet.keys.cmdHeld"), label: L("cheatsheet.invertSnap")),
+                ShortcutRow(keys: "⌘↑ · ⌘↓", label: L("cheatsheet.transposeOctave")),
+                ShortcutRow(keys: "mouse wheel", label: L("cheatsheet.zoomWheel")),
             ])]
         }
         if shift && !cmd && !opt && !ctrl {
+            // ⇧ is the fine adjustment of every value (22 October 2026); zoom and the transport's
+            // pause moved to ⌘ and ⌥.
             return [ShortcutSection(title: "⇧", rows: [
-                ShortcutRow(keys: "⇧↑ · ⇧↓", label: L("cheatsheet.transposeOctave")),
-                ShortcutRow(keys: L("cheatsheet.keys.shiftSpace"), label: L("cheatsheet.pauseResume")),
-                ShortcutRow(keys: "mouse wheel", label: L("cheatsheet.zoomWheel")),
-                ShortcutRow(keys: "⇧T · ⇧R", label: L("cheatsheet.zoomVertical")),
+                ShortcutRow(keys: L("cheatsheet.keys.shiftHeld"), label: L("cheatsheet.fineAdjust")),
+                ShortcutRow(keys: "⇧↑ · ⇧↓", label: L("cheatsheet.transposeSemitone")),
             ])]
         }
         if opt && !cmd && !shift && !ctrl {
             // The two '⌥ = copy' rows have moved into the move band, which says them DURING the
             // gesture and shows which one is held (@see TimelineView.moveDragHUD).
             return [ShortcutSection(title: "⌥", rows: [
+                ShortcutRow(keys: L("cheatsheet.keys.optSpace"), label: L("cheatsheet.pauseResume")),
+                ShortcutRow(keys: "⌥T · ⌥R", label: L("cheatsheet.zoomVertical")),
                 ShortcutRow(keys: L("cheatsheet.keys.optDragTop"),
                             label: L("cheatsheet.slip")),
                 ShortcutRow(keys: "⌥⌫", label: L("cheatsheet.ripple.delete")),

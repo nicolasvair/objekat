@@ -174,7 +174,7 @@ extension CommandAdapters {
                      details: .object(["reason": .string("gain_stage_no_bypass")]))
     }
 
-    /// `plugin.link` and a send's mini-chain: refused on either side (a send's plugin is never linked).
+    /// An FX link and a send's mini-chain: refused (a send's plugin is never linked, nor held by a bin).
     static func refuseLinkOnSend(_ hosts: [UUID], in vm: EditViewModel) throws {
         guard hosts.contains(where: { vm.isSendChainHost($0) && vm.find(id: $0) == nil }) else { return }
         throw CommandError(code: .invalid_state,
@@ -297,13 +297,17 @@ extension CommandAdapters {
         return .series(location, index: at)
     }
 
-    /// The modifiers a drag command's `mode` stands for: move = none, copy = ⌥, link = ⌘.
+    /// The modifiers a drag command's `mode` stands for: move = none, copy = ⌥.
     static func dropModifiers(_ mode: String) throws -> NSEvent.ModifierFlags {
         switch mode {
         case "move": return []
         case "copy": return .option
-        case "link": return .command
-        default: throw CommandError(code: .bad_params, message: "mode must be move, copy or link")
+        // ⌘ means nothing in a plugin drop (since 22 October 2026): these two exist so that a script can
+        // ASSERT it — the outcome of "move_command" / "copy_command" must be that of "move" / "copy".
+        case "move_command": return .command
+        case "copy_command": return [.option, .command]
+        default: throw CommandError(code: .bad_params,
+                                    message: "mode must be move, copy, move_command or copy_command")
         }
     }
 

@@ -527,11 +527,6 @@ final class ScriptCanvasPlotNSView: NSView {
         }
         guard plotRect.contains(p) else { return }
         updatePointer(p)
-        // ⌃-click is the right click of a one-button mouse: the playhead, nothing else.
-        if event.modifierFlags.contains(.control) {
-            seek(toScreenX: p.x)
-            return
-        }
         // No tool declared: a left click in the plot does nothing (there is no Hand any more).
         guard let kind = activeKind(c) else { return }
         let pol = polarity(c, event)
@@ -601,7 +596,7 @@ final class ScriptCanvasPlotNSView: NSView {
 
     // MARK: Scroll and pinch
 
-    /// Plain = pan. ⇧ = zoom, on the axis the gesture locked to (the timeline's own lock and factors:
+    /// Plain = pan. ⌘ = zoom (⇧ until 22 October 2026: ⇧ is the fine adjustment of every value now), on the axis the gesture locked to (the timeline's own lock and factors:
     /// @see TimelineView.ScrollAxisLock), anchored under the pointer. The timeline's monitors let a
     /// canvas window's events alone (@see TimelineKeyHandler), so this is the only reader.
     override func scrollWheel(with event: NSEvent) {
@@ -609,7 +604,7 @@ final class ScriptCanvasPlotNSView: NSView {
               let vp = viewport() else { return }
         let p = point(of: event)
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags.contains(.shift) {
+        if flags.contains(.command) {
             scrollLock.observe(event, now: ProcessInfo.processInfo.systemUptime)
             guard let axis = scrollLock.decide(event, wheelDecidesAtOnce: false) else { return }
             let r = plotRect

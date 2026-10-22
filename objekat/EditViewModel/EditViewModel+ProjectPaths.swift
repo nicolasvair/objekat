@@ -160,6 +160,8 @@ extension EditViewModel {
         // A sidecar written before format 25 carries trims and frozen FX outputs: the same
         // conversion as the session's (@see LegacyGainMigration).
         LegacyGainMigration.migrate(&subtree)
+        // And one written before format 32 may carry the single-instance manual link, which is gone.
+        LegacyManualLinkMigration.migrate(&subtree)
         guard let folder else { return subtree }
         return ProjectPaths.rewritingClipPaths(subtree) {
             ProjectPaths.resolved($0, projectFolder: folder)

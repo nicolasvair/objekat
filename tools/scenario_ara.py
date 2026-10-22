@@ -536,7 +536,7 @@ try:
             audio_before = render_iso(a, "g_before")
             send("project.save")
             doc = json.load(open(manifest))
-            check("version == 31", doc.get("version") == 31, doc.get("version"))
+            check("version == 32", doc.get("version") == 32, doc.get("version"))
 
             def find_ara(o):
                 if isinstance(o, dict):
@@ -860,7 +860,6 @@ try:
             for cmd, prm in (("plugin.toggle", {"host": x, "plugin": pid_}),
                              ("plugin.move", {"from": x, "plugin": pid_, "to": y}),
                              ("plugin.copy", {"from": x, "plugin": pid_, "to": y}),
-                             ("plugin.link", {"from": x, "plugin": pid_, "to": y}),
                              ("plugin.drop", {"from": x, "plugin": pid_, "to": y})):
                 refused(lambda cmd=cmd, prm=prm: send(cmd, prm), "%s on the ARA source" % cmd)
             check("the source is still there after those", status(x)["has_source"])

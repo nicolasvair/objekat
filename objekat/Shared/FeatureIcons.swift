@@ -16,7 +16,7 @@ import Foundation
 nonisolated enum FeatureIcons {
     /// An object carrying effects (at least one real plugin in its chain).
     static let fx = "fx"
-    /// An FX link (a bin of plugins several objects share) and the legacy ⌘-link of plugins:
+    /// An FX link (a bin of plugins several objects share):
     /// the link badges, the bin's frame, the drag hint.
     static let fxLink = "personalhotspot"
     /// A send to an aux — outgoing or received, a send card, a row, the Aux tool.

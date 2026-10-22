@@ -327,17 +327,21 @@ extension CommandRegistry {
                         + "continuous gestures take (the Pan tool, the inspector's box, the ±0.1 "
                         + "arrows, the wheel). Every object's result clicks onto the nearest tenth, "
                         + "however many are held: the detent is unconditional and answers neither "
-                        + "to the snap nor to ⌘. Absolute setting, and exact: object.set_pan.",
+                        + "to the snap nor to ⌘ — only to ⇧, the fine adjustment (`fine: true`), which "
+                        + "lifts it down to the percent. Absolute setting, and exact: object.set_pan.",
                  params: [ParamSpec("by", "number", "Travel, added to the current pan."),
+                          ParamSpec("fine", "bool", required: false,
+                                    "⇧ held: the detent is a hundredth, not a tenth (default false)."),
                           ParamSpec("ids", "array<uuid>", required: false,
                                     "Target objects; default = current selection.")],
                  undo: .bus) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let delta = Float(try p.double("by"))
+            let fine = try p.bool("fine", or: false)
             let ids = try CommandAdapters.targetIDs(p, in: vm)
             let anchors = Dictionary(uniqueKeysWithValues:
                 ids.compactMap { vm.find(id: $0) }.map { ($0.id, $0.pan) })
-            vm.applyPanDelta(delta, from: anchors)
+            vm.applyPanDelta(delta, from: anchors, fine: fine)
             let pans = ids.compactMap { vm.find(id: $0) }.map { JSONValue.number(Double($0.pan)) }
             return .object(["count": .int(ids.count), "pans": .array(pans)])
         }

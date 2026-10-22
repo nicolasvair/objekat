@@ -589,7 +589,7 @@ try:
               abs(py5 / p0 - 1.0) < 0.05, "%s / %s" % (py5, p0))
 
         # ── the SIGNAL VIEW: a bin's cards carry no link badge of their own ─────
-        # (the block does), while the old ⌘-links keep theirs. `synoptic.cards` reads what the view
+        # (the block does). `synoptic.cards` reads what the view
         # builds from the model, so this is asserted with no screen.
         audit_clean("after the export proof")
         cmd("project.new")
@@ -609,15 +609,15 @@ try:
         check("the bin's two instances are cards flagged as in the block",
               [c["name"] for c in in_bin] == ["Equalizer", "Reverb"], str(ca))
         check("...and NOT the plugin outside it", [c["in_fx_block"] for c in ca].count(False) == 1)
-        check("a card in the block shows NO link badge (though its instance is linked)",
-              all(c["link_badge"] is False for c in in_bin)
-              and all(next(p for p in block_of(SA)["plugins"] if p["id"] == c["id"])["linked"] for c in in_bin))
-        check("...nor the linked emphasis", all(c["linked_style"] is False for c in in_bin))
+        check("a card in the block is an instance of the bin (linked in the model)",
+              all(next(p for p in block_of(SA)["plugins"] if p["id"] == c["id"])["linked"] for c in in_bin))
         cb = cards(SB)
-        check("the same holds on every member", len(cb) == 2 and all(not c["link_badge"] for c in cb))
+        check("the same holds on every member", len(cb) == 2 and all(c["in_fx_block"] for c in cb))
+        check("`synoptic.cards` no longer carries a link badge or a linked emphasis (the manual link is gone)",
+              all("link_badge" not in c and "linked_style" not in c for c in ca + cb))
         cmd("fxlink.detach", host=SB, link=SL); idle()
-        check("a DETACHED block's cards show no badge either (the block's header carries it)",
-              all(not c["link_badge"] and c["in_fx_block"] for c in cards(SB)))
+        check("a DETACHED block's cards stay in the block (its header carries the link)",
+              all(c["in_fx_block"] for c in cards(SB)))
         cmd("fxlink.reattach", host=SB, link=SL); idle()
 
         # ── a bin that is OFF: the cards keep their own on/off, drawn GREYED ─────
@@ -656,16 +656,12 @@ try:
               [c["enabled"] for c in cards(SA) if c["in_fx_block"]] == [True, False])
         cmd("fxlink.set_plugin_enabled", link=SL, plugin=d_rev_s, enabled=True); idle()
 
-        # the old manual link keeps its badge
-        cmd("plugin.link", **{"from": SA, "plugin": s_solo, "to": SB}); idle()
-        legacy = [c for c in cards(SB) if not c["in_fx_block"]]
-        check("a legacy ⌘-linked plugin, outside any bin, keeps its badge and its emphasis",
-              len(legacy) == 1 and legacy[0]["link_badge"] is True and legacy[0]["linked_style"] is True, str(legacy))
-        check("...on its source too", [c for c in cards(SA) if not c["in_fx_block"]][0]["link_badge"] is True)
+        # the single-instance manual link is gone (22 October 2026)
+        check("plugin.link no longer exists", refused("plugin.link", **{"from": SA, "plugin": s_solo, "to": SB}) == "unknown_command")
 
         # ── the LINK OVERLAY (halo + star in the timeline, drawn while a plugin's editor is open) ─────
-        # takes the BIN's colour for a plugin held by a block, and joins the hosts sharing the bin; the
-        # old ⌘-links keep the plugin's own colour and their own group.
+        # takes the BIN's colour for a plugin held by a block, and joins the hosts sharing the bin; a plain
+        # plugin keeps its own colour and its own host alone.
         NCOL = 16           # ObjekatPalette.plugins
         own = next(p for p in block_of(SA)["plugins"] if p["id"] == s_eq)["color_index"]
         bin_col = (own + 1) % NCOL
@@ -694,9 +690,9 @@ try:
         cmd("fxlink.reattach", host=SC, link=SL); idle()
         lg_src = next(p for p in chain(SA) if p["id"] == s_solo)
         ovl = cmd("plugin.link_overlay", plugin=s_solo)
-        check("a legacy ⌘-link keeps the plugin's OWN colour and no bin",
+        check("a plain plugin keeps its OWN colour and no bin",
               ovl["fx_link"] is None and ovl["color_index"] == lg_src["color_index"], str(ovl))
-        check("...and joins its link group (the two hosts), not the bin's", set(ovl["members"]) == {SA, SB}, str(ovl))
+        check("...and highlights its own host alone", ovl["members"] == [SA], str(ovl))
         lone = add(SC, "chorus")
         ovn = cmd("plugin.link_overlay", plugin=lone)
         check("an unlinked plugin highlights its own host alone",

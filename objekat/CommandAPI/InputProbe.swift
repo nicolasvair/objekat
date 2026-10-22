@@ -5,7 +5,7 @@ import AppKit
 /// Called on the FIRST line of the timeline's scroll and key monitors (@see TimelineKeyHandler) —
 /// not from a monitor of its own: the order AppKit calls local monitors in is not documented, and
 /// a monitor that ran after the timeline's would miss every event the timeline swallows (a
-/// ⇧-scroll, a `t`). Sitting at the same door is the only way to see exactly what it sees.
+/// ⌘-scroll, a `t`). Sitting at the same door is the only way to see exactly what it sees.
 ///
 /// Costs one Bool test per event while nothing listens.
 @MainActor

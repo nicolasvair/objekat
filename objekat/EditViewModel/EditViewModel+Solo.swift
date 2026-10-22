@@ -30,7 +30,7 @@ import Foundation
 // anything changing in the sound, since the two layers already add up.
 //
 // THE SEPARATION THAT MATTERS: solo FILTERS the listening, it does not PILOT the transport. Space
-// is always play/stop and ⇧space is always pause/resume, whatever solo is active — playback starts
+// is always play/stop and ⌥space is always pause/resume, whatever solo is active — playback starts
 // at `cursorPosition` and runs to the stop, the caret or a traced zone making no difference. This
 // used to be different: an "audition" (⇧+space, later s+space) seeked to a selection's start,
 // played, and stopped automatically at its end. It was removed because a single key meaning two
@@ -177,7 +177,7 @@ extension EditViewModel {
     /// Releasing "s": lifts the temporary layer and hands back to the confirmed solo (or to the full
     /// mix). What was frozen by s+⏎ stays, the rest goes out. This is now, together with Esc, the
     /// ONLY path that lifts the temporary layer — the transport never touches it any more: space
-    /// and ⇧space are plain play/stop and pause/resume, whatever solo is filtering the listening.
+    /// and ⌥space are plain play/stop and pause/resume, whatever solo is filtering the listening.
     func endHeldSolo() {
         guard heldSoloActive else { return }
         heldSoloActive = false

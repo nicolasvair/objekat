@@ -317,7 +317,9 @@ What has landed since mid-August, in order:
   `updatePan` instead of adding a delta. So a lone object slid continuously, 13 %, 17 %, and its
   ↑ / ↓ arrows walked in HALF-tenths (`keyStep: 0.05`) besides. The rule now: **a pan a hand lays
   down is on a tenth, always** — no snap, no ⌘ escape, since a modifier that leaves 13 % behind in
-  the file is the intermediate value under another name. It lives at the two doors a hand comes in
+  the file is the intermediate value under another name. (**One exception since 22 October 2026: ⇧ lifts the
+  detent** — it is the fine adjustment of every value now, the pan's included, down to the percent; ⌘ still does
+  nothing there. See the entry on the modifiers rework.) It lives at the two doors a hand comes in
   by, both of them going through one definition (`EditViewModel.detentedPan`): `applyPanDelta` for
   everything that ADDS (the Pan tool, the inspector's box, the ±0.1 arrows, the wheel) and
   `setPanFromHand` for what SETS (the synoptic's box). `updatePan` stays exact, because it is the
@@ -2668,6 +2670,60 @@ What has landed since mid-August, in order:
   branch's commit). **Not seen, not heard, not felt**: the bar itself, the GR meter on a real compressor, the
   coupled drag and its detents, the badge on the card, the preset menu in the title bar, and the gain match by
   ear on real material.
+
+- **The modifiers rework, and the single-instance manual link is gone** (22 October 2026, ON THE BRANCH
+  `feat/modifiers-rework`, from `main` `9e98684c`, NOT merged, nothing pushed, no engine patch). The user's
+  validated plan (`plan_modifiers_rework.md`): ONE meaning per modifier. **⇧ = fine adjustment of every
+  value**, a tenth of the travel (`Shared/FineAdjust.swift`, `factor = 0.1`), read CONTINUOUSLY and
+  RE-ANCHORED when ⇧ flips mid-gesture (the effective travel earned so far is banked, the origin of the raw
+  travel is reset, so the value is continuous at the switch and only the slope changes); the boxes
+  (`DragValueBox`), the Volume / Pan / Send tools and their wheels, the pencil and the points of an
+  automation band, the plugin trims, the piano-roll velocity (⌘⇧). A box of whole semitones has no fine
+  mode (`allowsFine: false`); a pan drag keeps its detent on the tenth and ⇧ lifts it to the percent.
+  **⌘ = the other side**: grid snap inversion on a drag, ZOOM on the wheel (`cmdZoomLock`), the BIG step on
+  an arrow (box ×10, but a level in dB takes ±3 and a pan ±0.5, boxes and tools alike — `FineAdjust.dbBigStep` / `panBigStep`; BPM ±10) and the piano-roll octave (⌘↑/↓; ⇧↑/↓ on notes is a
+  semitone). **⌥** takes what ⇧ used to carry in the transport: ⌥space = pause / resume, ⌥R / ⌥T = vertical
+  zoom. In a plugin drop ⌘ does NOTHING and ⌥ copies; in a file drop the end-to-end layout is ⌥. ⌃ is no
+  longer excluded from the digits (stems) and the F key. **Arrows**: Volume ↑ ±1 dB / ⇧ ±0.5 / ⌘ ±3, Pan
+  ↑ ±0.1 / ⇧ ±0.01 / ⌘ ±0.5; `stepTimeSelectionLanes` / `stepCaretLane` still ignore ⌘.
+  **The ⌘-link of ONE plugin to instances on other objects no longer exists** (gesture, `plugin.link` /
+  `unlink`, drop outcome, badge, overlays). The FX link (a bin several objects share) is the only way left of
+  sharing parameters. What stays: `linkGroupID` / `detachedLinkGroupID` as FIELDS, the engine mirror
+  (`OBJParamMirror`, `rewireLinkGroups`) — a bin's instance names its definition plugin through them. The
+  discriminant of a manual link is WHERE the field sits: on a plugin outside every `fxBlock` (or on an
+  instrument) = manual link. **Session format 32**: `LegacyManualLinkMigration` (pure, presence-driven,
+  idempotent, load stays clean) clears both fields of every such plugin at load, on the three roots and on
+  the stems, consolidated sidecars included; the plugin stays with its settings and plays on its own.
+  `tools/test_manual_link_migration.swift` and `tools/test_fine_adjust.swift` assert the two halves.
+  **The volume is kept to a TENTH of a dB** (a follow-up of the same day; it was whole dB, which swallowed
+  every ⇧ step): `EditViewModel.roundedVolume` is the one rounding (`updateVolume`, `adjustVolumeDB`), the
+  model stores the Float as is, so NO format change and no engine change (a file written with whole dB reads
+  the same). The bare drag of the Volume tool still moves in whole dB (it rounds the TRAVEL), ⇧ moves in
+  tenths; the labels show the tenth only when there is one (`abs(v - v.rounded()) >= 0.05`). ⌘↑/↓ = ±3 dB
+  (±10 was refused by the user as too easy to confuse). `object.set_gain` keeps its value to the tenth.
+  **The automation band follows ⇧ too**: the grips of the transform box are RE-ANCHORED when ⇧ flips
+  (`AutomationTransform.FineTravel`, two `FineAdjust` fed with `k - 1` or the time shift; the scale is bounded
+  at 0 again, banking can otherwise mirror the curve), and ⇧ is the fine mode of the three wheels: the line
+  by value (`AutomationLineWheel.effectiveSteps`, a Double), the ⌥ curvature (⌥⇧ = fine) and the pencil's
+  writing wheel. A mouse's ⇧ + wheel arrives as `scrollingDeltaX` with a zero Y: `automationWheelDeltas`
+  reads it as the vertical one over an editable line or curve, so the timeline does not scroll sideways.
+  **Three chords on held keys** (`TimelineKeyHandler`, the state is `SoloChordState`, synchronous, cleared on
+  keyUp and when the app resigns): **F held + Esc** hides / shows EVERY plugin editor window, native and
+  built-in (`EditViewModel.togglePluginEditorsVisibility`, engine `hideVisiblePluginEditors` /
+  `showPluginEditors`; a toggle read off what is on screen, the editors stay OPEN, the keyboard focus is not
+  taken); **a stem digit N held + S** toggles stem N's solo and arms NOTHING else (no `beginHeldSolo`; S
+  first then the digit is the older chord and is unchanged); **S held + Esc** = `clearAllSolo` only (like
+  S + ⌫). The three come FIRST in the Escape case, ahead of "choose object" and of the cancellation of a
+  consolidated edit (which rolls back): holding a key is an explicit combination, the other branches answer a
+  bare Esc by what the app is in the middle of, and a destructive rollback must not hide behind a solo chord.
+  Esc alone is unchanged. Cheat sheet: the F tool lists ⎋, the stem HUD ends with "· S = solo".
+  **Not seen, not felt**: the feel of the re-anchoring under a hand (a flip of ⇧ in the middle of a drag, on a
+  volume drag a whole-dB step comes back at the release of ⇧: a jump of up to 0.5 dB), ⇧ + mouse-wheel
+  arriving as a sideways delta (the SIGN of `scrollingDeltaX` is assumed to match), the labels that still
+  round (the pan label whole percent: a fine step is invisible in the display; the inspector's dB box shows
+  tenths only when there is one), F + Esc itself (no command opens or reads a plugin editor, so only its
+  negative half is asserted: Esc does nothing else), the cheat sheet rows, and the three languages of the
+  changed texts.
 
 ### What is owed
 

@@ -25,14 +25,11 @@ fileprivate func dragCarriesFile(_ p: NSItemProvider) -> Bool {
 fileprivate func dragCarriesPlugin(_ p: NSItemProvider) -> Bool { PluginDrop.carries(p) }
 
 // The timeline's drop delegate: it drives the cursor's badge live (a plugin drag with no
-// modifier = .move (no badge); with ⌥ or ⌘ = .copy (a '+' badge).
+// modifier = .move (no badge); with ⌥ = .copy (a '+' badge).
 // For files (fileURL): .copy by default. The real drop goes through handleDrop.
 struct TimelineDropDelegate: DropDelegate {
     let types: [UTType]
     let onPerform: ([NSItemProvider], CGPoint) -> Bool
-    // A live 'link' hint: the cursor's position while ⌘ is held over a plugin drag, nil
-    // otherwise. Called continuously by dropUpdated → the overlay answers ⌘ live.
-    let onLinkIndicator: (CGPoint?) -> Void
     /// Files being hovered: a 'how these files will land' band plus a ghost preview.
     /// It receives the providers (to read names and lengths, once only) and the cursor's
     /// position, which places the rectangles. Called again on every movement so as to follow the
@@ -68,22 +65,18 @@ struct TimelineDropDelegate: DropDelegate {
         let providers = info.itemProviders(for: types)
         if providers.contains(where: dragCarriesPlugin) {
             let f = NSEvent.modifierFlags
-            // The resolver's verdict when it is known: a refusal is `.forbidden` (and no band, no
-            // maillon), a link is what lights the maillon and the band's ⌘ — not the bare modifier.
+            // The resolver's verdict when it is known: a refusal is `.forbidden` (and no band).
             if let outcome = pluginOutcome?(info.location, f) {
-                if let ctx = outcome.hintContext(plainContext: .host) {
+                if let ctx = outcome.hintContext() {
                     PluginDropHint.shared.present("timeline", context: ctx)
                 } else {
                     PluginDropHint.shared.leave("timeline")
                 }
-                onLinkIndicator(outcome.isLinking ? info.location : nil)
                 return DropProposal(operation: outcome.operation)
             }
             PluginDropHint.shared.present("timeline", context: .host)
-            onLinkIndicator(f.contains(.command) ? info.location : nil)
             return DropProposal(operation: PluginDrop.operation(for: f))
         }
-        onLinkIndicator(nil)
         // The files the band really concerns (empty = an internal drag: a plugin).
         // Called again on every movement: that is what makes the preview rectangles follow. It
         // also serves as a net if `dropEntered` did not open the band (the providers not being
@@ -95,14 +88,12 @@ struct TimelineDropDelegate: DropDelegate {
     func dropExited(info: DropInfo) {
         onDropHover?(false)
         PluginDropHint.shared.leave("timeline")
-        onLinkIndicator(nil)
         onFileHintEnd()
     }
 
     func performDrop(info: DropInfo) -> Bool {
         onDropHover?(false)
         PluginDropHint.shared.leave("timeline")
-        onLinkIndicator(nil)
         // resolved yet on entry, which happens depending on the drag's source).
         // The mode is read BEFORE the band closes, in handleDrop: here we merely hand over, and
         return onPerform(info.itemProviders(for: types), info.location)
@@ -190,7 +181,7 @@ extension TimelineView {
 
         for provider in providers {
             // A plugin payload (dragged from a chip's handle): carried in public.plain-text,
-            // confirmed by decoding successfully. nothing=move ⌥=copy ⌘=copy+link.
+            // confirmed by decoding successfully. nothing=move ⌥=copy.
             // No `continue`: the decoding is asynchronous, so nothing says here yet that this
             // text IS a plugin payload — we let the following branches try their luck on the
             // same provider (they will disqualify themselves if there is no fileURL).

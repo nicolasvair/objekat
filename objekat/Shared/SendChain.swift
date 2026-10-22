@@ -45,8 +45,8 @@ enum SendChain {
     /// chain.
     ///
     /// NO LINK ON A SEND (user decision, 10 October 2026, replacing Q-U8 / Q-U8b): a plugin of a
-    /// send's mini-chain never carries a `linkGroupID` nor a detached one — no FX link bin, no
-    /// manual link either. A linked trunk plugin that is moved or copied into a send arrives unlinked;
+    /// send's mini-chain never carries a `linkGroupID` nor a detached one — no FX link bin.
+    /// A bin's instance that is moved or copied into a send arrives unlinked;
     /// a copy of an object copies its sends' plugins INDEPENDENT. Enforced HERE, so that no door, no
     /// copier and no file can keep or create one (`rewireLinkGroups` then has nothing to wire).
     static func sanitised(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {

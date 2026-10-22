@@ -12,7 +12,7 @@ What it proves, on a built-in Low Pass over a 1 kHz tone:
   • a BYPASS bypasses the trims with the plugin;
   • ±24 dB is the range; one undo point per set, the undo PATCHED (same plugin id, same level back);
   • `plugin.list` carries `trims` only when they are not neutral;
-  • a manual link (⌘) carries them to the linked instance; a duplicate and a save / reopen keep them;
+  • an FX link bin carries them to its members; a duplicate and a save / reopen keep them;
   • the COMPENSATION (a third gain after the output trim) is heard, kept by the coupled nudge, ±24 dB;
   • the GAIN MATCH is refused while stopped, and while playing sets the COMPENSATION only (both trims
     untouched, an output trim of −3 dB compensated too) so that the export comes back to the dry level
@@ -172,16 +172,23 @@ try:
               str(gr))
         check("...which the bar says (published false)", gr.get("published") is False, str(gr))
 
-        # ── link, duplicate ───────────────────────────────────────────────
+        # ── FX link (the single-instance manual link is gone, 22 October 2026), duplicate ──
+        # On a SEPARATE pair of objects, so that P stays a plain plugin of A for the rest of the scenario.
+        A2 = cmd("object.add", path=SRC, lane=2, start=20.0)["id"]
         B = cmd("object.add", path=SRC, lane=1, start=10.0)["id"]
         idle()
-        LP = cmd("plugin.link", **{"from": A, "plugin": P, "to": B})["plugins"][0]
+        P2 = cmd("plugin.add", host=A2, identifier="lowpass", format="TracktionInternal")["plugin"]["id"]
+        cmd("plugin.set_trims", plugin=P2, input=0.0, output=-3.0)
+        LID = cmd("fxlink.create", host=A2, plugins=[P2], name="trims")["id"]
+        cmd("fxlink.attach", link=LID, host=B)
         idle()
-        check("a linked copy carries the trims", trims(LP) == (0, -3), str(trims(LP)))
-        cmd("plugin.set_trims", plugin=P, input=2.0, output=-4.0)
-        check("a set on a linked plugin moves its linked instance", trims(LP) == (2, -4), str(trims(LP)))
+        blk = next(q for q in cmd("plugin.list", host=B)["plugins"] if q.get("is_fx_block"))
+        LP = blk["plugins"][0]["id"]
+        check("a bin member carries the trims", trims(LP) == (0, -3), str(trims(LP)))
+        cmd("plugin.set_trims", plugin=P2, input=2.0, output=-4.0)
+        check("a set on a bin member moves its linked instance", trims(LP) == (2, -4), str(trims(LP)))
         cmd("plugin.set_trims", plugin=LP, input=0.0, output=-3.0)
-        check("...both ways", trims(P) == (0, -3), str(trims(P)))
+        check("...both ways", trims(P2) == (0, -3), str(trims(P2)))
 
         before = {o["id"] for o in cmd("object.list")["objects"]}
         cmd("object.duplicate", ids=[A])
@@ -199,7 +206,7 @@ try:
             text = f.read()
         import json
         doc = json.loads(text)
-        check("the session is written in format 31", doc.get("version") == 31, str(doc.get("version")))
+        check("the session is written in format 32", doc.get("version") == 32, str(doc.get("version")))
         check("the file carries outputTrimDb", '"outputTrimDb"' in text)
         check("no compensationDb while it is 0", '"compensationDb"' not in text)
         cmd("project.new")

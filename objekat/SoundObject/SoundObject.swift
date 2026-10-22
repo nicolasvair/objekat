@@ -286,8 +286,6 @@ struct ObjectPlugin: Identifiable, Codable, Equatable {
     var isRack: Bool { rack != nil }
 
     var isLinked: Bool { linkGroupID != nil }
-    /// Out of its group but able to come back. @see detachedLinkGroupID
-    var isLinkDetached: Bool { linkGroupID == nil && detachedLinkGroupID != nil }
     /// The group this plugin belongs to, whether it is active in it or merely able to rejoin.
     var effectiveLinkGroupID: UUID? { linkGroupID ?? detachedLinkGroupID }
     var isBuiltIn: Bool { formatName == "TracktionInternal" }
@@ -861,7 +859,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var timelineMetaSummary: String {
         var parts: [String] = []
         if volume <= -96 { parts.append("-∞ dB") }
-        else if abs(volume) >= 0.5 { parts.append("\(Int(volume.rounded())) dB") }
+        else if abs(volume) >= 0.05 {
+            // A tenth only when the volume holds one (the fine ⇧ steps).
+            parts.append(abs(volume - volume.rounded()) < 0.05 ? "\(Int(volume.rounded())) dB" : String(format: "%.1f dB", volume))
+        }
         if abs(pan) >= 0.01 {
             parts.append(pan < 0 ? "L\(Int((-pan * 100).rounded()))" : "R\(Int((pan * 100).rounded()))")
         }

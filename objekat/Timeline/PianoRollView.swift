@@ -8,12 +8,12 @@ import AppKit
 /// Conventions (see project_midi_integration):
 /// - The height PER NOTE = the global `pianoRollRowHeight` state (the band's zoom +/-),
 ///   DECOUPLED from the band's height: the number of visible rows follows from the band's height
-///   (shift+R/T grows the band → more notes, the size per note unchanged). The default window is around C3.
+///   (⌥R/⌥T grows the band → more notes, the size per note unchanged). The default window is around C3.
 /// - A control band at the bottom: oct +/- (moves the view), crop (present pitches only, per
 ///   clip), zoom +/- (the height per note). See `controlStrip`.
 /// - Local geometry: x=0 = the clip's start; time in beats at the current tempo.
 /// - Creating = a double click on the background; deleting = a double click on a note;
-///   the left/right handles = resize; ⌘+a vertical drag on the body = velocity;
+///   the left/right handles = resize; ⌘+a vertical drag on the body = velocity (⇧ on top = fine);
 ///   dragging the body = moving (pitch plus time).
 ///
 /// Gestures: a single (high-priority) `DragGesture` branching on the starting zone plus ⌘,
@@ -37,7 +37,7 @@ struct PianoRollView: View {
     private var noteAreaHeight: Double { max(rowHeight, bandHeight - controlStripHeight) }
 
     // The height PER NOTE: a GLOBAL state set by zoom +/-, DECOUPLED from the band's height. The
-    // number of visible rows follows from it (the taller the band through shift+R/T, the more
+    // number of visible rows follows from it (the taller the band through ⌥R/⌥T, the more
     // notes one sees; the height per note does not move).
     private var rowHeight: Double {
         viewModel.pianoRollRowHeight
@@ -127,6 +127,9 @@ struct PianoRollView: View {
         // crop mode (the axis must not move under the cursor during the drag), empty in normal mode
         // (movement by semitone bounded by the visible window).
         var pitchAxis: [Int] = []
+        // ⇧ = fine adjust of the velocity (a tenth of the travel), read continuously and re-anchored
+        // (@see FineAdjust). A reference, so the per-frame update does not rewrite the @State.
+        let fine = FineAdjustTracker(fine: NSEvent.modifierFlags.contains(.shift))
     }
 
     /// A rubber-band selection under way. `base` = the pre-existing selection to preserve when
@@ -602,7 +605,9 @@ struct PianoRollView: View {
             }
 
         case .velocity:
-            let dv = Int((-dy / noteAreaHeight * 127).rounded())
+            // ⌘ chose the mode (velocity); ⇧ held on top makes it fine (⌘⇧ + drag).
+            let travel = d.fine.effective(-dy, fine: NSEvent.modifierFlags.contains(.shift))
+            let dv = Int((travel / noteAreaHeight * 127).rounded())
             let origs = d.origs
             viewModel.updateMidiNotes(inObject: object.id) { notes in
                 for i in notes.indices {

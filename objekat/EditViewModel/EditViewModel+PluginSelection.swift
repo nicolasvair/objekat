@@ -21,17 +21,15 @@ import AppKit
 //  • One undo per GESTURE, not per card. The single-plugin functions each push their own undo
 //    point; calling them in a loop would leave the user pressing ⌘Z once per plugin to come back
 //    from one gesture. So the batch is the real implementation and the singles delegate to it
-//    (@see movePlugin / copyPlugin / linkAcrossObjects), rather than the two drifting apart.
+//    (@see movePlugin / copyPlugin), rather than the two drifting apart.
 
-/// What a drag of one or more cards onto ANOTHER host does. The three gestures the timeline drop
-/// has spoken since the chips: nothing = move, ⌥ = an independent copy, ⌘ = a copy that stays
-/// linked to its source.
+/// What a drag of one or more cards onto ANOTHER host does: nothing = move, ⌥ = an independent
+/// copy. (The linked copy of a single plugin was removed on 22 October 2026: sharing parameters is
+/// the FX link's job, @see FXLink.)
 enum PluginTransferMode {
     case move
     /// An INDEPENDENT copy: a new identity, no link, a colour of its own.
     case copy
-    /// A copy that JOINS the source's link group (created on the spot if the source had none).
-    case link
 }
 
 @MainActor
@@ -235,7 +233,7 @@ extension EditViewModel {
         return fresh.map(\.id)
     }
 
-    // MARK: - Dragging onto another host: move / copy / link, N at a time
+    // MARK: - Dragging onto another host: move / copy, N at a time
 
     /// Carries `ids` from one chain HOST to another — an object or a stem bus on either side, which
     /// is why nothing here goes through `find`/`update` (a stem's chain does not live in `items`).
@@ -248,19 +246,15 @@ extension EditViewModel {
     /// own point and this is one of its parts.
     @discardableResult
     func transferPlugins(_ ids: [UUID], from sourceHostID: UUID, to targetHostID: UUID,
-                         mode requested: PluginTransferMode, at place: (SeriesLocation, Int)? = nil,
+                         mode: PluginTransferMode, at place: (SeriesLocation, Int)? = nil,
                          undo: Bool = true) -> [UUID] {
-        guard let engine, chainPlugins(targetHostID) != nil,
+        guard engine != nil, chainPlugins(targetHostID) != nil,
               let sourcePlugins = chainPlugins(sourceHostID) else { return [] }
-        // No link on a send: ⌘ to or from a mini-chain is a plain copy (@see effectiveTransferMode).
-        let mode = effectiveTransferMode(requested, from: sourceHostID, to: targetHostID)
-        // Moving or linking a chain onto ITSELF means nothing: a move would be a no-op that still
-        // burnt an undo point, and a link would tie a plugin to its own instance.
+        // Moving a chain onto ITSELF means nothing: it would be a no-op that still burnt an undo point.
         if mode != .copy && sourceHostID == targetHostID { return [] }
         let wanted = Set(ids)
         // The instances of an ATTACHED FX link are the bin's, not the host's: they can be copied
-        // out (an independent twin), never moved nor linked — a move would empty the bin for this
-        // host alone, and a link would tie a member to a second group.
+        // out (an independent twin), never moved — a move would empty the bin for this host alone.
         let ordered = Self.flattenLeaves(sourcePlugins).filter { p in
             wanted.contains(p.id) && (mode == .copy || fxDefinition(ofInstance: p.id, on: sourceHostID) == nil)
         }
@@ -270,25 +264,6 @@ extension EditViewModel {
         guard sendChainRefusal(adding: adding, to: targetHostID) == nil else { NSSound.beep(); return [] }
 
         if undo { pushUndo() }
-
-        // A LINK needs the source registered in a group before the copy can join it. Gathered
-        // first, in one pass over the source, so the writes below stay a single update.
-        var groups: [UUID: UUID] = [:]      // source plugin id → the group it will share
-        if mode == .link {
-            for p in ordered {
-                // A DETACHED source goes back into ITS group rather than opening another —
-                // otherwise it would drag a dormant group around while an active link holds it
-                // elsewhere (@see linkAcrossObjects, whose rule this is).
-                groups[p.id] = p.effectiveLinkGroupID ?? UUID()
-            }
-            updateChainPlugins(sourceHostID) { plugins in
-                for p in ordered where p.linkGroupID == nil {
-                    guard let gid = groups[p.id] else { continue }
-                    plugins = Self.settingDetachedLinkGroup(p.id, nil, in: plugins)
-                    plugins = Self.settingLinkGroup(p.id, gid, in: plugins)
-                }
-            }
-        }
 
         let placed: [ObjectPlugin] = ordered.map { p in
             let stateXML = liveStateXML(of: p)
@@ -311,13 +286,6 @@ extension EditViewModel {
                                     isEnabled: p.isEnabled, stateXML: stateXML, linkGroupID: nil,
                                     sidechain: p.sidechain,
                                     monoFold: p.monoFold).withTrims(of: p)
-            case .link:
-                return ObjectPlugin(id: UUID(), name: p.name, manufacturer: p.manufacturer,
-                                    identifier: p.identifier, formatName: p.formatName,
-                                    isEnabled: p.isEnabled, stateXML: stateXML,
-                                    linkGroupID: groups[p.id], colorIndex: p.colorIndex,
-                                    sidechain: p.sidechain,
-                                    monoFold: p.monoFold).withTrims(of: p)
             }
         }
 
@@ -337,13 +305,6 @@ extension EditViewModel {
         if mode == .move { compileRack(objectID: sourceHostID) }
         compileRack(objectID: targetHostID)   // creates the target instances (state restored)
 
-        if mode == .link {
-            for (src, new) in zip(ordered, placed) {
-                guard let gid = groups[src.id] else { continue }
-                engine.setPluginLinkGroup(src.id.uuidString, groupID: gid.uuidString)
-                engine.setPluginLinkGroup(new.id.uuidString, groupID: gid.uuidString)
-            }
-        }
         if mode == .move && placed.contains(where: { $0.linkGroupID != nil }) { rewireLinkGroups() }
         isDirty = true
         return placed.map(\.id)

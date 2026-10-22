@@ -82,7 +82,7 @@ with ObjekatClient(SOCK, timeout=180) as c:
                 return pl.get("link_group")
         return None
 
-    # ── build the SOURCE project (a group with two linked plugins, an internal send to an ──
+    # ── build the SOURCE project (a group with a plugin, an internal send to an ──
     #    aux inside it, a send to an aux OUTSIDE it (must be dropped), a stem assignment (must
     #    be forced back to the Main), and a standalone consolidated clip ──────────────────────
     cmd("project.new")
@@ -96,13 +96,9 @@ with ObjekatClient(SOCK, timeout=180) as c:
     V_ORIG = lo + (hi - lo) * 0.2
     cmd("plugin.set_param", plugin=p1, index=0, value=V_ORIG)
 
-    # "from" is a Python keyword: passed positionally via **kwargs instead.
-    linked = cmd("plugin.link", **{"from": oa, "plugin": p1, "to": ob})
-    p2 = linked["plugins"][0]
-    group_v1_link = plugin_link_group(oa, p1)
-    check("the source plugin carries a link group", group_v1_link is not None)
-    check("the linked copy shares that same group",
-          plugin_link_group(ob, p2) == group_v1_link)
+    # (The single-instance manual link is gone, 22 October 2026: the plugin stays plain. The FX link
+    # bins crossing a project are asserted by test_cross_project_import.swift.)
+    check("the source plugin carries no link group", plugin_link_group(oa, p1) is None)
 
     aux_inside = cmd("aux.create", start=0, end=4, lane=2)["id"]
     cmd("send.set_level", id=oa, aux=aux_inside, db=-3)
@@ -219,14 +215,10 @@ with ObjekatClient(SOCK, timeout=180) as c:
     check("the target's own group is still on its own stem, untouched",
           target_group_after.get("stem") == stem_id)
 
-    # ── the internal link survived, remapped to a NEW group — never the source's own id ─────
-    if new_oa and new_ob:
-        new_p1_group = plugin_link_group(new_oa["id"], new_oa["plugins"][0]["id"])
-        new_p2_group = plugin_link_group(new_ob["id"], new_ob["plugins"][0]["id"])
-        check("the two pasted plugins are linked to EACH OTHER",
-              new_p1_group is not None and new_p1_group == new_p2_group)
-        check("...through a BRAND NEW group, never the source's own",
-              new_p1_group != group_v1_link)
+    # ── a plain plugin stays plain: no link group is invented by the paste ──────────────────
+    if new_oa:
+        check("the pasted plugin is not linked to anything",
+              plugin_link_group(new_oa["id"], new_oa["plugins"][0]["id"]) is None)
 
     # ── the internal send (to the aux INSIDE the batch) was remapped, not dropped ───────────
     if new_oa and new_aux:

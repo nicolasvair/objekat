@@ -113,6 +113,15 @@ with ObjekatClient(SOCK) as c:
         r = c.send("object.adjust_pan", {"by": 0.1, "ids": [ida]})
     check("ten steps of a tenth land exactly on the edge, with no float dust",
           abs(r["pans"][0] - 1.0) < 1e-6, str(r["pans"]))
+    # ⇧ is the fine adjustment of every value, the pan's included (22 October 2026): it lifts the tenth detent
+    # down to the percent, whatever the snap. Bare, the same travel still clicks onto the tenth.
+    c.send("object.set_pan", {"ids": [ida], "pan": 0.0})
+    r = step("object.adjust_pan fine", lambda: c.send("object.adjust_pan", {"by": 0.0137, "fine": True, "ids": [ida]}))
+    check("fine: the detent is the percent (0.0137 lands on 0.01)",
+          r and abs(r["pans"][0] - 0.01) < 1e-6, str(r and r["pans"]))
+    r = c.send("object.adjust_pan", {"by": 0.0137, "ids": [ida]})
+    check("bare, the same travel is back on a tenth (0.0237 lands on 0.0)",
+          abs(r["pans"][0] - 0.0) < 1e-6, str(r["pans"]))
     c.send("object.set_pan", {"ids": [ida, idb], "pan": 0.0})
 
     # --- TWO GESTURES, told apart (21 September 2026). The hand on the edge HANDLE — the crop,
@@ -1076,7 +1085,7 @@ with ObjekatClient(SOCK) as c:
         c.send("project.save")
         txt = open(PROJ).read()
         check("colour: file carries colorHex as text", '"colorHex" : "#FF8A00"' in txt, "colorHex missing")
-        check("colour: file format 31", json.load(open(PROJ)).get("version") == 31)
+        check("colour: file format 32", json.load(open(PROJ)).get("version") == 32)
         c.send("project.open", {"path": PROJ})
         c.send("wait_idle", {"timeout_ms": 30000})
         check("colour: reopened", col(icx) == ("#FF8A00", None), col(icx))

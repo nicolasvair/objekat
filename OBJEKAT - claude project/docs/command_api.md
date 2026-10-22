@@ -525,7 +525,7 @@ long that took, and `view_after` is read after it.
 | `view.set` | puts `pps` / `block_height` / `scroll_x` / `scroll_y` directly, not a gesture: the starting point of a measurement. A `pps` outside the bounds is clamped to them (`view.state` answers the result) |
 | `view.reveal` | `ids` — brings those objects into view exactly as selecting them in the sound list does (the selection is not touched). The groups hiding them are unfolded (`unfolded` names them; an open automation band is closed to give the content back). One object: scroll only, never a zoom; several that fit in the window: scroll; several that do not: zoom out to ~80 % of the width (within `min_pps` / `max_pps`) then centre. A box already entirely visible moves nothing. Vertically: no zoom, the first lane is brought in (framed by the lane snap when it is active). Answers `view_before` and `view` (a `view.state`). UI mode only: `invalid_state` with `--headless`; `not_found` for an unknown id |
 | `input.scroll` | `direction` (`up/down/left/right`) + `distance_px`, or raw `dx`/`dy`; `style: trackpad` (`duration_ms`, `rate_hz`, `momentum`) or `wheel` (`notches`, `interval_ms`); `modifiers` |
-| `input.zoom` | `factor`, `axis` (`horizontal/vertical`), `via: shift_scroll` (the timeline's law, e^(0.01·dx), e^(0.012·dy) vertically) or `keys` (`t`/`r` = ×/÷1.5, ⇧ for vertical); answers `requested_factor`, `achieved_factor`, `presses` |
+| `input.zoom` | `factor`, `axis` (`horizontal/vertical`), `via: cmd_scroll` (a ⌘ + two-finger swipe; the timeline's law, e^(0.01·dx), e^(0.012·dy) vertically) or `keys` (`t`/`r` = ×/÷1.5, ⌥ for vertical); answers `requested_factor`, `achieved_factor`, `presses` |
 | `input.key` | `key`, `modifiers`, `repeat`, `interval_ms`, `hold_ms`; `claimed` / `claimed_by` says whether a text field or a `KeyboardClaim` owner took it before the timeline |
 | `view.state.hover` | what the hover has resolved at the pointer: `position` (canvas) / `viewport` (visible area), the active `tool`, `hovered_id` (the block aimed at, resolved by whichever tool keeps it: `tool_hovered_id` under Volume / Pan / Stem, the block of `zone` under the selection tool — `fadeIn`, `fadeOut`, `trimLeft`, `resizeRight`, `timeSelect`, `move`, `loopIn`, `loopOut` — and `cut_hover {id, local_x}` under Cut; each is null under the other tools), `send_focus` (Aux), `help`, the `cursor` the timeline wants (a name: `arrow`, `iBeam`, `openHand`, `resizeUpDown`, `edge_open_LR`, `fade_in`…, `custom`) and `cursor_owned`. Read-only. The hover resolves inside the hover callback itself, but its redraw does not — `wait_idle` before reading what is on screen. UI mode only |
 | `input.hover` | lays or clears the hover (see above) |
@@ -895,9 +895,8 @@ What a send's chain refuses, always `invalid_state` with `details.reason`:
 - `send_chain_leaves_only` — an instrument, a parallel block, an FX link bin or a send marker (a send takes plain
   plugins only; `plugin.drop_at` answers it as `refused` / `reason`);
 - `chainFull` — more than 20 plugins on one send (its own limit, apart from the 20 entries of the trunk);
-- `send_plugins_never_linked` — `plugin.link` with a send on either side, `fxlink.create` with a send as `host`,
-  `fxlink.attach` to a send. **A plugin on a send is never linked**: `plugin.drop` with `mode: "link"` to or from a
-  send is a plain copy, and every copy of a sender (duplicate, split, paste, cross-project paste, consolidation,
+- `send_plugins_never_linked` — `fxlink.create` with a send as `host`, `fxlink.attach` to a send.
+  **A plugin on a send is never linked** (no bin, no mirror): and every copy of a sender (duplicate, split, paste, cross-project paste, consolidation,
   the split of an aux) gives the send's plugins fresh ids and independent states.
 An unknown host (a removed send's `chain_host` included) is `not_found`. `send.retarget` keeps the plugins and their
 live instances (the `chain_host` changes with the aux); `send.remove` forgets them and their automation in the same
@@ -1050,7 +1049,7 @@ A bar at the bottom of every plugin editor (under the Sidechain strip when there
 after the output trim (`ObjectPlugin.inputTrimDb` / `outputTrimDb` / `compensationDb`, each absent when 0;
 the compensation is format 30), three separate gains, ±24 dB each, applied by the probe patch `0045` puts around the plugin, live AND in
 every render, ramped over one block, and BYPASSED with the plugin. Not automatable. Carried by undo (patched,
-never a rebuild), the session file, copies, duplicates, a manual link and an FX link's active members (a set
+never a rebuild), the session file, copies, duplicates and an FX link's active members (a set
 on one moves every instance actively linked to it). `plugin.list` carries `trims {input_db, output_db,
 compensation_db}` on a plugin where one of the three is not neutral.
 - `plugin.trims {plugin}` → `{plugin, input_db, output_db, compensation_db}`.
@@ -1088,7 +1087,7 @@ commands drive.
 | `plugin.toggle_selected` | on/off over the lot, in one undo step. Mixed states go to OFF: one still on turns them all off |
 | `plugin.duplicate_selected` | ⌘D — independent copies, just after the LAST selected card, in ITS series |
 | `plugin.copy_selected` / `plugin.paste` | ⌘C / ⌘V, through a clipboard of their own |
-| `plugin.drop` | the DROP itself — `mode` move/copy/link — onto an object or onto a bus's strip; `plugin` may also be an FX link's BLOCK id (what the bin's header carries); answers `outcome`, `refused`, `reason` |
+| `plugin.drop` | the DROP itself — `mode` move/copy (`move_command` / `copy_command` add ⌘ on top, which changes nothing: for a script to assert it) — onto an object or onto a bus's strip; `plugin` may also be an FX link's BLOCK id (what the bin's header carries); answers `outcome`, `refused`, `reason` |
 | `plugin.drop_at` | the same drop at a PLACE of a host's chain — `series` (`"root"`, `{"block": id}` = into a bin, `{"voice": id, "index": n}` = a parallel branch) and `at` — with `dry_run` returning the resolver's `outcome` and refusal `reason` without touching anything |
 | `plugin.branch` | a PARALLEL BRANCH, as the signal view makes it (13 October 2026): from a '+' — `series` (`"root"` default, `{"voice": id, "index": n}`) and `at` (the '+''s index, markers not counted; default the tail '+') — or from a card's menu — `plugin`. The host's CURRENT card selection decides the run: a '+' takes the element under it (the one above it for the tail '+'), or the selected run that STARTS there (going up from the last one for the tail '+'); a card takes the selected run round it, or itself alone when it is not selected. A non-contiguous selection keeps the part touching the start; a send's marker stops a run; a '+' with nothing under it makes an EMPTY branch (a block of two empty branches — the dry signal twice, +6 dB). One run of several → a 2-branch block `[[run], []]` in its place; one block → one more empty branch on it. A bin's series or instance is refused (`invalid_state`). One undo point. Answers `branched` (ids, in order; `[]` = an empty branch), `empty_branch`, `block` (the block the run went into) and the root `plugins` |
 
@@ -1113,21 +1112,19 @@ Three things are worth knowing before driving them:
 
 **What a drop does — one resolver, for the hand and the API alike** (`pluginDropOutcome`; the cursor, the
 band at the bottom of the timeline and the drop itself all read it, so what the hand is told is what
-happens). `outcome` is one of `move`, `copy`, `link` (a plain plugin: nothing / ⌥ / ⌘; within ONE chain ⌘ is
-a plain move), `join_bin` (an instance of an FX link dropped with ⌘ on another host: that host joins the
-WHOLE bin), `move_block` / `copy_block` (a block dragged by its header: the target joins the bin and the
-source loses its block, or — ⌥ / ⌘ — keeps it; every copy of a bin stays on the bin; a DETACHED block
+happens). `outcome` is one of `move`, `copy` (a plain plugin: nothing / ⌥; ⌘ does nothing since 22 October 2026 — the
+single-instance manual link is gone), `move_block` / `copy_block` (a block dragged by its header: the target joins the bin and the
+source loses its block, or — ⌥ — keeps it; every copy of a bin stays on the bin; a DETACHED block
 moves as it is, local output and all, with fresh instance ids), `adopt_into_bin` (a plain plugin let go
 INSIDE an attached bin joins its definition: its instance keeps its id, every other member gets one —
 from another host it is moved first), `copy_into_bin` (⌥: an independent copy is added to the definition),
 `extract_from_bin` (an instance let go OUTSIDE its bin leaves it for EVERY member and stays a plain
-plugin: same id, live state) or `refuse` (`reason` says why: ⌘ into a bin, an instance moved onto another
+plugin: same id, live state) or `refuse` (`reason` says why: an instance moved onto another
 host, a bin onto a host that already holds it or into another bin, a plugin that is linked or already in
 a block). A refused drop places nothing and pushes no undo point. Every other outcome is ONE `edit.undo`.
 
-`plugin.move`, `plugin.copy` and `plugin.link` take **`plugins`** (a list) in place of `plugin`: one
-card or a whole selection, the same three gestures either way. A link of several ties each card to
-its OWN copy — an EQ and a reverb dragged together do not end up sharing their parameters.
+`plugin.move` and `plugin.copy` take **`plugins`** (a list) in place of `plugin`: one
+card or a whole selection, the same two gestures either way.
 
 ### FX links (`fxlink.*`)
 
@@ -1161,7 +1158,7 @@ knowing before driving one:
   `fxlink.remove_block` drops the block and its plugins from this host; `fxlink.delete` dissolves the
   bin everywhere (every block replaced by its plugins, inline and independent).
 - **Creation**: `fxlink.create {host, plugins}` makes the plugins of ONE series of one host (plain,
-  with no manual ⌘-link, none already in a bin) the definition, the host's own instances becoming its
+  none already in a bin) the definition, the host's own instances becoming its
   block at the place of the first (nothing reloads). `fxlink.create {objects}` — the timeline menu's
   last entry — takes the first object (timeline order) with plain plugins as the source, and the
   others receive a block of it at the END of their chain, their own plugins untouched.
@@ -1184,7 +1181,7 @@ knowing before driving one:
   in rename. Answers `{target: "fxlink"|"object"|"annotation"|"none", id, renaming_fxlink}`.
 - **Automatic creation.** A cut / split, a duplicate, ⌥-copy, a paste or an overlap's fragment of an
   object whose plugins are plain no longer writes a `link_group` on them: the copy joins a NEW bin and
-  the original joins it too. (The old manual ⌘-links and their `link_group` are untouched, and cohabit.)
+  the original joins it too. (The single-instance manual link no longer exists: a file of format 31 or older is cleared of it at load, session format 32.)
 - **Crossing a project** (paste into another tab) and **consolidating** never share a bin: they
   recreate a NEW one from the plugins' states as they were.
 - **Undo**: every mutator pushes ONE point (`undo: handled`), the registry restoring with the chains.
@@ -1272,9 +1269,7 @@ knowing before driving one:
   `total_input_channels` > the main bus's). `loaded: false` = an external instance still loading,
   buses `null` — ask again. `not_found` = no live instance under that key.
 - **`synoptic.cards {host}`** reads back how the signal view DRAWS each card of a host's chain, in
-  reading order: `enabled` (its own bypass), `in_fx_block`, `link_badge` and `linked_style`. Inside a
-  bin's block — attached or detached — a card carries no link badge and no linked emphasis (the
-  block's frame and header carry the link); a legacy ⌘-linked plugin outside any bin keeps both.
+  reading order: `enabled` (its own bypass) and `in_fx_block` (the block's frame and header carry the link).
   `greyed` is true for the cards of a block whose common on/off is OFF (the bin's while attached, the
   block's own while detached): the card keeps its own `enabled` and its identity colours and is drawn
   greyed — the plugin's own bypass is never touched.
@@ -1282,8 +1277,8 @@ knowing before driving one:
   while a plugin's editor is open) shows for that plugin: `source` (its object), `members` (the objects
   joined to it), `color_index` (a palette index) and `fx_link` (the bin, or null). For a plugin held by a
   bin's block the colour is the BIN's (`fxlink.set_color`) and the members are the hosts sharing the bin
-  through an ATTACHED block (a detached block stands alone, in the bin's colour); for a ⌘-linked or plain
-  plugin it is the plugin's own colour (`color_index` on every plugin payload) and its link group.
+  through an ATTACHED block (a detached block stands alone, in the bin's colour); for a plain
+  plugin it is the plugin's own colour (`color_index` on every plugin payload) and no member.
 - `fxlink.list` lists only the bins some block still refers to (an orphan is what a deleted object
   leaves for the undo). Every answer carries `members[]` with `host`, `is_stem`, `block`, `detached`,
   `instances` and, when detached, `local`.
@@ -1470,8 +1465,7 @@ explicit, offered, pick, file_level, inert, entering, into_one_input, engine_mod
 one there (a pick already there keeps its id and its place). One undo step, none when nothing changes
 (`changed: false`). A cable that enters a ONE-input plugin hands that plugin's own fold over to the pick
 (its key is cleared); the head cable of a stereo clip writes `channelMode`; a cable inside an ATTACHED FX bin
-is the bin's (the definition is written, every member follows); a manual ⌘-link does NOT carry a cable's
-choice. Refusals: `bad_params` with `details.reason` `bad_choice`, `no_such_series`, `out_of_range`,
+is the bin's (the definition is written, every member follows). Refusals: `bad_params` with `details.reason` `bad_choice`, `no_such_series`, `out_of_range`,
 `not_offered` (stereo into a one-input plugin); `invalid_state` with `mono_cable` (nothing to choose on
 one wire) or `send_chain`; `not_found` for an unknown host. Nothing is refused while playing.
 
@@ -1863,16 +1857,24 @@ took the dB off their round figures. It no longer is.
 The detent lives at the HAND's doors, and the machine's write what they are given: `object.set_pan`,
 `object.set_send_level`, and what a curve pushes to the engine. A plugin parameter has no detent at
 all — its 0…1 is normalised, so there is no unit to round to. The one exception is
-**`object.set_gain`**, whose whole dB lives in the model rather than at the door and therefore
-applies to a script too: `updateVolume` has rounded since long before this doctrine was written, and
-moving it would silently change what every existing scenario reads back.
+**`object.set_gain`**, whose resolution lives in the model rather than at the door and therefore
+applies to a script too. **Since 22 October 2026 that resolution is a TENTH of a dB, not a whole dB**:
+⇧ is the fine adjustment of every value, and a fine step (the Volume tool's ⇧↑ / ⇧↓ is half a dB, a
+⇧-held drag or wheel a tenth of the travel) would have been rounded away otherwise. `updateVolume`
+rounds to the tenth, so `object.set_gain {db: -2.5}` reads back -2.5 (it read -2 before); the BARE
+hand gestures still land on whole dB (the timeline drag snaps its travel, the boxes snap to their
+step), so a file only holds a tenth when the fine adjustment put it there. The session stores the
+Float as is: no format change, and a file written with whole dB reads the same.
 
 ### The pan clicks onto the tenths, always
 
 `object.adjust_pan` moves the pan BY a delta — the path every hand gesture takes (the Pan tool, the
 inspector's box, the ±0.1 arrows, the wheel) — and each held object's result lands on the nearest
 TENTH, however many are held. The detent is **unconditional**: it answers neither to `project.set_snap`
-nor to ⌘, because the values between the tenths are not wanted at all. What this is NOT is the
+nor to ⌘, because the values between the tenths are not wanted at all. **One exception since
+22 October 2026: ⇧ is the fine adjustment of every value**, the pan's included — `fine: true` lifts the detent
+down to the hundredth (the Pan tool's ⇧↑ / ⇧↓ step is 0.01, a ⇧-held drag or wheel is a tenth of the travel).
+What this is NOT is the
 quantum that used to live in the model and cancelled a multiple drag outright: that one compounded,
 rounding each ~0.0125 delta back onto the tenth it came from until nothing moved at all. Here the
 gesture works from ANCHORS and hands over its TOTAL travel, so the rounding lands on the result and

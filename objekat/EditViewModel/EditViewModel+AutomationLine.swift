@@ -204,11 +204,11 @@ extension EditViewModel {
     /// value where the hover would (@see automationLineWheelReadout).
     func wheelShiftAutomationLine(_ grab: AutomationLineGrab,
                                   objectID: UUID, param ref: ParamRef, row: Int,
-                                  steps: Int, geo: AutomationBandGeometry) {
+                                  steps: Double, geo: AutomationBandGeometry) {
         let r = ref.valueRange
         let span = Double(r.upperBound - r.lowerBound)
         guard span > 0 else { return }
-        let dy = -(Double(steps) * Double(Self.automationWheelStepValue(ref))) / span * geo.usableHeight
+        let dy = -(steps * Double(Self.automationWheelStepValue(ref))) / span * geo.usableHeight
         if let v = shiftAutomationLine(grab, objectID: objectID, param: ref, row: row, dy: dy, geo: geo) {
             // No timer: the figure stays as long as the pointer stays (the band drops it when the
             // pointer travels or leaves, the wheel handler when the wheel goes elsewhere).

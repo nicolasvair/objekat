@@ -277,6 +277,7 @@ struct ObjectInspectorView: View {
                             return String(format: "%+.1f st", v)
                         },
                         range: -48...48, pointsPerStep: 6, snap: true, width: 48, keyStep: 1,
+                        allowsFine: false,
                         help: L("help.drag.semitones"),
                         onBegin: { viewModel.pushUndo() },
                         onChange: { new in
@@ -375,12 +376,13 @@ struct ObjectInspectorView: View {
         DragValueBox(
             value: relVolume,
             format: { v in
-                if volRelative { return v <= -96 ? "-∞" : String(format: "%+.0f dB", v) }
-                return v <= -96 ? "-∞ dB" : String(format: "%.0f dB", v)
+                let whole = abs(v - v.rounded()) < 0.05      // a tenth only when the volume holds one
+                if volRelative { return v <= -96 ? "-∞" : String(format: whole ? "%+.0f dB" : "%+.1f dB", v) }
+                return v <= -96 ? "-∞ dB" : String(format: whole ? "%.0f dB" : "%.1f dB", v)
             },
             // Relative: at most +40 dB up per gesture (already enormous), enough down to take
             // anything to −∞; each object is clamped on its own.
-            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1,
+            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
             help: L("help.drag.volume"),
             // Touching the control: the fader becomes the 'future automation' row of EVERY object
             // in the batch, without any value having to move.
@@ -437,7 +439,7 @@ struct ObjectInspectorView: View {
             },
             // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
             // tenths rather than halving them.
-            range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
+            range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1, coarseKeyStep: FineAdjust.panBigStep,
             parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
             help: L("help.drag.pan"),
             onTouch: {
@@ -456,8 +458,9 @@ struct ObjectInspectorView: View {
                 // `relPan` is a local accumulator, nothing reads the objects back into it
                 // during a drag. Quantising it does not compound — DragValueBox works from
                 // the travel since the gesture's start, never from the value it last wrote.
-                let stepped = Double(EditViewModel.detentedPan(Float(new)))
-                viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors)
+                let fine = NSEvent.modifierFlags.contains(.shift)   // ⇧ lifts the tenth (@see EditViewModel+Pan)
+                let stepped = Double(EditViewModel.detentedPan(Float(new), fine: fine))
+                viewModel.applyPanDelta(Float(stepped - panOrigin), from: panAnchors, fine: fine)
                 relPan = stepped
                 panOwnWrite = panSignature
             },
@@ -513,7 +516,7 @@ struct ObjectInspectorView: View {
                 // send is clamped on its own, from where it stood when the gesture began.
                 range: rel ? -Double(sendMaxDb - sendMinDb)...Double(sendMaxDb - sendMinDb)
                            : Double(sendMinDb)...Double(sendMaxDb),
-                pointsPerStep: 6, snap: true, width: 52, keyStep: 1,
+                pointsPerStep: 6, snap: true, width: 52, keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
                 help: L("help.drag.send"),
                 onBegin: {
                     viewModel.pushUndo()
@@ -617,7 +620,7 @@ struct ObjectInspectorView: View {
         // EditViewModel.liveAutomationValue).
         let v = viewModel.liveAutomationValue(.volume, on: o.id) ?? o.volume
         let p = viewModel.liveAutomationValue(.pan,    on: o.id) ?? o.pan
-        let vol = v <= -96 ? "-∞" : "\(Int(v.rounded()))dB"
+        let vol = v <= -96 ? "-∞" : (abs(v - v.rounded()) < 0.05 ? "\(Int(v.rounded()))dB" : String(format: "%.1fdB", v))
         let pan = abs(p) < 0.01 ? "C" : (p < 0 ? "L\(Int(-p*100))" : "R\(Int(p*100))")
         if !o.isClip { return "\(vol) · \(pan)" }
         return "\(vol) · \(pan) · " + String(format: "×%.2f", o.speedRatio)

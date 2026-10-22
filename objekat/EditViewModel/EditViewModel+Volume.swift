@@ -4,8 +4,16 @@ extension EditViewModel {
 
     // MARK: - Volume
 
+    /// A volume as the model keeps it: clamped, and at the resolution of a TENTH of a dB (it was a whole
+    /// dB until 22 October 2026, which swallowed every ⇧ fine step). The session stores the Float as
+    /// is, so no format change: a file written with whole dB reads the same. A gesture that wants whole
+    /// dB (the bare drag on the timeline) snaps BEFORE calling.
+    static func roundedVolume(_ db: Float) -> Float {
+        ((db * 10).rounded() / 10).clamped(to: -96...40)
+    }
+
     func updateVolume(id: UUID, volume: Float) {
-        update(id: id) { $0.volume = volume.rounded().clamped(to: -96...40) }
+        update(id: id) { $0.volume = Self.roundedVolume(volume) }
         // The fader has just been touched: it is the one the automation band will offer.
         recordAutomationTouch(id, .volume)
         pushMix(id)
@@ -18,7 +26,7 @@ extension EditViewModel {
             // ONE traversal and ONE write of `items` (`updateMany`), then the engine.
             let ids = selectedIDs
             updateMany(ids) { o in
-                o.volume = (o.volume + dB).rounded().clamped(to: -96...40)
+                o.volume = Self.roundedVolume(o.volume + dB)
                 o.recordAutomationTouch(.volume)
             }
             for id in ids { pushMix(id) }

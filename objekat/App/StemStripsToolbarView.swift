@@ -41,12 +41,6 @@ struct StemStripsToolbarView: View {
     @State private var clippedStems: Set<UUID> = []
     // The strip a plugin drag is hovering over. One id and not a Set: a drop has one target.
     @State private var dropTargetStemID: UUID? = nil
-    // ⌘ held over that strip → the drop will LINK, and WHERE the cursor is while it does.
-    // Refreshed on every movement by the delegate, exactly like the timeline's own link hint
-    // (@see EditViewModel.pluginLinkDropLocation) — the point is in the STRIP's own coordinates,
-    // which is what `DropInfo.location` already gives, so nothing has to be converted.
-    @State private var dropLinksStemID: UUID? = nil
-    @State private var dropLinkPoint: CGPoint? = nil
     // A tick counter for the poll → the blink rate (independent of playback).
     @State private var pollTick: Int = 0
     // @State (and not `let`): the toolbar is rebuilt ~20 times a second by the playhead; a `let`
@@ -137,7 +131,6 @@ struct StemStripsToolbarView: View {
                     isClipping: clippedStems.contains(stem.id),
                     blinkOn: blinkOn,
                     isDropTarget: dropTargetStemID == stem.id,
-                    dropLinkAt: dropLinksStemID == stem.id ? dropLinkPoint : nil,
                     isBeingDragged: dragStemID == stem.id,
                     compact: compact,
                     onClearClip: { clippedStems.remove(stem.id) }
@@ -160,22 +153,20 @@ struct StemStripsToolbarView: View {
                 // only place a bus can be aimed at with the hand: a stem has no block of its own
                 // in the timeline — its band is INFINITE and belongs to a group or an aux, and
                 // the Main has nothing drawn at all — so without this the whole drag vocabulary
-                // (nothing = move, ⌥ = an independent copy, ⌘ = a copy that stays linked) stopped
+                // (nothing = move, ⌥ = an independent copy) stopped
                 // at the objects, and a chain built on an object could not be carried up onto a
                 // bus. What happens on arrival is `acceptPluginDrop`, the timeline's own door.
                 .onDrop(of: [.plainText], delegate: StemStripDropDelegate(
                     stemID: stem.id, viewModel: viewModel,
-                    onHover: { hovered, at in
+                    onHover: { hovered in
                         // Written unconditionally rather than cleared on leaving: the strips are
                         // side by side, and macOS sends the new strip's `dropEntered` BEFORE the
                         // old one's `dropExited` — a blind clear would then wipe the strip the
                         // hand had just reached.
                         if hovered {
                             dropTargetStemID = stem.id
-                            dropLinksStemID = at != nil ? stem.id : nil
-                            dropLinkPoint = at
                         } else if dropTargetStemID == stem.id {
-                            dropTargetStemID = nil; dropLinksStemID = nil; dropLinkPoint = nil
+                            dropTargetStemID = nil
                         }
                     }))
                 .popover(isPresented: Binding(
@@ -363,23 +354,14 @@ private nonisolated struct StemBarOverflow: Equatable, Sendable {
 private struct StemStripDropDelegate: DropDelegate {
     let stemID: UUID
     let viewModel: EditViewModel
-    /// (hovered, where the maillon goes). One callback and not two: they always change together,
-    /// and two would let the strip hold a maillon after the drag had left it. The point is nil
-    /// unless ⌘ is held — 'link' and 'where' are the same answer, so they travel as one.
-    let onHover: (Bool, CGPoint?) -> Void
+    /// Whether a plugin drag is hovering over this strip.
+    let onHover: (Bool) -> Void
 
     private func carriesPlugin(_ info: DropInfo) -> Bool {
         info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
     }
 
     func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
-
-    /// `info.location` is already in the DROP VIEW's coordinates — the strip's — so the maillon
-    /// follows the cursor with nothing converted, which is the whole reason it is drawn by the
-    /// strip and not by the bar.
-    private func linkPoint(_ info: DropInfo) -> CGPoint? {
-        NSEvent.modifierFlags.contains(.command) ? info.location : nil
-    }
 
     /// The band at the bottom of the timeline (@see PluginDropHint), under this strip's own key.
     private var hintKey: String { "strip:\(stemID.uuidString)" }
@@ -397,28 +379,28 @@ private struct StemStripDropDelegate: DropDelegate {
     /// and shows the refusing cursor, when it would not.
     private func present(_ info: DropInfo) -> DropProposal {
         guard let o = outcome() else {
-            onHover(true, linkPoint(info))
+            onHover(true)
             PluginDropHint.shared.present(hintKey, context: .host)
             return DropProposal(operation: PluginDrop.operation(for: NSEvent.modifierFlags))
         }
-        guard let ctx = o.hintContext(plainContext: .host) else {
-            onHover(false, nil)
+        guard let ctx = o.hintContext() else {
+            onHover(false)
             PluginDropHint.shared.leave(hintKey)
             return DropProposal(operation: .forbidden)
         }
-        onHover(true, o.isLinking ? info.location : nil)
+        onHover(true)
         PluginDropHint.shared.present(hintKey, context: ctx)
         return DropProposal(operation: o.operation)
     }
 
     func dropEntered(info: DropInfo) {
-        guard carriesPlugin(info) else { onHover(true, linkPoint(info)); return }
+        guard carriesPlugin(info) else { onHover(true); return }
         _ = present(info)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard carriesPlugin(info) else {
-            onHover(false, nil)
+            onHover(false)
             PluginDropHint.shared.leave(hintKey)
             return DropProposal(operation: .forbidden)
         }
@@ -426,12 +408,12 @@ private struct StemStripDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) {
-        onHover(false, nil)
+        onHover(false)
         PluginDropHint.shared.leave(hintKey)
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        onHover(false, nil)
+        onHover(false)
         PluginDropHint.shared.leave(hintKey)
         guard let provider = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries)
         else { return false }
@@ -459,20 +441,12 @@ private struct StemStripButton: View {
     /// hand lets go. The border carries it (it is already the strip's 'open' signal), so a bus
     /// reads the same whether one is opening it or dropping onto it.
     var isDropTarget: Bool = false
-    /// Where the ⌘ maillon goes — the cursor's position in THIS strip's coordinates — or nil when
-    /// the drop would not link. The timeline says the same thing the same way, a yellow maillon
-    /// following the cursor, but draws it in its own canvas, which is exactly why that one cannot
-    /// serve here: the bar is another region and a popover is another WINDOW above the main one,
-    /// so a badge drawn down there is hidden by whatever is open over it. A target carries its own
-    /// feedback, in its own layer.
-    var dropLinkAt: CGPoint? = nil
-    private var dropWillLink: Bool { dropLinkAt != nil }
     /// This strip is the one currently being reordered by drag (@see
     /// `StemStripsToolbarView.handleStemDragChanged`): dimmed, with an accent border, while its
     /// PREVIEW slot elsewhere in the bar shows where it would land.
     var isBeingDragged: Bool = false
     /// The bar's compact mode (@see `StemStripsToolbarView.compact`): the number and the VU dot,
-    /// no name. Everything laid AROUND the row — tint, border, clip LED, maillon — is unchanged,
+    /// no name. Everything laid AROUND the row — tint, border, clip LED — is unchanged,
     /// and the clip LED still lands on the dot: it is aligned on the trailing edge and `hPadding`,
     /// neither of which the compact row moves.
     var compact: Bool = false
@@ -490,10 +464,6 @@ private struct StemStripButton: View {
     private static let hPadding: CGFloat = 7
     /// The clip LED deliberately overflows the VU dot: an alert has to be seen.
     private static let clipDotDiameter: CGFloat = 11
-    /// The link maillon's overall diameter: `LinkBadge(size: 8)` is the glyph plus 0.45 × 8 of
-    /// padding on each side. Written down because the clamp that keeps it inside the strip needs
-    /// its RADIUS, and a clamp guessing at that is a clamp that lets a corner stick out.
-    private static let linkBadgeSize: CGFloat = 8 + 2 * (8 * 0.45) + 2
 
     /// The VU dot's legend — the thresholds are those of `StemVuDot.color`. The same for the Main
     /// and for the other buses: it is the same scale, and the same LED to acknowledge.
@@ -502,7 +472,6 @@ private struct StemStripButton: View {
     // Pulled out of `body`: a border that used to be computed inline, folding a drag-reorder
     // state into an already three-way ternary, pushed the type-checker over its time budget.
     private var borderColor: Color {
-        if dropWillLink { return LinkColor.plugin }
         if isBeingDragged || isDropTarget || isOpen { return Color.accentColor }
         return tint.opacity(0.55)
     }
@@ -563,30 +532,6 @@ private struct StemStripButton: View {
         .help(L("stem.strip.help", isMain ? L("stem.main.name") : stem.name)
               + (number.map { " \($0)" } ?? "")
               + (stem.muted ? " " + L("stem.strip.mutedSuffix") : ""))
-        // The link maillon, following the cursor while ⌘ is held over the strip — the timeline's
-        // gesture word for word, up and to the right of the pointer. Deaf to the mouse, so it
-        // cannot take the drop itself.
-        //
-        // CLAMPED to the strip, which is the one difference from the timeline and comes from the
-        // size of the thing: a strip is some 23 pt tall, so the timeline's (+18, -18) would put
-        // the maillon over the window's chrome rather than beside the pointer. Inside those
-        // bounds it still tracks the horizontal, which is the axis one actually travels along a
-        // bar of buses; the clamp only bites on the vertical, and would let go of its own accord
-        // if a strip ever grew.
-        .overlay {
-            GeometryReader { geo in
-                if let p = dropLinkAt {
-                    let r = Self.linkBadgeSize / 2
-                    // Below the strip rather than on it: the carried card (the system's drag image,
-                    // over every window) covers the strip's whole height around the cursor, so a
-                    // badge kept inside the strip was always hidden under it.
-                    LinkBadge(color: LinkColor.plugin, size: 8)
-                        .position(x: min(max(p.x, r), max(r, geo.size.width - r)),
-                                  y: p.y + PluginDragPreview.height / 2 + r + 4)
-                }
-            }
-            .allowsHitTesting(false)
-        }
         // A latched clip LED, laid over the VU dot (the strip's right edge).
         // A dedicated button → it catches the acknowledging click without opening the FX popover underneath.
         .overlay(alignment: .trailing) {

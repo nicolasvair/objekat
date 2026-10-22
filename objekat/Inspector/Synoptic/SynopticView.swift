@@ -552,9 +552,6 @@ struct SynopticView: View {
             dropOutcome: { actions.dropOutcome?(.beforeCard(c.plugin.id), $0) },
             onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
             onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
-            onUnlink: actions.onUnlink.map { f in { f(c.plugin.id) } },
-            onRelink: actions.onRelink.map { f in { f(c.plugin.id) } },
-            linkSiblingCount: actions.linkSiblingCount?(c.plugin.id) ?? 0,
             sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id),
             // A gain stage's faces read and write their values through the bound view (@see
             // SynopticGainStageControls); a plugin card ignores it.
@@ -794,13 +791,8 @@ struct SynopticView: View {
                         onRemove: { actions.onRemoveInstrument?() },
                         // The same drag handle as the FX cards: the name. Dropped on another MIDI
                         // clip in the timeline, the instrument takes the instrument slot there
-                        // (⌥ = a copy, ⌘ = a linked copy) — @see EditViewModel.transferInstrument.
+                        // (⌥ = a copy) — @see EditViewModel.transferInstrument.
                         dragProvider: actions.dragProvider.map { f in { f(inst.id) } },
-                        // A link badge, as on an FX card: an instrument links to
-                        // another instance (⌘-drop) and unlinks with a click.
-                        onUnlink: actions.onUnlink.map { f in { f(inst.id) } },
-                        onRelink: actions.onRelink.map { f in { f(inst.id) } },
-                        linkSiblingCount: actions.linkSiblingCount?(inst.id) ?? 0,
                         width: slot.width
                     )
                     .frame(width: slot.width, height: slot.height)

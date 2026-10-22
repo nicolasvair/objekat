@@ -1497,6 +1497,52 @@
         }
       }
     },
+    "cheatsheet.fineAdjust": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "fine adjustment — a tenth of the travel (drags, wheel, arrows)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ajuste fino — una décima parte del recorrido (arrastres, rueda, flechas)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "réglage fin — un dixième du déplacement (glissers, molette, flèches)"
+          }
+        }
+      }
+    },
+    "cheatsheet.fx.hideEditors": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hides / shows every plugin editor"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta / muestra todos los editores de plugin"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masque / montre tous les éditeurs de plugin"
+          }
+        }
+      }
+    },
     "cheatsheet.fx.openEditor": {
       "extractionState": "manual",
       "localizations": {
@@ -1842,25 +1888,48 @@
         }
       }
     },
-    "cheatsheet.keys.shiftSpace": {
+    "cheatsheet.keys.optSpace": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧space"
+            "value": "⌥space"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧espacio"
+            "value": "⌥espacio"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "⇧espace"
+            "value": "⌥espace"
+          }
+        }
+      }
+    },
+    "cheatsheet.keys.shiftHeld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (held)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (mantenida)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ (maintenu)"
           }
         }
       }
@@ -2206,6 +2275,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "piano-roll (midi) : transposer d'une octave"
+          }
+        }
+      }
+    },
+    "cheatsheet.transposeSemitone": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano roll (midi): transpose one semitone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano roll (midi): transponer un semitono"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "piano-roll (midi) : transposer d'un demi-ton"
           }
         }
       }
@@ -4079,19 +4171,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⌘ for fine); the compensation stays. Double-click: both trims back to 0."
+            "value": "Drag: +n dB into the plugin, −n dB out of it (half-dB steps, ⇧ for fine); the compensation stays. Double-click: both trims back to 0."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⌘ para afinar); la compensación se mantiene. Doble clic: ambos trims vuelven a 0."
+            "value": "Arrastrar: +n dB a la entrada del plugin, −n dB a su salida (pasos de medio dB, ⇧ para afinar); la compensación se mantiene. Doble clic: ambos trims vuelven a 0."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⌘ pour affiner) ; la compensation reste. Double-clic : les deux trims reviennent à 0."
+            "value": "Glisser : +n dB à l'entrée du plugin, −n dB à sa sortie (pas d'un demi-dB, ⇧ pour affiner) ; la compensation reste. Double-clic : les deux trims reviennent à 0."
           }
         }
       }
@@ -7621,19 +7713,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (after the speed change) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "BPM (after the speed change) — drag / ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM (tras el cambio de velocidad) — arrastrar / ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM (après modification de vitesse) — drag / ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM (après modification de vitesse) — drag / ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }
@@ -7914,29 +8006,6 @@
         }
       }
     },
-    "hud.drop.cmdHint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ changes the layout"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ cambia la disposición"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ change la disposition"
-          }
-        }
-      }
-    },
     "hud.drop.fileCount.one": {
       "extractionState": "manual",
       "localizations": {
@@ -7979,6 +8048,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "%d fichiers"
+          }
+        }
+      }
+    },
+    "hud.drop.optHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ changes the layout"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ cambia la disposición"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· ⌥ change la disposition"
           }
         }
       }
@@ -8282,29 +8374,6 @@
         }
       }
     },
-    "hud.pluginDrop.binNoCmd": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ has no effect here"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ no tiene efecto aquí"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ n'a pas d'effet ici"
-          }
-        }
-      }
-    },
     "hud.pluginDrop.blockCopy": {
       "extractionState": "manual",
       "localizations": {
@@ -8347,29 +8416,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "DÉPLACER LE FX LINK"
-          }
-        }
-      }
-    },
-    "hud.pluginDrop.chip.link": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copy linked"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copiar vinculado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "copier lié"
           }
         }
       }
@@ -8420,29 +8466,6 @@
         }
       }
     },
-    "hud.pluginDrop.linkedCopy": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "LINKED COPY"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "COPIA VINCULADA"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "COPIE LIÉE"
-          }
-        }
-      }
-    },
     "hud.pluginDrop.outOfBin": {
       "extractionState": "manual",
       "localizations": {
@@ -8462,29 +8485,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "HORS DU FX LINK, POUR TOUS LES OBJETS"
-          }
-        }
-      }
-    },
-    "hud.pluginDrop.sameChainNoLink": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ links only onto another object"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ vincula solo hacia otro objeto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "· ⌘ lie seulement vers un autre objet"
           }
         }
       }
@@ -9198,6 +9198,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "· M = mute"
+          }
+        }
+      }
+    },
+    "hud.stem.soloHint": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "· S = solo"
           }
         }
       }
@@ -18293,19 +18316,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag: move (⌥ copy, ⌘ linked copy to another object)"
+            "value": "Drag: move (⌥ copy)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+            "value": "Arrastrar: mover (⌥ copiar)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+            "value": "Glisser : déplacer (⌥ copie)"
           }
         }
       }
@@ -18444,98 +18467,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Instrument"
-          }
-        }
-      }
-    },
-    "synoptic.link.linked": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked instance — click to unlink"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instancia vinculada — clic para desvincular"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instance liée — clic pour délier"
-          }
-        }
-      }
-    },
-    "synoptic.link.linkedWithOthers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linked to %d other instance(s) — click to unlink"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vinculada a %d otra(s) instancia(s) — clic para desvincular"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Liée à %d autre(s) instance(s) — clic pour délier"
-          }
-        }
-      }
-    },
-    "synoptic.link.unlinked": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unlinked — click to rejoin its group"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desvinculada — clic para volver a su grupo"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déliée — clic pour rejoindre son groupe"
-          }
-        }
-      }
-    },
-    "synoptic.link.unlinkedWithOthers": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Unlinked from %d other instance(s) — click to link back (it will take their settings)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Desvinculada de %d otra(s) instancia(s) — clic para vincular (tomará sus ajustes)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déliée de %d autre(s) instance(s) — clic pour relier (elle reprendra leurs réglages)"
           }
         }
       }
@@ -18983,19 +18914,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click: open the plugin · drag: move (⌥ copy, ⌘ linked copy to another object)"
+            "value": "Double-click: open the plugin · drag: move (⌥ copy)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar, ⌘ copia vinculada a otro objeto)"
+            "value": "Doble clic: abrir el plugin · arrastrar: mover (⌥ copiar)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie, ⌘ copie liée vers un autre objet)"
+            "value": "Double-clic : ouvrir le plugin · glisser : déplacer (⌥ copie)"
           }
         }
       }
@@ -20064,19 +19995,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM of the wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "BPM of the wav — ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM del wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM del wav — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "BPM du wav — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "BPM du wav — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }
@@ -20087,19 +20018,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy, ⌘ linked copy to another object)."
+            "value": "Double-click = editor · bypass · remove · “+” adds in series · “//” puts in parallel · drag = move (⌥ copy)."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar, ⌘ copia vinculada a otro objeto)."
+            "value": "Doble clic = editor · bypass · quitar · «+» añade en serie · «//» pone en paralelo · arrastrar = mover (⌥ copiar)."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie, ⌘ copie liée vers un autre objet)."
+            "value": "Double-clic = éditeur · bypass · retrait · « + » ajout en série · « // » mise en parallèle · glisser = déplacer (⌥ copie)."
           }
         }
       }
@@ -21030,19 +20961,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0.1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0.1 · ⌘ ±10"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Tempo — ↑/↓ ±1 · ⇧ ±10 · ⌘ ±0,1"
+            "value": "Tempo — ↑/↓ ±1 · ⇧ ±0,1 · ⌘ ±10"
           }
         }
       }

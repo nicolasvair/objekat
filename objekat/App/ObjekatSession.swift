@@ -32,7 +32,7 @@ final class ObjekatSession {
     }
     var playheadPosition: Double = 0
 
-    /// Playback suspended by ⇧space: the position where it was cut, and where it will resume.
+    /// Playback suspended by ⌥space: the position where it was cut, and where it will resume.
     /// nil = not paused (a normal stop, or playback under way).
     var pausedAt: Double? = nil
 
@@ -55,7 +55,7 @@ final class ObjekatSession {
     /// The answer is to READ the right value rather than to copy the cursor into the playhead:
     /// stopped, the cursor IS where one is (it is where play starts, @see `play`); playing, the
     /// playhead is; paused, the playhead held at the pause is, since that is the muted red line
-    /// the timeline still draws and where ⇧space resumes. A computed read of three observed
+    /// the timeline still draws and where ⌥space resumes. A computed read of three observed
     /// properties costs nothing while stopped — no timer, no `onChange`, no hook in the dozen
     /// places that move the cursor — and the observation tracking of the ONE view that calls it
     /// (@see TransportView's `PlayheadTimeText`) is what makes a cursor move redraw that text,
@@ -167,7 +167,7 @@ final class ObjekatSession {
         engine.play()
     }
 
-    /// ⇧space: suspends playback WITHOUT moving the playhead, and resumes exactly there. Touches
+    /// ⌥space: suspends playback WITHOUT moving the playhead, and resumes exactly there. Touches
     /// nothing about solo — pausing and resuming must give back the exact same listening, and so
     /// must a plain stop; only the playhead differs between the two (the cursor vs. where it was
     /// cut).
@@ -220,7 +220,7 @@ final class ObjekatSession {
     }
 
     /// ⌥-click in the ruler: the cursor AND the playhead go there. Playing, playback carries on
-    /// from that point; paused, ⇧space resumes from it; stopped, it is a plain cursor move.
+    /// from that point; paused, ⌥space resumes from it; stopped, it is a plain cursor move.
     /// Unlike `seek(to:)` it keeps a pause a pause.
     func jumpPlayhead(to seconds: Double) {
         guard !viewModel.isLoadingProject else { return }
