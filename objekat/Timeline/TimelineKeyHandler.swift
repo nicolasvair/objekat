@@ -53,13 +53,13 @@ extension TimelineView {
     /// ⌘ wins if both are held — the big step is the explicit ask.
     static func volumeArrowStep(_ flags: NSEvent.ModifierFlags) -> Float {
         if flags.contains(.command) { return Float(FineAdjust.dbBigStep) }
-        return Float(FineAdjust.step(1, fine: flags.contains(.shift), fineStep: 0.5))
+        return Float(FineAdjust.step(1, fine: flags.contains(.shift), fineStep: FineAdjust.dbFineStep))
     }
 
     /// The Pan tool's ↑/↓ step: a tenth bare (the detent), ⇧ = a hundredth with the detent LIFTED
     /// (`fine`), ⌘ = half the range (0.5, which sits on the tenths).
     static func panArrowStep(_ flags: NSEvent.ModifierFlags) -> (delta: Float, fine: Bool) {
-        if flags.contains(.command) { return (0.5, false) }
+        if flags.contains(.command) { return (Float(FineAdjust.panBigStep), false) }
         if flags.contains(.shift) { return (Float(FineAdjust.step(0.1, fine: true, fineStep: 0.01)), true) }
         return (0.1, false)
     }

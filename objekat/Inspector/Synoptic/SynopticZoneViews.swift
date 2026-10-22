@@ -53,7 +53,7 @@ struct GainDbControl: View {
                      format: { _ in label },           // a signed label with its unit
                      range: Double(minDb)...Double(maxDb),
                      pointsPerStep: 6, snap: true, width: 46,
-                     keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
+                     keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
                      help: L("help.drag.volume"),
                      onTouch: onTouch,
                      onBegin: onBegin,
@@ -633,7 +633,7 @@ struct ClipMixZoneView: View {
                     DragValueBox(value: Double(mix.pan),
                                  format: { panLabel(Float($0)) },
                                  range: -1...1, pointsPerStep: 80, snap: false, width: 52,
-                                 keyStep: 0.1,
+                                 keyStep: 0.1, coarseKeyStep: FineAdjust.panBigStep,
                                  parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
                                  help: L("help.drag.pan"),
                                  onTouch: { actions.onTouchParam?(.pan) },

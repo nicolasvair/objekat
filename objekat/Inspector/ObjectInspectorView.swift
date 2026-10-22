@@ -382,7 +382,7 @@ struct ObjectInspectorView: View {
             },
             // Relative: at most +40 dB up per gesture (already enormous), enough down to take
             // anything to −∞; each object is clamped on its own.
-            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
+            range: volRelative ? -136...40 : -96...40, pointsPerStep: 6, snap: true, width: 56, keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
             help: L("help.drag.volume"),
             // Touching the control: the fader becomes the 'future automation' row of EVERY object
             // in the batch, without any value having to move.
@@ -439,7 +439,7 @@ struct ObjectInspectorView: View {
             },
             // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
             // tenths rather than halving them.
-            range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1,
+            range: panRelative ? -2...2 : -1...1, pointsPerStep: 80, snap: false, width: 52, keyStep: 0.1, coarseKeyStep: FineAdjust.panBigStep,
             parse: { Double($0.replacingOccurrences(of: ",", with: ".")).map { $0 / 100 } },
             help: L("help.drag.pan"),
             onTouch: {
@@ -516,7 +516,7 @@ struct ObjectInspectorView: View {
                 // send is clamped on its own, from where it stood when the gesture began.
                 range: rel ? -Double(sendMaxDb - sendMinDb)...Double(sendMaxDb - sendMinDb)
                            : Double(sendMinDb)...Double(sendMaxDb),
-                pointsPerStep: 6, snap: true, width: 52, keyStep: 1, coarseKeyStep: FineAdjust.dbBigStep,
+                pointsPerStep: 6, snap: true, width: 52, keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
                 help: L("help.drag.send"),
                 onBegin: {
                     viewModel.pushUndo()
