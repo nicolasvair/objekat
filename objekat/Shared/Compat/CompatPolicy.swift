@@ -9,13 +9,19 @@
 //  hover fallbacks...). In Release it is a constant `false`: the native branches are taken
 //  whenever the system has them, and nothing is read from the environment.
 //
+//  A build compiled with the condition `OBJ_FORCE_LEGACY_BUILD` (xcodebuild override
+//  `SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) OBJ_FORCE_LEGACY_BUILD'`) always takes the
+//  fallbacks, in Release too: a full-speed app to judge the macOS 12 rendering on a recent Mac.
+//
 //  To delete when the deployment target is raised.
 //
 
 import Foundation
 
 enum CompatPolicy {
-    #if DEBUG
+    #if OBJ_FORCE_LEGACY_BUILD
+    static let forceLegacy: Bool = true
+    #elseif DEBUG
     static let forceLegacy: Bool = ProcessInfo.processInfo.environment["OBJ_FORCE_LEGACY_UI"] == "1"
     #else
     static let forceLegacy: Bool = false
