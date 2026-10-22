@@ -2671,8 +2671,8 @@ What has landed since mid-August, in order:
   coupled drag and its detents, the badge on the card, the preset menu in the title bar, and the gain match by
   ear on real material.
 
-- **The modifiers rework, and the single-instance manual link is gone** (22 October 2026, ON THE BRANCH
-  `feat/modifiers-rework`, from `main` `9e98684c`, NOT merged, nothing pushed, no engine patch). The user's
+- **The modifiers rework, and the single-instance manual link is gone** (22 October 2026, branch
+  `feat/modifiers-rework`, MERGED into `main` on 22 October 2026 (merge `7babc9df`), nothing pushed, no engine patch). The user's
   validated plan (`plan_modifiers_rework.md`): ONE meaning per modifier. **⇧ = fine adjustment of every
   value**, a tenth of the travel (`Shared/FineAdjust.swift`, `factor = 0.1`), read CONTINUOUSLY and
   RE-ANCHORED when ⇧ flips mid-gesture (the effective travel earned so far is banked, the origin of the raw
