@@ -33,11 +33,11 @@ extension TimelineView {
         return event.scrollingDeltaX
     }
 
-    /// The Volume tool's ↑/↓ step, in dB: 1 bare, ⇧ = the fine step (a tenth), ⌘ = the big step (10).
+    /// The Volume tool's ↑/↓ step, in dB: 1 bare, ⇧ = the fine step (half a dB), ⌘ = the big step (3).
     /// ⌘ wins if both are held — the big step is the explicit ask.
     static func volumeArrowStep(_ flags: NSEvent.ModifierFlags) -> Float {
-        if flags.contains(.command) { return 10 }
-        return Float(FineAdjust.step(1, fine: flags.contains(.shift)))
+        if flags.contains(.command) { return 3 }
+        return Float(FineAdjust.step(1, fine: flags.contains(.shift), fineStep: 0.5))
     }
 
     /// The Pan tool's ↑/↓ step: a tenth bare (the detent), ⇧ = a hundredth with the detent LIFTED
@@ -720,7 +720,7 @@ extension TimelineView {
                     }
                     return nil
                 }
-                // Volume: ↓ = -1 dB, ⇧ = -0.1 dB (fine), ⌘ = -10 dB (big step).
+                // Volume: ↓ = -1 dB, ⇧ = -0.5 dB (fine), ⌘ = -3 dB (big step).
                 if vm.activeTool == .toolVolume {
                     let db = Self.volumeArrowStep(flags)
                     DispatchQueue.main.async { vm.edit { vm.adjustVolumeDB(-db) } }

@@ -1857,9 +1857,14 @@ took the dB off their round figures. It no longer is.
 The detent lives at the HAND's doors, and the machine's write what they are given: `object.set_pan`,
 `object.set_send_level`, and what a curve pushes to the engine. A plugin parameter has no detent at
 all — its 0…1 is normalised, so there is no unit to round to. The one exception is
-**`object.set_gain`**, whose whole dB lives in the model rather than at the door and therefore
-applies to a script too: `updateVolume` has rounded since long before this doctrine was written, and
-moving it would silently change what every existing scenario reads back.
+**`object.set_gain`**, whose resolution lives in the model rather than at the door and therefore
+applies to a script too. **Since 22 October 2026 that resolution is a TENTH of a dB, not a whole dB**:
+⇧ is the fine adjustment of every value, and a fine step (the Volume tool's ⇧↑ / ⇧↓ is half a dB, a
+⇧-held drag or wheel a tenth of the travel) would have been rounded away otherwise. `updateVolume`
+rounds to the tenth, so `object.set_gain {db: -2.5}` reads back -2.5 (it read -2 before); the BARE
+hand gestures still land on whole dB (the timeline drag snaps its travel, the boxes snap to their
+step), so a file only holds a tenth when the fine adjustment put it there. The session stores the
+Float as is: no format change, and a file written with whole dB reads the same.
 
 ### The pan clicks onto the tenths, always
 

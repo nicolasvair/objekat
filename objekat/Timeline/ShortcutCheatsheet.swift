@@ -90,6 +90,8 @@ enum ShortcutCheatsheet {
             return [
                 ShortcutSection(title: L("cheatsheet.section.keyboard"), rows: [
                     ShortcutRow(keys: "↑ · ↓", label: "± 1 dB"),
+                    ShortcutRow(keys: "⇧ ↑ · ↓", label: "± 0.5 dB"),
+                    ShortcutRow(keys: "⌘ ↑ · ↓", label: "± 3 dB"),
                     ShortcutRow(keys: "M", label: L("cheatsheet.volume.mute")),
                     ShortcutRow(keys: "⌫", label: L("cheatsheet.volume.reset")),
                 ]),

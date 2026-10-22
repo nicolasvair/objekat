@@ -376,8 +376,9 @@ struct ObjectInspectorView: View {
         DragValueBox(
             value: relVolume,
             format: { v in
-                if volRelative { return v <= -96 ? "-∞" : String(format: "%+.0f dB", v) }
-                return v <= -96 ? "-∞ dB" : String(format: "%.0f dB", v)
+                let whole = abs(v - v.rounded()) < 0.05      // a tenth only when the volume holds one
+                if volRelative { return v <= -96 ? "-∞" : String(format: whole ? "%+.0f dB" : "%+.1f dB", v) }
+                return v <= -96 ? "-∞ dB" : String(format: whole ? "%.0f dB" : "%.1f dB", v)
             },
             // Relative: at most +40 dB up per gesture (already enormous), enough down to take
             // anything to −∞; each object is clamped on its own.
@@ -619,7 +620,7 @@ struct ObjectInspectorView: View {
         // EditViewModel.liveAutomationValue).
         let v = viewModel.liveAutomationValue(.volume, on: o.id) ?? o.volume
         let p = viewModel.liveAutomationValue(.pan,    on: o.id) ?? o.pan
-        let vol = v <= -96 ? "-∞" : "\(Int(v.rounded()))dB"
+        let vol = v <= -96 ? "-∞" : (abs(v - v.rounded()) < 0.05 ? "\(Int(v.rounded()))dB" : String(format: "%.1fdB", v))
         let pan = abs(p) < 0.01 ? "C" : (p < 0 ? "L\(Int(-p*100))" : "R\(Int(p*100))")
         if !o.isClip { return "\(vol) · \(pan)" }
         return "\(vol) · \(pan) · " + String(format: "×%.2f", o.speedRatio)

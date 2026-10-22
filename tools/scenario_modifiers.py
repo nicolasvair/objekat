@@ -9,7 +9,7 @@ ASSERTS, in UI MODE (`input.key` goes through the real key monitor of the timeli
 One meaning per modifier: ⇧ = fine, ⌘ = the big step (or the zoom), ⌥ = the transport's pause and the
 vertical zoom. What it proves, through the same door a hand uses:
 
-  • M1  Volume tool: ↑/↓ = ±1 dB, ⇧ = ±0.1 dB, ⌘ = ±10 dB;
+  • M1  Volume tool: ↑/↓ = ±1 dB, ⇧ = ±0.5 dB, ⌘ = ±3 dB, a tenth of a dB kept by the model and by the file;
   • M2  Pan tool: ↑/↓ = ±0.1 (the detent), ⇧ = ±0.01 (the detent lifted), ⌘ = ±0.5;
   • M3  ⌃ no longer blocks the FX tool's key (⌃⇧F arms it), ⌘ and ⌥ still do;
   • M4  ⌃ + a digit holds a stem tool, ⌥ and ⌘ do not;
@@ -104,24 +104,41 @@ v2 = obj()["volume_db"]
 check(approx(v2 - v1, -1.0, 0.02), "down = -1 dB", v2 - v1)
 key("up", ["shift"])
 v3 = obj()["volume_db"]
-# KNOWN LIMIT (reported, not decided here): the model stores a volume in WHOLE dB
-# (EditViewModel.adjustVolumeDB / updateVolume round), so the 0.1 dB fine step is rounded away.
-check(approx(v3 - v2, 0.0, 0.02) or approx(v3 - v2, 0.1, 0.02),
-      "shift+up = the fine step (0.1 dB asked; whole-dB model: 0 or 0.1, never a full dB)", v3 - v2)
-print("       note: shift+up moved the volume by %+.2f dB (a whole-dB model rounds the 0.1 step away)" % (v3 - v2))
+check(approx(v3 - v2, 0.5, 0.02), "shift+up = +0.5 dB (the model keeps a tenth of a dB)", v3 - v2)
 key("down", ["shift"])
 v4 = obj()["volume_db"]
-check(approx(v4 - v3, 0.0, 0.02) or approx(v4 - v3, -0.1, 0.02),
-      "shift+down = the fine step (never a full dB)", v4 - v3)
+check(approx(v4 - v3, -0.5, 0.02), "shift+down = -0.5 dB", v4 - v3)
+# A value off the whole dB is conserved as it is (no rounding in the model), and the bare step goes on from it.
+c.send("object.set_gain", {"ids": [oid], "db": -2.5})
+check(approx(obj()["volume_db"], -2.5, 0.001), "set_gain -2.5 reads back -2.5 (a tenth is kept)", obj()["volume_db"])
+c.send("object.set_gain", {"ids": [oid], "db": -2.34})
+check(approx(obj()["volume_db"], -2.3, 0.001), "set_gain -2.34 is kept to the tenth (-2.3)", obj()["volume_db"])
+key("up")
+check(approx(obj()["volume_db"], -1.3, 0.02), "a bare step from -2.3 lands on -1.3 (no re-snap to whole dB)", obj()["volume_db"])
+c.send("object.set_gain", {"ids": [oid], "db": -2.5})
+tmp = "/tmp/objekat_modifiers_%d.objekat" % os.getpid()
+c.send("project.save_as", {"path": tmp})
+c.send("project.open", {"path": tmp})
+time.sleep(1.0)
+oid = c.send("object.list")["objects"][0]["id"]
+check(approx(obj()["volume_db"], -2.5, 0.001), "-2.5 dB survives a save and a reopen", obj()["volume_db"])
+try:
+    os.remove(tmp)
+except OSError:
+    pass
+c.send("tool.set", {"tool": "volume"})
+select_obj()
+c.send("object.set_gain", {"ids": [oid], "db": 0.0})
+v4 = obj()["volume_db"]
 key("up", ["cmd"])
 v5 = obj()["volume_db"]
-check(approx(v5 - v4, 10.0, 0.02), "cmd+up = +10 dB (big step)", v5 - v4)
+check(approx(v5 - v4, 3.0, 0.02), "cmd+up = +3 dB (big step)", v5 - v4)
 key("down", ["cmd"])
 v6 = obj()["volume_db"]
-check(approx(v6 - v5, -10.0, 0.02), "cmd+down = -10 dB (big step)", v6 - v5)
+check(approx(v6 - v5, -3.0, 0.02), "cmd+down = -3 dB (big step)", v6 - v5)
 key("up", ["cmd", "shift"])
 v7 = obj()["volume_db"]
-check(approx(v7 - v6, 10.0, 0.02), "cmd+shift+up = the big step (the explicit ask wins)", v7 - v6)
+check(approx(v7 - v6, 3.0, 0.02), "cmd+shift+up = the big step (the explicit ask wins)", v7 - v6)
 key("down", ["cmd", "shift"])
 
 # ── M2 — the Pan tool's arrows ──────────────────────────────────────────────────────────────────────

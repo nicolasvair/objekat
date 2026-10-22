@@ -1932,7 +1932,9 @@ extension TimelineView {
         // One batch per frame: K `updateVolume` = K writes of `items` = K lane-entry rebuilds otherwise.
         viewModel.batchItemsMutation {
             for (id, anchorDB) in state.anchors {
-                let newDB = (anchorDB + dDB).clamped(to: -96 ... min(40, anchorDB + 12))
+                // Bare: whole dB of travel (the habit); ⇧: the tenths the model now keeps.
+                let travel = fine ? dDB : dDB.rounded()
+                let newDB = (anchorDB + travel).clamped(to: -96 ... min(40, anchorDB + 12))
                 viewModel.updateVolume(id: id, volume: newDB)
             }
         }

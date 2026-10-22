@@ -189,8 +189,9 @@ enum ToolOverlayGeometryTest {
     check("volume label: 0 dB", G.volumeLabel(db: 0, compact: false) == "0 dB")
     check("volume label, compact keeps the unit above the floor", G.volumeLabel(db: -3, compact: true) == "-3 dB")
     check("volume label: +40", G.volumeLabel(db: 40, compact: false) == "40 dB")
-    check("volume label: a half dB rounds like %.0f does", G.volumeLabel(db: 2.4, compact: false) == "2 dB")
-    check("volume label: -95.9 is not the floor", G.volumeLabel(db: -95.9, compact: false) == "-96 dB")
+    check("volume label: a tenth is shown when the volume holds one", G.volumeLabel(db: 2.4, compact: false) == "2.4 dB")
+    check("volume label: noise under a twentieth of a dB stays whole", G.volumeLabel(db: 2.01, compact: false) == "2 dB")
+    check("volume label: -95.9 is not the floor", G.volumeLabel(db: -95.9, compact: false) == "-95.9 dB")
 
     check("pan label: centre", G.panLabel(pan: 0) == "C")
     check("pan label: under 1 % is still centre", G.panLabel(pan: 0.009) == "C" && G.panLabel(pan: -0.009) == "C")

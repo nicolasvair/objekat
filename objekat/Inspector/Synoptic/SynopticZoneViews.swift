@@ -18,7 +18,11 @@ struct GainDbControl: View {
     var onBegin: (() -> Void)? = nil     // called at the start of a drag (to push an undo point, say)
     let onChange: (Float) -> Void
 
-    private var label: String { dB == 0 ? "0 \(unit)" : String(format: "%+.0f \(unit)", dB) }
+    private var label: String {
+        if dB == 0 { return "0 \(unit)" }
+        // A tenth only when the value holds one (the ⇧ fine steps).
+        return String(format: abs(dB - dB.rounded()) < 0.05 ? "%+.0f \(unit)" : "%+.1f \(unit)", dB)
+    }
     private var isMuted: Bool { muted == true }
 
     var body: some View {
