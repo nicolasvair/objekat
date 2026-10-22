@@ -33,13 +33,13 @@ import AppKit
 
 /// What `onScrollGeometryChange` hands over, reduced to what the app reads. `contentOffset` has its
 /// origin at the top left, as SwiftUI's.
-struct ScrollGeometryCompat: Equatable, Sendable {
+nonisolated struct ScrollGeometryCompat: Equatable, Sendable {
     var contentOffset: CGPoint = .zero
     var contentSize: CGSize = .zero
     var containerSize: CGSize = .zero
 }
 
-enum ScrollPhaseCompat: Sendable {
+nonisolated enum ScrollPhaseCompat: Sendable {
     case idle
     case active
 }
@@ -361,6 +361,31 @@ private final class ScrollBridgeView: NSView {
         if origin != clip.bounds.origin {
             clip.scroll(to: origin)
             scrollView.reflectScrolledClipView(clip)
+        }
+    }
+}
+
+// MARK: - A list that remembers its top row (macOS 14+)
+
+extension View {
+    /// `scrollTargetLayout()`, which marks a lazy stack's rows as the scroll targets. Nothing below 14.
+    @ViewBuilder
+    func scrollTargetLayoutCompat() -> some View {
+        if #available(macOS 14, *), !CompatPolicy.forceLegacy {
+            scrollTargetLayout()
+        } else {
+            self
+        }
+    }
+
+    /// `scrollPosition(id:)`: the scroll view keeps `id` at its top and comes back to it. Below 14
+    /// the position is simply not remembered (the list restarts at the top when its tab is shown again).
+    @ViewBuilder
+    func rememberTopRowCompat(_ id: Binding<UUID?>) -> some View {
+        if #available(macOS 14, *), !CompatPolicy.forceLegacy {
+            scrollPosition(id: id)
+        } else {
+            self
         }
     }
 }

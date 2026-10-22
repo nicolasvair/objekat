@@ -99,7 +99,7 @@ struct AudioSettingsMenu: View {
         // for 'the menu is opening').
         .onHover { inside in if inside { reloadDevices() } }
         // A device plugged in or out: the list updates on its own.
-        .onChange(of: AudioDeviceWatcher.shared.generation) { _, _ in reloadDevices() }
+        .onChangeCompat(of: AudioDeviceWatcher.shared.generation) { _, _ in reloadDevices() }
     }
 
     private func reloadDevices() {

@@ -184,7 +184,7 @@ struct MarkerBandView: View {
         else { return }
         context.drawLayer { inner in
             inner.clip(to: shape)
-            inner.draw(label.foregroundStyle(Color.primary.opacity(0.85)),
+            inner.draw(label.foregroundColor(Color.primary.opacity(0.85)),
                        at: CGPoint(x: rect.minX + 4, y: rect.midY), anchor: .leading)
         }
     }
@@ -218,7 +218,7 @@ struct MarkerBandView: View {
         // read as belonging to it.
         guard let label = fitted(m.name, weight: sel ? .semibold : .regular,
                                  maxWidth: limitX - (x + 8) - 3, context: context) else { return }
-        context.draw(label.foregroundStyle(sel ? Color.accentColor : Color.primary.opacity(0.8)),
+        context.draw(label.foregroundColor(sel ? Color.accentColor : Color.primary.opacity(0.8)),
                      at: CGPoint(x: x + 8, y: y + rowHeight / 2 + 2), anchor: .leading)
     }
 }

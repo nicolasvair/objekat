@@ -251,7 +251,7 @@ struct AutomationBandView: View {
             // The interaction layer: it catches taps and drags over the whole band.
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { handleTap(at: $0.location) })
+                .spatialTapCompat { handleTap(at: $0) }
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 3)
                         .onChanged { dropWheelReadout(); handleDragChanged($0) }
@@ -261,7 +261,7 @@ struct AutomationBandView: View {
                             drag = nil; readout = nil; clearHover(); dropWheelReadout()
                         }
                 )
-                .onContinuousHover { phase in
+                .onContinuousHoverCompat { phase in
                     guard drag == nil else { return }
                     switch phase {
                     case .active(let p): updateCursor(at: p)
@@ -285,13 +285,13 @@ struct AutomationBandView: View {
         .frame(width: max(1, bandWidth), height: geo.interactiveHeight, alignment: .topLeading)
         // ⌘ pressed or released WITHOUT moving the mouse: the gesture under way is replayed in place,
         // so that the snap flips before one's eyes instead of waiting for the next pixel travelled.
-        .onChange(of: viewModel.cmdKeyHeld) { _, _ in
+        .onChangeCompat(of: viewModel.cmdKeyHeld) { _, _ in
             if let d = drag { applyDrag(at: d.last) }
         }
         // The value of a PLUGIN parameter on the offered row: an engine query, so read here — when the
         // row changes — and never from the drawing (@see refreshPluginParamValue).
         .onAppear { if let pending { viewModel.refreshPluginParamValue(pending) } }
-        .onChange(of: pending) { _, ref in
+        .onChangeCompat(of: pending) { _, ref in
             if let ref { viewModel.refreshPluginParamValue(ref) }
         }
     }
@@ -334,7 +334,7 @@ struct AutomationBandView: View {
         .frame(width: r.width, height: r.height)
         .contentShape(Rectangle())
         .help(L("automation.pencil.help"))
-        .onContinuousHover { phase in
+        .onContinuousHoverCompat { phase in
             guard drag == nil, pencilPress == nil else { return }
             if case .active = phase {
                 clearHover()
@@ -580,7 +580,7 @@ struct AutomationBandView: View {
         }()
         let text = Text(title)
             .font(.system(size: 10, weight: isFuture ? .regular : .medium))
-            .foregroundStyle(Color.primary.opacity(isFuture ? 0.45 : 0.62))
+            .foregroundColor(Color.primary.opacity(isFuture ? 0.45 : 0.62))
         ctx.draw(ctx.resolve(text), at: CGPoint(x: 6, y: top + 3), anchor: .topLeading)
 
         // A row with NO point: the dotted line above IS its line — it already carries the value the
@@ -808,7 +808,7 @@ struct AutomationBandView: View {
         let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
         let text = Text(r.text)
             .font(.system(size: 9, weight: .semibold).monospacedDigit())
-            .foregroundStyle(Color.white.opacity(0.9))
+            .foregroundColor(Color.white.opacity(0.9))
         let resolved = ctx.resolve(text)
         let size = resolved.measure(in: CGSize(width: 200, height: 20))
         let off = drag == nil ? Self.readoutOffset.hover : Self.readoutOffset.drag

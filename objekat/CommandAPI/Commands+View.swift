@@ -123,7 +123,7 @@ extension CommandRegistry {
             // and any deceleration a previous gesture left running, have to come to rest.
             let deadline = Date().addingTimeInterval(2)
             while vm.pendingViewRestore != nil, Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(5))
+                try? await Task.compatSleep(.milliseconds(5))
             }
             _ = await Self.waitViewAtRest(host)
             return try Self.viewState()
@@ -154,7 +154,7 @@ extension CommandRegistry {
             // and sets it back to nil; then the layout and the scroll have to come to rest.
             let deadline = Date().addingTimeInterval(2)
             while vm.timelineRevealRequest != nil, Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(5))
+                try? await Task.compatSleep(.milliseconds(5))
             }
             _ = await Self.waitViewAtRest(host)
             return .object(["unfolded": .array(opened.map { .string($0.uuidString) }),
@@ -356,7 +356,7 @@ extension CommandRegistry {
             // Happens when the app cannot come to the front (screen locked, display asleep).
             if try p.bool("activate", or: true) {
                 try InputSynth.activate()
-                try? await Task.sleep(for: .milliseconds(150))
+                try? await Task.compatSleep(.milliseconds(150))
             }
             guard host.window?.isKeyWindow == true else {
                 throw CommandError(code: .invalid_state,
@@ -415,7 +415,7 @@ extension CommandRegistry {
                 target: held.target, route: route)
             let deadline = Date().addingTimeInterval(2)
             while probe.syntheticSeen < outcome.posted, Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(2))
+                try? await Task.compatSleep(.milliseconds(2))
             }
             let settledMs = await Self.waitViewAtRest(host)
             return .object(["released": .bool(true), "events_posted": .int(outcome.posted),
@@ -479,7 +479,7 @@ extension CommandRegistry {
             var perStep: [JSONValue] = []
             for (i, step) in steps.enumerated() {
                 if let wait = step["wait_ms"]?.doubleValue {
-                    try? await Task.sleep(for: .milliseconds(Int(wait)))
+                    try? await Task.compatSleep(.milliseconds(Int(wait)))
                     perStep.append(.object(["index": .int(i), "wait_ms": .number(wait)]))
                     continue
                 }
@@ -513,7 +513,7 @@ extension CommandRegistry {
                  """,
                  params: [ParamSpec("activate", "bool", required: false, "Bring the window to the front (default true).")]) { p in
             if try p.bool("activate", or: true) { try InputSynth.activate() }
-            try? await Task.sleep(for: .milliseconds(100))
+            try? await Task.compatSleep(.milliseconds(100))
             var rows: [String: JSONValue] = [:]
             var chosen: InputSynth.Route? = nil
             for route in InputSynth.Route.allCases {
@@ -626,9 +626,9 @@ extension CommandRegistry {
         // window server then tells the tracking area where the REAL pointer is — off the
         // timeline, a `mouseExited` that would wipe a hover laid too early. Then one more pause
         // for the hover's own redraw: it is the set-up, not the gesture.
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.compatSleep(.milliseconds(80))
         if try p.bool("hover", or: hover) { try InputSynth.hover(atViewport: point) }
-        try? await Task.sleep(for: .milliseconds(40))
+        try? await Task.compatSleep(.milliseconds(40))
 
         let before = try viewState()
         let probe = InputProbe.shared
@@ -644,7 +644,7 @@ extension CommandRegistry {
         // sent), and that tail is part of what the gesture costs.
         let deadline = Date().addingTimeInterval(2)
         while probe.syntheticSeen < outcome.posted, Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(2))
+            try? await Task.compatSleep(.milliseconds(2))
         }
         let settledMs = await waitViewAtRest(host)
 
@@ -680,7 +680,7 @@ extension CommandRegistry {
         var last = snapshot()
         var stillSince = Date()
         while Date().timeIntervalSince(start) < 4 {
-            try? await Task.sleep(for: .milliseconds(16))
+            try? await Task.compatSleep(.milliseconds(16))
             // D8's debounce (or D7's idle re-frame) can be ARMED while the scroll/zoom values
             // above have already sat still for 150 ms — the vertical lane snap's own settle has
             // not landed yet. Without this, a test would sample the frame mid-settle.
@@ -888,9 +888,9 @@ extension CommandRegistry {
             target: path[0], route: route)
         let deadline = Date().addingTimeInterval(1)
         while probe.syntheticSeen < outcome.posted, Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(2))
+            try? await Task.compatSleep(.milliseconds(2))
         }
-        try? await Task.sleep(for: .milliseconds(120))
+        try? await Task.compatSleep(.milliseconds(120))
         let traced = vm.timeSelection != nil && vm.timeSelection != savedSelection
         vm.timeSelection = savedSelection
         vm.selectedIDs = savedIDs
@@ -932,7 +932,7 @@ extension CommandRegistry {
             target: target, route: route)
         let deadline = Date().addingTimeInterval(1)
         while probe.syntheticSeen < outcome.posted, Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(2))
+            try? await Task.compatSleep(.milliseconds(2))
         }
         _ = await waitViewAtRest(host)
         let x1 = host.visibleRect.minX

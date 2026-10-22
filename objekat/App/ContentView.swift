@@ -141,26 +141,26 @@ struct ContentView: View {
         // An export rendering directly suspends playback on the engine side: the SESSION's transport
         // state has to follow, otherwise the button would stay on 'stop' and the playhead would
         // freeze while claiming to play. @see EditViewModel.pendingPlaybackStop
-        .onChange(of: viewModel.pendingPlaybackStop) { _, stopRequested in
+        .onChangeCompat(of: viewModel.pendingPlaybackStop) { _, stopRequested in
             guard stopRequested else { return }
             viewModel.pendingPlaybackStop = false
             if session.isPlaying { session.stop() }
         }
         // A NEW, non-empty object selection brings the inspector forward — unless the list made
         // it (@see `listMadeSelection`). An emptied selection leaves the panel where it is.
-        .onChange(of: viewModel.selectedIDs) { old, new in
+        .onChangeCompat(of: viewModel.selectedIDs) { old, new in
             let fromList = listMadeSelection == new
             listMadeSelection = nil
             guard !new.isEmpty, new != old, !fromList else { return }
             leftPanelTab = .objet
         }
-        .onChange(of: viewModel.seekRequest) { _, _ in
+        .onChangeCompat(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
         }
-        .onChange(of: viewModel.loopRegion) { _, newRegion in
+        .onChangeCompat(of: viewModel.loopRegion) { _, newRegion in
             session.loopRegionChanged(newRegion)
         }
-        .onChange(of: viewModel.loopModeEnabled) { _, enabled in
+        .onChangeCompat(of: viewModel.loopModeEnabled) { _, enabled in
             session.loopModeChanged(enabled)
         }
         .onDisappear {

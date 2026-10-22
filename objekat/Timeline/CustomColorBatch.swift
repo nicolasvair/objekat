@@ -38,7 +38,7 @@ nonisolated struct CustomColorBatch {
         let bodyRect = CGRect(x: rect.minX, y: rect.minY + bandH,
                               width: rect.width, height: max(0, rect.height - bandH))
         full.addPath(RoundedRectangle(cornerRadius: r).path(in: rect))
-        band.addPath(UnevenRoundedRectangle(topLeadingRadius: r, topTrailingRadius: r).path(in: bandRect))
-        body.addPath(UnevenRoundedRectangle(bottomLeadingRadius: r, bottomTrailingRadius: r).path(in: bodyRect))
+        band.addPath(UnevenRoundedRectangleCompat(topLeadingRadius: r, topTrailingRadius: r).path(in: bandRect))
+        body.addPath(UnevenRoundedRectangleCompat(bottomLeadingRadius: r, bottomTrailingRadius: r).path(in: bodyRect))
     }
 }

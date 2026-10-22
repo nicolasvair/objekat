@@ -114,7 +114,7 @@ struct ScriptOverlayLayer: View {
                     guard let label = fittedMarkerLabel(w.text, size: 9, weight: .medium,
                                                         maxWidth: room, context: context)
                     else { continue }
-                    context.draw(label.foregroundStyle(Color.white),
+                    context.draw(label.foregroundColor(Color.white),
                                  at: CGPoint(x: x + 2, y: ty + 6), anchor: .leading)
                 }
             }

@@ -147,7 +147,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
                                                                modifiers: modifier))
         // The window's size is ours (1100 × 660, 720 × 420 at the least); the SwiftUI content must
         // not push constraints of its own onto it.
-        hosting.sizingOptions = []
+        if #available(macOS 13, *) { hosting.sizingOptions = [] }
         let frame = NSRect(origin: .zero, size: Self.windowSize)
         hosting.frame = frame
 

@@ -191,7 +191,7 @@ struct InfiniteBusBandView: View {
         .allowsHitTesting(isRenaming)
         // See SoundBlockView: `renameFocused` stays true when the field goes away, and the
         // next rename of the same bus would never get focus.
-        .onChange(of: isRenaming) { _, now in
+        .onChangeCompat(of: isRenaming) { _, now in
             if now { beginRename() } else { renameFocused = false }
         }
     }

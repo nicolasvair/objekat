@@ -76,17 +76,17 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("panel_id")
             let since = try p.int("since_rev")
-            let budget = Duration.milliseconds(min(5000, max(0, try p.int("timeout_ms", or: 1000))))
-            let started = ContinuousClock.now
+            let budget = CompatDuration.milliseconds(min(5000, max(0, try p.int("timeout_ms", or: 1000))))
+            let started = CompatClock.now
             while true {
                 // Read without draining first: only a wait that RETURNS drains the events.
                 guard let cur = vm.scriptPanels.panels[id] else {
                     throw CommandError(code: .not_found, message: "no panel \(id.uuidString)")
                 }
-                if cur.rev > since || cur.state != .open || ContinuousClock.now - started >= budget {
+                if cur.rev > since || cur.state != .open || CompatClock.now - started >= budget {
                     return panelPayload(try vm.scriptPanels.read(id))
                 }
-                try? await Task.sleep(for: .milliseconds(10))
+                try? await Task.compatSleep(.milliseconds(10))
             }
         }
 

@@ -385,6 +385,9 @@ struct ClipEditZonesOverlay: View {
         }
         p.closeSubpath()
         guard hw > 0 else { return p }
-        return p.union(Path(band))
+        // `Path.union` is macOS 14; below, the band is simply added (same fill, same hit area).
+        if #available(macOS 14, *), !CompatPolicy.forceLegacy { return p.union(Path(band)) }
+        p.addPath(Path(band))
+        return p
     }
 }

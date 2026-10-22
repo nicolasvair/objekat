@@ -116,7 +116,7 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .background(GeometryReader { inner in WithPerceptionTracking {
                 Color.clear
                     .onAppear { circleFrame = inner.frame(in: .named(Self.space)) }
-                    .onChange(of: inner.frame(in: .named(Self.space))) { _, f in circleFrame = f }
+                    .onChangeCompat(of: inner.frame(in: .named(Self.space))) { _, f in circleFrame = f }
             } })
         } }
     }

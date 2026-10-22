@@ -46,8 +46,8 @@ struct WorkspaceTabBar: View {
                     let isDragged = drag?.id == tab.id
                     let offset = drag?.offset(for: tab.id) ?? 0
                     TabCapsule(workspace: workspace, tab: tab)
-                        .onGeometryChange(for: CGRect.self,
-                                          of: { $0.frame(in: .named(Self.coordinateSpaceName)) }) { frame in
+                        .onGeometryChangeCompat(for: CGRect.self,
+                                                of: { $0.frame(in: .named(Self.coordinateSpaceName)) }) { frame in
                             liveFrames[tab.id] = frame
                         }
                         .offset(x: offset)
@@ -74,7 +74,7 @@ struct WorkspaceTabBar: View {
                 .helpIf(L("tabs.new.help"))
             }
             .padding(.horizontal, 8)
-            .coordinateSpace(.named(Self.coordinateSpaceName))
+            .coordinateSpace(name: Self.coordinateSpaceName)
         }
         .frame(height: Self.barHeight)
         .background(Color(nsColor: .underPageBackgroundColor))

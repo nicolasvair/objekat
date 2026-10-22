@@ -56,13 +56,13 @@ struct ExportWaveformView: View {
             .contentShape(Rectangle())
             // Reading the curves under the mouse: a hover only ever DRAWS, it changes no state that
             // anything else reads, so it cannot get in the seek's way.
-            .onContinuousHover { phase in
+            .onContinuousHoverCompat { phase in
                 switch phase {
                 case .active(let p): hoverX = p.x
                 case .ended: hoverX = nil
                 }
             }
-            .onTapGesture { p in
+            .onLocatedTapCompat { p in
                 guard w > 0 else { return }
                 onSeek(min(1, max(0, p.x / w)))
             }

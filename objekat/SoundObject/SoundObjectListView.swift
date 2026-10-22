@@ -138,18 +138,18 @@ struct SoundObjectListView: View {
             .focused($listFocused)
             // Everything repaired: the filter goes OFF, not merely dormant. Left on, it would
             // switch itself back in, unasked, the next time a single file went missing.
-            .onChange(of: viewModel.missingFileCount) { _, n in
+            .onChangeCompat(of: viewModel.missingFileCount) { _, n in
                 if n == 0 { showOnlyMissing = false }
             }
             // The timeline's monitor must let the arrows through while this list holds them
             // (@see `KeyboardClaim`), and take them back the moment it does not.
-            .onChange(of: listFocused) { _, f in
+            .onChangeCompat(of: listFocused) { _, f in
                 if f { KeyboardClaim.shared.claim(.soundList) } else { KeyboardClaim.shared.release(.soundList) }
             }
-            .onKeyPress(.upArrow)    { moveCursor(-1);    return .handled }
-            .onKeyPress(.downArrow)  { moveCursor(+1);    return .handled }
-            .onKeyPress(.leftArrow)  { collapseOrParent(); return .handled }
-            .onKeyPress(.rightArrow) { expandOrFirstChild(); return .handled }
+            .onKeyPressCompat(.upArrow, focused: listFocused)    { moveCursor(-1);    return .handled }
+            .onKeyPressCompat(.downArrow, focused: listFocused)  { moveCursor(+1);    return .handled }
+            .onKeyPressCompat(.leftArrow, focused: listFocused)  { collapseOrParent(); return .handled }
+            .onKeyPressCompat(.rightArrow, focused: listFocused) { expandOrFirstChild(); return .handled }
             // SELECTING AN OBJECT ANYWHERE BRINGS IT INTO VIEW HERE. A table of contents that
             // does not follow the hand stops being one: with a project taller than the panel, a
             // click in the timeline highlighted a row nobody could see, and the list said less
@@ -162,7 +162,7 @@ struct SoundObjectListView: View {
             // show, and picking one would be picking for the user. And it never steals the view
             // while one is typing in the search field, where the rows under the hand are the
             // result of the search and not of any selection.
-            .onChange(of: revealKey(in: rows)) { old, new in
+            .onChangeCompat(of: revealKey(in: rows)) { old, new in
                 guard let new else { return }
                 // A click in THIS list on the row that was already the one to show: it is under
                 // the pointer, there is nothing to bring into view.

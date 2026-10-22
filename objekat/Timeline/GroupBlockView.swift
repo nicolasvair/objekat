@@ -148,10 +148,10 @@ struct GroupBlockView: View {
             // the body in the stem's colour.
             if let custom = group.customColor {
                 VStack(spacing: 0) {
-                    UnevenRoundedRectangle(topLeadingRadius: 20, topTrailingRadius: 20)
+                    UnevenRoundedRectangleCompat(topLeadingRadius: 20, topTrailingRadius: 20)
                         .fill(custom.opacity(ObjectColorChoice.bandOpacity(selected: isSelected)))
                         .frame(height: max(3, blockHeight * 0.20))
-                    UnevenRoundedRectangle(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
+                    UnevenRoundedRectangleCompat(bottomLeadingRadius: 20, bottomTrailingRadius: 20)
                         .fill(stemColor.opacity(isSelected ? 0.55 : 0.30))
                 }
             } else {
@@ -341,7 +341,7 @@ struct GroupBlockView: View {
                 // See SoundBlockView: without this reset, `renameFocused` stays true after the field
                 // disappears and the next rename of the same group never gets focus.
                 //
-                .onChange(of: isRenaming) { _, now in
+                .onChangeCompat(of: isRenaming) { _, now in
                     if now { beginRename(group.label) } else { renameFocused = false }
                 }
                 }

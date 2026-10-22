@@ -102,7 +102,7 @@ struct PreferencesView: View {
                     .textSelection(.enabled)
             }
         }
-        .formStyle(.grouped)
+        .groupedFormStyleCompat()
         .padding()
         .frame(width: 380, height: 280)
     }

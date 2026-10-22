@@ -41,7 +41,7 @@ struct ProjectLoadOverlay: View {
             }
         }
         .animation(.easeInOut(duration: Self.fadeDuration), value: showOverlay)
-        .onChange(of: viewModel.isLoadingProject) { _, loading in
+        .onChangeCompat(of: viewModel.isLoadingProject) { _, loading in
             if loading {
                 armShow()
             } else {

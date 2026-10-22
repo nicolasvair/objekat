@@ -95,7 +95,7 @@ struct FXStripOverlayView: View {
                 var textX = rect.minX + 4
                 if e.kind == .gainStage {
                     let gs = min(rect.height - 4, 10)
-                    var glyph = ctx.resolve(Image(systemName: "dial.low"))
+                    var glyph = ctx.resolve(Image(compatSystemName: "dial.low", fallback: "dial.min"))
                     glyph.shading = .color(ink.opacity(0.6))
                     ctx.draw(glyph, in: CGRect(x: rect.minX + 3, y: rect.midY - gs / 2, width: gs, height: gs))
                     textX = rect.minX + 4 + gs

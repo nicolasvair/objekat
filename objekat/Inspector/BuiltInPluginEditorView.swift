@@ -42,7 +42,7 @@ struct BuiltInPluginEditorView: View {
         .frame(width: 340)
         .onAppear { reload() }
         // A preset laid from the title bar's menu: the parameters moved without this view.
-        .onChange(of: viewModel.pluginStateRevision[plug.id]) { reload() }
+        .onChangeCompat(of: viewModel.pluginStateRevision[plug.id]) { reload() }
     }
 
     private func paramRow(_ p: Param) -> some View {

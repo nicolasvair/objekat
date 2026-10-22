@@ -80,7 +80,7 @@ struct FXBlockHeaderView: View {
                             .focused($fieldFocused)
                             .onSubmit { endRename(commit: true) }
                             .onExitCommand { endRename(commit: false) }
-                            .onChange(of: fieldFocused) { _, focused in if !focused { endRename(commit: true) } }
+                            .onChangeCompat(of: fieldFocused) { _, focused in if !focused { endRename(commit: true) } }
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(link.name)
@@ -179,7 +179,7 @@ struct FXBlockHeaderView: View {
         .contextMenu { menuItems }
         // The one line of a FOLDED block, written under the header card (outside its frame, after the clip).
         .overlay(alignment: .topLeading) { foldedSummary }
-        .onChange(of: isRenaming, initial: true) { _, on in
+        .onChangeCompat(of: isRenaming, initial: true) { _, on in
             guard on else { return }
             draft = link.name
             DispatchQueue.main.async { fieldFocused = true }

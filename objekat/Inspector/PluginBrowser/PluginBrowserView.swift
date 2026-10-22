@@ -191,13 +191,13 @@ struct PluginBrowserView: View {
         .frame(maxWidth: .infinity)
         // The sheet's height follows the page: taller on the "+" page, which lays its palette under the circle.
         .frame(height: PluginBrowserLayout.sheetSize(plusPage: currentPage == .plusShortcuts).height)
-        .onChange(of: searchText) { old, new in
+        .onChangeCompat(of: searchText) { old, new in
             // A search STARTS: back to "All". Only then — a colour picked while searching stays.
             guard PluginBrowserQuery(new).asksForSomething, !PluginBrowserQuery(old).asksForSomething,
                   case .plugins(let tab) = currentPage, tab != .all else { return }
             page = .plugins(.all)
         }
-        .onChange(of: usedCategories) { _, _ in
+        .onChangeCompat(of: usedCategories) { _, _ in
             // The colour of the tab we were on was taken off its last plugin: stay on "All".
             let resolved = currentPage
             if resolved != page { page = resolved }

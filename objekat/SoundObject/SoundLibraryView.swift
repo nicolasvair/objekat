@@ -928,29 +928,29 @@ struct SoundLibraryView: View {
                         Divider()
                     } }
                 }
-                .scrollTargetLayout()
+                .scrollTargetLayoutCompat()
             }
             // The scroll comes back where it was when the tab is shown again.
-            .scrollPosition(id: Binding(get: { vm.scrollTopID }, set: { vm.scrollTopID = $0 }))
+            .rememberTopRowCompat(Binding(get: { vm.scrollTopID }, set: { vm.scrollTopID = $0 }))
             .focusable()
             .focused($listFocused)
-            .onChange(of: listFocused) { _, f in
+            .onChangeCompat(of: listFocused) { _, f in
                 if f { KeyboardClaim.shared.claim(.explorer) } else { KeyboardClaim.shared.release(.explorer) }
             }
-            .onChange(of: vm.cursorID) { _, id in
+            .onChangeCompat(of: vm.cursorID) { _, id in
                 if let id { withAnimation(.easeOut(duration: 0.1)) { proxy.scrollTo(id, anchor: nil) } }
             }
-            .onKeyPress(keys: [.upArrow]) { press in
+            .onKeyPressCompat(keys: [.upArrow], focused: listFocused) { press in
                 if press.modifiers.contains(.command) { vm.goUp() } else { vm.moveCursor(-1) }
                 return .handled
             }
-            .onKeyPress(keys: [.downArrow]) { press in
+            .onKeyPressCompat(keys: [.downArrow], focused: listFocused) { press in
                 if press.modifiers.contains(.command), let n = vm.cursorNode { vm.enterFolder(n) }
                 else { vm.moveCursor(1) }
                 return .handled
             }
-            .onKeyPress(.leftArrow) { vm.collapseOrParent(); return .handled }
-            .onKeyPress(.rightArrow) { vm.expandOrEnter(); return .handled }
+            .onKeyPressCompat(.leftArrow, focused: listFocused) { vm.collapseOrParent(); return .handled }
+            .onKeyPressCompat(.rightArrow, focused: listFocused) { vm.expandOrEnter(); return .handled }
         } }
     }
 

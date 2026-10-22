@@ -190,7 +190,7 @@ struct ScriptPanel: Equatable, Sendable {
         trailing.insert(id)
         let wait = Self.coalesceInterval - since
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(Int(wait * 1000) + 1))
+            try? await Task.compatSleep(.milliseconds(Int(wait * 1000) + 1))
             guard let self else { return }
             self.trailing.remove(id)
             self.bump(id)

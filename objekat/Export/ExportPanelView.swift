@@ -125,10 +125,10 @@ struct ExportPanelView: View {
         .padding(20)
         .frame(width: 460)
         .onAppear(perform: syncTimeFields)
-        .onChange(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
-        .onChange(of: job?.isRunning) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: job?.isRunning) { _, _ in syncTimeFields() }
         // Changing unit does not touch the bounds: we show the same instants differently.
-        .onChange(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
         // The listening belongs to this panel: closing it stops the sound. The render, itself,
         // goes on — and the strip under the transport takes it over.
         .onDisappear { viewModel.exportAudition.stop() }
@@ -418,7 +418,7 @@ struct ExportPanelView: View {
                     if let t = parseTime(text.wrappedValue) { commit(t) }
                     syncTimeFields()
                 }
-                .onChange(of: focusedField) { _, now in
+                .onChangeCompat(of: focusedField) { _, now in
                     guard now != field else { return }
                     if let t = parseTime(text.wrappedValue) { commit(t) }
                     syncTimeFields()

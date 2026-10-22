@@ -435,17 +435,17 @@ extension CommandRegistry {
             let id = try p.uuid("canvas_id")
             let since = try p.int("since_rev")
             let known = try p.optionalInt("known_history_rev")
-            let budget = Duration.milliseconds(min(5000, max(0, try p.int("timeout_ms", or: 1000))))
-            let started = ContinuousClock.now
+            let budget = CompatDuration.milliseconds(min(5000, max(0, try p.int("timeout_ms", or: 1000))))
+            let started = CompatClock.now
             while true {
                 // Read without draining first: only a wait that RETURNS drains the events.
                 guard let cur = vm.scriptCanvases.canvases[id] else {
                     throw CommandError(code: .not_found, message: "no canvas \(id.uuidString)")
                 }
-                if cur.rev > since || cur.state != .open || ContinuousClock.now - started >= budget {
+                if cur.rev > since || cur.state != .open || CompatClock.now - started >= budget {
                     return try readPayload(vm, id, knownHistoryRev: known)
                 }
-                try? await Task.sleep(for: .milliseconds(10))
+                try? await Task.compatSleep(.milliseconds(10))
             }
         }
 

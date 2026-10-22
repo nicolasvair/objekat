@@ -210,13 +210,13 @@ struct PianoRollView: View {
             // The interaction layer: it catches taps and drags over the note area.
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { handleTap(at: $0.location) })
+                .spatialTapCompat { handleTap(at: $0) }
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 4)
                         .onChanged { handleDragChanged($0) }
                         .onEnded   { _ in drag = nil; rubber = nil }
                 )
-                .onContinuousHover { phase in
+                .onContinuousHoverCompat { phase in
                     guard drag == nil, rubber == nil else { return }
                     switch phase {
                     // The cursors go through `TimelineCursorKeeper`: it is what has AppKit claim the

@@ -24,7 +24,7 @@ struct PluginPresetMenu: View {
             menuContent(status)
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: "slider.horizontal.below.square.and.square.filled")
+                Image(compatSystemName: "slider.horizontal.below.square.and.square.filled", fallback: "slider.horizontal.3")
                 Text(verbatim: label(status))
                     .lineLimit(1)
                     .truncationMode(.middle)

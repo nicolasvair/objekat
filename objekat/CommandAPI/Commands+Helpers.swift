@@ -431,11 +431,11 @@ extension CommandAdapters {
         Task { @MainActor in
             // Let the lock arm itself first: the render starts on a round trip through the engine,
             // and concluding "nothing in flight" on the first pass would end the job before it began.
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.compatSleep(.milliseconds(50))
             while !vm.bakingIDs.isEmpty
                     || !vm.recomputingConsolidateIDs.isEmpty
                     || vm.isCascadingRebake {
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.compatSleep(.milliseconds(50))
             }
             JobRegistry.shared.finish(jobID, result: result())
         }
@@ -555,7 +555,7 @@ extension CommandAdapters {
         Task { @MainActor in
             // A regions batch counts as running between two of its regions too.
             while vm.exportJob?.isRunning == true || vm.exportBatch?.isActive == true {
-                try? await Task.sleep(for: .milliseconds(100))
+                try? await Task.compatSleep(.milliseconds(100))
             }
             guard let job = vm.exportJob else {
                 // The status bar clears itself after a while: if we arrive after it, the file on disk

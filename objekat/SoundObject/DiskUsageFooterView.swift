@@ -46,7 +46,7 @@ struct DiskUsageFooterView: View {
             .popover(isPresented: $isOpen, arrowEdge: .top) { WithPerceptionTracking {
                 DiskUsagePopoverView(viewModel: viewModel)
             } }
-            .onChange(of: isOpen) { _, open in
+            .onChangeCompat(of: isOpen) { _, open in
                 // The popover opens on FRESH figures: the line may be minutes old.
                 if open { viewModel.refreshDiskUsage() }
             }

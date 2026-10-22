@@ -146,7 +146,7 @@ struct DragValueBox: View {
     /// delete and nothing else, and ⌫ fell through unconsumed. Same family as the ⌥+letter trap:
     /// what a key MEANS and what it TYPES are two different questions.
     /// (Kept out of the body: the view builder could no longer type-check it in reasonable time.)
-    private static func isResetKey(_ press: KeyPress) -> Bool {
+    private static func isResetKey(_ press: KeyPressCompat) -> Bool {
         if press.key == .delete || press.key == .deleteForward { return true }
         return press.characters.first == deleteCharacter
     }
@@ -221,14 +221,14 @@ struct DragValueBox: View {
         // Claim the keyboard for THIS box for as long as it shows any focus (container or
         // field), release it the instant neither does. The guard against the A/B race between
         // two boxes' focus changes lives in `KeyboardClaim.release` itself.
-        .onChange(of: isFocused) { _, f in
+        .onChangeCompat(of: isFocused) { _, f in
             if f { KeyboardClaim.shared.claim(.valueField(claimID)) }
             else { KeyboardClaim.shared.release(.valueField(claimID)) }
         }
         // The timeline took the keyboard back (a click on the canvas, Escape…) with no `release`
         // of ours ever called. "Partir, c'est valider": a typed-but-uncommitted entry is
         // committed rather than dropped, then the box lets go of its own visual focus too.
-        .onChange(of: KeyboardClaim.shared.revocation) { _, _ in
+        .onChangeCompat(of: KeyboardClaim.shared.revocation) { _, _ in
             if typing != nil { commitTyping(refocus: false) }
             focused = false
             fieldFocused = false
@@ -251,7 +251,7 @@ struct DragValueBox: View {
         )
         .onTapGesture(count: 2) { onReset?() }
         .onTapGesture { grabKeyFocus() }
-        .onKeyPress(phases: .down) { press in
+        .onKeyPressCompat(phases: .down, focused: isFocused) { press in
             guard typing == nil else { return .ignored }   // typing under way → leave it to the TextField
             if Self.isResetKey(press) { onReset?(); return .handled }
             switch press.key {
@@ -381,7 +381,7 @@ struct AudioFileZoneView: View {
             .onTapGesture(count: 2) { toggleFold() }
             .position(x: rect.midX, y: rect.midY)
             .onAppear { syncBaseText() }
-            .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
+            .onChangeCompat(of: file.baseBPM) { _, _ in syncBaseText() }
     }
 
     private var zone: some View {
@@ -532,12 +532,12 @@ struct AudioFileZoneView: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
                 .focused($baseFocused)
                 .onSubmit { commitBase() }
-                .onChange(of: baseFocused) { _, focused in
+                .onChangeCompat(of: baseFocused) { _, focused in
                     if focused { installBaseCommandArrowMonitorIfNeeded() }
                     else { removeBaseCommandArrowMonitor() }
                 }
                 .onDisappear { removeBaseCommandArrowMonitor() }
-                .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                .onKeyPressCompat(keys: [.upArrow, .downArrow], focused: baseFocused) { press in
                     let step: Double = press.modifiers.contains(.command) ? 10
                         : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                         : 1

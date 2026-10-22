@@ -123,11 +123,11 @@ struct ObjectInspectorView: View {
         // (Re)initialises the slider positions on every change of selection:
         // the shared value if it is uniform (absolute mode), otherwise 0 (relative mode).
         .onAppear { refreshMultiBaselines() }
-        .onChange(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
+        .onChangeCompat(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
         // What moves the values from ELSEWHERE — v/p + ↑/↓, the wheel, the Pan tool, an undo —
         // is read back into the boxes; the boxes' own writes are recognised and left alone.
-        .onChange(of: volumeSignature) { old, new in resyncVolume(old, new) }
-        .onChange(of: panSignature) { old, new in resyncPan(old, new) }
+        .onChangeCompat(of: volumeSignature) { old, new in resyncVolume(old, new) }
+        .onChangeCompat(of: panSignature) { old, new in resyncPan(old, new) }
     }
 
     /// The width of the single multiple-selection column: the signal view's own zone width and a

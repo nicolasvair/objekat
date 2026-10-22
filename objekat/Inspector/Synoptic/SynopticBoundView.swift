@@ -555,11 +555,11 @@ struct SynopticBoundView: View {
             viewModel.setMeteredPlugins(owner: meterOwner.uuidString, objectID: objectID, ids: [])
             if !levelStore.levels.isEmpty { levelStore.levels = [:] }
         }
-        .onChange(of: objectID) { _, newID in
+        .onChangeCompat(of: objectID) { _, newID in
             receivedIDs = viewModel.activeSenders(toAux: newID)
             levelStore.levels = [:]
         }
-        .onChange(of: meteredIDs) { _, ids in registerMeters(ids) }
+        .onChangeCompat(of: meteredIDs) { _, ids in registerMeters(ids) }
         .onReceive(poll) { _ in refreshStates(); refreshReceived() }
         .onReceive(vuPoll) { _ in refreshLevels() }
         .sheet(item: $activeSheet) { kind in WithPerceptionTracking {

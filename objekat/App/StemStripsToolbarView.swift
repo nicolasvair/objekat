@@ -54,7 +54,7 @@ struct StemStripsToolbarView: View {
     // every scrolled frame, the Bools only when an edge is reached or left.
     @State private var contentSize: CGSize = .zero
     @State private var overflow = StemBarOverflow()
-    @State private var scrollPosition = ScrollPosition()
+    @State private var scrollPosition = ScrollPositionCompat()
 
     /// The narrowest a compact bar is squeezed to: about one compact strip (the Main's), so the
     /// bar never collapses to nothing and still says there is a mixer there to scroll.
@@ -140,8 +140,8 @@ struct StemStripsToolbarView: View {
                 ) {
                     openStemID = (openStemID == stem.id) ? nil : stem.id
                 }
-                .onGeometryChange(for: CGRect.self,
-                                   of: { $0.frame(in: .named("stemBar")) }) { frame in
+                .onGeometryChangeCompat(for: CGRect.self,
+                                         of: { $0.frame(in: .named("stemBar")) }) { frame in
                     liveFrames[stem.id] = frame
                 }
                 // The Main never moves and is never a target (@see EditViewModel.moveStem): a
@@ -199,7 +199,7 @@ struct StemStripsToolbarView: View {
             .buttonStyle(.plain)
             .help(L("stem.add.help"))
         }
-        .coordinateSpace(.named("stemBar"))
+        .coordinateSpace(name: "stemBar")
         .animation(.easeInOut(duration: 0.15), value: previewOrder)
     }
 
@@ -222,18 +222,18 @@ struct StemStripsToolbarView: View {
     /// is narrow. The height is the row's own, a horizontal scroll view being otherwise free to
     /// grow vertically too.
     private var compactBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let scrollDriver = ScrollDriverCompat(position: $scrollPosition, onGeometry: { geometry in
+            let newValue = StemBarOverflow(geometry: geometry)
+            if newValue != overflow { overflow = newValue }
+        })
+        return ScrollView(.horizontal, showsIndicators: false) {
             stripsRow
-                .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+                .onGeometryChangeCompat(for: CGSize.self, of: { $0.size }) { size in
                     contentSize = size
                 }
+                .scrollBridgeCompat(scrollDriver)
         }
-        .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: StemBarOverflow.self, of: { geometry in
-            StemBarOverflow(geometry: geometry)
-        }, action: { _, newValue in
-            overflow = newValue
-        })
+        .scrollDriverCompat(scrollDriver)
         // The row's own height, and never more: a horizontal scroll view is otherwise greedy on
         // BOTH axes, and before the first measurement it would take height from the timeline.
         .fixedSize(horizontal: false, vertical: true)
@@ -246,7 +246,7 @@ struct StemStripsToolbarView: View {
         }
         // A stem just created lands at the END of the bar, beside the '+': bring that end into
         // view, so the gesture's result is seen and the '+' stays under the hand for the next one.
-        .onChange(of: viewModel.stems.count) { oldCount, newCount in
+        .onChangeCompat(of: viewModel.stems.count) { oldCount, newCount in
             guard newCount > oldCount else { return }
             withAnimation(.easeInOut(duration: 0.2)) { scrollPosition.scrollTo(edge: .trailing) }
         }
@@ -335,7 +335,7 @@ private nonisolated struct StemBarOverflow: Equatable, Sendable {
 
     init() {}
 
-    init(geometry: ScrollGeometry) {
+    init(geometry: ScrollGeometryCompat) {
         let offset = geometry.contentOffset.x
         leading = offset > 0.5
         trailing = offset + geometry.containerSize.width < geometry.contentSize.width - 0.5
@@ -491,8 +491,8 @@ private struct StemStripButton: View {
                 // rather than the secondary grey of a shortcut reminder.
                 Text(verbatim: "\(displayIndex)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .lineLimit(1)
                     .strikethrough(stem.muted, color: .secondary)
+                    .lineLimit(1)
             } else {
                 if let number {
                     Text(verbatim: "\(number)")
@@ -501,8 +501,8 @@ private struct StemStripButton: View {
                 }
                 Text(isMain ? L("stem.main.name") : stem.name)
                     .font(.system(size: 11, weight: isMain ? .semibold : .medium))
-                    .lineLimit(1)
                     .strikethrough(stem.muted, color: .secondary)
+                    .lineLimit(1)
             }
             // A muted bus (the 'N + M' shortcut): the dot is replaced by a 'muted' icon.
             if stem.muted {
@@ -587,17 +587,17 @@ private struct StemFXPopover: View {
 
                 if isMain {
                     Text(L("stem.main.subtitle"))
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                 } else if isEditingName {
                     // Clicking the title → rename the stem.
                     TextField(noLabel, text: $editText)
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .textFieldStyle(.plain)
                         .onSubmit { viewModel.renameStem(id: stem.id, name: editText); isEditingName = false }
                         .onExitCommand { isEditingName = false }
                 } else {
                     Text(stem.name)
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .onTapGesture { editText = stem.name; isEditingName = true }
                         .help(L("stem.rename.help"))
                 }

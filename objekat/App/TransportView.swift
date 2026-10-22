@@ -181,7 +181,7 @@ struct TransportView: View {
                         commitBPM()
                         bpmFocused = false
                     }
-                    .onChange(of: bpmFocused) { _, focused in
+                    .onChangeCompat(of: bpmFocused) { _, focused in
                         if !focused {
                             commitBPM()
                             removeBpmCommandArrowMonitor()
@@ -194,12 +194,12 @@ struct TransportView: View {
                     // responder to the window's first text field (this one), and the old `if !bpmFocused`
                     // guard then froze '120'; on opening a project, losing focus committed that 120 over
                     // the saved tempo.
-                    .onChange(of: viewModel.tempo) { _, newTempo in
+                    .onChangeCompat(of: viewModel.tempo) { _, newTempo in
                         bpmText = TempoText.display(newTempo)
                     }
                     .onAppear { bpmText = TempoText.display(viewModel.tempo) }
                     .onDisappear { removeBpmCommandArrowMonitor() }
-                    .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                    .onKeyPressCompat(keys: [.upArrow, .downArrow], focused: bpmFocused) { press in
                         let step: Double = press.modifiers.contains(.command) ? 10
                             : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                             : 1
@@ -250,7 +250,7 @@ struct TransportView: View {
             // appear (see AudioSettingsMenu).
             AudioSettingsMenu(viewModel: viewModel)
         }
-        .coordinateSpace(.named(Self.barSpace))
+        .coordinateSpace(name: Self.barSpace)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -282,7 +282,7 @@ struct TransportView: View {
         // clear view flexible in width only is the same gauge with no second axis.
         return Color.clear
             .frame(minWidth: 0, maxWidth: .infinity, maxHeight: 0)
-            .onGeometryChange(for: ToolbarDensityProbe.self, of: { proxy in
+            .onGeometryChangeCompat(for: ToolbarDensityProbe.self, of: { proxy in
                 let frame = proxy.frame(in: .named(Self.barSpace))
                 return ToolbarDensityProbe(minX: frame.minX, maxX: frame.maxX, level: stamp)
             }, action: { probe in

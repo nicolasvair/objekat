@@ -145,11 +145,11 @@ extension CommandRegistry {
     /// not fail, only the confirmation took too long (a device that needs more time to restart).
     @MainActor
     private static func awaitDeviceSettled(from before: Int, timeoutMs: Int = 3000) async -> Bool {
-        let started = ContinuousClock.now
-        let budget = Duration.milliseconds(timeoutMs)
+        let started = CompatClock.now
+        let budget = CompatDuration.milliseconds(timeoutMs)
         while AudioDeviceStatus.shared.generation == before {
-            guard ContinuousClock.now - started < budget else { return false }
-            try? await Task.sleep(for: .milliseconds(20))
+            guard CompatClock.now - started < budget else { return false }
+            try? await Task.compatSleep(.milliseconds(20))
         }
         return true
     }

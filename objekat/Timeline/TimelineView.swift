@@ -76,7 +76,7 @@ struct TimelineView: View {
     // tool controls to the block's visible portion (see visibleSpan).
     @State var viewportWidth: CGFloat = 800
     @State private var viewportHeight: CGFloat = 400
-    @State private var scrollPosition = ScrollPosition()
+    @State private var scrollPosition = ScrollPositionCompat()
     @State private var scrollAnchor = TimelineScrollAnchor()
     @State private var currentSelectionCursor: Double = 0
 
@@ -516,6 +516,36 @@ struct TimelineView: View {
             }
         }
     }
+    }
+
+    /// What the timeline's ScrollView is driven and observed with (@see CompatScroll). The handlers
+    /// are the former `onScrollGeometryChange` / `onScrollPhaseChange` closures, unchanged.
+    private var scrollDriver: ScrollDriverCompat {
+        ScrollDriverCompat(
+            position: $scrollPosition,
+            onX: { x in
+                // The mirror in the view-model (`viewScrollX/Y`, @PerceptionIgnored) serves only to save
+                // the visible area with the project — it invalidates no view.
+                scrollAnchor.x = x
+                viewModel.viewScrollX = Double(x)
+                scrollFollow.offset.x = x
+                followScrollDuringDrag()
+                refreshCullWindow()     // it only moves once per notch → it almost never invalidates
+                relaxStickyDuration()   // back inside the content → the canvas can shrink
+            },
+            onY: { y in
+                scrollAnchor.y = y
+                viewModel.viewScrollY = Double(y)
+                scrollFollow.offset.y = y
+                followScrollDuringDrag()
+                refreshCullWindow()     // the vertical notch: same contract as the horizontal one
+            },
+            // D7 — the safety net: anything else that can leave `scrollY` between two lanes while
+            // snapped (the scroller dragged by hand, a drag-follow scroll, a stray gesture) is caught
+            // here, on the scroll coming to REST.
+            onPhase: { phase in
+                if phase == .idle { reframeIfOffGridOnIdle() }
+            })
     }
 
     var body: some View { WithPerceptionTracking { perceivedBody } }
@@ -1078,7 +1108,7 @@ struct TimelineView: View {
             .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
             .contentShape(Rectangle())
             .timelineHoverHelp(hoverStore)
-            .onTapGesture(coordinateSpace: .local) { handleCanvasTap(at: $0) }
+            .onLocatedTapCompat(coordinateSpace: .local) { handleCanvasTap(at: $0) }
             .simultaneousGesture(
                 DragGesture(minimumDistance: 3, coordinateSpace: .local)
                     .onChanged { handleCanvasDrag(CanvasDrag($0), phase: .changed) }
@@ -1131,31 +1161,12 @@ struct TimelineView: View {
                             guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
                             return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
                         }))
+            .scrollBridgeCompat(scrollDriver)
         }
-        .scrollPosition($scrollPosition)
-        // The mirror in the view-model (`viewScrollX/Y`, @PerceptionIgnored) serves only to save
-        // the visible area with the project — it invalidates no view.
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, x in
-            scrollAnchor.x = x
-            viewModel.viewScrollX = Double(x)
-            scrollFollow.offset.x = x
-            followScrollDuringDrag()
-            refreshCullWindow()     // it only moves once per notch → it almost never invalidates
-            relaxStickyDuration()   // back inside the content → the canvas can shrink
-        }
-        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, y in
-            scrollAnchor.y = y
-            viewModel.viewScrollY = Double(y)
-            scrollFollow.offset.y = y
-            followScrollDuringDrag()
-            refreshCullWindow()     // the vertical notch: same contract as the horizontal one
-        }
-        // D7 — the safety net: anything else that can leave `scrollY` between two lanes while
-        // snapped (the scroller dragged by hand, a drag-follow scroll, a stray gesture) is caught
-        // here, on the scroll coming to REST.
-        .onScrollPhaseChange { _, newPhase in
-            if newPhase == .idle { reframeIfOffGridOnIdle() }
-        }
+        // The scroll is driven and observed through the compat layer: the native modifiers on macOS 15+
+        // (`scrollPosition`, `onScrollGeometryChange`, `onScrollPhaseChange`), a bridge to the
+        // underlying NSScrollView below (the content carries it: @see `scrollBridgeCompat`).
+        .scrollDriverCompat(scrollDriver)
         .background(GeometryReader { geo in WithPerceptionTracking {
             Color(nsColor: .controlBackgroundColor)
                 .onAppear {
@@ -1166,7 +1177,7 @@ struct TimelineView: View {
                     enforceVerticalZoomBounds()
                 }
                 .onChange(of: geo.size.width)  { viewportWidth  = $0 }
-                .onChange(of: geo.size.height) { _, h in
+                .onChangeCompat(of: geo.size.height) { _, h in
                     viewportHeight = h
                     adjustForAvailableHeightChange()
                 }
@@ -1254,7 +1265,7 @@ struct TimelineView: View {
         // moving and copying. The handler does reread ⌥ on every frame, but a frame only arrives at
         // the next pixel — so pressing without moving had no effect. The same remedy as the
         // automation band's for ⌘ (@see AutomationBandView).
-        .onChange(of: viewModel.optKeyHeld) { _, held in
+        .onChangeCompat(of: viewModel.optKeyHeld) { _, held in
             // Outside a drag, ⌥ changes what the next gesture WILL DO: the cursor has to say so at once
             // (the slip's ↔ over a time selection), without waiting for a movement.
             if let pos = hoverState.position, moveDrag == nil { refreshHover(at: pos) }
@@ -1278,23 +1289,23 @@ struct TimelineView: View {
         }
         .onChange(of: selectionCursor) { currentSelectionCursor = $0 }
         // D2's catch-all: ANY door that writes `blockHeight` raw is re-clamped here.
-        .onChange(of: viewModel.blockHeight) { enforceVerticalZoomBounds() }
+        .onChangeCompat(of: viewModel.blockHeight) { enforceVerticalZoomBounds() }
         // A marker row shown or hidden moves the header, hence `availableLaneHeight` — D3's ratio
         // rule applies here exactly as it does to a window resize.
-        .onChange(of: rulerHeight) { adjustForAvailableHeightChange() }
+        .onChangeCompat(of: rulerHeight) { adjustForAvailableHeightChange() }
         // The content's length: followed at once when it grows, shrunk only when
         // that moves nothing on screen (see syncStickyDuration).
-        .onChange(of: contentDuration, initial: true) { syncStickyDuration() }
-        .onChange(of: viewModel.pixelsPerSecond) { relaxStickyDuration() }
+        .onChangeCompat(of: contentDuration, initial: true) { syncStickyDuration() }
+        .onChangeCompat(of: viewModel.pixelsPerSecond) { relaxStickyDuration() }
         // The catch-all for the HORIZONTAL zoom, on the model of `enforceVerticalZoomBounds`: any
         // door that writes `pixelsPerSecond` raw (`view.set`, a project load, a tab restore, the
         // pill's nil-closure fallback) lands on the same bounds, with no second implementation.
         // Idempotent — the corrected write comes back here once and finds nothing to do.
-        .onChange(of: viewModel.pixelsPerSecond) { enforceHorizontalZoomBounds() }
+        .onChangeCompat(of: viewModel.pixelsPerSecond) { enforceHorizontalZoomBounds() }
         // A loaded project: the zoom is already applied (by the view-model), and the scroll is what
         // is left. Deferred by one runloop turn so that the content has its final size (otherwise
         // the scroll is clamped on a width that is still empty).
-        .onChange(of: viewModel.pendingViewRestore) { _, vp in
+        .onChangeCompat(of: viewModel.pendingViewRestore) { _, vp in
             guard let vp else { return }
             DispatchQueue.main.async {
                 // D10 — clamp (D2) THEN apply the scroll: the window may not be the size it was
@@ -1321,7 +1332,7 @@ struct TimelineView: View {
         // it — zooming so that it fits whole, scrolling to bring it to the left. The same protocol
         // as `pendingViewRestore`: applied then set back to nil, and deferred by one runloop turn so
         // that the canvas already has its width at the requested scale.
-        .onChange(of: viewModel.pendingRangeReveal) { _, range in
+        .onChangeCompat(of: viewModel.pendingRangeReveal) { _, range in
             guard let range else { return }
             revealTimeRange(range)
             DispatchQueue.main.async { viewModel.pendingRangeReveal = nil }
@@ -1329,7 +1340,7 @@ struct TimelineView: View {
         // The row ↑ / ↓ has just walked the caret (or the time selection) onto: bring it back into
         // the window. Same protocol again — applied, then set back to nil. No deferral here: the
         // canvas keeps its size, only the scroll moves.
-        .onChange(of: viewModel.pendingLaneReveal) { _, lane in
+        .onChangeCompat(of: viewModel.pendingLaneReveal) { _, lane in
             guard let lane else { return }
             revealDisplayLane(lane)
             DispatchQueue.main.async { viewModel.pendingLaneReveal = nil }
@@ -1337,7 +1348,7 @@ struct TimelineView: View {
         // The sound list selected something and asks the view to show it (@see
         // EditViewModel.revealInTimeline, TimelineReveal). Same protocol once more — applied, then
         // set back to nil, unless a newer request has replaced it in the meantime.
-        .onChange(of: viewModel.timelineRevealRequest) { _, req in
+        .onChangeCompat(of: viewModel.timelineRevealRequest) { _, req in
             guard let req else { return }
             revealObjects(req)
             DispatchQueue.main.async {
@@ -1346,7 +1357,7 @@ struct TimelineView: View {
         }
         // The project folder changes (Save As, opening, a new version) → retarget the
         // disk cache; becoming non-nil flushes the peaks already computed.
-        .onChange(of: viewModel.projectURL) {
+        .onChangeCompat(of: viewModel.projectURL) {
             waveformCache.setWaveformsDirectory(viewModel.waveformsFolder)
         }
         // A new project / an opening: the displayed length starts again from the real content,
@@ -1354,11 +1365,11 @@ struct TimelineView: View {
         // under way, a notion that means nothing when all the content has just been replaced. The
         // scroll is reclamped straight after, otherwise the ScrollView stays beyond the new canvas
         // and shows emptiness outside the content (which the slightest zoom made disappear).
-        .onChange(of: viewModel.projectLoadToken) { resetStickyDuration() }
+        .onChangeCompat(of: viewModel.projectLoadToken) { resetStickyDuration() }
         // A new project: 60 s long and 60 s on screen, from zero. The old project's zoom would
         // otherwise survive — a scale made to fit 2:30 leaves the one-minute canvas short of the
         // window, the ruler stopping part-way across.
-        .onChange(of: viewModel.pendingNewProjectFrame) { _, pending in
+        .onChangeCompat(of: viewModel.pendingNewProjectFrame) { _, pending in
             guard pending else { return }
             resetStickyDuration()
             viewModel.pixelsPerSecond = clampZoom(Double(viewportWidth) / EditViewModel.newProjectSpan)
