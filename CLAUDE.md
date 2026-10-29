@@ -2727,14 +2727,14 @@ What has landed since mid-August, in order:
 
 - **Audio recording on armed groups** (29 October 2026, branch `feat/audio-recording`, NOT on `main`;
   increments 5 and 6 of `docs/plan_enregistrement_audio.md`, after the inputs, the pairs and the zones).
-  The transport's record button (and `rec.start` / `rec.stop`, shortcut **⌘⌥R**, provisional — tested BEFORE
+  The transport's record button (and `rec.start` / `rec.stop`, shortcut **⌘⇧R** since batch 2 (⌘⌥R removed) — tested BEFORE
   the ⌘-only branch, ⌘R stays "rename") records the inputs of the ARMED groups on hidden per-input tracks
   through Tracktion's own transport, which compensates the card's and the graph's latency: stopped, play and
   record from the caret; playing, a punch-in at the position (the graph is pre-warmed at arm time, so the
   press rebuilds nothing). ONE 32-bit float WAV per input and per take, at the card's rate, in
   `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for same-name inputs), shared by every
   group armed on that input (`RecordFileNaming`, pure). At the stop each group gets a TAKE: a child with
-  HANDLES (cropped to the group's window, `sourceOffset` into the file), on the lane BELOW the previous takes,
+  HANDLES (cropped to the group's window, `sourceOffset` into the file), on the lane ABOVE the previous takes (newest on top since batch 2, the older ones shifted down one lane),
   the unmuted previous ones that cross the window MUTED whole (since lot T at the START, see below), all in ONE undo (`RecordTakePlanner`, pure). A
   take that does not cross the window is still created over the whole capture (grey zone) and mutes nothing.
   Guards: unsaved project (record refused), tab switch / `tab.new` / `project.new` refused while recording
@@ -2765,6 +2765,38 @@ What has landed since mid-August, in order:
   assigned to it; `dropRecordInputs` = ONE undo, the zones selected; `rec.drop` accepts `inputs: [{first,count}]`.
   (4) The hand cursor over a live [ o ] (Selection tool), and all the armed zones' blinks start from a common
   origin (`blinkEpoch`, synchronised).
+  **Batch 2 (30 October 2026, lots A/B/C merged on `feat/audio-recording`)**. (A) **Take mode per zone**
+  (session format 34): `SoundObject.recordTakeMode: RecordTakeMode?` (nil = `mute`, written only for `add`);
+  `mute` mutes the audible previous takes at the press as before, `add` mutes nothing (the old takes stay
+  heard). In both modes the NEW take lands on the TOP lane of the zone (min of the children's lanes) and every
+  existing child moves down one lane (`RecordTakePlanner.Plan.shiftIDs`), at the stop; the red block is drawn
+  on that top lane (it overlaps the previous take until the stop); ONE ⌘Z undoes mutes, shift and take. Takes
+  saved in the old order are not reordered. `rec.set_take_mode {group|groups, mode}` (accepted while
+  recording, counts from the next take: a zone freezes its mode at the press), `rec.status.zones[].take_mode`.
+  `rec.assign`/`assignRecordInput` → `invalid_state` while recording (`rec.drop` is not guarded). **Synoptic
+  « Entrée » block** above the object, outside its frame, for every recordable zone (counterpart of the Stems
+  block): a menu in two sections (mono / stereo inputs, « Aucune » last), the cable has 1 or 2 wires after the
+  input (`WireSource.recordInput`, no channel-count choice), an absent input = greyed block « absente », locked
+  while recording; under it the take-mode menu, applied to the whole selection when the displayed object is in
+  it. (B) **Inputs tab**: sections « Entrées mono » then « Entrées stéréo » (empty one hidden); selection =
+  pure `Shared/ListClickSelection` (bare click, ⌘ toggle, ⇧ range from the selection's ENDS, ⌘A, ↑/↓, ⇧↑/⇧↓
+  grow only, click in the void clears; ⌘/⇧ on a NAME selects instead of renaming), keys via `KeyboardClaim`
+  claimant `.inputs` (↑/↓ only; ⌘A through `KeyboardClaim.shared.performSelectAll()` at the head of
+  `performSelectAllShortcut`); the level dot is replaced by `Shared/VULevelBar` (extracted from
+  `SynopticCardVULine`, unchanged there), one bar for a mono, two thin L/R bars (per-channel
+  `audioInputPeaksDb`) for a pair, on `VUScale`; the listening-gain box sits RIGHT of the speaker. (C) A zone
+  is born WITHOUT a label: its default name is its input's (`EditViewModel.displayName(of:)`, follows the
+  input's rename); only a typed name is a group name, and the TIMELINE then writes « [mic] Input → [folder]
+  Name » (Canvas and rich view, hidden while renaming; pure `RecordZoneName.prefix(label:inputName:)`, a label
+  equal to the input's name = default, for old projects; `rec.status.zones[].input_prefix`). Known gaps: a
+  parent group's composed name and the sound list's text filter still read the raw name. Clicking the [ o ] of
+  a SELECTED zone arms/disarms the whole selection (`armTargets(clicked:)`, the zones without a present input
+  ignored silently; outside the selection = that zone alone); `rec.arm {groups:[…]}` answers `ignored`. The
+  unused-files cleanup includes `samples/rec/` (`ProjectFileUsage.Kind.recording`, label « Enregistrements »;
+  muted takes count as used; cleanup and FLAC conversion `busy` while recording). Shortcut ⌘⇧R.
+  Verified with no screen: Debug build of the merge; planner 52, list selection 43, zone name 8, file usage
+  111, cross-project 76, object frame 550; `scenario_record` 276 (lot A), `scenario_record_zones` 85,
+  `scenario_disk_cleanup` (section F), `scenario_inputs` 52 (lot B). Not seen on screen.
   **The calibration is to the SAMPLE (engine patch `0047`, 2026-10-29)**: an impulse played at 1.000 s
   through a loopback is recorded at 1.000 s, error 0 (the scenarios accept +-1), at every buffer size
   (64 / 128 / 256 / 512 / 1024), started cold (seek 0 + `rec.start`) or punched in during playback,
@@ -2794,7 +2826,7 @@ What has landed since mid-August, in order:
   outside-window take, pairs 1-2 / 2-3 identical on the shared channel, punch-in without rebuild, refusals,
   calibration, buffer-size change during a recording); non-regression suites green; Settings.xml byte-identical.
   Commands: `rec.start`, `rec.stop`; `rec.status` gains `recording` and `last_takes`.
-  **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⌥R shortcut (no key event
+  **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⇧R shortcut (no key event
   can be sent headless), the takes on screen (handles, grey zone, muted ones), the file really heard back, a
   real card (latency of a real interface, a device unplugged mid-recording), a disk really full.
   **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with

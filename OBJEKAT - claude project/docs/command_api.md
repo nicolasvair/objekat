@@ -2369,12 +2369,21 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   The answer is `applied`, `refused` and `drops`: one object per lane (`outcome`, `reason`, `start`, `end`,
   `parent`, `target`, `lane`, `group`). One undo point for the lot; the new zones end up selected.
 * `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
-  absent (which disarms it). `invalid_state` for a group that cannot record. One undo point.
-* `rec.arm {group, on}` — arms or disarms. SESSION state: not saved, not in the undo, forgotten by a
+  absent (which disarms it). `invalid_state` for a group that cannot record, and while a recording is
+  under way. One undo point.
+* `rec.set_take_mode {group | groups: [uuid], mode: "mute" | "add"}` — the take mode of the zones (saved,
+  format 34; absent = `mute`). `mute`: the audible previous takes are muted at the press; `add`: nothing is
+  muted. In both modes the new take lands on the TOP lane and the previous ones move down one lane.
+  `bad_params` (mode/group missing), `not_found`, `invalid_state` (not a recordable zone) — nothing changed
+  then. One undo point, none when nothing changes. Accepted while recording: counts from the next take.
+* `rec.arm {group | groups: [uuid], on}` — arms or disarms. With `groups`, the ids that cannot change
+  state are skipped and listed in `ignored`; `invalid_state` only when none could be armed. SESSION state: not saved, not in the undo, forgotten by a
   new project or an opening. `invalid_state` when the group has no input, when its input is not on the
   card (or the inputs are closed) and for a group that cannot record. Several zones can be armed, on
   the same input too.
-* `rec.status` — `zones` (`id`, `name`, `input`, `input_present`, `recordable`, `armed`), `armed` (ids
+* `rec.status` — `zones` (`id`, `name` — the input's name while the zone has no typed name —, `input`, `input_present`,
+  `recordable`, `armed`, `input_prefix` — the input's name when the zone has a typed name, else null —,
+  `take_mode`), `armed` (ids
   armed AND still able to record), `can_record` (the transport's record button is live: something
   armed and a saved project), `project_saved`, `recording` (a recording is under way),
   `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
@@ -2397,7 +2406,7 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   `transport.play` ends it first.
 * `rec.stop` — ends the recording and playback; answers like `rec.status`. Each armed zone receives its
   TAKE: a child of the group holding the whole capture, cropped to the group's window with HANDLES
-  (`source_offset` points into the file), on the lane BELOW the previous takes, whose unmuted ones that
+  (`source_offset` points into the file), on the TOP lane, the previous takes moved down one lane, whose unmuted ones that
   cross the window are MUTED whole (already at the press, see `rec.start`; `muted` lists them). A take that
   does not cross the window is created anyway over the whole capture and mutes nothing (`outside_window`;
   the mutes of the press are given back). ONE undo point for the press and the stop together. `last_takes`:
