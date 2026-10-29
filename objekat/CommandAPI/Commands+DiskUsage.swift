@@ -12,7 +12,8 @@ extension CommandRegistry {
 
         register("project.disk_usage",
                  summary: "What the project folder weighs and how much of it nothing reads any more "
-                        + "(old revisions of consolidated waves, embedded sources, orphan waveform "
+                        + "(old revisions of consolidated waves, embedded sources, recordings "
+                        + "`samples/rec/` that nothing reads any more — `kind` \"recording\" —, orphan waveform "
                         + "caches). Recomputes by default; refused with invalid_state for a project "
                         + "never saved.",
                  params: [ParamSpec("scope", "string", required: false,

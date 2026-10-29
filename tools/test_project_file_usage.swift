@@ -202,6 +202,10 @@ enum ProjectFileUsageTest {
         ("samples/sources/cap.wav", 300),
         ("samples/other/alien.wav", 999),
         ("samples/rec/take.wav", 777),
+        ("samples/rec/Voix 2026-10-29 12-00-00.wav", 500),
+        ("samples/rec/.DS_Store", 6),
+        ("samples/rec/deep/inner.wav", 9),
+        ("waveforms/take.wav.wfc", 11),
         ("samples/root.wav", 999),
         ("samples/consolidate/deep/inner.wav", 999),
         ("samples/consolidate/.DS_Store", 6),
@@ -217,8 +221,16 @@ enum ProjectFileUsageTest {
           !ids(uni).contains("samples/other/alien.wav") && !ids(uni).contains("samples/root.wav")
           && !ids(uni).contains("samples/consolidate/deep/inner.wav") && !ids(uni).contains("notes.txt")
           && !ids(uni).contains("Project.objekat") && !ids(uni).contains("waveforms/readme.txt"))
-    check("universe: a recording of samples/rec is never offered for deletion",
-          !ids(uni).contains("samples/rec/take.wav") && !uni.contains { $0.files.contains("samples/rec/take.wav") })
+    check("universe: a take of samples/rec is a candidate of kind recording, with its cache",
+          uni.first { $0.id == "samples/rec/take.wav" }?.kind == .recording
+          && uni.first { $0.id == "samples/rec/take.wav" }?.files == ["samples/rec/take.wav", "waveforms/take.wav.wfc"]
+          && uni.first { $0.id == "samples/rec/take.wav" }?.size == 777 + 11)
+    check("universe: a take has no sidecar and the dot files and deeper sub-folders of rec/ stay out",
+          !uni.contains { $0.files.contains { $0.hasSuffix(".DS_Store") } }
+          && !ids(uni).contains("samples/rec/deep/inner.wav"))
+    check("universe: a take's cache is not listed twice",
+          uni.flatMap(\.files).filter { $0 == "waveforms/take.wav.wfc" }.count == 1
+          && uni.first { $0.id == "waveforms/take.wav.wfc" } == nil)
     check("universe: dot files are never listed",
           !uni.contains { $0.files.contains { $0.hasSuffix(".DS_Store") } })
     let v1 = uni.first { $0.id == "samples/consolidate/Kick_aaaaaaaa_v1.wav" }
@@ -389,6 +401,48 @@ enum ProjectFileUsageTest {
         let r = U.classify(universe: uni, session: u, protected: U.Usage(), others: [])
         check("capsule source in use is used (cache goes with it)",
               ids(r.used).contains("samples/sources/cap.wav") && r.used.first { $0.id == "samples/sources/cap.wav" }?.files.contains("waveforms/cap.wav.wfc") == true)
+    }
+
+    // Recordings (`samples/rec/`): the cleaning offers the takes nothing reads any more.
+    do {
+        let take = "samples/rec/take.wav"
+        let other = "samples/rec/Voix 2026-10-29 12-00-00.wav"
+        // Read by the session by an absolute path (what the engine stores), a relative one: used.
+        for path in ["/Users/n/Projects/P/" + take, take] {
+            let (_, u) = usage([Ref(filePath: path)], [], [:])
+            let r = U.classify(universe: uni, session: u, protected: U.Usage(), others: [])
+            check("rec: a take the project reads is used (\(path.hasPrefix("/") ? "absolute" : "relative") path), its cache with it",
+                  ids(r.used).contains(take) && r.used.first { $0.id == take }?.files.contains("waveforms/take.wav.wfc") == true)
+            check("rec: ... and the take nobody reads is unused (cleanable)", ids(r.unused).contains(other))
+        }
+        // A take read inside a group (a child of a zone) counts, whatever the depth.
+        let (_, nested) = usage([Ref(children: [Ref(children: [Ref(filePath: "/Users/n/Projects/P/" + take)])])], [], [:])
+        check("rec: a take read by a child of a group is used",
+              ids(U.classify(universe: uni, session: nested, protected: U.Usage(), others: []).used).contains(take))
+        // Read by another version of the folder only: used elsewhere, not unused.
+        let holder = U.Usage(rel: [take], names: ["take.wav"])
+        let r = U.classify(universe: uni, session: U.Usage(), protected: U.Usage(),
+                           others: [U.OtherVersion(name: "V1.objekat", usage: holder)])
+        check("rec: a take another version reads is used_elsewhere, never unused",
+              r.usedElsewhere.first { $0.candidate.id == take }?.usedBy == ["V1.objekat"] && !ids(r.unused).contains(take))
+        // Read by the clipboard (a protected holder): protected, never offered.
+        let rp = U.classify(universe: uni, session: U.Usage(), protected: holder, others: [])
+        check("rec: a take the clipboard holds is protected", ids(rp.protected).contains(take) && !ids(rp.unused).contains(take))
+        // Nothing reads it: an orphan, offered in both scopes.
+        let ro = U.classify(universe: uni, session: U.Usage(), protected: U.Usage(), others: [])
+        check("rec: an orphan take is cleanable in both scopes",
+              ids(ro.cleanable(in: .session, unreadableVersions: []) ?? []).contains(take)
+              && ids(ro.cleanable(in: .folder, unreadableVersions: []) ?? []).contains(take))
+        // A MUTED take stays in the project (mute is a flag on the object, not a removal): same Ref, used.
+        check("rec: a muted take is still read (the mute is a flag, the object keeps its path)",
+              ids(U.classify(universe: uni, session: usage([Ref(filePath: take)], [], [:]).1, protected: U.Usage(),
+                             others: []).used).contains(take))
+        // The archive leaves a WAV beside its FLAC: in rec/ it is a recording, not an "archived original".
+        let l = listed([("samples/rec/a.wav", 100), ("samples/rec/a.flac", 60), ("waveforms/a.wav.wfc", 3)])
+        let ua = U.universe(listing: l)
+        check("rec: a WAV with a FLAC twin in rec/ is one recording candidate, not an archived original",
+              ua.filter { $0.id == "samples/rec/a.wav" }.count == 1 && ua.first { $0.id == "samples/rec/a.wav" }?.kind == .recording
+              && ua.first { $0.id == "samples/rec/a.flac" }?.kind == .recording && !ua.contains { $0.kind == .archivedOriginal })
     }
 
     // MARK: - Decoding

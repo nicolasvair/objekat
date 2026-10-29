@@ -6,6 +6,9 @@ struct GroupBlockView: View {
     /// group composes its name from its children — a sort and a string per child — and this body
     /// runs on every pass of the timeline.
     var displayName: String
+    /// A recording zone with a name of its own: the input's name, written in front of it ("[mic] Input
+    /// → [folder] Name") — hidden while the name is being edited. nil = the name alone.
+    var inputPrefix: String? = nil
     let pixelsPerSecond: Double
     let rulerHeight: Double
     let blockHeight: Double
@@ -271,6 +274,17 @@ struct GroupBlockView: View {
                         // the block's own colour it was decoration beside the name, and it says
                         // the same kind of thing the name says, so it is coloured like the name
                         // (black, red and haloed when the file is gone).
+                        // A recording zone with a name of its own: "[mic] Input → " in front of the
+                        // glyph and the name (the Canvas writes the same run). Not while renaming.
+                        if !isRenaming, let inputPrefix {
+                            Image(systemName: ObjectKindIcon.recordInput)
+                                .font(.system(size: TimelineLabelMetrics.groupIconSize, weight: .medium))
+                                .foregroundStyle(BlockInk.metaColor(light: lightInk))
+                            Text(verbatim: " " + inputPrefix + " \u{2192} ")
+                                .font(.system(size: MissingFileLabel.size, weight: .medium))
+                                .foregroundStyle(BlockInk.metaColor(light: lightInk))
+                                .lineLimit(1)
+                        }
                         Image(systemName: ObjectKindIcon.name(for: group, isOpenConsolidate: isOpenConsolidate))
                             .font(.system(size: TimelineLabelMetrics.groupIconSize, weight: .medium))
                             .blockIconStyle(missingFile: containsMissingFile, lightInk: lightInk)

@@ -208,6 +208,8 @@ extension EditViewModel {
             return "diskUsage.busy.render"
         }
         if isEditingConsolidate || !consolidateEditStack.isEmpty { return "diskUsage.busy.consolidateEdit" }
+        // A take being recorded: its file exists (the engine is writing it) and no object names it yet.
+        if isRecording { return "diskUsage.busy.recording" }
         return nil
     }
 

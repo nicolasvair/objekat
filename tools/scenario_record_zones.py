@@ -17,6 +17,10 @@ Driven on `--virtual-audio` (4 inputs). The view is 100 s wide for the planner u
   F  groups that cannot record: infinite, looping, consolidated (drop, assign and arm refused)
   G  arming: refusals, several zones on one input, outside the undo, the record button via `can_record`
   H  arming is not persisted (reopening, new project); the input is.
+  J  the name: a zone is born without a label, its default name is its input's (it follows the input's
+     renaming); `input_prefix` appears only once a name is typed, goes when it is cleared, and a label
+     equal to the input's name (an older project) is still the default
+  K  arming several zones at once (`rec.arm groups`): the ones that cannot are passed over in silence
   I  Settings.xml is byte for byte what it was
 
 Settings.xml is only READ (hash). Run on the virtual card ONLY.
@@ -347,6 +351,68 @@ try:
         c.send("project.new")
         st = c.send("rec.status")
         check("a new project: no zone, nothing armed", st["zones"] == [] and st["armed"] == [] and not st["can_record"], st)
+
+        # ── J: the name ----------------------------------------------------------------------------
+        section("J  the name of a zone")
+        c.send("project.new")
+        c.send("input.enable")
+        c.send("input.set_name", {"first": 2, "name": "Voix"})
+        gz = drop(c, 2, 0, 0.0)["group"]
+        check("born without a name of its own: no input_prefix, named after its input",
+              zone(c, gz)["input_prefix"] is None and zone(c, gz)["name"] == "Voix" and objs(c)[gz]["name"] == "Voix",
+              zone(c, gz))
+        c.send("input.set_name", {"first": 2, "name": "Chant"})
+        check("the default name follows the input's renaming",
+              zone(c, gz)["name"] == "Chant" and objs(c)[gz]["name"] == "Chant" and zone(c, gz)["input_prefix"] is None,
+              zone(c, gz))
+        c.send("object.rename", {"id": gz, "name": "Refrain"})
+        check("a typed name is a group name: the input's name comes in front",
+              zone(c, gz)["input_prefix"] == "Chant" and zone(c, gz)["name"] == "Refrain", zone(c, gz))
+        c.send("input.set_name", {"first": 2, "name": "Micro"})
+        check("... and the prefix follows the input's renaming", zone(c, gz)["input_prefix"] == "Micro", zone(c, gz))
+        c.send("object.rename", {"id": gz, "name": ""})
+        check("clearing the name gives the default back (no prefix)",
+              zone(c, gz)["input_prefix"] is None and zone(c, gz)["name"] == "Micro", zone(c, gz))
+        # A zone of an older project carried the input's name as a label: that is the default, not a group name.
+        c.send("object.rename", {"id": gz, "name": "Micro"})
+        check("a label equal to the input's name is still the default (older projects)",
+              zone(c, gz)["input_prefix"] is None and zone(c, gz)["name"] == "Micro", zone(c, gz))
+        c.send("object.rename", {"id": gz, "name": "micro"})
+        check("... another case is a name somebody chose", zone(c, gz)["input_prefix"] == "Micro", zone(c, gz))
+        c.send("object.rename", {"id": gz, "name": ""})
+        # A group that is no zone never has a prefix, whatever its name.
+        pc = clip(c, 30, 0, 2)
+        pg = c.send("group.create", {"ids": [pc]})["id"]
+        c.send("object.rename", {"id": pg, "name": "Plain"})
+        check("a group with no input: not a zone, so not in rec.status", zone(c, pg) is None)
+        c.send("rec.assign", {"group": pg, "first": 0})
+        c.send("object.rename", {"id": pg, "name": ""})
+        check("assigned an input to a named-then-cleared group: default name is the input's",
+              zone(c, pg)["input_prefix"] is None and zone(c, pg)["name"] == "In 1", zone(c, pg))
+
+        # ── K: several zones at once ---------------------------------------------------------------
+        section("K  arming several zones at once")
+        c.send("project.new")
+        c.send("input.enable")
+        a = drop(c, 0, 0, 0.0)["group"]
+        b = drop(c, 1, 1, 0.0)["group"]
+        nc = clip(c, 5, 0, 2)
+        cnone = c.send("group.create", {"ids": [nc]})["id"]      # a group with no input
+        d0 = undo_depth(c)
+        r = c.send("rec.arm", {"groups": [a, b, cnone], "on": True})
+        check("groups [a, b, no-input]: a and b are armed, the third is passed over",
+              sorted(r["armed"]) == sorted([a, b]) and r["ignored"] == [cnone], r)
+        check("... without an error, and outside the undo", undo_depth(c) == d0)
+        r = c.send("rec.arm", {"groups": [a, b, cnone], "on": False})
+        check("the same list disarms them (disarming is always possible: nothing ignored)",
+              r["armed"] == [] and r["ignored"] == [], r)
+        check("none of them can: invalid_state",
+              refused(c, "rec.arm", groups=[cnone], on=True) == "invalid_state")
+        check("an unknown id among the others is ignored too",
+              c.send("rec.arm", {"groups": [a, "00000000-0000-0000-0000-000000000000"], "on": True})["armed"] == [a])
+        check("an empty list does nothing", c.send("rec.arm", {"groups": [], "on": True})["armed"] == [a])
+        check("neither group nor groups is a bad call", refused(c, "rec.arm", on=True) is not None)
+        c.send("rec.arm", {"group": a, "on": False})
 
     check("Settings.xml untouched by the whole run (hash)", digest() == before, "%s -> %s" % (before, digest()))
 finally:

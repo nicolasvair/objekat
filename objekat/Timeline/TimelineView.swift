@@ -64,7 +64,7 @@ struct TimelineView: View {
     var onTogglePlayback: () -> Void = {}
     /// ⌥space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
-    /// ⌘⌥R: record the armed zones / stop the recording, as the transport's button does.
+    /// ⌘⇧R: record the armed zones / stop the recording, as the transport's button does.
     var onToggleRecord: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
     /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).
@@ -260,6 +260,9 @@ struct TimelineView: View {
     @State var lastTapInfo: (time: Date, location: CGPoint) = (.distantPast, .zero)
     /// The recording zone whose [ o ] the previous click hit (@see handleCanvasTap).
     @State var recordIconTapID: UUID? = nil
+    /// What each zone acted on by that first click was (armed or not) BEFORE it, so that the second click
+    /// of a double tap gives every one of them back (a click on a selected zone acts on the selection).
+    @State var recordIconTapBefore: [UUID: Bool] = [:]
     @State var moveDrag: MoveDragState? = nil
     /// A drag held while the view scrolls (@see CanvasDragScrollFollow).
     @State var scrollFollow = CanvasDragScrollFollow()
@@ -3139,6 +3142,7 @@ struct TimelineView: View {
                 name: name,
                 icon: ObjectKindIcon.name(for: item,
                                           isOpenConsolidate: viewModel.isInConsolidateEditStack(item.id)),
+                inputPrefix: viewModel.recordZoneInputPrefix(of: item),
                 missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
                 mutedInMix: viewModel.isShownMuted(item),
                 badges: viewModel.featureBadges(of: item),
@@ -3874,6 +3878,7 @@ struct TimelineView: View {
         return GroupBlockView(
             group: group,
             displayName: viewModel.displayName(of: group),
+            inputPrefix: viewModel.recordZoneInputPrefix(of: group),
             pixelsPerSecond: pixelsPerSecond,
             rulerHeight: rulerHeight,
             blockHeight: blockHeight,

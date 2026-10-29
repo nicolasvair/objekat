@@ -207,7 +207,7 @@ final class ObjekatSession {
         return nil
     }
 
-    /// The record button and ⌘⌥R: stops a recording, or starts one when a zone is armed (and tells why not).
+    /// The record button and ⌘⇧R: stops a recording, or starts one when a zone is armed (and tells why not).
     func toggleRecording() {
         if viewModel.isRecording { stop(); return }
         guard viewModel.canRecord else { return }

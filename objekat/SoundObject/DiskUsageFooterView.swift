@@ -197,7 +197,7 @@ struct DiskUsagePopoverView: View {
                     if showOrphans {
                         Section {
                             ForEach(orphans) { unit in
-                                row(unit.name, unit.folder, unit.size, nil, tick: tickBinding(unit.id))
+                                row(unit.name, unit.folder, unit.size, nil, shownFolder: folderText(of: unit), tick: tickBinding(unit.id))
                             }
                         } header: {
                             sectionHeader {
@@ -218,10 +218,11 @@ struct DiskUsagePopoverView: View {
                                 if scope == .session {
                                     // OFFERED, but unticked: cleaning them makes the OTHER versions miss their files.
                                     row(unit.candidate.name, unit.candidate.folder, unit.candidate.size, detail,
+                                        shownFolder: folderText(of: unit.candidate),
                                         warn: true, tick: tickBinding(unit.id))
                                 } else {
                                     row(unit.candidate.name, unit.candidate.folder, unit.candidate.size, detail,
-                                        tick: nil)
+                                        shownFolder: folderText(of: unit.candidate), tick: nil)
                                         .opacity(0.55)
                                 }
                             }
@@ -270,14 +271,21 @@ struct DiskUsagePopoverView: View {
             .background(.bar)
     }
 
+    /// What the line under a file's name says about where it lives: its folder, except for a take, which
+    /// says what it IS ("Recordings") — nobody looks for a take by its folder. The tooltip keeps the path.
+    private func folderText(of unit: ProjectFileUsage.Candidate) -> String {
+        unit.kind == .recording ? L("diskUsage.kind.recording") : unit.folder
+    }
+
     /// One file. Three columns that a long name cannot push: the checkbox (or its empty place, so
     /// the rows of both sections line up), the name over its folder — each on ONE line, cut in the
     /// middle, taking only the width left — and the size, a fixed column on the right. The whole
     /// path is in the tooltip. The checkbox is no longer the row's LABEL: a macOS checkbox sizes
     /// itself on its label's full text, which is what pushed the size out of the popover.
     private func row(_ name: String, _ folder: String, _ size: Int64, _ detail: String?,
-                     warn: Bool = false, tick: Binding<Bool>?) -> some View {
+                     shownFolder: String? = nil, warn: Bool = false, tick: Binding<Bool>?) -> some View {
         let path = folder.isEmpty ? name : "\(folder)/\(name)"
+        let place = shownFolder ?? folder
         return HStack(alignment: .center, spacing: 6) {
             Group {
                 if let tick {
@@ -290,7 +298,7 @@ struct DiskUsagePopoverView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(verbatim: name).font(.system(size: 11))
                     .lineLimit(1).truncationMode(.middle)
-                Text(verbatim: detail.map { "\(folder) · \($0)" } ?? folder)
+                Text(verbatim: detail.map { "\(place) · \($0)" } ?? place)
                     .font(.system(size: 9)).foregroundStyle(warn ? Color.orange : .secondary)
                     .lineLimit(1).truncationMode(.middle)
             }

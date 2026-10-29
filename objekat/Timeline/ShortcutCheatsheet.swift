@@ -153,6 +153,7 @@ enum ShortcutCheatsheet {
             return [ShortcutSection(title: "⌘⇧", rows: [
                 ShortcutRow(keys: "⌘⇧Z", label: L("cheatsheet.redo")),
                 ShortcutRow(keys: "⌘⇧S", label: L("cheatsheet.saveAs")),
+                ShortcutRow(keys: "⌘⇧R", label: L("cheatsheet.record")),
             ])]
         }
         if cmd && !shift && !opt && !ctrl {
