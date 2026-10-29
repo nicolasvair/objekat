@@ -3130,6 +3130,29 @@
         }
       }
     },
+    "diskUsage.busy.recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A recording is under way: try again when it is done."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay una grabación en curso: inténtelo de nuevo cuando termine."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un enregistrement est en cours : réessayez quand il sera terminé."
+          }
+        }
+      }
+    },
     "diskUsage.busy.render": {
       "extractionState": "manual",
       "localizations": {
@@ -3609,6 +3632,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Espace disque du dossier du projet. Cliquer pour nettoyer les fichiers que plus rien ne lit."
+          }
+        }
+      }
+    },
+    "diskUsage.kind.recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recordings"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrements"
           }
         }
       }
