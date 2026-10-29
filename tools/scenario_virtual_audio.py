@@ -142,6 +142,10 @@ try:
         check("virtual.status open", vs["open"] is True, vs)
         check("4 inputs, 2 outputs", vs["inputs"] == 4 and vs["outputs"] == 2, vs)
         check("configured latencies 64 / 96", vs["input_latency"] == 64 and vs["output_latency"] == 96, vs)
+        check("inputs closed at launch: the card announces no input latency, output = configured + one buffer (352)",
+              vs["announced_input_latency"] == 0 and vs["announced_output_latency"] == 96 + 256, vs)
+        c.send("input.enable")                             # open the card's inputs: it now announces them too
+        vs = c.send("audio.virtual.status")
         check("ANNOUNCED latencies = configured + one buffer (320 / 352), like CoreAudio",
               vs["announced_input_latency"] == 64 + 256 and vs["announced_output_latency"] == 96 + 256, vs)
         check("announced in + out = loopback_delay",
@@ -218,6 +222,7 @@ try:
         check("device is the virtual card", st["device"] == CARD, st["device"])
         check("44100 Hz", st["sample_rate"] == 44100, st["sample_rate"])
         check("128 frames", st["buffer_size"] == 128, st["buffer_size"])
+        c.send("input.enable")
         vs = c.send("audio.virtual.status")
         check("2 inputs", vs["inputs"] == 2, vs)
         check("latencies 10 / 20", vs["input_latency"] == 10 and vs["output_latency"] == 20, vs)
