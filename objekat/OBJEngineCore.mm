@@ -1284,6 +1284,7 @@ struct OBJLatencyWatcher : public juce::Timer {
 @interface OBJEngineCore ()
 - (void)rebindAudioWorkgroupIfDeviceChanged;
 - (void)syncInputMonitors;       // @see "Input monitoring"
+- (BOOL)isLiveInputFirst:(NSInteger)first count:(NSInteger)count;     // @see "Input monitoring"
 - (void)stopRecordingIfActive;   // @see "Recording"
 @end
 
@@ -1848,6 +1849,8 @@ struct OBJExportLoadScope {
     // sees them. Both are keyed (first channel, channel count).
     std::set<std::pair<int, int>>                             _monitoredInputs;
     std::map<std::pair<int, int>, te::EditItemID>             _inputTrackIDs;
+    // The listening level (dB) of each input, applied by `syncInputMonitors` as an ObjGain on its hidden track.
+    std::map<std::pair<int, int>, float>                      _inputMonitorGains;
     // Recording: the inputs prepared to record (their hidden track exists and is targeted), the file each
     // one is writing, and the listener collecting the result. @see -startRecordingInputs:.
     std::set<std::pair<int, int>>                             _armedInputs;
@@ -11057,6 +11060,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     [self stopRecordingIfActive];
     [self releaseInputMeter];
     _monitoredInputs.clear();
+    _inputMonitorGains.clear();
     _armedInputs.clear();
     [self syncInputMonitors];
     if (![self audioInputsOpen]) return;
@@ -11181,6 +11185,8 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         it = live.count(*it) ? std::next(it) : _monitoredInputs.erase(it);
     for (auto it = _armedInputs.begin(); it != _armedInputs.end(); )
         it = live.count(*it) ? std::next(it) : _armedInputs.erase(it);
+    for (auto it = _inputMonitorGains.begin(); it != _inputMonitorGains.end(); )
+        it = live.count(it->first) ? std::next(it) : _inputMonitorGains.erase(it);
 
     // A hidden track serves an input that is heard OR armed to record (and one being recorded keeps its
     // track whatever happens: the target cannot change while Tracktion records into it).
@@ -11198,6 +11204,13 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         if (!wi || !track) continue;
         wi->setMonitorMode(_monitoredInputs.count(key) ? te::InputDevice::MonitorMode::on
                                                        : te::InputDevice::MonitorMode::off);
+        // The listening level: an ObjGain at the end of the track's chain (a true dB gain, unlike the track's
+        // own fader which stops at +6). The recording is taken from the device, before the track.
+        const float gainDb = _inputMonitorGains.count(key) ? _inputMonitorGains[key] : 0.0f;
+        auto* gain = track->pluginList.findFirstPluginOfType<te::ObjGainPlugin>();
+        if (gain == nullptr && gainDb != 0.0f)
+            gain = dynamic_cast<te::ObjGainPlugin*>(insertObjGain(track->pluginList).get());
+        if (gain != nullptr) gain->setGainDb(gainDb);
         if (auto* inst = epc ? epc->getInputFor(wi) : nullptr) {
             if (!inst->getTargets().contains(track->itemID)) {
                 auto res = inst->setTarget(track->itemID, true, nullptr);
@@ -11220,23 +11233,40 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     }
 }
 
+- (BOOL)isLiveInputFirst:(NSInteger)first count:(NSInteger)count {
+    if (![self audioInputsOpen]) return NO;
+    for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+        const auto& ch = wi->getChannels();
+        if (!ch.isEmpty() && wi->isEnabled() && ch[0].indexInDevice == first && ch.getNumChannels() == count)
+            return YES;
+    }
+    return NO;
+}
+
 - (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count {
     const std::pair<int, int> key { (int) first, (int) count };
     if (on) {
         if (![self audioInputsOpen]) return @"the inputs are closed";
-        bool exists = false;
-        for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
-            const auto& ch = wi->getChannels();
-            if (!ch.isEmpty() && wi->isEnabled() && ch[0].indexInDevice == key.first
-                && ch.getNumChannels() == key.second) { exists = true; break; }
-        }
-        if (!exists) return @"no such input";
+        if (![self isLiveInputFirst:first count:count]) return @"no such input";
         _monitoredInputs.insert(key);
     } else {
         _monitoredInputs.erase(key);
     }
     [self syncInputMonitors];
     return nil;
+}
+
+- (NSString* _Nullable)setAudioInputMonitorGain:(float)db first:(NSInteger)first count:(NSInteger)count {
+    if (![self audioInputsOpen]) return @"the inputs are closed";
+    if (![self isLiveInputFirst:first count:count]) return @"no such input";
+    _inputMonitorGains[{ (int) first, (int) count }] = db;
+    [self syncInputMonitors];
+    return nil;
+}
+
+- (float)audioInputMonitorGainFirst:(NSInteger)first count:(NSInteger)count {
+    const auto it = _inputMonitorGains.find({ (int) first, (int) count });
+    return it == _inputMonitorGains.end() ? 0.0f : it->second;
 }
 
 - (NSArray<NSDictionary<NSString*, NSNumber*>*>*)audioInputMonitors {

@@ -1001,6 +1001,13 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count;
 /// The inputs being monitored right now, as `{first, count}`, ordered.
 - (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)audioInputMonitors;
+/// The LISTENING level of an input, in dB (a true gain, -24...+24 in the Inputs tab), applied on its hidden
+/// track AFTER the point where the recording is taken: the file is the same whatever it is. It belongs to
+/// the engine, like the monitoring itself (not saved; forgotten when the inputs close or the input stops
+/// existing). nil on success, otherwise why not (inputs closed, no such input).
+- (NSString* _Nullable)setAudioInputMonitorGain:(float)db first:(NSInteger)first count:(NSInteger)count;
+/// The listening level of an input in dB (0 when none was set).
+- (float)audioInputMonitorGainFirst:(NSInteger)first count:(NSInteger)count;
 
 // RECORDING (@see docs/plan_enregistrement_audio.md). One hidden track per input, targeted by the input
 // device (the same track that carries the monitoring); Tracktion's transport records into it and does

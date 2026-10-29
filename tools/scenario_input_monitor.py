@@ -16,6 +16,10 @@ a known signal on each); the master's level is read through `stem.level` of the 
      input is heard, a solo elsewhere does not silence it, monitoring stops with the inputs and with a
      pair heard being taken apart, but NOT with a new or opened project (it is the card's, not
      the project's); refusals when the inputs are closed
+  F  monitor gain PER INPUT (`input.set_monitor_gain`, `monitor_gain_db`): 0 dB vs -12 dB = 12 dB apart
+     on the master, only the LISTENING moves (the recorded file is the same whatever the gain), a
+     gain on an input nobody hears adds nothing, it is the session's (not in the file, forgotten when
+     the inputs close), refusals
   E  Settings.xml is byte for byte what it was
 
 Settings.xml is only READ (hash); nothing here writes it. Run on the virtual card ONLY.
@@ -25,7 +29,9 @@ Settings.xml is only READ (hash); nothing here writes it. Run on the virtual car
 Exit: 0 if every assertion passes, 1 if one fails, 2 on bad usage.
 """
 
-import hashlib, json, os, shutil, subprocess, sys, tempfile, time
+import hashlib, json, os, shutil, struct, subprocess, sys, tempfile, time
+
+import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -83,6 +89,41 @@ def recs(lst):
 
 def names(lst):
     return [(d["first"], d["count"], d["name"]) for d in lst["record_inputs"]]
+
+
+def read_wav_float(path):
+    """The float32 samples [frames, channels] of a 32-bit float WAV."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    pos, ch, data = 12, 1, b""
+    while pos + 8 <= len(raw):
+        cid, size = raw[pos:pos + 4], struct.unpack("<I", raw[pos + 4:pos + 8])[0]
+        body = raw[pos + 8:pos + 8 + size]
+        if cid == b"fmt ":
+            ch = struct.unpack("<H", body[2:4])[0]
+        elif cid == b"data":
+            data = body
+        pos += 8 + size + (size & 1)
+    return np.frombuffer(data[:len(data) // 4 * 4], dtype="<f4").reshape(-1, ch)
+
+
+def record_two_seconds(c, tmp, name):
+    """A saved project, a zone armed on the card's input 1, 2 s recorded: the take's samples."""
+    c.send("project.new")
+    c.send("project.save_as", {"path": os.path.join(tmp, name, name + ".objekat.json")})
+    c.send("timesel.set", {"start": 0, "end": 4, "lanes": [0]})
+    zone = c.send("rec.drop", {"first": 0, "count": 1, "lane": 0, "time": 2})["group"]
+    c.send("timesel.clear")
+    c.send("rec.arm", {"group": zone, "on": True})
+    c.send("transport.seek", {"seconds": 0})
+    c.send("rec.start")
+    end = time.time() + 20
+    while time.time() < end and c.send("transport.state")["position"] < 3.0:
+        time.sleep(0.05)
+    take = c.send("rec.stop")["last_takes"][0]
+    c.send("rec.arm", {"group": zone, "on": False})
+    x = read_wav_float(take["path"])[:, 0]
+    return x[int(0.5 * 48000):int(2.5 * 48000)]
 
 
 def master_level(c):
@@ -317,6 +358,68 @@ try:
         c.send("transport.stop")
         check("playback works with an input monitored", playing is True)
         c.send("input.monitor", {"first": 0, "on": False})
+
+        # ── F: the monitor gain, per input ------------------------------------------------------
+        section("F  monitor gain per input")
+        c.send("project.new")
+        lst = c.send("input.list")
+        check("every input starts at 0 dB", all(d["monitor_gain_db"] == 0 for d in lst["record_inputs"]), lst["record_inputs"])
+        c.send("input.monitor", {"first": 0, "on": True})
+        time.sleep(0.5)
+        master_level(c)
+        l0 = master_level(c)
+        lst = c.send("input.set_monitor_gain", {"first": 0, "db": -12})
+        check("-12 dB reported by input.list", recs(lst)[(0, 1)]["monitor_gain_db"] == -12, lst["record_inputs"])
+        time.sleep(0.5)
+        master_level(c)
+        l12 = master_level(c)
+        check("0 dB vs -12 dB: 12 dB apart on the master (%.3f -> %.3f, expected 0.2 of the 60 dB scale)" % (l0, l12),
+              abs((l0 - l12) - 12.0 / 60.0) < 0.04, (l0, l12))
+        check("the other inputs keep 0 dB", all(d["monitor_gain_db"] == 0 for d in lst["record_inputs"] if (d["first"], d["count"]) != (0, 1)))
+        c.send("input.set_monitor_gain", {"first": 0, "db": 6})
+        time.sleep(0.5)
+        master_level(c)
+        l6 = master_level(c)
+        check("+6 dB: louder than 0 dB (%.3f > %.3f), the box reaches past +6 (true dB, not the 6 dB fader)" % (l6, l0),
+              l6 > l0 + 0.05, (l6, l0))
+        lst = c.send("input.set_monitor_gain", {"first": 0, "db": 99})
+        check("past the box's range: held at +24", recs(lst)[(0, 1)]["monitor_gain_db"] == 24, lst["record_inputs"])
+        lst = c.send("input.set_monitor_gain", {"first": 0, "db": -99})
+        check("under the box's range: held at -24", recs(lst)[(0, 1)]["monitor_gain_db"] == -24, lst["record_inputs"])
+
+        # the gain acts on the LISTENING only: a gain on an input nobody hears adds nothing,
+        # and the recorded file is the same whatever the gain
+        c.send("input.monitor", {"first": 0, "on": False})
+        c.send("input.set_monitor_gain", {"first": 0, "db": 12})
+        time.sleep(0.5)
+        master_level(c)
+        mute = master_level(c)
+        check("a gain on an input that is not heard adds nothing (%.3f)" % mute, mute < 0.05, mute)
+        c.send("input.monitor", {"first": 0, "on": True})
+        c.send("input.set_monitor_gain", {"first": 0, "db": -12})
+        quiet_take = record_two_seconds(c, tmp, "g1")
+        c.send("input.set_monitor_gain", {"first": 0, "db": 0})
+        loud_take = record_two_seconds(c, tmp, "g2")
+        qp, lp = float(np.max(np.abs(quiet_take))), float(np.max(np.abs(loud_take)))
+        qr, lr = float(np.sqrt(np.mean(quiet_take ** 2))), float(np.sqrt(np.mean(loud_take ** 2)))
+        check("the file is the same at -12 and at 0 dB: peaks %.4f / %.4f (0.5 sine)" % (qp, lp),
+              abs(qp - 0.5) < 0.02 and abs(lp - 0.5) < 0.02, (qp, lp))
+        check("... and the same RMS %.4f / %.4f" % (qr, lr), abs(qr - lr) < 0.01 and abs(qr - 0.3536) < 0.02, (qr, lr))
+
+        # the session's: not in the file, forgotten with the inputs, refusals
+        c.send("input.set_monitor_gain", {"first": 0, "db": -5})
+        c.send("project.save")
+        proj = [os.path.join(d, f) for d, _, fs in os.walk(os.path.join(tmp, "g2")) for f in fs if "objekat" in f]
+        check("the gain is NOT written to the project file",
+              bool(proj) and all("monitorgain" not in open(f).read().lower().replace("_", "") for f in proj), proj)
+        c.send("input.disable")
+        lst = c.send("input.enable")
+        check("closing the inputs forgets the gain", all(d["monitor_gain_db"] == 0 for d in lst["record_inputs"]), lst["record_inputs"])
+        check("a gain on an input that does not exist is refused",
+              refused(c, "input.set_monitor_gain", first=9, db=0) == "invalid_state")
+        c.send("input.disable")
+        check("... and while the inputs are closed", refused(c, "input.set_monitor_gain", first=0, db=0) == "invalid_state")
+        check("a missing db is refused", refused(c, "input.set_monitor_gain", first=0) == "bad_params")
 
     check("Settings.xml untouched by the whole run (hash)", digest() == before, "%s -> %s" % (before, digest()))
 finally:

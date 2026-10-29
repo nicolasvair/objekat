@@ -65,7 +65,7 @@ extension CommandRegistry {
                  `engine_devices` is everything the engine describes (2N - 1 for N channels: \
                  N monos then N - 1 neighbouring pairs), enabled or not. `record_inputs` is what the \
                  Inputs tab lists — every declared pair, then every mono — with the project's \
-                 `name` for each (`custom` when one was typed) and whether it is `monitored`. All are \
+                 `name` for each (`custom` when one was typed), whether it is `monitored` and its `monitor_gain_db`. All are \
                  empty while the inputs are closed (`open: false`), `--no-audio` included — never an \
                  error.
                  """,
@@ -174,6 +174,28 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let ref = try Self.inputRef(p)
             if let why = vm.setInputMonitor(ref, on: try p.bool("on")) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
+        }
+
+        register("input.set_monitor_gain",
+                 summary: """
+                 Sets the LISTENING level of an input in dB (`db`, held to -24...+24, the synoptic's gain \
+                 range; `first`, `count` as in `input.set_name`): a true gain on the input's hidden \
+                 track, heard whether or not the input is monitored (it only matters while it is). Only the \
+                 listening moves: a recording is taken BEFORE it, the file is the same whatever it is. \
+                 `invalid_state` when the inputs are closed or the input does not exist. Not saved, and \
+                 forgotten when the inputs close or the input stops existing. Answers like `input.list` \
+                 (`monitor_gain_db`).
+                 """,
+                 params: [ParamSpec("first", "int", "First channel, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("db", "number", "The level in dB.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ref = try Self.inputRef(p)
+            if let why = vm.setInputMonitorGain(ref, db: try p.double("db")) {
                 throw CommandError(code: .invalid_state, message: why)
             }
             return Self.inputListPayload(try CommandContext.shared.requireEngine())
@@ -443,7 +465,8 @@ extension CommandRegistry {
             .object(["first": .int(ref.first), "count": .int(ref.count), "stereo": .bool(ref.isStereo),
                      "name": .string(vm.inputName(ref)),
                      "custom": .bool(vm.recordInputs.customName(for: ref) != nil),
-                     "monitored": .bool(heard.contains(ref))])
+                     "monitored": .bool(heard.contains(ref)),
+                     "monitor_gain_db": .number(vm.inputMonitorGain(ref))])
         })
     }
 }

@@ -5,7 +5,7 @@ import Combine
 ///
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
 /// switches AirPods to the call profile, so nothing here does it on its own). Then one row per input:
-/// its number, a level dot, an editable name and a monitor button. The pairs come first, then every
+/// its number, a level dot, an editable name, the listening level and a monitor button. The pairs come first, then every
 /// mono (a pair does not take its monos away). The right-click menu works on the selection (⌘ or ⇧ click
 /// to extend it) when the row is part of it, else on the row alone: two NEIGHBOURING monos can be linked
 /// as one stereo input, a pair can be removed. The names and the pairs belong to the project and are
@@ -104,6 +104,7 @@ struct InputsPanelView: View {
                     .help(L("inputs.rename.help"))
             }
             Spacer(minLength: 4)
+            monitorGainBox(ref, heard: monitored.contains(ref))
             Button {
                 _ = viewModel.setInputMonitor(ref, on: !monitored.contains(ref))
                 tick()
@@ -132,6 +133,28 @@ struct InputsPanelView: View {
             }
         }
         .contextMenu { contextMenu(for: ref) }
+    }
+
+    /// The most a DRAG may raise the listening level above where it started (a typed value is only held
+    /// to the box's range).
+    private static let monitorRiseLimit: Double = 6
+    private static let gainRange = Double(GainStageValues.gainRange.lowerBound)...Double(GainStageValues.gainRange.upperBound)
+
+    /// The listening level of the input, in dB: the synoptic's gain box (drag, ⇧ fine, arrows, typing,
+    /// double-click = 0 dB). Hearing only — it does not touch what is recorded. Greyed and inert while the
+    /// input is not heard.
+    private func monitorGainBox(_ ref: InputRef, heard: Bool) -> some View {
+        DragValueBox(value: viewModel.inputMonitorGain(ref),
+                     format: { $0 == 0 ? "0 dB" : String(format: "%+.0f dB", $0) },
+                     range: Self.gainRange,
+                     pointsPerStep: 6, snap: true, width: 44,
+                     keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
+                     dragRiseLimit: Self.monitorRiseLimit,
+                     help: L("inputs.monitorGain.help"),
+                     onChange: { _ = viewModel.setInputMonitorGain(ref, db: $0); tick() },
+                     onReset: { _ = viewModel.setInputMonitorGain(ref, db: 0); tick() })
+            .opacity(heard ? 1 : 0.4)
+            .disabled(!heard)
     }
 
     /// The right-click menu: it acts on the selection when the row belongs to it, else on the row alone.

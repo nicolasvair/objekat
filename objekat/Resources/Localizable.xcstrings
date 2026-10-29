@@ -9570,6 +9570,29 @@
         }
       }
     },
+    "inputs.monitorGain.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Listening volume of this input (does not affect the recording) — drag: +6 dB at most per gesture, double-click = 0 dB"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volumen de escucha de esta entrada (no afecta a la grabación) — arrastrar: +6 dB como máximo por gesto, doble clic = 0 dB"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volume d'écoute de cette entrée (n'affecte pas l'enregistrement) — glisser : +6 dB au plus par geste, double-clic = 0 dB"
+          }
+        }
+      }
+    },
     "inputs.name.mono": {
       "extractionState": "manual",
       "localizations": {
