@@ -23,8 +23,6 @@ struct InputsPanelView: View {
     @State private var monitored: Set<InputRef> = []
     @State private var selection: Set<InputRef> = []
     @State private var failure: String? = nil
-    @State private var renaming: InputRef? = nil
-    @State private var editText = ""
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -73,6 +71,10 @@ struct InputsPanelView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows, id: \.self) { ref in row(ref) }
+                    // The void under the rows: a click there ends a rename (committing it), like a click
+                    // on the canvas. Not an ancestor gesture, which would also fire over the field.
+                    Color.clear.frame(height: 60).contentShape(Rectangle())
+                        .onTapGesture { viewModel.renamingInput = nil }
                 }
             }
         }
@@ -86,17 +88,19 @@ struct InputsPanelView: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 30, alignment: .trailing)
             StemVuDot(level: level(of: ref))
-            if renaming == ref {
-                TextField(noLabel, text: $editText)
-                    .font(.system(.caption, weight: .semibold))
-                    .textFieldStyle(.plain)
-                    .onSubmit { viewModel.renameInput(ref, to: editText); renaming = nil }
-                    .onExitCommand { renaming = nil }
+            if viewModel.renamingInput == ref {
+                // Leaving commits what was typed, Esc cancels (@see MarkerRenameField).
+                MarkerRenameField(initial: viewModel.inputName(ref),
+                                  font: .system(.caption, weight: .semibold),
+                                  commitsOnFocusLoss: true) { value in
+                    if let value { viewModel.renameInput(ref, to: value) }
+                    if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
+                }
             } else {
                 Text(viewModel.inputName(ref))
                     .font(.system(.caption, weight: .semibold))
                     .lineLimit(1)
-                    .onTapGesture { editText = viewModel.inputName(ref); renaming = ref }
+                    .onTapGesture { viewModel.renamingInput = ref }
                     .help(L("inputs.rename.help"))
             }
             Spacer(minLength: 4)
@@ -119,7 +123,7 @@ struct InputsPanelView: View {
         // this input (@see RecordZonePlanner, InputDragSession).
         .onDrag { InputDragSession.shared.begin(ref) }
         .onTapGesture {
-            renaming = nil
+            viewModel.renamingInput = nil
             let extend = NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift)
             if extend {
                 if isSelected { selection.remove(ref) } else { selection.insert(ref) }

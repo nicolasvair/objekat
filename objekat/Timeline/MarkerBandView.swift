@@ -229,6 +229,12 @@ struct MarkerBandView: View {
 /// field.
 struct MarkerRenameField: View {
     let initial: String
+    /// The text's font (a marker's name by default).
+    var font: Font = .system(size: 9, weight: .medium)
+    /// true = losing the keyboard focus ENDS the edit and commits what was typed, like the field's
+    /// disappearance does (a field that is not taken off screen by anything else, as a row of the
+    /// Inputs tab). The markers rely on the model removing the field instead.
+    var commitsOnFocusLoss: Bool = false
     /// nil = cancelled (Esc). Otherwise the new text.
     let onCommit: (String?) -> Void
 
@@ -241,12 +247,15 @@ struct MarkerRenameField: View {
 
     var body: some View {
         TextField(noLabel, text: $text)
-            .font(.system(size: 9, weight: .medium))
+            .font(font)
             .textFieldStyle(.plain)
             .padding(.horizontal, 3)
             .background(RoundedRectangle(cornerRadius: 3).fill(.regularMaterial))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1))
             .focused($focused)
+            .onChange(of: focused) { was, now in
+                if commitsOnFocusLoss, was, !now { finish(text) }
+            }
             .onSubmit { finish(text) }
             .onExitCommand { finish(nil) }
             // Deselecting takes the field away (@see EditViewModel.selectedAnnotation): what was

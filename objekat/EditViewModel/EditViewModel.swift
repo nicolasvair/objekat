@@ -348,6 +348,10 @@ final class EditViewModel {
     /// (abnormal cyclic dependencies). Reset at every new cascade.
     @ObservationIgnored var cascadeRebakeCount: Int = 0
     var renamingID: UUID? = nil
+    /// The Inputs tab's row being renamed, if any. Same doors as `renamingID` (a click on the canvas, a tab
+    /// switch, a click on another row or on the panel's void close it) and the same rule: leaving
+    /// commits what was typed (@see MarkerRenameField). Session state, not the project's.
+    var renamingInput: InputRef? = nil
     var activeTool: ActiveTool = .toolSelection
     var isToolPermanent: Bool = true
     var heldToolKeyCode: UInt16? = nil

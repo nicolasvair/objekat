@@ -196,6 +196,7 @@ extension EditViewModel {
         selectedPluginHostID = nil
         selectedCrossfade = nil
         renamingID = nil
+        renamingInput = nil
         pluginParamValues = [:]
         liveAutomationValues = [:]
         KeyboardClaim.shared.revoke()
