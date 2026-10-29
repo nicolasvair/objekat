@@ -2338,8 +2338,9 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
 **Recording zones (`rec.*`).** A zone is a GROUP with a `recordInput` (saved with the object, in the
 undo). These are the doors of the drop, the assignment, the arming and the recording itself.
 
-* `rec.drop {first, count?, lane, time, visible_secs?, dry_run?}` — what releasing a row of the Inputs
-  tab on the timeline does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
+* `rec.drop {first, count?, lane, time, visible_secs?, dry_run?}` or `rec.drop {inputs: [{first, count?}],
+  lane, time, ...}` — what releasing a row (or several selected rows) of the Inputs tab on the timeline
+  does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
   after the input, from `time` for 40 % of the view (`visible_secs`, default 100) or up to the next
   object of the lane, at least max(1 s, 24 px). Over the time selection: its in/out. Over a group that
   can record: the input is assigned to it. Over a clip, a group that cannot record (infinite, looping,
@@ -2347,6 +2348,12 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   sub-group (`parent`). `time` is NOT snapped. Answers `outcome` (`create` | `assign` | `refuse`),
   `reason` (`onObject`, `notRecordable`, `parentNotRecordable`, `tooShort`, `overlap`), `start`, `end`,
   `parent`, `target`, `group`, `applied`. One undo point for a change, none for a refusal.
+  SEVERAL inputs (`inputs`, an empty list or a `count` other than 1 / 2 is `bad_params`): one lane per
+  input, DOWNWARDS from `lane` in the order given, EACH with its own end (the rule above applies lane by
+  lane: the next object of THAT lane, or the selection's in/out on the lanes it covers); ONE refused lane
+  refuses the lot (nothing created, no undo point); a lane holding a group takes the input as an assignment.
+  The answer is `applied`, `refused` and `drops`: one object per lane (`outcome`, `reason`, `start`, `end`,
+  `parent`, `target`, `lane`, `group`). One undo point for the lot; the new zones end up selected.
 * `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
   absent (which disarms it). `invalid_state` for a group that cannot record. One undo point.
 * `rec.arm {group, on}` — arms or disarms. SESSION state: not saved, not in the undo, forgotten by a
@@ -2355,22 +2362,30 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   the same input too.
 * `rec.status` — `zones` (`id`, `name`, `input`, `input_present`, `recordable`, `armed`), `armed` (ids
   armed AND still able to record), `can_record` (the transport's record button is live: something
-  armed and a saved project), `project_saved`, `recording` (a recording is under way) and `last_takes`
-  (the takes of the last recording, below).
+  armed and a saved project), `project_saved`, `recording` (a recording is under way),
+  `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
+  recording, the red block the timeline draws for each zone: `{group, lane, start, end}` — `lane` the
+  display lane the take will land on, the zone's own row when it is closed; `start`..`end` the part of the
+  zone's window between the press and the playhead; a zone the head has not reached is absent) and
+  `last_takes` (the takes of the last recording, below).
 * `rec.start {seconds?}` — the transport's record button. Stopped: plays AND records from the cursor (or
   from `seconds`); playing: punches in at the current position (the graph is not rebuilt). It records the
   inputs of the ARMED zones on hidden per-input tracks, through Tracktion's transport, which compensates
   the latency of the card and of the graph. ONE 32-bit float WAV per input and per take, at the card's
   rate, in `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for an input of the same
   name), shared by every zone armed on that input. `invalid_state` when nothing is armed, the project is
-  unsaved, the inputs are closed or a recording is already under way. While it lasts a tab switch,
+  unsaved, the inputs are closed or a recording is already under way. The previous takes the new one will
+  replace (the unmuted children crossing a zone's window) are MUTED AT THE PRESS, before the engine
+  starts, in the undo point of the take — except when the press is already past the window's end; a
+  recording the engine refuses, or that gives no take, gives them back. While it lasts a tab switch,
   `tab.new`/`tab.open`/`project.new`/`project.open` are refused, `wait_idle` is not idle, and a seek or
   `transport.play` ends it first.
 * `rec.stop` — ends the recording and playback; answers like `rec.status`. Each armed zone receives its
   TAKE: a child of the group holding the whole capture, cropped to the group's window with HANDLES
   (`source_offset` points into the file), on the lane BELOW the previous takes, whose unmuted ones that
-  cross the window are MUTED whole. A take that does not cross the window is created anyway over the
-  whole capture and mutes nothing (`outside_window`). ONE undo point for the lot. `last_takes`:
+  cross the window are MUTED whole (already at the press, see `rec.start`; `muted` lists them). A take that
+  does not cross the window is created anyway over the whole capture and mutes nothing (`outside_window`;
+  the mutes of the press are given back). ONE undo point for the press and the stop together. `last_takes`:
   `{group, object, path, start, duration, source_offset, lane, outside_window, muted}`.
   `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
   the application quitting, end it the same way: the files are kept and the takes land in the project.
@@ -2381,8 +2396,10 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
 `tools/test_record_zone_planner.swift` asserts the planner alone; `tools/scenario_record_zones.py`
 asserts the zones against the virtual card; `tools/test_record_take_planner.swift` and
 `tools/test_record_file_naming.swift` assert the take planning and the file names;
-`tools/scenario_record.py` records for real on the virtual card (65+ assertions: file, header, content,
-handles, mute, lane order, one undo, punch-in, calibration, card change during recording).
+`tools/scenario_record.py` records for real on the virtual card (file, header, content, handles, mute at the
+press, red block, lane order, one undo, punch-in, calibration, card change during recording);
+`tools/test_record_progress.swift` asserts the red block's span and lane; `tools/scenario_record_multi_drop.py`
+asserts the drop of several inputs.
 The keyboard shortcut ⌘⌥R (provisional) is the record button; ⌘R stays "rename".
 
 `audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed) and `inputs_separate` (the

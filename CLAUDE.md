@@ -2735,13 +2735,32 @@ What has landed since mid-August, in order:
   `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for same-name inputs), shared by every
   group armed on that input (`RecordFileNaming`, pure). At the stop each group gets a TAKE: a child with
   HANDLES (cropped to the group's window, `sourceOffset` into the file), on the lane BELOW the previous takes,
-  the unmuted previous ones that cross the window MUTED whole, all in ONE undo (`RecordTakePlanner`, pure). A
+  the unmuted previous ones that cross the window MUTED whole (since lot T at the START, see below), all in ONE undo (`RecordTakePlanner`, pure). A
   take that does not cross the window is still created over the whole capture (grey zone) and mutes nothing.
   Guards: unsaved project (record refused), tab switch / `tab.new` / `project.new` refused while recording
   (`tabSwitchBlocker`, `Quiescence`), a card change during the recording (`OBJDeviceChangeWatcher`) and the
   application quitting END it cleanly with the files kept and the takes in the project; a disk full relies
-  on Tracktion's own check (not testable here). The take in progress is NOT drawn (not simple; the takes
-  appear at the stop).
+  on Tracktion's own check (not testable here).
+  **Lot T (29 October 2026, branch `feat/rec-lotT`)**: (1) the **previous takes are muted when the recording
+  STARTS**, not at the stop (`beginRecording(startTime:)` pushes the undo point BEFORE the first change, mutes
+  through `setMuted` = model + `pushMix`, THEN starts the engine, so they are silent from the first instant;
+  `RecordTakePlanner.mutesAtStart`: same takes as the stop's rule, none when the press is already past the
+  window's end). `completeRecording` adds the takes to that same point — ONE ⌘Z — and `plan(mutedAtStart:)`
+  reads the children as they were before the early mute; a capture that does not cross the window comes back
+  with `unmuteIDs` (the early mutes given back); an engine refusal at the start or a recording that gives
+  no take gives the mutes back and drops the point when nothing else was pushed on top. (2) **The take in
+  progress IS drawn**: a translucent red block (`RecordingProgressOverlay`, its own view like `PlayheadLine`,
+  mounted only while recording, reading the playhead through a closure) on the LANE WHERE THE TAKE WILL LAND
+  (the zone's own row when the group is closed), bounded to the group's window, growing from the press to the
+  playhead; pure `RecordProgress` (`span`, `displayLane`), `EditViewModel.recordingStartTime`,
+  `recordProgressBlocks(head:)`; `rec.status` exposes `recording_start` and `progress`. (3) **Dragging several
+  inputs**: select N rows in the Inputs tab and drag one — `InputDragSession` carries `[InputRef]` (the old
+  one-input payload is still read); `RecordZonePlanner.planMany` takes one lane per input DOWNWARDS in channel
+  order, EACH with its own end (40 % of the view or the next object; a time selection gives in/out on the lanes
+  it covers), a GLOBAL refusal if one lane is refused (all ghosts red), a lane holding a group = the input
+  assigned to it; `dropRecordInputs` = ONE undo, the zones selected; `rec.drop` accepts `inputs: [{first,count}]`.
+  (4) The hand cursor over a live [ o ] (Selection tool), and all the armed zones' blinks start from a common
+  origin (`blinkEpoch`, synchronised).
   **The calibration is to the SAMPLE (engine patch `0047`, 2026-10-29)**: an impulse played at 1.000 s
   through a loopback is recorded at 1.000 s, error 0 (the scenarios accept +-1), at every buffer size
   (64 / 128 / 256 / 512 / 1024), started cold (seek 0 + `rec.start`) or punched in during playback,
