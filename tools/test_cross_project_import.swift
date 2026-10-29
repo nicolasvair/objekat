@@ -448,6 +448,13 @@ enum CrossProjectImportTest {
             guard case .group(let kids, _) = plan.clips[1].kind else { check("pasted group", false); return }
             check("... and so does a child inside a pasted group", kids[0].recordInput == nil)
             check("... while the source is untouched", rec.recordInput == InputRef(first: 0, count: 2))
+
+            // ... but a copy WITHIN the project (cut half, duplicate, paste) keeps listening to the same input.
+            let half = rec.derivedCopy(startTime: 1, duration: 2, lane: 0, fadeIn: 0, fadeOut: 0, plugins: [], kind: rec.kind)
+            check("a derived copy inside the project keeps its recording input", half.recordInput == InputRef(first: 0, count: 2))
+            let codec = JSONDecoder()
+            let again = try? codec.decode(SoundObject.self, from: JSONEncoder().encode(half))
+            check("... and the input survives a save/load of the object", again?.recordInput == InputRef(first: 0, count: 2))
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"
