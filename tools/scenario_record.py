@@ -22,6 +22,8 @@ Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the sc
   D  stereo pairs 1-2 and 2-3 share the channel 2: identical sample for sample in both files
   E  punch-in during playback (no graph rebuild at the press); a tab switch and a project replacement are
      refused while recording; unsaved project / nothing armed: refused
+  E2 the stereo pairs are FIXED while recording: input.pair / unpair / set_pairs -> invalid_state, the
+     recording goes on, rec.stop gives the takes and the files; accepted again once stopped
   F  CALIBRATION: loopback of the virtual card, an impulse played at t = 1.000 s must be recorded at
      1.000 s once the file's position on the timeline is applied: to the SAMPLE (error 0, +-1 at most),
      for the buffer sizes 64 / 128 / 256 / 512 / 1024, 4 takes started cold (seek 0, rec.start) and 4
@@ -498,6 +500,44 @@ try:
         check("... the file holds just that (not the 3 s before)", abs(arr.shape[0] / sr - t["duration"]) < 0.05, arr.shape[0] / sr)
         check("a tab can be opened again after the stop", refused(c, "tab.new") is None)
         c.send("tab.close", {"discard": True})                         # the new tab (the active one)
+
+        # ── E2: the stereo pairs are fixed while recording --------------------------------------------
+        section("E2 pairing refused while recording (invalid_state), the take is not lost, accepted again after")
+        P3b = new_project(c, tmp, "p3b")
+        c.send("input.pair", {"first": 0})
+        c.send("input.pair", {"first": 1})
+        r = c.send("rec.drop", {"inputs": [{"first": 0, "count": 2}, {"first": 1, "count": 2}, {"first": 2}],
+                                "lane": 0, "time": 0})
+        grp = [d["group"] for d in r["drops"]]
+        check("three zones dropped (2 pairs + 1 mono)", len(grp) == 3, r)
+        for g in grp:
+            c.send("rec.arm", {"group": g, "on": True})
+        pairs_before = c.send("input.list")["pairs"]
+        c.send("transport.seek", {"seconds": 0})
+        c.send("rec.start")
+        time.sleep(1.5)
+        check("input.unpair refused during a recording (invalid_state)",
+              refused(c, "input.unpair", first=1) == "invalid_state")
+        check("input.pair refused during a recording (invalid_state)",
+              refused(c, "input.pair", first=2) == "invalid_state")
+        check("input.set_pairs refused during a recording (invalid_state)",
+              refused(c, "input.set_pairs", pairs=[]) == "invalid_state")
+        check("the pairs did not move", c.send("input.list")["pairs"] == pairs_before, c.send("input.list")["pairs"])
+        check("the recording goes on", c.send("rec.status")["recording"] is True, c.send("rec.status"))
+        time.sleep(1.0)
+        r = c.send("rec.stop")
+        lt = r["last_takes"]
+        check("rec.stop gives the three takes", len(lt) == 3, lt)
+        check("... and the three files exist on disk", len(rec_files(P3b)) == 3, rec_files(P3b))
+        if len(lt) == 3:
+            wavs = [read_wav(t["path"]) for t in lt]
+            check("... valid float32 WAVs, at least 2 s long", all(w[0] == 3 and w[3] == 32 and w[4].shape[0] / w[2] >= 2.0 for w in wavs),
+                  [(w[0], w[3], w[4].shape[0] / w[2]) for w in wavs])
+        check("after the stop input.unpair is accepted again", refused(c, "input.unpair", first=1) is None
+              and c.send("input.list")["pairs"] == [0])
+        check("... input.pair too", refused(c, "input.pair", first=1) is None)
+        check("... and input.set_pairs", refused(c, "input.set_pairs", pairs=[]) is None
+              and c.send("input.list")["pairs"] == [])
 
         # ── F: CALIBRATION ---------------------------------------------------------------------------
         section("F  CALIBRATION: an impulse played at t = 1.000 s is recorded at 1.000 s (to the sample)")

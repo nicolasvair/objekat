@@ -2309,7 +2309,8 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   then N - 1 neighbouring pairs), enabled or not. `record_inputs` is what the Inputs tab lists —
   every declared pair, then the monos no pair holds — each `{first, count, stereo, name, custom,
   monitored}`: `name` is the project's (`custom` when one was typed, else "In 3" / "In 1-2"),
-  `monitored` whether it is being heard. All are empty while closed, `--no-audio` included — never
+  `monitored` whether it is being heard, `monitor_gain_db` its LISTENING level in dB (0 until
+  `input.set_monitor_gain` set one). All are empty while closed, `--no-audio` included — never
   an error.
 * `input.levels` — `{open, channels: [{channel, peak_db}], inputs: [{index, name, first, count,
   peak_db}]}`: the peak of each channel since the PREVIOUS call, in dB (floor -120), then cleared,
@@ -2324,6 +2325,10 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   `tools/test_input_layout.cpp`.
 * `input.pair {first}` / `input.unpair {first}` — adds / removes ONE pair, the Inputs tab's
   *Link as stereo* / *Unlink*. A no-op when there is nothing to change; unpairing keeps the names.
+  **`input.set_pairs`, `input.pair` and `input.unpair` answer `invalid_state` while a recording is
+  running** (changing the pairs re-describes the engine's input devices, which would stop the take and
+  lose it): nothing moves, the recording goes on; they are accepted again once it has stopped. In the
+  Inputs tab the two entries of the context menu are greyed meanwhile.
 * `input.set_name {first, count?, name}` — names an input (`count` 1 = mono, the default, or 2 =
   stereo pair; `first` 0-based). Blank = back to the default name. Kept in the project
   (`recordInputs.names`, keyed "3" or "1-2", 1-based), outside the undo, project marked modified.
@@ -2334,6 +2339,12 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   closed or the input does not exist. NOT saved and NOT the project's: it survives a new or opened
   project and a tab switch, and stops when the inputs close, when the card changes, or when a pairing
   swallows the input.
+* `input.set_monitor_gain {first, count?, db}` — sets the LISTENING level of an input in dB (`db` is held
+  to −24…+24, the synoptic's gain range; `first`, `count` as in `input.set_name`): a true gain on the
+  input's hidden track, heard whether or not the input is monitored (it only matters while it is).
+  Hearing only: a recording is taken BEFORE it, so the file is the same whatever the level. `invalid_state`
+  when the inputs are closed or the input does not exist. NOT saved: forgotten when the inputs close or
+  the input stops existing. Answers like `input.list` (`monitor_gain_db` in `record_inputs`).
 
 **Recording zones (`rec.*`).** A zone is a GROUP with a `recordInput` (saved with the object, in the
 undo). These are the doors of the drop, the assignment, the arming and the recording itself.
@@ -2381,7 +2392,8 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   replace (the unmuted children crossing a zone's window) are MUTED AT THE PRESS, before the engine
   starts, in the undo point of the take — except when the press is already past the window's end; a
   recording the engine refuses, or that gives no take, gives them back. While it lasts a tab switch,
-  `tab.new`/`tab.open`/`project.new`/`project.open` are refused, `wait_idle` is not idle, and a seek or
+  `tab.new`/`tab.open`/`project.new`/`project.open` are refused, so are `input.pair`/`input.unpair`/`input.set_pairs`
+  (`invalid_state`), `wait_idle` is not idle, and a seek or
   `transport.play` ends it first.
 * `rec.stop` — ends the recording and playback; answers like `rec.status`. Each armed zone receives its
   TAKE: a child of the group holding the whole capture, cropped to the group's window with HANDLES
@@ -2392,8 +2404,8 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   `{group, object, path, start, duration, source_offset, lane, outside_window, muted}`.
   `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
   the application quitting, end it the same way: the files are kept and the takes land in the project.
-  Calibration (virtual card, loopback): the impulse comes back within ONE block of its place (0 or +1
-  block, +5.3 ms at 256 samples), also with a latency plugin on the Main; a recording pressed within
+  Calibration (virtual card, loopback): the impulse comes back to the SAMPLE (error 0, +-1 accepted in the
+  scenarios; engine patch `0047`), at every buffer size, cold or punched in, also with a latency plugin on the Main; a recording pressed within
   ~250 ms of a change of declared latency still compensates the previous one (the PDC resync tick).
 
 `tools/test_record_zone_planner.swift` asserts the planner alone; `tools/scenario_record_zones.py`

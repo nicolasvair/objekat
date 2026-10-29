@@ -2738,7 +2738,10 @@ What has landed since mid-August, in order:
   the unmuted previous ones that cross the window MUTED whole (since lot T at the START, see below), all in ONE undo (`RecordTakePlanner`, pure). A
   take that does not cross the window is still created over the whole capture (grey zone) and mutes nothing.
   Guards: unsaved project (record refused), tab switch / `tab.new` / `project.new` refused while recording
-  (`tabSwitchBlocker`, `Quiescence`), a card change during the recording (`OBJDeviceChangeWatcher`) and the
+  (`tabSwitchBlocker`, `Quiescence`), **the stereo pairing refused while recording** (`input.pair|unpair|set_pairs`
+  → `invalid_state`, the Inputs tab's *Link as stereo* / *Remove the pair* greyed; `EditViewModel.inputPairsLocked`,
+  checked in the three doors; changing the pairs re-describes the engine's devices, which stopped the take and lost
+  it), a card change during the recording (`OBJDeviceChangeWatcher`) and the
   application quitting END it cleanly with the files kept and the takes in the project; a disk full relies
   on Tracktion's own check (not testable here).
   **Lot T (29 October 2026, branch `feat/rec-lotT`)**: (1) the **previous takes are muted when the recording

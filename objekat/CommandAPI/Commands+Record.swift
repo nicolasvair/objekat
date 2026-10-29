@@ -105,11 +105,13 @@ extension CommandRegistry {
                  back to all-mono. Answers like `input.list` (`pairs` = the ones in force). The pairs \
                  are kept IN THE PROJECT (`recordInputs`), outside the undo, and mark it modified. \
                  While the inputs are closed they are kept as given: a pair the card cannot hold is \
-                 simply not offered.
+                 simply not offered. `invalid_state` while a recording is running (as for `input.pair` \
+                 and `input.unpair`).
                  """,
                  params: [ParamSpec("pairs", "array", "First channel of each stereo pair, 0-based.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            try Self.refuseWhileRecording(vm)
             let values = try p.array("pairs").map { v -> Int in
                 guard let i = v.intValue else {
                     throw CommandError(code: .bad_params, message: "'pairs' must be a list of integers")
@@ -122,10 +124,12 @@ extension CommandRegistry {
 
         register("input.pair",
                  summary: "Reads channels `first` and `first + 1` (0-based) as ONE stereo input, next to the " +
-                          "pairs already declared. A no-op when it exists already. Answers like `input.list`.",
+                          "pairs already declared. A no-op when it exists already. `invalid_state` while a recording " +
+                          "is running. Answers like `input.list`.",
                  params: [ParamSpec("first", "int", "First channel of the pair, 0-based.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            try Self.refuseWhileRecording(vm)
             let first = try p.int("first")
             guard first >= 0 else { throw CommandError(code: .bad_params, message: "'first' must be >= 0") }
             vm.pairInputs(first: first)
@@ -134,10 +138,12 @@ extension CommandRegistry {
 
         register("input.unpair",
                  summary: "Takes the stereo pair that starts on channel `first` (0-based) apart: its two monos " +
-                          "are offered again (unless another pair holds them). The names are kept.",
+                          "are offered again (unless another pair holds them). The names are kept. `invalid_state` " +
+                          "while a recording is running.",
                  params: [ParamSpec("first", "int", "First channel of the pair, 0-based.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            try Self.refuseWhileRecording(vm)
             vm.unpairInputs(first: try p.int("first"))
             return Self.inputListPayload(try CommandContext.shared.requireEngine())
         }
@@ -202,6 +208,15 @@ extension CommandRegistry {
         }
 
         registerRecordZoneCommands()
+    }
+
+    /// The pairing is fixed while a recording runs (changing it would stop the take and lose it).
+    /// `invalid_state`, like `project.new` during a recording. @see EditViewModel.inputPairsLocked
+    static func refuseWhileRecording(_ vm: EditViewModel) throws {
+        guard !vm.inputPairsLocked else {
+            throw CommandError(code: .invalid_state,
+                               message: "a recording is running: the stereo pairs cannot change until it stops")
+        }
     }
 
     // MARK: Recording zones (`rec.*`)

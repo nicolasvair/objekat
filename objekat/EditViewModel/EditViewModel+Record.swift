@@ -61,21 +61,31 @@ extension EditViewModel {
         editRecordInputs { $0.rename(ref, to: name) }
     }
 
-    /// Reads channels `first` and `first + 1` as ONE stereo input.
+    /// The pairs are FIXED while a recording runs: the engine re-describes its input devices when they
+    /// change, which stops the take and loses it. Same family of refusals as New / Open / a tab switch
+    /// (@see `exportPinsActiveDocument`): the hand finds the entries greyed, the API answers
+    /// `invalid_state`, and these three doors refuse whatever the caller (they return false, nothing moves).
+    var inputPairsLocked: Bool { isRecording }
+
+    /// Reads channels `first` and `first + 1` as ONE stereo input. Refused (false) during a recording.
     @discardableResult
     func pairInputs(first: Int) -> Bool {
+        guard !inputPairsLocked else { return false }
         let limit = recordChannelLimit
         return editRecordInputs { $0.pair(first, channelCount: limit) }
     }
 
+    /// Refused (false) during a recording.
     @discardableResult
     func unpairInputs(first: Int) -> Bool {
-        editRecordInputs { $0.unpair(first) }
+        guard !inputPairsLocked else { return false }
+        return editRecordInputs { $0.unpair(first) }
     }
 
-    /// Replaces every pair (the machine's door).
+    /// Replaces every pair (the machine's door). Refused (false) during a recording.
     @discardableResult
     func setInputPairs(_ firsts: [Int]) -> Bool {
+        guard !inputPairsLocked else { return false }
         let limit = recordChannelLimit
         return editRecordInputs { $0.setPairs(firsts, channelCount: limit) }
     }

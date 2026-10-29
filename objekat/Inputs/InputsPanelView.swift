@@ -166,6 +166,7 @@ struct InputsPanelView: View {
                 viewModel.pairInputs(first: first)
                 selection = []
             }
+            .disabled(viewModel.inputPairsLocked)   // the pairs are fixed while a recording runs
         }
         let pairs = target.filter(\.isStereo)
         if !pairs.isEmpty {
@@ -173,6 +174,7 @@ struct InputsPanelView: View {
                 for pair in pairs { viewModel.unpairInputs(first: pair.first) }
                 selection.subtract(pairs)
             }
+            .disabled(viewModel.inputPairsLocked)
         }
     }
 
