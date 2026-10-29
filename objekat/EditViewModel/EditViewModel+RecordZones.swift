@@ -98,25 +98,27 @@ extension EditViewModel {
         guard let item = find(id: id), Self.isRecordableZone(item) else { return false }
         if item.recordInput == ref { return true }
         pushUndo()
+        applyRecordInput(ref, toGroup: id)
+        return true
+    }
+
+    /// The change itself, for a caller that owns the undo point (a drop of several inputs makes ONE).
+    private func applyRecordInput(_ ref: InputRef?, toGroup id: UUID) {
         update(id: id) { $0.recordInput = ref }
         if ref == nil { armedGroupIDs.remove(id) }
         syncArmedInputs()   // an armed zone changed input: the hidden tracks follow
         isDirty = true
-        return true
     }
 
     // MARK: Dropping
 
-    /// What dropping `ref` at (`time`, `displayLane`) would do. Reads the model, changes nothing.
-    func planRecordDrop(displayLane: Int, time: Double, visibleSpanSecs: Double,
-                        pixelsPerSecond pps: Double) -> RecordZonePlanner.Plan {
-        let entries = laneEntries
-
-        // A lane inside a clip's piano roll or an automation band is not a row of the timeline.
+    /// What the lane `displayLane` holds, as the planner reads it; nil when it is not a row of the
+    /// timeline (inside a clip's piano roll or an automation band). Reads the model, changes nothing.
+    private func recordLaneContext(_ displayLane: Int, entries: [LaneEntry]) -> RecordZonePlanner.LaneContext? {
         if entries.contains(where: { e in
             !e.item.showsChildrenInline && e.expandedSpan > 0
                 && displayLane > e.displayLane && displayLane <= e.displayLane + e.expandedSpan
-        }) { return .refuse(.onObject) }
+        }) { return nil }
 
         let container = containerGroupEntry(forDisplayLanes: [displayLane])
         let parent = container.map { c in
@@ -139,9 +141,25 @@ extension EditViewModel {
             RecordZonePlanner.Selection(start: $0.timeRange.lowerBound, end: $0.timeRange.upperBound,
                                         lanes: $0.lanes)
         }
-        return RecordZonePlanner.plan(time: time, displayLane: displayLane,
-                                      visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps,
-                                      laneObjects: objects, selection: selection, parent: parent)
+        return .init(objects: objects, selection: selection, parent: parent)
+    }
+
+    /// What dropping `count` inputs at (`time`, `displayLane`) would do — one plan per input, on the
+    /// lane of the hand and the ones below it. Reads the model, changes nothing.
+    func planRecordDrops(count: Int, displayLane: Int, time: Double, visibleSpanSecs: Double,
+                         pixelsPerSecond pps: Double) -> [RecordZonePlanner.Plan] {
+        let entries = laneEntries
+        return RecordZonePlanner.planMany(time: time, firstLane: displayLane, count: count,
+                                          visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps) {
+            recordLaneContext($0, entries: entries)
+        }
+    }
+
+    /// What dropping ONE input at (`time`, `displayLane`) would do.
+    func planRecordDrop(displayLane: Int, time: Double, visibleSpanSecs: Double,
+                        pixelsPerSecond pps: Double) -> RecordZonePlanner.Plan {
+        planRecordDrops(count: 1, displayLane: displayLane, time: time, visibleSpanSecs: visibleSpanSecs,
+                        pixelsPerSecond: pps)[0]
     }
 
     /// The ghost for a plan: what the timeline draws under the cursor.
@@ -162,36 +180,74 @@ extension EditViewModel {
         }
     }
 
-    /// Carries out the drop: a zone is born, or a group takes the input, or nothing. Returns the plan that
-    /// was followed and the group concerned (a refusal changes nothing and pushes no undo point).
+    /// The ghosts of a drop of several inputs, one per lane: all red as soon as one lane is refused.
+    func recordDropGhosts(for plans: [RecordZonePlanner.Plan], refs: [InputRef], displayLane: Int,
+                          time: Double) -> [RecordDropGhost] {
+        let refused = RecordZonePlanner.isRefused(plans)
+        return plans.indices.map { i in
+            let lane = displayLane + i
+            return refused
+                ? RecordDropGhost(kind: .refused, displayLane: lane, start: max(0, time),
+                                  end: max(0, time) + 1, name: "")
+                : recordDropGhost(for: plans[i], ref: refs[i], displayLane: lane, time: time)
+        }
+    }
+
+    /// Carries out the drop of ONE input: a zone is born, or a group takes the input, or nothing. Returns
+    /// the plan that was followed and the group concerned (a refusal changes nothing and pushes no undo).
     @discardableResult
     func dropRecordInput(_ ref: InputRef, displayLane: Int, time: Double, visibleSpanSecs: Double,
                          pixelsPerSecond pps: Double) -> (plan: RecordZonePlanner.Plan, group: UUID?) {
-        let plan = planRecordDrop(displayLane: displayLane, time: time,
-                                  visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
-        var group: UUID? = nil
-        switch plan {
-        case .refuse:
-            break
-        case .assign(let id):
-            assignRecordInput(ref, toGroup: id)
-            selectedIDs = [id]
-            group = id
-        case .create(let start, let end, _):
-            pushUndo()
-            // The group carries the input's NAME; `placeClip` puts it where the lane says — at the top
-            // level, or inside the open group whose sub-lanes contain it (the same rule as the planner's).
-            var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane,
-                                   label: inputName(ref), kind: .group(children: [], isExpanded: false))
-            zone.recordInput = ref
-            let placed = placeClip(zone, snapshot: laneEntries)
-            if let s = timeSelection, s.timeRange.lowerBound == start, s.timeRange.upperBound == end {
-                timeSelection = nil
+        let r = dropRecordInputs([ref], displayLane: displayLane, time: time,
+                                 visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
+        return (r.plans[0], r.groups[0])
+    }
+
+    /// Carries out the drop of several inputs, `refs` in the order of the lanes they take downwards from
+    /// `displayLane`: each becomes a zone (or goes to the group on its lane), ALL in ONE undo point —
+    /// taken before the first change, and not at all for a refusal (global: one lane refused, nothing
+    /// is done) or when nothing would change. Every zone made or reached is selected. `groups` is aligned
+    /// with `plans` (nil for a refusal).
+    @discardableResult
+    func dropRecordInputs(_ refs: [InputRef], displayLane: Int, time: Double, visibleSpanSecs: Double,
+                          pixelsPerSecond pps: Double) -> (plans: [RecordZonePlanner.Plan], groups: [UUID?]) {
+        let plans = planRecordDrops(count: refs.count, displayLane: displayLane, time: time,
+                                    visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
+        var groups = [UUID?](repeating: nil, count: plans.count)
+        guard !plans.isEmpty, !RecordZonePlanner.isRefused(plans) else { return (plans, groups) }
+
+        let changes = plans.indices.contains { i in
+            switch plans[i] {
+            case .create: return true
+            case .assign(let id): return find(id: id)?.recordInput != refs[i]
+            case .refuse: return false
             }
-            selectedIDs = [placed.id]
-            isDirty = true
-            group = placed.id
         }
-        return (plan, group)
+        if changes { pushUndo() }   // BEFORE the first change, one for the whole gesture
+
+        var spent = false   // the time selection is consumed by the zone that took exactly its in/out
+        for (i, plan) in plans.enumerated() {
+            let ref = refs[i]
+            switch plan {
+            case .refuse:
+                break
+            case .assign(let id):
+                if find(id: id)?.recordInput != ref { applyRecordInput(ref, toGroup: id) }
+                groups[i] = id
+            case .create(let start, let end, _):
+                // The group carries the input's NAME; `placeClip` puts it where the lane says — at the top
+                // level, or inside the open group whose sub-lanes contain it (the same rule as the planner's).
+                var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
+                                       label: inputName(ref), kind: .group(children: [], isExpanded: false))
+                zone.recordInput = ref
+                let placed = placeClip(zone, snapshot: laneEntries)
+                if let s = timeSelection, s.timeRange.lowerBound == start, s.timeRange.upperBound == end { spent = true }
+                groups[i] = placed.id
+            }
+        }
+        if spent { timeSelection = nil }
+        selectedIDs = Set(groups.compactMap { $0 })
+        if changes { isDirty = true }
+        return (plans, groups)
     }
 }

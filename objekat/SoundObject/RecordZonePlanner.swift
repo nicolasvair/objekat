@@ -15,6 +15,11 @@ import Foundation
 //     lane if that is closer; shorter than max(1 s, 24 px) -> refused
 //   - inside an open group (the lane is one of its sub-lanes) the zone is a sub-group (`parent`)
 //
+// SEVERAL inputs dragged at once (`planMany`): one lane per input, DOWNWARDS from the lane of the hand, in
+// the order given (the channels'). Each lane is planned by the rules above on its own — so each zone has
+// its own end (40 % of the view, or the next object of ITS lane) — and the refusal is GLOBAL: one lane
+// refused refuses the lot (a drop that made three of four zones would be a gesture nobody asked for).
+//
 // A plain Foundation unit with no model behind it, compiled and asserted alone
 // (tools/test_record_zone_planner.swift).
 
@@ -119,4 +124,32 @@ enum RecordZonePlanner {
         guard end - t >= floor - 1e-9 else { return .refuse(.tooShort) }
         return .create(start: t, end: end, parent: parent?.id)
     }
+
+    /// What the lane aimed at holds, for `planMany`: the same three facts `plan` takes. nil for a row that
+    /// is not one of the timeline (a clip's piano roll, an automation band): nothing can be put there.
+    struct LaneContext {
+        let objects: [LaneObject]
+        let selection: Selection?
+        let parent: Parent?
+
+        init(objects: [LaneObject], selection: Selection?, parent: Parent?) {
+            self.objects = objects; self.selection = selection; self.parent = parent
+        }
+    }
+
+    /// One plan per input, on the lanes `firstLane`, `firstLane + 1`… (`count` of them). `context` reads a
+    /// lane; the instant, the view and the zoom are the hand's, the same for all.
+    static func planMany(time: Double, firstLane: Int, count: Int, visibleSpanSecs: Double,
+                         pixelsPerSecond: Double, context: (Int) -> LaneContext?) -> [Plan] {
+        (0 ..< max(0, count)).map { i in
+            let lane = firstLane + i
+            guard let c = context(lane) else { return .refuse(.onObject) }
+            return plan(time: time, displayLane: lane, visibleSpanSecs: visibleSpanSecs,
+                        pixelsPerSecond: pixelsPerSecond, laneObjects: c.objects,
+                        selection: c.selection, parent: c.parent)
+        }
+    }
+
+    /// The drop as a whole is refused as soon as one of its lanes is.
+    static func isRefused(_ plans: [Plan]) -> Bool { plans.contains { $0.isRefusal } }
 }

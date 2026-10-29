@@ -17,33 +17,33 @@ extension TimelineView {
         return (lane, time, Double(viewportWidth) / pixelsPerSecond)
     }
 
-    /// An input is hovering the timeline: lays the ghost and answers the cursor. nil when the drag in
-    /// flight is not an input.
+    /// Inputs are hovering the timeline: lays the ghosts (one per input, on the lanes from the hand's
+    /// downwards) and answers the cursor. nil when the drag in flight is not an input.
     func recordInputHover(at loc: CGPoint) -> DropOperation? {
-        guard let ref = InputDragSession.shared.current else { return nil }
+        guard let refs = InputDragSession.shared.current else { return nil }
         let p = recordDropPoint(at: loc)
-        let plan = viewModel.planRecordDrop(displayLane: p.lane, time: p.time,
-                                            visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pixelsPerSecond)
-        let ghost = viewModel.recordDropGhost(for: plan, ref: ref, displayLane: p.lane, time: p.time)
-        if viewModel.recordDropGhost != ghost { viewModel.recordDropGhost = ghost }
-        return plan.isRefusal ? .forbidden : .copy
+        let plans = viewModel.planRecordDrops(count: refs.count, displayLane: p.lane, time: p.time,
+                                              visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pixelsPerSecond)
+        let ghosts = viewModel.recordDropGhosts(for: plans, refs: refs, displayLane: p.lane, time: p.time)
+        if viewModel.recordDropGhosts != ghosts { viewModel.recordDropGhosts = ghosts }
+        return RecordZonePlanner.isRefused(plans) ? .forbidden : .copy
     }
 
     func endRecordInputHover() {
-        if viewModel.recordDropGhost != nil { viewModel.recordDropGhost = nil }
+        if !viewModel.recordDropGhosts.isEmpty { viewModel.recordDropGhosts = [] }
     }
 
-    /// The provider of a drop, when it carries an input: the zone is made (or the input assigned) at the
+    /// The provider of a drop, when it carries inputs: the zones are made (or the inputs assigned) at the
     /// lane and instant of the hand — read here, synchronously — once the payload is decoded.
     func receiveInputDrop(_ provider: NSItemProvider, at loc: CGPoint) {
         let p = recordDropPoint(at: loc)
         let pps = pixelsPerSecond
         let vm = viewModel
         InputDragSession.shared.end()
-        InputDragSession.read(provider) { ref in
-            guard let ref else { return }
-            vm.dropRecordInput(ref, displayLane: p.lane, time: p.time,
-                               visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pps)
+        InputDragSession.read(provider) { refs in
+            guard let refs else { return }
+            vm.dropRecordInputs(refs, displayLane: p.lane, time: p.time,
+                                visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pps)
         }
     }
 

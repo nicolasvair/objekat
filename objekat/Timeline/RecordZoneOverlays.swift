@@ -26,7 +26,7 @@ struct RecordDropGhostOverlay: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let g = viewModel.recordDropGhost {
+            ForEach(Array(viewModel.recordDropGhosts.enumerated()), id: \.offset) { _, g in
                 let refused = g.kind == .refused
                 let w = max(refused ? 24 : 3, (g.end - g.start) * pixelsPerSecond)
                 let colour: Color = refused ? .red : .accentColor
