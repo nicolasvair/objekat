@@ -442,6 +442,7 @@ extension CommandRegistry {
                         "input_present": .bool(vm.isRecordInputPresent(ref)),
                         "recordable": .bool(EditViewModel.isRecordableZone(item)),
                         "armed": .bool(vm.armedRecordZones.contains(item.id)),
+                        "input_prefix": .stringOrNull(vm.recordZoneInputPrefix(of: item)),
                     ]))
                 }
                 if case .group(let children, _) = item.kind { walk(children) }

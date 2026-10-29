@@ -1184,6 +1184,9 @@ final class EditViewModel {
     /// next changes. ⚠️ Only for an item TAKEN FROM `items` / `laneEntries` — the cache is keyed
     /// by id alone and a modified copy of a group would be handed the original's name.
     func displayName(of item: SoundObject) -> String {
+        // A recording zone nobody named is called after its input (and follows its renaming): not
+        // memoised, `recordInputs` is not `items` and nothing here would empty the cache for it.
+        if item.label == nil, item.isGroup, let ref = item.recordInput { return inputName(ref) }
         guard item.label == nil, item.isGroup else { return item.displayName }
         if let cached = composedNameCache[item.id] { return cached }
         let name = item.displayName
@@ -1711,7 +1714,7 @@ final class EditViewModel {
         // The DEFINITION's name follows too (it stayed frozen until the next re-bake).
         if let defID, let newLabel { consolidateDefinitions[defID]?.name = newLabel }
         // The FX link bins made from this object take its new name — same undo point (B.9).
-        if let shown = find(id: id)?.displayName { followRename(of: targets, to: shown) }
+        if let shown = find(id: id).map({ displayName(of: $0) }) { followRename(of: targets, to: shown) }
         isDirty = true
     }
 

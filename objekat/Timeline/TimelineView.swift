@@ -3139,6 +3139,7 @@ struct TimelineView: View {
                 name: name,
                 icon: ObjectKindIcon.name(for: item,
                                           isOpenConsolidate: viewModel.isInConsolidateEditStack(item.id)),
+                inputPrefix: viewModel.recordZoneInputPrefix(of: item),
                 missing: nothingMissing ? false : viewModel.containsMissingDescendant(item),
                 mutedInMix: viewModel.isShownMuted(item),
                 badges: viewModel.featureBadges(of: item),
@@ -3874,6 +3875,7 @@ struct TimelineView: View {
         return GroupBlockView(
             group: group,
             displayName: viewModel.displayName(of: group),
+            inputPrefix: viewModel.recordZoneInputPrefix(of: group),
             pixelsPerSecond: pixelsPerSecond,
             rulerHeight: rulerHeight,
             blockHeight: blockHeight,

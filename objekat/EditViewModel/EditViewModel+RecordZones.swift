@@ -34,6 +34,16 @@ extension EditViewModel {
         item.isGroup && !item.isInfinite && !item.loopEnabled && !item.isConsolidateInstance
     }
 
+    // MARK: The zone's name
+
+    /// What the timeline writes IN FRONT of a zone's name: the input's name ("[mic] Input → [folder] Name"),
+    /// nil when the zone has no name of its own (its default name is the input's) or is no zone. Only
+    /// the timeline draws it — the list and the inspector show the name alone.
+    func recordZoneInputPrefix(of item: SoundObject) -> String? {
+        guard item.isGroup, let ref = item.recordInput else { return nil }
+        return RecordZoneName.prefix(label: item.label, inputName: inputName(ref))
+    }
+
     // MARK: Is the input there?
 
     /// Whether the card has `ref` right now. The channel count is `AudioDeviceStatus`'s — observable, and
@@ -235,10 +245,12 @@ extension EditViewModel {
                 if find(id: id)?.recordInput != ref { applyRecordInput(ref, toGroup: id) }
                 groups[i] = id
             case .create(let start, let end, _):
-                // The group carries the input's NAME; `placeClip` puts it where the lane says — at the top
+                // The zone is born WITHOUT a label: its default name is its input's (`displayName(of:)`), as
+                // an unnamed group takes the name composed from its content — only a name typed later is a
+                // group name (@see `RecordZoneName`). `placeClip` puts it where the lane says — at the top
                 // level, or inside the open group whose sub-lanes contain it (the same rule as the planner's).
                 var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
-                                       label: inputName(ref), kind: .group(children: [], isExpanded: false))
+                                       label: nil, kind: .group(children: [], isExpanded: false))
                 zone.recordInput = ref
                 let placed = placeClip(zone, snapshot: laneEntries)
                 // A zone of the selection starts at its in and ends at its out, or earlier (an object behind).
