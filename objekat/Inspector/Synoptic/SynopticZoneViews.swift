@@ -849,6 +849,147 @@ struct StemsZoneView: View {
     }
 }
 
+// MARK: - The 'input' zone of a recording zone: the card input and the take mode
+//
+// The stems zone's counterpart at the TOP, outside the object's frame. Two rows: the title with the menu of
+// the card's inputs (a mono one or a stereo pair — the wire below follows: one wire or two — and "None" last),
+// then the menu of the take mode. Greyed (and unusable) while a recording runs: the zone's input is frozen at
+// the press. An input the zone keeps but the card does not have is shown with its name and "absent".
+
+struct RecordInputZoneView: View {
+    let rect: CGRect
+    let input: SynopticRecordInput
+    let actions: SynopticActions
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: rect.midY)
+
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(L("synoptic.zone.input"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    inputMenu
+                }
+                takeModeMenu
+            }
+            .padding(.horizontal, 12)
+            .frame(width: rect.width, height: rect.height, alignment: .center)
+            .position(x: rect.midX, y: rect.midY)
+            .disabled(input.locked)
+            // Greyed while a recording runs, and for an input the card no longer has (the name stays, "absent").
+            .opacity(input.locked ? 0.5 : (isAbsent ? 0.6 : 1))
+        }
+    }
+
+    private var isAbsent: Bool { input.ref != nil && !input.present }
+
+    // MARK: The input
+
+    private var currentLabel: String {
+        guard input.ref != nil else { return L("synoptic.input.none") }
+        return input.present ? input.name : L("synoptic.input.absent", input.name)
+    }
+
+    private var inputMenu: some View {
+        Menu {
+            if input.monoChoices.isEmpty && input.stereoChoices.isEmpty {
+                Text(L("synoptic.input.noCard"))
+            }
+            if !input.monoChoices.isEmpty {
+                Section(L("synoptic.input.section.mono")) {
+                    ForEach(input.monoChoices) { choice in choiceButton(choice) }
+                }
+            }
+            if !input.stereoChoices.isEmpty {
+                Section(L("synoptic.input.section.stereo")) {
+                    ForEach(input.stereoChoices) { choice in choiceButton(choice) }
+                }
+            }
+            Divider()
+            Button { actions.onAssignRecordInput?(nil) } label: {
+                if input.ref == nil { Label(L("synoptic.input.none"), systemImage: "checkmark") }
+                else { Text(L("synoptic.input.none")) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: input.ref?.isStereo == true ? "mic.and.signal.meter" : "mic")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text(verbatim: currentLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isAbsent ? Color.secondary : Color.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .help(L("synoptic.input.help"))
+    }
+
+    private func choiceButton(_ choice: SynopticRecordInputChoice) -> some View {
+        // A `String` and not a literal: see `StemsZoneView`, same trap.
+        Button { actions.onAssignRecordInput?(choice.ref) } label: {
+            if choice.ref == input.ref { Label(choice.name, systemImage: "checkmark") }
+            else { Text(verbatim: choice.name) }
+        }
+    }
+
+    // MARK: The take mode
+
+    private func modeTitle(_ mode: RecordTakeMode) -> String {
+        mode == .mute ? L("synoptic.input.take.mute") : L("synoptic.input.take.add")
+    }
+
+    private var takeModeMenu: some View {
+        Menu {
+            ForEach(RecordTakeMode.allCases, id: \.self) { mode in
+                Button { actions.onSetRecordTakeMode?(mode) } label: {
+                    if mode == input.takeMode { Label(modeTitle(mode), systemImage: "checkmark") }
+                    else { Text(modeTitle(mode)) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: input.takeMode == .mute ? "speaker.slash" : "square.stack")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text(input.takeMode == .mute ? L("synoptic.input.take.mute.short")
+                                             : L("synoptic.input.take.add.short"))
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .help(L("synoptic.input.take.help"))
+    }
+}
+
 // MARK: - The 'output' zone of a group's child: routed to the group (read only)
 //
 // A group's child has no stem assignment of its own: its output feeds the group's submix,

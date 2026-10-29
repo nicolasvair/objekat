@@ -30,6 +30,9 @@ struct SynopticView: View {
     var mix: SynopticMix? = nil
     /// Selectable stems at the foot (the 'stems' zone, replacing Out). nil for a bus.
     var stems: [SynopticStem]? = nil
+    /// A recording zone (a group that can record): its 'input' zone hangs at the top, outside the frame.
+    /// nil for everything else.
+    var recordInput: SynopticRecordInput? = nil
     /// A group's child: a read-only 'output' zone (→ the parent group) in place
     /// of the stems zone. Mutually exclusive with `stems`.
     var groupRouting: SynopticGroupRouting? = nil
@@ -145,6 +148,10 @@ struct SynopticView: View {
             }
             if let cz = d.clipZone, let m = mix {
                 ClipMixZoneView(rect: cz, mix: m, actions: actions)
+            }
+            // A recording zone's 'input' zone, above the frame (the stems zone's counterpart).
+            if let iz = d.inputZone, let ri = recordInput {
+                RecordInputZoneView(rect: iz, input: ri, actions: actions)
             }
             // The object frame's LINE, over the head and the mixer: the whole outline in the object's colour,
             // the two boxes inside it as intro and outro. Deaf to the mouse.
@@ -503,6 +510,7 @@ struct SynopticView: View {
                                midi: isMIDI, audioFile: audioFile != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                stems: stems != nil || groupRouting != nil,
+                               input: recordInput != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                infiniteOption: infinite != nil,
                                // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
