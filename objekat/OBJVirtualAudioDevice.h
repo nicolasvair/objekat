@@ -19,11 +19,14 @@
 //                 cable from the output to this input would bring back
 //
 //  THE LATENCY MODEL, the one place to read it. `getInputLatencyInSamples` / `getOutputLatencyInSamples`
-//  announce `inlat` / `outlat` and, like CoreAudio's, they EXCLUDE the buffers. A real round trip is
-//  one buffer on the way out, the announced latencies, and one buffer on the way in, so the loopback
+//  announce `inlat` / `outlat` PLUS one block each, the way JUCE's CoreAudio device does (it returns
+//  deviceLatency + safetyOffset + framesInBuffer + streamLatency: the buffer is INCLUDED). A real round
+//  trip is one buffer on the way out, the latencies, and one buffer on the way in, so the loopback
 //  delay is  2 * bs + inlat + outlat  (never less than a block: a block-based callback cannot hand
-//  back samples it has not produced yet). A host that compensates the way a real card needs it must
-//  land exactly on that figure; `audio.virtual.status` reports it as `loopback_delay`.
+//  back samples it has not produced yet) — which is exactly the sum of the two ANNOUNCED figures. A
+//  host that compensates the way a real card needs it lands on that figure by adding the two;
+//  `audio.virtual.status` reports it as `loopback_delay` and the announced ones as
+//  `announced_input_latency` / `announced_output_latency`.
 //
 //  THE DEVICE LIVES IN THE PROCESS ONLY. It must never reach ~/Library/objekat/Settings.xml, or the
 //  next normal launch would look for a card that does not exist: OBJPropertyStorage (OBJEngineCore.mm)
@@ -236,8 +239,9 @@ public:
     juce::BigInteger getActiveOutputChannels() const override { return activeOut; }
     juce::BigInteger getActiveInputChannels() const override  { return activeIn; }
 
-    int getOutputLatencyInSamples() override { return hasOut ? config.outLatency : 0; }
-    int getInputLatencyInSamples() override  { return hasIn ? config.inLatency : 0; }
+    // Like JUCE's CoreAudio device: the latencies PLUS the buffer (see the latency model in the header).
+    int getOutputLatencyInSamples() override { return hasOut ? config.outLatency + block : 0; }
+    int getInputLatencyInSamples() override  { return hasIn ? config.inLatency + block : 0; }
 
 private:
     //--------------------------------------------------------------------------

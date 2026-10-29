@@ -2258,8 +2258,11 @@ property storage neither reads nor writes any device setting (`audio_device_setu
 wave in/out, the wave in/out items, the layout presets). A normal launch afterwards finds the
 file as it was — `tools/scenario_virtual_audio.py` asserts it by hash.
 
-* `audio.virtual.status` — the configuration, what each input carries right now, and
-  `loopback_delay`. `{"active": false}` on a normal launch (and under `--no-audio`).
+* `audio.virtual.status` — the configuration, what each input carries right now, `loopback_delay`
+  and the latencies the device ANNOUNCES to the host (`announced_input_latency`,
+  `announced_output_latency` = `input_latency` / `output_latency` plus one buffer each, the way
+  CoreAudio reports them; their sum equals `loopback_delay`). `{"active": false}` on a normal
+  launch (and under `--no-audio`).
 * `audio.virtual.set_input {channel, signal, frequency?, amplitude?, period?}` — what input
   `channel` carries: `silence` (default), `sine` (`frequency` Hz at `amplitude`, phase-continuous
   across a change of frequency), `impulse` (one sample of `amplitude` every `period` seconds, the
@@ -2267,12 +2270,12 @@ file as it was — `tools/scenario_virtual_audio.py` asserts it by hash.
   with `invalid_state` when the card is not active, `bad_params` for a channel outside the card or an
   impossible value.
 
-The loopback models a cable from the output back to an input: the device announces `inlat` and
-`outlat` the way CoreAudio does, EXCLUDING the buffers, and the real round trip is one buffer out,
-the announced latencies, one buffer in — `loopback_delay = 2 * bs + inlat + outlat` frames (672 with
-the defaults). Never less than a block: a block-based callback cannot hand back samples it has not
-produced yet. A host that compensates a recording the way a real card needs must land on that
-figure.
+The loopback models a cable from the output back to an input: the real round trip is one buffer
+out, the latencies `inlat` and `outlat`, one buffer in — `loopback_delay = 2 * bs + inlat + outlat`
+frames (672 with the defaults). The device announces `inlat + bs` and `outlat + bs` to the host
+(`announced_input_latency`, `announced_output_latency`), the way JUCE's CoreAudio device does —
+the buffer INCLUDED — so a host that adds the two lands exactly on `loopback_delay`. Never less than
+a block: a block-based callback cannot hand back samples it has not produced yet.
 
 #### The card's inputs (`input.enable` / `disable` / `list` / `levels` / `set_pairs` / `pair` / `unpair` / `set_name` / `monitor`)
 

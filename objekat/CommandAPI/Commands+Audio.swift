@@ -99,9 +99,12 @@ extension CommandRegistry {
         register("audio.virtual.status",
                  summary: """
                  The virtual sound card (`--virtual-audio`): its configuration, what each input \
-                 carries right now, and `loopback_delay` — the frames between an output sample \
+                 carries right now, `loopback_delay` — the frames between an output sample \
                  leaving the callback and coming back on a `loopback` input (two buffers plus the \
-                 announced latencies). `{ "active": false }` on a normal launch.
+                 `input_latency` / `output_latency` of the configuration) — and \
+                 `announced_input_latency` / `announced_output_latency`, what the device tells the \
+                 host (the configured latency PLUS one buffer each, like CoreAudio: their sum is \
+                 `loopback_delay`). `{ "active": false }` on a normal launch.
                  """,
                  undo: .none) { _ in
             let engine = try CommandContext.shared.requireEngine()

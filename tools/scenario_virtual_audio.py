@@ -141,7 +141,11 @@ try:
         check("virtual.status active", vs["active"] is True, vs)
         check("virtual.status open", vs["open"] is True, vs)
         check("4 inputs, 2 outputs", vs["inputs"] == 4 and vs["outputs"] == 2, vs)
-        check("announced latencies 64 / 96", vs["input_latency"] == 64 and vs["output_latency"] == 96, vs)
+        check("configured latencies 64 / 96", vs["input_latency"] == 64 and vs["output_latency"] == 96, vs)
+        check("ANNOUNCED latencies = configured + one buffer (320 / 352), like CoreAudio",
+              vs["announced_input_latency"] == 64 + 256 and vs["announced_output_latency"] == 96 + 256, vs)
+        check("announced in + out = loopback_delay",
+              vs["announced_input_latency"] + vs["announced_output_latency"] == vs["loopback_delay"], vs)
         check("loopback_delay = 2*256 + 64 + 96 = 672", vs["loopback_delay"] == 672, vs["loopback_delay"])
         check("every input starts on silence", all(s["signal"] == "silence" for s in vs["signals"]), vs["signals"])
 
@@ -191,6 +195,8 @@ try:
         check("buffer changed to 128", b["buffer_size"] == 128 and b["device"] == CARD, b)
         vs3 = c.send("audio.virtual.status")
         check("loopback_delay follows the new block (2*128 + 160 = 416)", vs3["loopback_delay"] == 416, vs3["loopback_delay"])
+        check("the announced latencies follow the block too (192 / 224)",
+              vs3["announced_input_latency"] == 64 + 128 and vs3["announced_output_latency"] == 96 + 128, vs3)
         c.send("audio.set_buffer_size", {"frames": 256})
         c.send("audio.set_sample_rate", {"hz": 48000})
 
@@ -216,6 +222,8 @@ try:
         check("2 inputs", vs["inputs"] == 2, vs)
         check("latencies 10 / 20", vs["input_latency"] == 10 and vs["output_latency"] == 20, vs)
         check("loopback_delay = 2*128 + 10 + 20 = 286", vs["loopback_delay"] == 286, vs["loopback_delay"])
+        check("announced latencies 138 / 148 (sum = loopback_delay)",
+              vs["announced_input_latency"] == 138 and vs["announced_output_latency"] == 148, vs)
         check("channel 2 does not exist", refused(c, "audio.virtual.set_input", channel=2, signal="sine") == "bad_params")
     stop(proc, SOCK)
     proc = None

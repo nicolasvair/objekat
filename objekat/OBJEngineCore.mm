@@ -11367,6 +11367,8 @@ static void objDumpPluginList(te::PluginList& pl,
               @"block_size": @(block),
               @"input_latency": @(st.config.inLatency),
               @"output_latency": @(st.config.outLatency),
+              @"announced_input_latency": @(onVirtual ? dev->getInputLatencyInSamples() : st.config.inLatency + block),
+              @"announced_output_latency": @(onVirtual ? dev->getOutputLatencyInSamples() : st.config.outLatency + block),
               @"loopback_delay": @(objvirtual::loopbackDelaySamples(st.config, block)),
               @"signals": signals };
 }
