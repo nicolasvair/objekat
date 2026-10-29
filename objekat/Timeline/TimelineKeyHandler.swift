@@ -974,8 +974,9 @@ extension TimelineView {
                     return nil
                     // Cmd+S (Save) / Cmd+Shift+S (Save As) are handled by the File menu.
                 case "r":
-                    // ⌘⌥R (provisional): record / stop. Tested BEFORE the ⌘-only branch below: ⌘R stays "rename".
-                    if flags.contains([.command, .option]) {
+                    // ⌘⇧R: record / stop (⌘⌥R, the provisional one, is gone). Tested BEFORE the ⌘-only branch
+                    // below, which would take it for a rename: ⌘R stays "rename", ⌥R the vertical zoom.
+                    if flags.contains([.command, .shift]) && !flags.contains(.option) {
                         guard !event.isARepeat else { return nil }
                         DispatchQueue.main.async { toggleRecord() }
                         return nil

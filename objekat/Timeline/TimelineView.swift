@@ -64,7 +64,7 @@ struct TimelineView: View {
     var onTogglePlayback: () -> Void = {}
     /// ⌥space: suspend / resume in the same place (without going back to the cursor).
     var onTogglePause: () -> Void = {}
-    /// ⌘⌥R: record the armed zones / stop the recording, as the transport's button does.
+    /// ⌘⇧R: record the armed zones / stop the recording, as the transport's button does.
     var onToggleRecord: () -> Void = {}
     var onMoveCursor: (Double) -> Void = { _ in }
     /// ⌥-click in the ruler: the playhead jumps too (playing: playback goes on from there).

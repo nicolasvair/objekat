@@ -2026,6 +2026,29 @@
         }
       }
     },
+    "cheatsheet.record": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "record / stop"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grabar / detener"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "enregistrer / arrêter"
+          }
+        }
+      }
+    },
     "cheatsheet.redo": {
       "extractionState": "manual",
       "localizations": {
