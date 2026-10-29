@@ -324,6 +324,9 @@ extension EditViewModel {
         // parameter touched between two ⌘Z was rebuilding its object, for the memory of having
         // touched it.
         probe.automationTouchOrder = new.automationTouchOrder
+        // The recording input of a zone is a fact of the model that the engine knows nothing about
+        // (the transport's record button reads it): undoing an assignment rebuilds nothing.
+        probe.recordInput = new.recordInput
 
         switch (old.kind, new.kind) {
         case let (.clip(f0, _, fd0, sr0, rev0), .clip(f1, _, fd1, sr1, rev1)):

@@ -40,6 +40,9 @@ struct CanvasGroup {
     var badges: [FeatureBadge] = []
     /// `showsChildrenInline`: the chevron points down.
     let expanded: Bool
+    /// The [ o ] of a recording zone (a group with an input), nil when there is none
+    /// (@see RecordZoneIcon). `.armed` is the overlay's: the Canvas draws nothing for it.
+    var recordIcon: RecordZoneIcon.State? = nil
     /// The span shared with a crossfaded neighbour at each end (px): the white base is punched
     /// out there, so the neighbour's content still reads (@see `OpaqueBaseMask`).
     let sharedLeading: Double
@@ -427,7 +430,7 @@ enum GroupBlocksCanvas {
             let fadeOutPx = g.fadeOut * geo.pixelsPerSecond
             let needsLabel = w >= 30
             guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil
-                    || g.loopRange != nil else { continue }
+                    || g.loopRange != nil || g.recordIcon != nil else { continue }
 
             var c = ctx
             if g.dim { c.opacity = 0.25 }
@@ -471,6 +474,11 @@ enum GroupBlocksCanvas {
 
             if g.mutedInMix {
                 c.fill(outline(rect, radius: item.blockCornerRadius), with: .color(.black.opacity(0.38)))
+            }
+
+            // The record button, centred on the block (its hit-test is the canvas's: recordIconHit).
+            if let state = g.recordIcon, let iconRect = RecordZoneIcon.rect(in: rect) {
+                RecordZoneIcon.draw(into: c, rect: iconRect, state: state)
             }
 
             guard needsLabel else { continue }

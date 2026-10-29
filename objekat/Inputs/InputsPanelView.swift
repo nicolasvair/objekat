@@ -127,6 +127,9 @@ struct InputsPanelView: View {
         .padding(.horizontal, 10).padding(.vertical, 5)
         .background(isSelected ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.25) : Color.clear)
         .contentShape(Rectangle())
+        // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
+        // this input (@see RecordZonePlanner, InputDragSession).
+        .onDrag { InputDragSession.shared.begin(ref) }
         .onTapGesture {
             renaming = nil
             let extend = NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift)

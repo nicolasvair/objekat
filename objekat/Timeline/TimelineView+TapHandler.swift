@@ -91,6 +91,24 @@ extension TimelineView {
             && hypot(point.x - lastTapInfo.location.x, point.y - lastTapInfo.location.y) < 20
         lastTapInfo = (now, point)
 
+        // The [ o ] of a recording zone arms / disarms it (the Selection tool only: the others own the
+        // click). It sits at the CENTRE of the block, where a double click to open the group also
+        // lands: the second click of a double tap that began on the [ o ] gives the first one back
+        // and goes on to open the group, so that opening a zone never leaves it armed by accident.
+        if viewModel.activeTool == .toolSelection, let zone = recordIconHit(at: point) {
+            let armed = viewModel.armedGroupIDs.contains(zone)
+            if isDoubleTap, recordIconTapID == zone {
+                viewModel.setArmed(zone, on: !armed)
+                recordIconTapID = nil
+            } else {
+                viewModel.setArmed(zone, on: !armed)
+                recordIconTapID = zone
+                return
+            }
+        } else {
+            recordIconTapID = nil
+        }
+
         // The 'objects / automations' hem of an object that has both to show. Resolved BEFORE the
         // band guards: on an infinite bus the band covers the whole timeline and the hem falls
         // inside it — the guard would have swallowed it.

@@ -21093,6 +21093,75 @@
         }
       }
     },
+    "transport.record.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record (recording itself arrives with the next increment)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grabar (la grabación llega en el siguiente incremento)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer (l'enregistrement arrive à l'incrément suivant)"
+          }
+        }
+      }
+    },
+    "transport.record.help.noArm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arm a recording zone first: the [ o ] at the centre of a group that has an input"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arma primero una zona de grabación: el [ o ] en el centro de un grupo que tenga una entrada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Armez d'abord une zone d'enregistrement : le [ o ] au centre d'un groupe qui a une entrée"
+          }
+        }
+      }
+    },
+    "transport.record.help.noProject": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save the project first: the takes go into its folder"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda primero el proyecto: las tomas van a su carpeta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrez d'abord le projet : les prises vont dans son dossier"
+          }
+        }
+      }
+    },
     "transport.snap": {
       "extractionState": "manual",
       "localizations": {

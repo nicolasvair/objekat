@@ -2320,6 +2320,31 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   project and a tab switch, and stops when the inputs close, when the card changes, or when a pairing
   swallows the input.
 
+**Recording zones (`rec.*`).** A zone is a GROUP with a `recordInput` (saved with the object, in the
+undo). Nothing records yet; these are the doors of the drop, the assignment and the arming.
+
+* `rec.drop {first, count?, lane, time, visible_secs?, dry_run?}` — what releasing a row of the Inputs
+  tab on the timeline does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
+  after the input, from `time` for 40 % of the view (`visible_secs`, default 100) or up to the next
+  object of the lane, at least max(1 s, 24 px). Over the time selection: its in/out. Over a group that
+  can record: the input is assigned to it. Over a clip, a group that cannot record (infinite, looping,
+  consolidated) or with less room than the floor: refused. In an open group's sub-lane the zone is a
+  sub-group (`parent`). `time` is NOT snapped. Answers `outcome` (`create` | `assign` | `refuse`),
+  `reason` (`onObject`, `notRecordable`, `parentNotRecordable`, `tooShort`, `overlap`), `start`, `end`,
+  `parent`, `target`, `group`, `applied`. One undo point for a change, none for a refusal.
+* `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
+  absent (which disarms it). `invalid_state` for a group that cannot record. One undo point.
+* `rec.arm {group, on}` — arms or disarms. SESSION state: not saved, not in the undo, forgotten by a
+  new project or an opening. `invalid_state` when the group has no input, when its input is not on the
+  card (or the inputs are closed) and for a group that cannot record. Several zones can be armed, on
+  the same input too.
+* `rec.status` — `zones` (`id`, `name`, `input`, `input_present`, `recordable`, `armed`), `armed` (ids
+  armed AND still able to record), `can_record` (the transport's record button is live: something
+  armed and a saved project), `project_saved`, `recording` (false until recording exists).
+
+`tools/test_record_zone_planner.swift` asserts the planner alone; `tools/scenario_record_zones.py`
+asserts the family against the virtual card.
+
 `audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed).
 Changing the output device closes the inputs; a rate or buffer change keeps them.
 

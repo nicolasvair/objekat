@@ -86,6 +86,20 @@ struct TransportView: View {
             }
             .buttonStyle(.bordered)
 
+            // Record: live when a zone is armed AND the project has a folder for the takes. It does
+            // nothing yet — the recording itself is the next increment; this is its door.
+            Button {
+            } label: {
+                Image(systemName: "circle.fill")
+                    .frame(width: 16)
+                    .foregroundStyle(viewModel.canRecord ? RecordZoneIcon.red : Color.primary)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!viewModel.canRecord)
+            .help(viewModel.canRecord ? L("transport.record.help")
+                  : viewModel.armedRecordZones.isEmpty ? L("transport.record.help.noArm")
+                  : L("transport.record.help.noProject"))
+
             Button {
                 viewModel.toggleLoopMode()
             } label: {

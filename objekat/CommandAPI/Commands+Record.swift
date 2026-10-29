@@ -169,6 +169,155 @@ extension CommandRegistry {
             }
             return Self.inputListPayload(try CommandContext.shared.requireEngine())
         }
+
+        registerRecordZoneCommands()
+    }
+
+    // MARK: Recording zones (`rec.*`)
+
+    /// A zone is a GROUP with a `recordInput`; these commands are the doors of the drop, the assignment and
+    /// the arming (nothing records yet: that is the next increment). The state they read and write is the
+    /// view model's (@see EditViewModel+RecordZones).
+    func registerRecordZoneCommands() {
+
+        register("rec.drop",
+                 summary: """
+                 Drops the input (`first`, `count`) on the timeline at display lane `lane` and instant \
+                 `time` — exactly what releasing a row of the Inputs tab there does, the same planner \
+                 (RecordZonePlanner). On empty room: a new empty group named after the input, from `time` \
+                 for 40 % of the view (`visible_secs` is the view's width in seconds, default 100) or up \
+                 to the next object of the lane, at least max(1 s, 24 px). Over the time selection: the \
+                 selection's in/out. Over a group that can record: the input is assigned to it. Over a \
+                 clip, or a group that cannot record (infinite, looping, consolidated), or with less room \
+                 than the floor: refused. In an open group's sub-lane the zone is a sub-group. `time` is \
+                 NOT snapped (the hand's gesture snaps; the machine's door is exact). `dry_run` plans \
+                 without changing anything. One undo point for a change, none for a refusal. \
+                 `outcome`: create | assign | refuse (`reason` says why).
+                 """,
+                 params: [ParamSpec("first", "int", "First channel of the input, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("lane", "int", "Display lane under the cursor."),
+                          ParamSpec("time", "number", "Instant under the cursor, seconds."),
+                          ParamSpec("visible_secs", "number", required: false,
+                                    "Width of the view in seconds (default 100)."),
+                          ParamSpec("dry_run", "bool", required: false, "Plan only.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ref = try Self.inputRef(p)
+            let lane = try p.int("lane")
+            guard lane >= 0 else { throw CommandError(code: .bad_params, message: "'lane' must be >= 0") }
+            let time = try p.double("time")
+            let visible = try p.double("visible_secs", or: 100)
+            let pps = vm.pixelsPerSecond
+            if try p.bool("dry_run", or: false) {
+                let plan = vm.planRecordDrop(displayLane: lane, time: time, visibleSpanSecs: visible,
+                                             pixelsPerSecond: pps)
+                return Self.recordPlanJSON(plan, group: nil, applied: false)
+            }
+            let r = vm.dropRecordInput(ref, displayLane: lane, time: time, visibleSpanSecs: visible,
+                                       pixelsPerSecond: pps)
+            return Self.recordPlanJSON(r.plan, group: r.group, applied: !r.plan.isRefusal)
+        }
+
+        register("rec.assign",
+                 summary: """
+                 Gives the group `group` the input (`first`, `count`) it will record, or takes it away when \
+                 `first` is absent. Refused (`invalid_state`) for a group that cannot record (infinite, \
+                 looping, consolidated) and for anything that is not a group. One undo point, none when \
+                 nothing changes. Taking the input away disarms the zone.
+                 """,
+                 params: [ParamSpec("group", "uuid", "The group."),
+                          ParamSpec("first", "int", required: false, "First channel; absent = clear."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("group")
+            guard let item = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let ref: InputRef? = try p.optionalInt("first") == nil ? nil : Self.inputRef(p)
+            guard item.isGroup, EditViewModel.isRecordableZone(item) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "only a finite, non-looping, non-consolidated group can record")
+            }
+            vm.assignRecordInput(ref, toGroup: id)
+            return Self.recordStatusJSON(vm)
+        }
+
+        register("rec.arm",
+                 summary: """
+                 Arms (`on` true) or disarms a recording zone. Arming is SESSION state: not saved, not in the \
+                 undo, forgotten by a new project or an opening. Refused (`invalid_state`) when the group has \
+                 no input, when its input is not on the card (or the inputs are closed — `input.enable`) \
+                 and for a group that cannot record. Several zones can be armed, on the same input too.
+                 """,
+                 params: [ParamSpec("group", "uuid", "The group."),
+                          ParamSpec("on", "bool", "Armed or not.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("group")
+            if let why = vm.setArmed(id, on: try p.bool("on")) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            return Self.recordStatusJSON(vm)
+        }
+
+        register("rec.status",
+                 summary: """
+                 The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
+                 ({first, count}), `input_present` (the card has it), `armed`. `armed`: the ids of the \
+                 zones armed AND still able to record. `can_record`: the transport's record button is live \
+                 (something armed, and `project_saved`). `recording` is false until recording exists.
+                 """,
+                 undo: .none) { _ in
+            Self.recordStatusJSON(try CommandContext.shared.requireViewModel())
+        }
+    }
+
+    @MainActor
+    private static func recordPlanJSON(_ plan: RecordZonePlanner.Plan, group: UUID?, applied: Bool) -> JSONValue {
+        var o: [String: JSONValue] = ["applied": .bool(applied)]
+        switch plan {
+        case .create(let start, let end, let parent):
+            o["outcome"] = .string("create")
+            o["start"] = .number(start)
+            o["end"] = .number(end)
+            o["parent"] = .stringOrNull(parent?.uuidString)
+        case .assign(let id):
+            o["outcome"] = .string("assign")
+            o["target"] = .string(id.uuidString)
+        case .refuse(let why):
+            o["outcome"] = .string("refuse")
+            o["reason"] = .string(why.rawValue)
+        }
+        o["group"] = .stringOrNull(group?.uuidString)
+        return .object(o)
+    }
+
+    @MainActor
+    private static func recordStatusJSON(_ vm: EditViewModel) -> JSONValue {
+        var zones: [JSONValue] = []
+        func walk(_ items: [SoundObject]) {
+            for item in items {
+                if let ref = item.recordInput {
+                    zones.append(.object([
+                        "id": .string(item.id.uuidString),
+                        "name": .string(vm.displayName(of: item)),
+                        "input": .object(["first": .int(ref.first), "count": .int(ref.count)]),
+                        "input_present": .bool(vm.isRecordInputPresent(ref)),
+                        "recordable": .bool(EditViewModel.isRecordableZone(item)),
+                        "armed": .bool(vm.armedRecordZones.contains(item.id)),
+                    ]))
+                }
+                if case .group(let children, _) = item.kind { walk(children) }
+            }
+        }
+        walk(vm.items)
+        return .object(["zones": .array(zones),
+                        "armed": .array(vm.armedRecordZones.map { .string($0.uuidString) }),
+                        "can_record": .bool(vm.canRecord),
+                        "project_saved": .bool(vm.projectURL != nil),
+                        "recording": .bool(false)])
     }
 
     private static func inputRef(_ p: CommandParams) throws -> InputRef {

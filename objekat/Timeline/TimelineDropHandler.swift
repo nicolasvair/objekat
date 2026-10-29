@@ -46,6 +46,13 @@ struct TimelineDropDelegate: DropDelegate {
     /// `PluginDragSession` — a drop target gets only an `NSItemProvider` whose payload loads
     /// asynchronously, too late to refuse in time. nil = not known (no session): the old answer.
     var pluginOutcome: ((CGPoint, NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
+    /// An input dragged from the Inputs tab hovers HERE (a recording zone, @see RecordZonePlanner): the
+    /// answer is the cursor's operation (`.copy`, or `.forbidden` for a refusal) and nil when the drag in
+    /// flight is not an input — then the other readings go on. It is asked first: an input travels as
+    /// plain text, like a plugin.
+    var inputHover: ((CGPoint) -> DropOperation?)? = nil
+    /// The input drag left the timeline (or was dropped): the ghost goes.
+    var inputHoverEnd: (() -> Void)? = nil
 
     /// movements, which are absent during a system drag. `nil` = nothing to warn.
     private func fileProviders(in info: DropInfo) -> [NSItemProvider] {
@@ -62,6 +69,7 @@ struct TimelineDropDelegate: DropDelegate {
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         onDropHover?(true)
+        if let op = inputHover?(info.location) { return DropProposal(operation: op) }
         let providers = info.itemProviders(for: types)
         if providers.contains(where: dragCarriesPlugin) {
             let f = NSEvent.modifierFlags
@@ -87,12 +95,14 @@ struct TimelineDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         onDropHover?(false)
+        inputHoverEnd?()
         PluginDropHint.shared.leave("timeline")
         onFileHintEnd()
     }
 
     func performDrop(info: DropInfo) -> Bool {
         onDropHover?(false)
+        inputHoverEnd?()
         PluginDropHint.shared.leave("timeline")
         // resolved yet on entry, which happens depending on the drag's source).
         // The mode is read BEFORE the band closes, in handleDrop: here we merely hand over, and
@@ -186,6 +196,10 @@ extension TimelineView {
             // text IS a plugin payload — we let the following branches try their luck on the
             // same provider (they will disqualify themselves if there is no fileURL).
             if dragCarriesPlugin(provider) {
+                // An input of the Inputs tab travels as plain text too: the marker in its payload says
+                // so (a plugin's does not decode as one). Its lane and instant are read NOW, from the
+                // hand's position — the provider answers later.
+                receiveInputDrop(provider, at: location)
                 // What a dropped payload DOES is the same wherever it is let go of — a timeline
                 // object here, a bus's strip in the toolbar — so the timeline only says WHERE:
                 // the host under the cursor, resolved at the drop and not before.

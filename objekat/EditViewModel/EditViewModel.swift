@@ -1280,6 +1280,15 @@ final class EditViewModel {
     /// Written through `setRecordInputs` / `editRecordInputs` (@see EditViewModel+Record), which also
     /// tell the engine which pairs to describe.
     var recordInputs = RecordInputsConfig()
+    /// The recording zones (groups with an input) armed to record. SESSION state: not in the project
+    /// file, not in the undo (like the playback loop), forgotten by a new project / an opening.
+    /// Read through `armedRecordZones`, which keeps only the ones still able to record
+    /// (@see EditViewModel+RecordZones).
+    var armedGroupIDs: Set<UUID> = []
+    /// What releasing the input drag in flight HERE would do — the ghost under the cursor, written by
+    /// the timeline's drop delegate and read by `RecordDropGhostOverlay` only (a separate view, so that
+    /// the cursor's movement does not invalidate the timeline). nil = no input drag over the timeline.
+    var recordDropGhost: RecordDropGhost? = nil
     var cmdKeyHeld: Bool = false
     var effectiveSnapEnabled: Bool { snapEnabled != cmdKeyHeld }
     /// ⌥ held at this instant. The counterpart of `cmdKeyHeld` above, and for the same reason:

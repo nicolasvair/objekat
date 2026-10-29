@@ -256,6 +256,8 @@ struct TimelineView: View {
 
     @State var waveformCache = WaveformCache()
     @State var lastTapInfo: (time: Date, location: CGPoint) = (.distantPast, .zero)
+    /// The recording zone whose [ o ] the previous click hit (@see handleCanvasTap).
+    @State var recordIconTapID: UUID? = nil
     @State var moveDrag: MoveDragState? = nil
     /// A drag held while the view scrolls (@see CanvasDragScrollFollow).
     @State var scrollFollow = CanvasDragScrollFollow()
@@ -1065,6 +1067,24 @@ struct TimelineView: View {
                     .allowsHitTesting(false)
                     .zIndex(2.95)
 
+                // The zone about to be born under an input being dragged from the Inputs tab, and the
+                // red frame of the armed zones: two views of their own, so that neither the cursor
+                // nor the blink invalidates this body (@see RecordZoneOverlays).
+                RecordDropGhostOverlay(viewModel: viewModel,
+                                       pixelsPerSecond: pixelsPerSecond,
+                                       rulerHeight: rulerHeight,
+                                       laneStep: laneStep,
+                                       blockHeight: blockHeight)
+                    .allowsHitTesting(false)
+                    .zIndex(2.96)
+                ArmedRecordZonesOverlay(viewModel: viewModel,
+                                        pixelsPerSecond: pixelsPerSecond,
+                                        rulerHeight: rulerHeight,
+                                        laneStep: laneStep,
+                                        blockHeight: blockHeight)
+                    .allowsHitTesting(false)
+                    .zIndex(2.94)
+
                 // The FX tool's mini signal view, inside the hovered block (@see FXStripLayout).
                 // Pure drawing: the canvas resolves its clicks (@see handleFXTap).
                 FXStripOverlayView(viewModel: viewModel, store: fxStripStore)
@@ -1125,7 +1145,9 @@ struct TimelineView: View {
                             guard let payload = PluginDragSession.shared.current else { return nil }
                             guard let host = objectID(at: loc) else { return .refuse("no object under the cursor") }
                             return viewModel.pluginDropOutcome(payload, toHost: host, at: .hostEnd, flags: flags)
-                        }))
+                        },
+                        inputHover: { recordInputHover(at: $0) },
+                        inputHoverEnd: { endRecordInputHover() }))
         }
         .scrollPosition($scrollPosition)
         // The mirror in the view-model (`viewScrollX/Y`, @ObservationIgnored) serves only to save
@@ -1894,7 +1916,7 @@ struct TimelineView: View {
     }
 
     /// `clipRect(for:)` once the entry is in hand.
-    private func clipRect(for e: LaneEntry) -> CGRect {
+    func clipRect(for e: LaneEntry) -> CGRect {
         let dy = previewOffset(for: e.item)?.dy ?? 0
         let y = rulerHeight + Double(e.displayLane) * laneStep + dy
         // An infinite bus: its clickable 'surface' is its whole lane (0 → the content's width).
@@ -3081,6 +3103,7 @@ struct TimelineView: View {
         // Read ONCE, ahead of the loop: with nothing missing (the common case) the recursive
         // `containsMissingDescendant` is never asked.
         let nothingMissing = viewModel.missingPaths.isEmpty
+        let inputChannels = AudioDeviceStatus.shared.snapshot.inputChannels
         let resolved = entries.map { entry -> CanvasGroup in
             let item = entry.item
             let name = viewModel.displayName(of: item)
@@ -3099,6 +3122,7 @@ struct TimelineView: View {
                 mutedInMix: viewModel.isShownMuted(item),
                 badges: viewModel.featureBadges(of: item),
                 expanded: item.showsChildrenInline,
+                recordIcon: viewModel.recordZoneIcon(of: item, channels: inputChannels),
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
                 toolOverlay: toolOverlays[item.id],
                 loopRange: previewLoopRange(for: item),
