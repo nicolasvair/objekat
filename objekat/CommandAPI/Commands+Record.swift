@@ -321,14 +321,32 @@ extension CommandRegistry {
                  Arms (`on` true) or disarms a recording zone. Arming is SESSION state: not saved, not in the \
                  undo, forgotten by a new project or an opening. Refused (`invalid_state`) when the group has \
                  no input, when its input is not on the card (or the inputs are closed — `input.enable`) \
-                 and for a group that cannot record. Several zones can be armed, on the same input too.
+                 and for a group that cannot record. Several zones can be armed, on the same input too. \
+                 `groups` (instead of `group`) acts on several zones at once, as a click on the [ o ] of a \
+                 selected zone does: the ones that cannot take the change (no input, input absent, cannot \
+                 record, unknown id) are passed over without an error and listed in `ignored`; \
+                 `invalid_state` only when none of them could.
                  """,
-                 params: [ParamSpec("group", "uuid", "The group."),
+                 params: [ParamSpec("group", "uuid", required: false, "The group."),
+                          ParamSpec("groups", "array<uuid>", required: false,
+                                    "Several groups, all taken to the state `on`; the ones that cannot are ignored."),
                           ParamSpec("on", "bool", "Armed or not.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            let on = try p.bool("on")
+            if p.raw["groups"] != nil {
+                let ids = try p.uuids("groups")
+                let refused = vm.setArmed(ids: ids, on: on)
+                if !ids.isEmpty, refused.count == Set(ids).count, on {
+                    throw CommandError(code: .invalid_state,
+                                       message: refused[ids[0]] ?? "no zone can be armed")
+                }
+                guard case .object(var status) = Self.recordStatusJSON(vm) else { return Self.recordStatusJSON(vm) }
+                status["ignored"] = .array(ids.filter { refused[$0] != nil }.map { .string($0.uuidString) })
+                return .object(status)
+            }
             let id = try p.uuid("group")
-            if let why = vm.setArmed(id, on: try p.bool("on")) {
+            if let why = vm.setArmed(id, on: on) {
                 throw CommandError(code: .invalid_state, message: why)
             }
             return Self.recordStatusJSON(vm)

@@ -96,13 +96,23 @@ extension TimelineView {
         // click). It sits at the CENTRE of the block, where a double click to open the group also
         // lands: the second click of a double tap that began on the [ o ] gives the first one back
         // and goes on to open the group, so that opening a zone never leaves it armed by accident.
+        //
+        // On a zone that belongs to the SELECTION the click acts on every selected zone that can take it,
+        // in the state the clicked one goes to (`armTargets`); on a zone outside it, on that zone alone and
+        // the selection does not move. The second click of a double tap gives back to each target the
+        // state it had before the first.
         if viewModel.activeTool == .toolSelection, let zone = recordIconHit(at: point) {
-            let armed = viewModel.armedGroupIDs.contains(zone)
             if isDoubleTap, recordIconTapID == zone {
-                viewModel.setArmed(zone, on: !armed)
+                for (id, was) in recordIconTapBefore { viewModel.setArmed(id, on: was) }
+                recordIconTapBefore = [:]
                 recordIconTapID = nil
             } else {
-                viewModel.setArmed(zone, on: !armed)
+                let on = !viewModel.armedGroupIDs.contains(zone)
+                let targets = viewModel.armTargets(clicked: zone)
+                recordIconTapBefore = Dictionary(uniqueKeysWithValues: targets.map {
+                    ($0, viewModel.armedGroupIDs.contains($0))
+                })
+                viewModel.setArmed(ids: targets, on: on)
                 recordIconTapID = zone
                 return
             }

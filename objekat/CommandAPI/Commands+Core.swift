@@ -1077,7 +1077,7 @@ enum CommandAdapters {
         var payload: [String: JSONValue] = [
             "id": .string(item.id.uuidString),
             "kind": .string(kindName(item)),
-            "name": .string(item.displayName),
+            "name": .string(vm.displayName(of: item)),   // a recording zone nobody named: its input's name
             "lane": .int(item.lane),
             "display_lane": .int(entry.displayLane),
             "expanded_span": .int(item.expandedSpan),

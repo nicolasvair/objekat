@@ -85,6 +85,30 @@ extension EditViewModel {
         return nil
     }
 
+    /// The zones a click on the [ o ] of `clicked` acts on. A zone that is PART of the selection brings
+    /// along the other selected zones that can take the change (an input on the card, a group that can
+    /// record) — the others are passed over without a word; a zone outside the selection acts alone and
+    /// the selection stays as it is (the rule of the plugin cards). `clicked` comes first.
+    func armTargets(clicked: UUID) -> [UUID] {
+        guard selectedIDs.contains(clicked), selectedIDs.count > 1 else { return [clicked] }
+        let others = selectedIDs.filter { $0 != clicked && armRefusal(of: $0) == nil }.sorted { a, b in
+            let sa = find(id: a)?.startTime ?? 0, sb = find(id: b)?.startTime ?? 0
+            return sa != sb ? sa < sb : a.uuidString < b.uuidString
+        }
+        return [clicked] + others
+    }
+
+    /// Arms or disarms several zones at once, each as `setArmed` would. Returns the refusals by id (the
+    /// zones that could not take the change); an empty dictionary when all went through.
+    @discardableResult
+    func setArmed(ids: [UUID], on: Bool) -> [UUID: String] {
+        var refusals: [UUID: String] = [:]
+        for id in ids {
+            if let why = setArmed(id, on: on) { refusals[id] = why }
+        }
+        return refusals
+    }
+
     /// The zones armed AND still able to record, in timeline order. An armed group that has been deleted,
     /// emptied of its input or whose input left the card simply stops counting.
     var armedRecordZones: [UUID] {
