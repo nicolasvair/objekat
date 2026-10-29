@@ -93,6 +93,60 @@ extension CommandRegistry {
             let settled = await Self.awaitDeviceSettled(from: before)
             return Self.audioStatusPayload(settled: settled)
         }
+
+        // MARK: The virtual card (--virtual-audio)
+
+        register("audio.virtual.status",
+                 summary: """
+                 The virtual sound card (`--virtual-audio`): its configuration, what each input \
+                 carries right now, and `loopback_delay` — the frames between an output sample \
+                 leaving the callback and coming back on a `loopback` input (two buffers plus the \
+                 announced latencies). `{ "active": false }` on a normal launch.
+                 """,
+                 undo: .none) { _ in
+            let engine = try CommandContext.shared.requireEngine()
+            return JSONValue.fromFoundation(engine.virtualAudioStatus())
+        }
+
+        register("audio.virtual.set_input",
+                 summary: """
+                 Chooses what input `channel` of the virtual card carries: `silence` (the default), \
+                 `sine` (`frequency` Hz at `amplitude`, phase-continuous), `impulse` (one sample of \
+                 `amplitude` every `period` seconds, the first at once) or `loopback` (the output's \
+                 first channel, delayed by `audio.virtual.status.loopback_delay`). Only exists \
+                 under `--virtual-audio`; the real card is never touched.
+                 """,
+                 params: [ParamSpec("channel", "int", "0-based input channel of the virtual card."),
+                          ParamSpec("signal", "string", "silence | sine | impulse | loopback."),
+                          ParamSpec("frequency", "number", required: false, "sine only, Hz. Default 440."),
+                          ParamSpec("amplitude", "number", required: false, "Linear, 0...1. Default 0.5."),
+                          ParamSpec("period", "number", required: false, "impulse only, seconds. Default 1.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            guard OBJEngineCore.isVirtualAudio() else {
+                throw CommandError(code: .invalid_state,
+                                   message: "the virtual card is not active (launch with --virtual-audio)")
+            }
+            let channel = try p.int("channel")
+            let signal = try p.string("signal")
+            let frequency = try p.double("frequency", or: 440)
+            let amplitude = try p.double("amplitude", or: 0.5)
+            let period = try p.double("period", or: 1)
+            guard frequency > 0, frequency <= 96_000 else {
+                throw CommandError(code: .bad_params, message: "frequency \(frequency) outside (0, 96000] Hz")
+            }
+            guard amplitude >= 0, amplitude <= 4 else {
+                throw CommandError(code: .bad_params, message: "amplitude \(amplitude) outside 0...4")
+            }
+            guard period >= 0.001 else {
+                throw CommandError(code: .bad_params, message: "period \(period) under 0.001 s")
+            }
+            if let why = engine.setVirtualInputChannel(channel, signal: signal, frequency: frequency,
+                                                       amplitude: amplitude, period: period) {
+                throw CommandError(code: .bad_params, message: why)
+            }
+            return JSONValue.fromFoundation(engine.virtualAudioStatus())
+        }
     }
 
     // MARK: Shared helpers

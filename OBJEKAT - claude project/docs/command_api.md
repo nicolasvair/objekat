@@ -725,6 +725,7 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--project=<path>` | opens a project on startup |
 | `--exec=<script.jsonl>` | replays a JSON-lines scenario (`#` for a comment, `{DIR}` = the script's folder) |
 | `--no-audio` | opens no output device |
+| `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
 
@@ -2242,6 +2243,36 @@ keep the engine from opening the real device. So on a machine that has ever run 
 fields still answer the truth of whatever the engine actually opened; it is `--no-audio`'s own
 guarantee that is short here. `tools/scenario_audio_device.py`'s phase A detects this and adapts
 its assertions rather than failing on a machine where it is present.
+
+#### The virtual card (`--virtual-audio`, `audio.virtual.*`)
+
+Audio tests with no hardware. `--virtual-audio` registers ONE device type, "OBJ Virtual"
+(`objekat/OBJVirtualAudioDevice.h`), BEFORE the device manager initialises — so no system type is
+ever created and the run cannot reach a real card, whatever Settings.xml says. Its device calls the
+audio callback from a thread paced on the wall clock (one block every `bs / sr` seconds, absolute
+deadlines: no drift), so `transport.play` advances at real time. Defaults: 4 inputs, 2 outputs,
+48 kHz, 256 frames, announced latencies 64 (in) and 96 (out) frames.
+
+The virtual card **never reaches `~/Library/objekat/Settings.xml`**: while it is on, the engine's
+property storage neither reads nor writes any device setting (`audio_device_setup`, the default
+wave in/out, the wave in/out items, the layout presets). A normal launch afterwards finds the
+file as it was — `tools/scenario_virtual_audio.py` asserts it by hash.
+
+* `audio.virtual.status` — the configuration, what each input carries right now, and
+  `loopback_delay`. `{"active": false}` on a normal launch (and under `--no-audio`).
+* `audio.virtual.set_input {channel, signal, frequency?, amplitude?, period?}` — what input
+  `channel` carries: `silence` (default), `sine` (`frequency` Hz at `amplitude`, phase-continuous
+  across a change of frequency), `impulse` (one sample of `amplitude` every `period` seconds, the
+  first at once) or `loopback` (the output's first channel, delayed by `loopback_delay`). Refused
+  with `invalid_state` when the card is not active, `bad_params` for a channel outside the card or an
+  impossible value.
+
+The loopback models a cable from the output back to an input: the device announces `inlat` and
+`outlat` the way CoreAudio does, EXCLUDING the buffers, and the real round trip is one buffer out,
+the announced latencies, one buffer in — `loopback_delay = 2 * bs + inlat + outlat` frames (672 with
+the defaults). Never less than a block: a block-based callback cannot hand back samples it has not
+produced yet. A host that compensates a recording the way a real card needs must land on that
+figure.
 
 ### Export
 

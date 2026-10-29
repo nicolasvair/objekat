@@ -22,6 +22,8 @@
 #include "OBJPluginProbe.h"     // trims + gain match around a plugin (engine patch 0045)
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
+#include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
+#include "OBJVirtualAudioDevice.h"        // --virtual-audio: a paced test card with synthetic inputs
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -116,14 +118,94 @@ struct OBJRenderPluginFilter {
 // PAS modifié : seule la lecture est filtrée (getXmlValue renvoie une copie), et la sauvegarde
 // continue d'écrire la fréquence réellement ouverte.
 // @see Shared/OBJSampleRatePolicy.h, -applySampleRatePolicy.
+//
+// Three more rules, all about what must NEVER reach Settings.xml (recording work, 2026-10):
+//  - `--virtual-audio` (@see OBJVirtualAudioDevice.h): the virtual card exists in this process
+//    only. Every device-related setting is neither read nor written while it is on, so the next
+//    normal launch finds the real card's settings exactly as they were.
+//  - The card's INPUTS are opened on demand (-openAudioInputs) and stay open until the device
+//    changes: the saved setup never carries an input device or input channels, neither written
+//    nor read back (an old file may hold some). Otherwise a launch would reopen the microphone —
+//    and with AirPods, switch them to the call profile — before anybody asked for an input.
+//  - The `wavein` items (a wave input's gain, monitor mode, record adjustment...) are never
+//    persisted nor read: an input's settings belong to the PROJECT, not to a per-machine file, and
+//    Tracktion would otherwise write one at every device destruction.
 struct OBJPropertyStorage : public te::PropertyStorage {
     using te::PropertyStorage::PropertyStorage;
 
+    /// Settings that describe the sound card. Off-limits while the virtual card is on.
+    static bool isDeviceSetting(te::SettingID s) {
+        return s == te::SettingID::audio_device_setup || s == te::SettingID::audiosettings
+            || s == te::SettingID::defaultWaveOutDevice || s == te::SettingID::defaultWaveInDevice
+            || s == te::SettingID::waveout || s == te::SettingID::wavein
+            || s == te::SettingID::audioDeviceLayoutPresets;
+    }
+    static bool blocked(te::SettingID s) {
+        return s == te::SettingID::wavein || (objvirtual::state().active && isDeviceSetting(s));
+    }
+
+    /// The setup without its INPUT side (@see the rules above).
+    static void stripInputs(juce::XmlElement& xml) {
+        // An old-style single `audioDeviceName` names output AND input: keep it as the output.
+        const auto both = xml.getStringAttribute("audioDeviceName");
+        if (both.isNotEmpty()) {
+            xml.removeAttribute("audioDeviceName");
+            if (xml.getStringAttribute("audioOutputDeviceName").isEmpty())
+                xml.setAttribute("audioOutputDeviceName", both);
+        }
+        xml.removeAttribute("audioInputDeviceName");
+        xml.removeAttribute("audioDeviceInChans");
+    }
+
     std::unique_ptr<juce::XmlElement> getXmlProperty(te::SettingID setting) override {
+        if (blocked(setting)) return nullptr;
         auto xml = te::PropertyStorage::getXmlProperty(setting);
-        if (xml != nullptr && setting == te::SettingID::audio_device_setup)
+        if (xml != nullptr && setting == te::SettingID::audio_device_setup) {
             xml->removeAttribute("audioDeviceRate");
+            stripInputs(*xml);
+        }
         return xml;
+    }
+
+    void setXmlProperty(te::SettingID setting, const juce::XmlElement& xml) override {
+        if (blocked(setting)) return;
+        if (setting == te::SettingID::audio_device_setup) {
+            juce::XmlElement copy(xml);
+            stripInputs(copy);
+            te::PropertyStorage::setXmlProperty(setting, copy);
+            return;
+        }
+        te::PropertyStorage::setXmlProperty(setting, xml);
+    }
+
+    void removeProperty(te::SettingID setting) override {
+        if (blocked(setting)) return;
+        te::PropertyStorage::removeProperty(setting);
+    }
+
+    void removePropertyItem(te::SettingID setting, juce::StringRef item) override {
+        if (blocked(setting)) return;
+        te::PropertyStorage::removePropertyItem(setting, item);
+    }
+
+    juce::var getPropertyItem(te::SettingID setting, juce::StringRef item, const juce::var& defaultValue) override {
+        if (blocked(setting)) return defaultValue;
+        return te::PropertyStorage::getPropertyItem(setting, item, defaultValue);
+    }
+
+    void setPropertyItem(te::SettingID setting, juce::StringRef item, const juce::var& value) override {
+        if (blocked(setting)) return;
+        te::PropertyStorage::setPropertyItem(setting, item, value);
+    }
+
+    std::unique_ptr<juce::XmlElement> getXmlPropertyItem(te::SettingID setting, juce::StringRef item) override {
+        if (blocked(setting)) return nullptr;
+        return te::PropertyStorage::getXmlPropertyItem(setting, item);
+    }
+
+    void setXmlPropertyItem(te::SettingID setting, juce::StringRef item, const juce::XmlElement& xml) override {
+        if (blocked(setting)) return;
+        te::PropertyStorage::setXmlPropertyItem(setting, item, xml);
     }
 };
 
@@ -306,6 +388,11 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // pour un arbitrage qui n'a jamais rien à arbitrer. C'est aussi la source de
     // l'assertion « duplicate nodeID » qui pollue la console en Debug.
     bool areClipSlotsEnabled() override { return false; }
+
+    // `--virtual-audio`: the virtual card is the ONLY device type (@see OBJVirtualAudioDevice.h).
+    // JUCE would not create the system types anyway once one has been added, but a card that
+    // appears in a test run is a test that depends on the machine.
+    bool addSystemAudioIODeviceTypes() override { return !objvirtual::state().active; }
 
     // Threads de calcul audio : les cœurs PERFORMANCE, pas tous les cœurs logiques — le moteur
     // retire lui-même le thread audio (workers = n-1). @see objAudioThreadCount (OBJ_AUDIO_THREADS).
@@ -1928,9 +2015,22 @@ static BOOL gOBJAudioDisabled = NO;
 
 + (void)setAudioDisabled:(BOOL)disabled { gOBJAudioDisabled = disabled; }
 
+/// `--virtual-audio[=spec]`, set by main.swift BEFORE the engine is built for the same reason. The
+/// spec is parsed here (@see objvirtual::parseConfig); `--no-audio` wins over it (-init).
++ (void)setVirtualAudio:(BOOL)on spec:(NSString* _Nullable)spec {
+    auto& st = objvirtual::state();
+    st.active = on;
+    st.config = objvirtual::Config();
+    if (on && spec.length > 0) st.config = objvirtual::parseConfig(std::string([spec UTF8String]));
+}
+
++ (BOOL)isVirtualAudio { return objvirtual::state().active; }
+
 - (instancetype)init {
     if (self = [super init]) {
         juce::initialiseJuce_GUI();
+        // No audio at all outranks the virtual card: nothing is opened, so nothing to simulate.
+        if (gOBJAudioDisabled) objvirtual::state().active = false;
         // ARA : les requêtes de transport d'un plugin (play / stop / position / boucle) passent par
         // l'hôte. Sans rappel posé, on rend false et Tracktion garde son comportement natif.
         {
@@ -1998,6 +2098,17 @@ static BOOL gOBJAudioDisabled = NO;
         // court-circuiter le ferait trébucher plus loin. Zéro canal suffit à ne pas réquisitionner
         // la carte son, ce qui est le but : faire tourner plusieurs instances, ou une machine de
         // test sans sortie audio.
+        // The virtual card is added BEFORE initialise(): JUCE then never creates the system device
+        // types (createDeviceTypesIfNeeded only runs on an empty list), so this run cannot reach
+        // a real card, whatever Settings.xml says.
+        if (objvirtual::state().active) {
+            _engine->getDeviceManager().deviceManager.addAudioDeviceType(
+                std::make_unique<objvirtual::OBJVirtualAudioDeviceType>(objvirtual::state().config));
+            NSLog(@"[OBJ] --virtual-audio : carte « %s » (%d in, %d out, %.0f Hz, %d frames, latences %d/%d)",
+                  objvirtual::cardName(), objvirtual::state().config.numIn, objvirtual::state().config.numOut,
+                  objvirtual::state().config.sampleRate, objvirtual::state().config.blockSize,
+                  objvirtual::state().config.inLatency, objvirtual::state().config.outLatency);
+        }
         _engine->getDeviceManager().initialise(0, gOBJAudioDisabled ? 0 : 2);
         // Veilleur du device audio : posé APRÈS initialise() (@see plan_titlebar_audio_device.md
         // §Step 1) — un changement diffusé avant qu'il existe (la restauration au démarrage)
@@ -10689,6 +10800,56 @@ static void objDumpPluginList(te::PluginList& pl,
     s.rateDecision = kind;
     s.deviceRateBeforeDecision = before > 0 ? before : s.sampleRate;
     return s;
+}
+
+// MARK: Virtual card (--virtual-audio)
+
+- (NSDictionary<NSString*, id>*)virtualAudioStatus {
+    auto& st = objvirtual::state();
+    if (!st.active) return @{ @"active": @NO };
+
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* dev = dm.getCurrentAudioDevice();
+    const bool onVirtual = dev != nullptr && dev->isOpen() && dev->getTypeName() == objvirtual::cardName();
+    const int block = onVirtual ? dev->getCurrentBufferSizeSamples() : st.config.blockSize;
+
+    NSMutableArray* signals = [NSMutableArray array];
+    for (int i = 0; i < st.config.numIn; ++i) {
+        auto& sig = st.inputs[(size_t) i];
+        [signals addObject:@{ @"channel": @(i),
+                              @"signal": [NSString stringWithUTF8String:objvirtual::signalName((objvirtual::Signal) sig.kind.load())],
+                              @"frequency": @(sig.freq.load()),
+                              @"amplitude": @(sig.amp.load()),
+                              @"period": @(sig.period.load()) }];
+    }
+    return @{ @"active": @YES,
+              @"open": @(onVirtual),
+              @"inputs": @(st.config.numIn),
+              @"outputs": @(st.config.numOut),
+              @"sample_rate": @(onVirtual ? dev->getCurrentSampleRate() : st.config.sampleRate),
+              @"block_size": @(block),
+              @"input_latency": @(st.config.inLatency),
+              @"output_latency": @(st.config.outLatency),
+              @"loopback_delay": @(objvirtual::loopbackDelaySamples(st.config, block)),
+              @"signals": signals };
+}
+
+- (NSString* _Nullable)setVirtualInputChannel:(NSInteger)channel signal:(NSString*)signal
+                                    frequency:(double)frequency amplitude:(double)amplitude
+                                       period:(double)period {
+    auto& st = objvirtual::state();
+    if (!st.active) return @"the virtual card is not active (launch with --virtual-audio)";
+    if (channel < 0 || channel >= st.config.numIn)
+        return [NSString stringWithFormat:@"channel %ld outside 0..%d", (long) channel, st.config.numIn - 1];
+    objvirtual::Signal kind;
+    if (!objvirtual::parseSignal(std::string([signal UTF8String]), kind))
+        return [NSString stringWithFormat:@"unknown signal '%@'", signal];
+    auto& sig = st.inputs[(size_t) channel];
+    sig.freq.store(frequency);
+    sig.amp.store(amplitude);
+    sig.period.store(period);
+    sig.kind.store((int) kind);          // last: the audio thread reads the parameters after the kind
+    return nil;
 }
 
 @end

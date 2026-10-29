@@ -40,6 +40,17 @@ nonisolated struct LaunchArguments: Sendable {
     var headless: Bool { flag("headless") }
     var noAudio: Bool { flag("no-audio") }
 
+    /// Replaces every sound card with a virtual one, paced on the wall clock and fed synthetic
+    /// inputs — audio tests with no hardware (@see `OBJVirtualAudioDevice.h`). `--virtual-audio`
+    /// alone takes the defaults; `--virtual-audio=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96`
+    /// overrides any of them. Joined form only (see the note at the top).
+    var virtualAudio: Bool { flag("virtual-audio") || virtualAudioSpec != nil }
+    var virtualAudioSpec: String? {
+        guard let joined = raw.first(where: { $0.hasPrefix("--virtual-audio=") }) else { return nil }
+        let v = String(joined.dropFirst("--virtual-audio=".count))
+        return v.isEmpty ? nil : v
+    }
+
     /// Writes NOTHING into "Recent Projects" during this launch. A test opens and saves throwaway
     /// projects: without this, the user's list fills up with temporary folders and pushes their
     /// real projects out (it only keeps 10). Applies with or without a window — trying something

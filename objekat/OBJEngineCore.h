@@ -31,6 +31,13 @@
 /// À poser avant la première construction : c'est `init` qui ouvre le périphérique.
 + (void)setAudioDisabled:(BOOL)disabled;
 
+/// `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96]`: replaces EVERY sound card with
+/// a virtual one paced on the wall clock, with synthetic inputs (@see OBJVirtualAudioDevice.h).
+/// Same rule as above — set before the first construction. `--no-audio` wins over it. Nothing the
+/// virtual card does is ever written to Settings.xml.
++ (void)setVirtualAudio:(BOOL)on spec:(NSString* _Nullable)spec;
++ (BOOL)isVirtualAudio;
+
 // Edit live — muté incrémentalement, jamais reconstruit
 - (void)addSoundObject:(OBJSoundObjectData*)data withID:(NSString*)uuid;
 - (void)removeSoundObjectWithID:(NSString*)uuid;
@@ -944,6 +951,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Le device de sortie RÉELLEMENT en usage — jamais la config demandée, jamais le choix persisté.
 // @see OBJAudioDeviceSnapshot. Thread principal.
 - (OBJAudioDeviceSnapshot* _Nonnull)audioDeviceSnapshot;
+
+// The virtual card (`--virtual-audio`): its configuration, the live signal on each input and the
+// loopback delay it applies (`{ "active": false }` when it is off). Main thread.
+- (NSDictionary<NSString*, id>* _Nonnull)virtualAudioStatus;
+/// Chooses what input `channel` of the virtual card carries: `silence`, `sine`, `impulse` or
+/// `loopback` (@see objvirtual::Signal). nil on success, otherwise why not.
+- (NSString* _Nullable)setVirtualInputChannel:(NSInteger)channel signal:(NSString* _Nonnull)signal
+                                    frequency:(double)frequency amplitude:(double)amplitude
+                                       period:(double)period;
 
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices

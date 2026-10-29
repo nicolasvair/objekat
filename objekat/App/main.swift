@@ -19,6 +19,8 @@ Localization.applyLaunchOverride(launchArguments)
 
 // Before the engine is built: it is `-[OBJEngineCore init]` that opens the audio device.
 OBJEngineCore.setAudioDisabled(launchArguments.noAudio)
+// Same moment, same reason. `--no-audio` outranks it (the engine drops the virtual card then).
+OBJEngineCore.setVirtualAudio(launchArguments.virtualAudio, spec: launchArguments.virtualAudioSpec)
 
 if launchArguments.headless {
     MainActor.assumeIsolated { HeadlessRunner.run(launchArguments) }

@@ -176,7 +176,8 @@ struct ContentView: View {
                 selectedDevice = saved
             } else {
                 selectedDevice = engine.currentOutputDeviceName() ?? outputDevices.first ?? ""
-                AudioOutputDevice.shared.name = selectedDevice
+                // `--virtual-audio` is a test fixture: it must not become the remembered choice.
+                if !OBJEngineCore.isVirtualAudio() { AudioOutputDevice.shared.name = selectedDevice }
             }
             // At launch, AppKit gives first responder to the window's first text field — the BPM
             // one — which ends up selected without anyone asking for it.
