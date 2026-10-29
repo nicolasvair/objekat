@@ -66,9 +66,14 @@ struct Config {
     int    blockSize   = 256;
     int    inLatency   = 64;
     int    outLatency  = 96;
+    /// `splitin:1`: the card says its inputs live on ANOTHER device that has the same name — the AirPods
+    /// layout (a speaker and a microphone, two CoreAudio devices, one name). The engine refuses to open
+    /// them (`-openAudioInputs`, same test as on a real card), which makes that refusal reachable with
+    /// no hardware. Nothing else changes: the card still has its inputs, they are just never opened.
+    bool   splitIn     = false;
 };
 
-/// "in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96" — every key optional, unknown keys and malformed
+/// "in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0" — every key optional, unknown keys and malformed
 /// values ignored (a typo must not turn a test run into a failure to start). The rate must be one the
 /// device lists (`availableRates()`), anything else keeps the default.
 inline std::vector<double> availableRates()  { return { 44100.0, 48000.0, 88200.0, 96000.0 }; }
@@ -97,6 +102,7 @@ inline Config parseConfig(const std::string& spec)
         }
         else if (key == "inlat")  c.inLatency  = std::max(0, (int) v);
         else if (key == "outlat") c.outLatency = std::max(0, (int) v);
+        else if (key == "splitin") c.splitIn   = v != 0.0;
     }
     return c;
 }

@@ -42,6 +42,10 @@ struct AudioDeviceSnapshot: Equatable {
     var outputChannels: Int
     /// Active INPUT channels: 0 while the inputs are closed (they open on demand, `input.enable`).
     var inputChannels: Int = 0
+    /// The inputs listed under the output device's name belong to ANOTHER device (AirPods: a speaker and
+    /// a microphone, two CoreAudio devices, one name). `input.enable` refuses them, and the Inputs tab
+    /// says so instead of offering to enable them. Always false once the inputs are open.
+    var inputsSeparate: Bool = false
     var running: Bool
     /// What the sample-rate policy decided (@see `SampleRateDecision`) and the rate the card had
     /// BEFORE it — the one that was refused, for `.fallback` and `.outOfRangeKept`.
@@ -104,7 +108,8 @@ final class AudioDeviceStatus {
         let next = AudioDeviceSnapshot(name: live.deviceName, type: live.deviceType,
                                        sampleRate: live.sampleRate, bufferSize: live.bufferSize,
                                        outputChannels: live.outputChannels,
-                                       inputChannels: live.inputChannels, running: live.running,
+                                       inputChannels: live.inputChannels,
+                                       inputsSeparate: live.inputsSeparate, running: live.running,
                                        rateDecision: SampleRateDecision(raw: live.rateDecision),
                                        deviceRateBeforeDecision: live.deviceRateBeforeDecision)
         guard next != snapshot else { return }

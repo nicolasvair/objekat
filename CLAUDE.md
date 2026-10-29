@@ -2774,6 +2774,20 @@ What has landed since mid-August, in order:
   **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⌥R shortcut (no key event
   can be sent headless), the takes on screen (handles, grey zone, muted ones), the file really heard back, a
   real card (latency of a real interface, a device unplugged mid-recording), a disk really full.
+  **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
+  one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
+  input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both
+  devices and the combiner restarted itself from the `HALC_ShellPlugIn Connection Queue` thread while the main
+  thread was still inside `setAudioDeviceSetup`: `EXC_BAD_ACCESS`. `objekat/Shared/OBJCoreAudioProbe.h` (pure
+  `classify` + a thin CoreAudio layer, property queries only: no device opened, no microphone prompt) asks the
+  system whether the output device carries input channels ITSELF; with several same-name devices the verdict is
+  cautious (every output-capable one must, else refused). `openAudioInputs` refuses BEFORE any
+  `setAudioDeviceSetup` (`OBJInputsSeparateDeviceReason`), `OBJAudioDeviceSnapshot.inputsSeparate` /
+  `AudioDeviceSnapshot.inputsSeparate` carry it to the Inputs tab (a message in place of the button) and to
+  `audio.status.inputs_separate` / `input.list.inputs_separate`; `input.enable` answers `invalid_state` with
+  `details.reason = "inputs_on_separate_device"`. `--virtual-audio=...,splitin:1` reaches the same refusal with
+  no hardware (`tools/scenario_inputs_split_device.py`, `tools/test_coreaudio_probe.cpp`). Not seen: the message
+  on screen, and a real pair of AirPods (not touched).
 
 ### What is owed
 

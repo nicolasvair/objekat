@@ -725,7 +725,7 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--project=<path>` | opens a project on startup |
 | `--exec=<script.jsonl>` | replays a JSON-lines scenario (`#` for a comment, `{DIR}` = the script's folder) |
 | `--no-audio` | opens no output device |
-| `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
+| `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout), which `input.enable` then refuses. Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
 
@@ -2253,6 +2253,12 @@ audio callback from a thread paced on the wall clock (one block every `bs / sr` 
 deadlines: no drift), so `transport.play` advances at real time. Defaults: 4 inputs, 2 outputs,
 48 kHz, 256 frames, announced latencies 64 (in) and 96 (out) frames.
 
+`splitin:1` (default `0`) makes the card say that its inputs live on ANOTHER device that has the same name — the
+AirPods layout, a speaker and a microphone being two CoreAudio devices with one name. Nothing else about the
+card changes; it is only the answer to "does the output device own its inputs?", so that the refusal of
+`input.enable` (below) can be exercised with no hardware (`tools/scenario_inputs_split_device.py`).
+`audio.virtual.status` reports it as `split_inputs`.
+
 The virtual card **never reaches `~/Library/objekat/Settings.xml`**: while it is on, the engine's
 property storage neither reads nor writes any device setting (`audio_device_setup`, the default
 wave in/out, the wave in/out items, the layout presets). A normal launch afterwards finds the
@@ -2282,12 +2288,18 @@ a block: a block-based callback cannot hand back samples it has not produced yet
 Recording starts from the card's INPUTS, and they are **closed at launch**: opening them on a real
 card makes macOS ask for the microphone (and wakes a Bluetooth headset into its call profile), so
 nothing opens them until a command — the "Inputs" tab's *Enable inputs* button — asks. They are the
-inputs of the SAME device as the output; there is no separate input card. These nine `input.*` names sit beside the
+inputs of the SAME device as the output; there is no separate input card. A card whose inputs are another device
+with the same name (AirPods) is therefore **not supported**: opening them made JUCE aggregate the two devices, and the
+switch to the call profile made CoreAudio restart the aggregate from its own thread in the middle of the opening (a
+crash). The engine asks the system first (`objekat/Shared/OBJCoreAudioProbe.h`: the output device must carry input
+channels ITSELF; with several same-name devices, every output-capable one must) and refuses before touching anything. These nine `input.*` names sit beside the
 synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only the prefix.
 
 * `input.enable` — opens the inputs of the current output device, waits for the device to settle
   (`audio.status.generation` moves), answers like `input.list`. A no-op when already open.
-  `invalid_state` with no device open (`--no-audio`, or the open failed), `engine_error` when the
+  `invalid_state` with no device open (`--no-audio`, or the open failed), `invalid_state` too with
+  `details.reason = "inputs_on_separate_device"` when the inputs are a separate device (AirPods; the output is not
+  touched, not even restarted: `generation` does not move), `engine_error` when the
   card refuses (the output keeps playing: the previous setup is restored).
 * `input.disable` — closes them again; the output is untouched.
 * `input.list` — `{open, device, channels, channel_names, pairs, inputs, engine_devices, record_inputs}`.
@@ -2373,7 +2385,9 @@ asserts the zones against the virtual card; `tools/test_record_take_planner.swif
 handles, mute, lane order, one undo, punch-in, calibration, card change during recording).
 The keyboard shortcut ⌘⌥R (provisional) is the record button; ⌘R stays "rename".
 
-`audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed).
+`audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed) and `inputs_separate` (the
+inputs listed under the output device's name belong to ANOTHER device — AirPods; the Inputs tab then shows a message
+in place of its *Enable inputs* button; also in `live`, and in `input.list`).
 Changing the output device closes the inputs; a rate or buffer change keeps them.
 
 **Settings.xml.** The inputs are on demand, so the engine's property storage never reads or writes

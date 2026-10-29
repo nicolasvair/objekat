@@ -31,7 +31,7 @@
 /// À poser avant la première construction : c'est `init` qui ouvre le périphérique.
 + (void)setAudioDisabled:(BOOL)disabled;
 
-/// `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96]`: replaces EVERY sound card with
+/// `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0]`: replaces EVERY sound card with
 /// a virtual one paced on the wall clock, with synthetic inputs (@see OBJVirtualAudioDevice.h).
 /// Same rule as above — set before the first construction. `--no-audio` wins over it. Nothing the
 /// virtual card does is ever written to Settings.xml.
@@ -967,7 +967,16 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Main thread throughout. Opening and closing are asynchronous like the other device changes:
 // wait for `onAudioDeviceChanged` (AudioDeviceStatus.generation) before reading back.
 /// nil on success (or already open), otherwise why not (no card, no inputs, refused by the OS).
+/// `OBJInputsSeparateDeviceReason` when the output device has no inputs of its own (the AirPods
+/// layout: speaker and microphone are two CoreAudio devices with one name) — refused BEFORE anything
+/// is touched, the output keeps playing exactly as it was.
 - (NSString* _Nullable)openAudioInputs;
+/// YES when the inputs listed under the output device's name belong to ANOTHER device (AirPods), which
+/// `-openAudioInputs` refuses: JUCE would build an aggregate and the profile switch (call mode) makes
+/// CoreAudio restart it from its own thread while the main thread is still opening it — a crash.
+/// Re-asked of the system each time (@see OBJCoreAudioProbe.h); NO for a card whose inputs are its
+/// own, for one with no inputs at all, and for no device. Main thread.
+- (BOOL)audioInputsAreOnSeparateDevice;
 - (void)closeAudioInputs;
 - (BOOL)audioInputsOpen;
 /// The names of the open card's input channels, in order (empty while closed).
@@ -1031,6 +1040,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 @property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
 @property (nonatomic) NSInteger inputChannels;                 // canaux d'entrée ACTIFS (0 = entrées fermées)
 @property (nonatomic) BOOL      running;                        // dev->isPlaying()
+// Les entrées de cette carte sont un AUTRE périphérique de même nom (AirPods) : non prises en charge
+// (@see -audioInputsAreOnSeparateDevice). Toujours NO une fois les entrées ouvertes ou sans carte.
+@property (nonatomic) BOOL      inputsSeparate;
 // Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
 // 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la
 // carte a été ramenée à `sampleRate`), 2 = outOfRangeKept (inutilisable mais rien de mieux à
@@ -1040,5 +1052,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // La fréquence que la carte avait AVANT la décision (celle qui a été refusée, pour 1 et 2).
 @property (nonatomic) double    deviceRateBeforeDecision;
 @end
+
+// Declared LAST on purpose (@see the note on @class OBJAudioDeviceSnapshot at the top): a nullability
+// annotation wakes -Wnullability-completeness for every line of the file that follows it.
+/// The reason `-openAudioInputs` answers when the inputs are a separate device (compare, do not parse).
+FOUNDATION_EXPORT NSString* _Nonnull const OBJInputsSeparateDeviceReason;
 
 #endif /* OBJEngineCore_h */

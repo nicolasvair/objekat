@@ -9685,6 +9685,29 @@
         }
       }
     },
+    "inputs.separateDevice": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone of this device is a separate device (e.g. AirPods): not supported."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El micrófono de este dispositivo es un periférico aparte (p. ej. AirPods): no compatible."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le micro de cet appareil est un périphérique séparé (ex. AirPods) : non pris en charge."
+          }
+        }
+      }
+    },
     "inputs.unpair": {
       "extractionState": "manual",
       "localizations": {

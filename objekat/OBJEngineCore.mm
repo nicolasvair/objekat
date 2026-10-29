@@ -24,6 +24,7 @@
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
 #include "OBJVirtualAudioDevice.h"        // --virtual-audio: a paced test card with synthetic inputs
+#include "Shared/OBJCoreAudioProbe.h"     // does the output device own its inputs? (AirPods = no)
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -10901,6 +10902,26 @@ static void objDumpPluginList(te::PluginList& pl,
     }
 }
 
+NSString* const OBJInputsSeparateDeviceReason =
+    @"the inputs of this device are a separate device (e.g. AirPods): not supported";
+
+// The verdict, from the live system. Only a device we can actually ask about is ever judged
+// "separate": the virtual card says so by configuration (`splitin:1`), a CoreAudio card by the
+// probe; any other type, or an answer we cannot get, is "not separate" — the previous behaviour.
+static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
+{
+    auto* type = dm.getCurrentDeviceTypeObject();
+    const juce::String outName = dm.getAudioDeviceSetup().outputDeviceName;
+    if (type == nullptr || outName.isEmpty()) return false;
+    if (!type->getDeviceNames(true).contains(outName)) return false;     // no input of that name at all
+
+    if (type->getTypeName() == objvirtual::cardName())
+        return objvirtual::state().active && objvirtual::state().config.splitIn;
+    if (type->getTypeName() == "CoreAudio")
+        return objcoreaudio::outputOwnership(outName.toStdString()) == objcoreaudio::Ownership::separateInputs;
+    return false;
+}
+
 // Le device RÉELLEMENT en usage. Deux pièges que ne referment pas les getters ci-dessus
 // (@see plan_titlebar_audio_device.md §1) :
 //  - `--no-audio` : getCurrentAudioDevice() est non nul et getName() rend un vrai nom bien que
@@ -10922,6 +10943,7 @@ static void objDumpPluginList(te::PluginList& pl,
     s.outputChannels = outs;
     s.inputChannels = dev->getActiveInputChannels().countNumberOfSetBits();
     s.running = dev->isPlaying();
+    s.inputsSeparate = s.inputChannels == 0 && objOutputInputsAreSeparate(dm);
     // La décision de fréquence — sauf si la carte ne tourne plus à ce qu'elle avait décidé (le
     // système ou une autre application l'a changée depuis) : un message « passée à 48k » devant
     // une carte à 96k serait faux, et ce changement-là est suivi, pas combattu.
@@ -10964,6 +10986,11 @@ static void objDumpPluginList(te::PluginList& pl,
     _inputMeter.reset();
 }
 
+- (BOOL)audioInputsAreOnSeparateDevice {
+    if (gOBJAudioDisabled) return NO;
+    return objOutputInputsAreSeparate(_engine->getDeviceManager().deviceManager);
+}
+
 - (NSString* _Nullable)openAudioInputs {
     if (gOBJAudioDisabled) return @"audio is disabled (--no-audio)";
     auto& dm = _engine->getDeviceManager().deviceManager;
@@ -10978,6 +11005,15 @@ static void objDumpPluginList(te::PluginList& pl,
     // "No such device" with the output dead: look first, so a refusal costs nothing.
     if (type == nullptr || !type->getDeviceNames(true).contains(outName))
         return @"this device has no inputs";
+    // The inputs under this name may be ANOTHER CoreAudio device (AirPods: speaker and microphone are
+    // two devices with one name). JUCE would aggregate them, the switch to the call profile makes
+    // CoreAudio retire and republish both, and the aggregate restarts itself from a CoreAudio thread
+    // while this one is still inside setAudioDeviceSetup — a crash. Refuse before touching anything:
+    // the output stays exactly as it is (@see Shared/OBJCoreAudioProbe.h).
+    if (objOutputInputsAreSeparate(dm)) {
+        NSLog(@"[OBJ] openAudioInputs refused: the inputs of '%s' are a separate device", outName.toRawUTF8());
+        return OBJInputsSeparateDeviceReason;
+    }
 
     // How many channels to ask for: a throw-away input-only object of the same card answers without
     // opening anything (so without any microphone prompt). Asking for "all" with a default count
@@ -11367,6 +11403,7 @@ static void objDumpPluginList(te::PluginList& pl,
               @"block_size": @(block),
               @"input_latency": @(st.config.inLatency),
               @"output_latency": @(st.config.outLatency),
+              @"split_inputs": @(st.config.splitIn),
               @"announced_input_latency": @(onVirtual ? dev->getInputLatencyInSamples() : st.config.inLatency + block),
               @"announced_output_latency": @(onVirtual ? dev->getOutputLatencyInSamples() : st.config.outLatency + block),
               @"loopback_delay": @(objvirtual::loopbackDelaySamples(st.config, block)),

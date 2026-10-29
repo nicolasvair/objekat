@@ -19,7 +19,10 @@ extension CommandRegistry {
                  Opens the inputs of the CURRENT output device (on demand — they are closed at \
                  launch). Waits for the device to settle, then answers like `input.list`. A no-op \
                  when they are already open. Under `--no-audio`, or with no device open: \
-                 `invalid_state`. On a real card the first call makes macOS ask for the microphone.
+                 `invalid_state`. When the card's inputs are a SEPARATE device (AirPods: speaker and \
+                 microphone are two devices with one name): `invalid_state` too, with \
+                 `details.reason = "inputs_on_separate_device"`, before anything is touched. On a real \
+                 card the first call makes macOS ask for the microphone.
                  """,
                  undo: .none) { _ in
             let engine = try CommandContext.shared.requireEngine()
@@ -31,6 +34,12 @@ extension CommandRegistry {
             }
             let before = status.generation
             if let why = engine.openAudioInputs() {
+                // The inputs are a separate device (AirPods): a state of the card, refused before
+                // anything was touched — the output keeps playing as it was.
+                if why == OBJInputsSeparateDeviceReason {
+                    throw CommandError(code: .invalid_state, message: why,
+                                       details: .object(["reason": .string("inputs_on_separate_device")]))
+                }
                 throw CommandError(code: .engine_error, message: why)
             }
             _ = await Self.awaitDeviceSettled(from: before)
@@ -412,6 +421,7 @@ extension CommandRegistry {
         let names = engine.audioInputChannelNames()
         return .object([
             "open": .bool(open),
+            "inputs_separate": .bool(!open && AudioDeviceStatus.shared.snapshot.inputsSeparate),
             "device": .stringOrNull(open ? AudioDeviceStatus.shared.snapshot.name : nil),
             "channels": .int(names.count),
             "channel_names": .array(names.map { .string($0) }),

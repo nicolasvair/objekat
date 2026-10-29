@@ -42,11 +42,18 @@ struct InputsPanelView: View {
 
     private var enableBar: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(L("inputs.enable")) {
-                failure = viewModel.enableRecordInputs()
-                tick()
+            if AudioDeviceStatus.shared.snapshot.inputsSeparate {
+                // AirPods and the like: the microphone is another device, which the engine refuses.
+                Text(L("inputs.separateDevice"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Button(L("inputs.enable")) {
+                    failure = viewModel.enableRecordInputs()
+                    tick()
+                }
+                .help(L("inputs.enable.help"))
             }
-            .help(L("inputs.enable.help"))
             if let failure {
                 Text(L("inputs.openFailed", failure))
                     .font(.caption)
