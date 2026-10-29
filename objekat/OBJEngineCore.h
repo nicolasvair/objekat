@@ -961,6 +961,29 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
                                     frequency:(double)frequency amplitude:(double)amplitude
                                        period:(double)period;
 
+// The card's INPUTS, opened on demand (recording work). Closed at launch — opening one is what
+// makes macOS ask for the microphone and switches AirPods to the call profile — they open with
+// -openAudioInputs, on the SAME device as the output, and stay open until the device changes.
+// Main thread throughout. Opening and closing are asynchronous like the other device changes:
+// wait for `onAudioDeviceChanged` (AudioDeviceStatus.generation) before reading back.
+/// nil on success (or already open), otherwise why not (no card, no inputs, refused by the OS).
+- (NSString* _Nullable)openAudioInputs;
+- (void)closeAudioInputs;
+- (BOOL)audioInputsOpen;
+/// The names of the open card's input channels, in order (empty while closed).
+- (NSArray<NSString*>* _Nonnull)audioInputChannelNames;
+/// Every input the engine describes — one mono per channel plus one stereo per neighbouring pair
+/// (2N - 1) — as `{name, first, count, enabled}`. Empty while the inputs are closed.
+- (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)audioInputDevices;
+/// Peak of each DEVICE input channel since the last call, in dB (floor -120), then cleared.
+/// Empty while the inputs are closed.
+- (NSArray<NSNumber*>* _Nonnull)audioInputPeaksDb;
+/// Declares which neighbouring channels are one stereo input: the FIRST channel of each pair
+/// (0 = channels 1+2). An overlap keeps the lower pair. Re-describes the inputs at once.
+- (void)setAudioInputStereoPairs:(NSArray<NSNumber*>* _Nonnull)firstChannels;
+/// The pairs actually in force (declared, inside the card, without overlap).
+- (NSArray<NSNumber*>* _Nonnull)audioInputStereoPairs;
+
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices
 // changée). Coalescé par JUCE. Ne porte rien : le récepteur relit -audioDeviceSnapshot
@@ -979,6 +1002,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 @property (nonatomic) double    sampleRate;                    // Hz, 0 si deviceName == nil
 @property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
 @property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
+@property (nonatomic) NSInteger inputChannels;                 // canaux d'entrée ACTIFS (0 = entrées fermées)
 @property (nonatomic) BOOL      running;                        // dev->isPlaying()
 // Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
 // 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la

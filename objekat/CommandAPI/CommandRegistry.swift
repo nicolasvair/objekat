@@ -261,6 +261,7 @@ final class CommandRegistry {
         registerToolCommands()
         registerTabCommands()
         registerAudioCommands()
+        registerRecordCommands()
         registerScriptCommands()
         registerOverlayCommands()
         registerScriptPanelCommands()

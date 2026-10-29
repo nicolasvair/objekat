@@ -40,6 +40,8 @@ struct AudioDeviceSnapshot: Equatable {
     var sampleRate: Double
     var bufferSize: Int
     var outputChannels: Int
+    /// Active INPUT channels: 0 while the inputs are closed (they open on demand, `input.enable`).
+    var inputChannels: Int = 0
     var running: Bool
     /// What the sample-rate policy decided (@see `SampleRateDecision`) and the rate the card had
     /// BEFORE it — the one that was refused, for `.fallback` and `.outOfRangeKept`.
@@ -101,7 +103,8 @@ final class AudioDeviceStatus {
         let live = engine.audioDeviceSnapshot()
         let next = AudioDeviceSnapshot(name: live.deviceName, type: live.deviceType,
                                        sampleRate: live.sampleRate, bufferSize: live.bufferSize,
-                                       outputChannels: live.outputChannels, running: live.running,
+                                       outputChannels: live.outputChannels,
+                                       inputChannels: live.inputChannels, running: live.running,
                                        rateDecision: SampleRateDecision(raw: live.rateDecision),
                                        deviceRateBeforeDecision: live.deviceRateBeforeDecision)
         guard next != snapshot else { return }

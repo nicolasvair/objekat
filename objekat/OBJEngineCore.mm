@@ -411,7 +411,7 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // Appairage des canaux physiques : OBJEKAT est une application STÉRÉO — tout part au main,
     // il n'y a aucune UI de routage multicanal. On décrit donc nous-mêmes les devices wave :
     // des paires L/R consécutives, plus un mono résiduel si la carte a un nombre impair de
-    // canaux. Aucune entrée (l'app ne s'enregistre pas).
+    // canaux. Les ENTRÉES (enregistrement) sont décrites plus bas, à la demande.
     //
     // Pourquoi c'est nécessaire, et pas seulement propre :
     // le socle moteur multicanal choisit l'appairage dans cet ordre — describeWaveDevices, puis
@@ -428,13 +428,30 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // aucune préférence héritée ne peut plus désappairer la sortie.
     bool isDescriptionOfWaveDevicesSupported() override { return true; }
 
+    // The INPUT side: every possible recording input is described up front — one mono per channel
+    // plus one stereo per neighbouring pair, 2N - 1 — and only `enabled` moves with the user's
+    // choices (which channels are open, which pairs are declared). The decision is the pure
+    // `objinput::describe` (Shared/OBJInputLayout.h, tools/test_input_layout.cpp). "Open" is read
+    // off the device itself: the channels its active input mask holds.
+    std::vector<int> inputPairs;      // first channel of each declared stereo pair; main thread only
+
     void describeWaveDevices (std::vector<te::WaveDeviceDescription>& descs,
                               juce::AudioIODevice& device, bool isInput) override
     {
         descs.clear();
 
         if (isInput)
+        {
+            const int numIn = device.getInputChannelNames().size();
+            const auto active = device.getActiveInputChannels();
+            std::vector<bool> open((size_t) std::max(0, numIn));
+            for (int i = 0; i < numIn; ++i) open[(size_t) i] = active[i];
+
+            for (const auto& d : objinput::describe(numIn, open, inputPairs))
+                descs.push_back (te::WaveDeviceDescription::withNumChannels ({}, (uint32_t) d.first,
+                                                                            (uint32_t) d.count, d.enabled));
             return;
+        }
 
         const int numChannels = device.getOutputChannelNames().size();
 
@@ -1257,6 +1274,53 @@ struct OBJLatencyWatcher : public juce::Timer {
 - (void)rebindAudioWorkgroupIfDeviceChanged;
 @end
 
+// Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
+// beside Tracktion's DeviceManager, registered only while the inputs are open. It reads the device's
+// own input buffers — what the card delivers, before any gain or routing — and keeps, per DEVICE
+// channel, the linear peak since the last read (the reader clears it: -audioInputPeaksDb).
+//
+// Two JUCE facts it is built around:
+//  - the input buffers are COMPACTED to the active channels, so `map` turns "i-th active channel"
+//    back into the device's channel number (a card with inputs 1, 3, 4 open hands over 3 buffers);
+//  - every callback after the first is given an UNCLEARED scratch buffer as its output, and
+//    AudioDeviceManager ADDS that buffer to the real output: a meter that left it alone would put
+//    garbage into the speakers. It clears its outputs every block.
+struct OBJInputMeter : public juce::AudioIODeviceCallback {
+    static constexpr int kMax = 64;
+    std::array<std::atomic<float>, kMax> peak;
+    std::array<int, kMax>                map {};
+    std::atomic<int>                     numActive { 0 };
+    std::atomic<int>                     numDeviceChannels { 0 };
+
+    OBJInputMeter() { for (auto& p : peak) p.store(0.0f); }
+
+    void audioDeviceAboutToStart(juce::AudioIODevice* d) override {
+        int n = 0;
+        const auto act = d->getActiveInputChannels();
+        for (int c = act.findNextSetBit(0); c >= 0 && n < kMax; c = act.findNextSetBit(c + 1))
+            if (c < kMax) map[(size_t) n++] = c;
+        numActive.store(n);
+        numDeviceChannels.store(std::min(kMax, d->getInputChannelNames().size()));
+        for (auto& p : peak) p.store(0.0f);
+    }
+
+    void audioDeviceStopped() override {}
+
+    void audioDeviceIOCallbackWithContext(const float* const* in, int nIn, float* const* out, int nOut,
+                                          int numSamples, const juce::AudioIODeviceCallbackContext&) override {
+        for (int c = 0; c < nOut; ++c)
+            if (out[c] != nullptr) juce::FloatVectorOperations::clear(out[c], numSamples);
+        const int n = std::min(nIn, numActive.load(std::memory_order_relaxed));
+        for (int i = 0; i < n; ++i) {
+            if (in[i] == nullptr) continue;
+            const auto r = juce::FloatVectorOperations::findMinAndMax(in[i], numSamples);
+            const float m = std::max(std::abs(r.getStart()), std::abs(r.getEnd()));
+            auto& p = peak[(size_t) map[(size_t) i]];
+            if (m > p.load(std::memory_order_relaxed)) p.store(m, std::memory_order_relaxed);
+        }
+    }
+};
+
 struct OBJDeviceChangeWatcher : public juce::ChangeListener {
     __unsafe_unretained OBJEngineCore* owner = nil;   // même convention que les autres veilleurs
     void changeListenerCallback(juce::ChangeBroadcaster*) override {
@@ -1959,6 +2023,10 @@ struct OBJExportLoadScope {
     // Veilleur du device audio (@see OBJDeviceChangeWatcher) : diffuse -onAudioDeviceChanged
     // sur tout changement du juce::AudioDeviceManager (device, taux, buffer, liste).
     std::unique_ptr<OBJDeviceChangeWatcher>               _deviceWatcher;
+
+    // Peak meter on the card's inputs; registered on the device manager ONLY while the inputs are
+    // open (@see OBJInputMeter, -openAudioInputs).
+    std::unique_ptr<OBJInputMeter>                        _inputMeter;
 
     // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
     // -endBulkLoad. Tant qu'il vit, l'Edit n'alloue aucun nouveau graphe de lecture — chaque
@@ -10672,7 +10740,15 @@ static void objDumpPluginList(te::PluginList& pl,
     // Autre carte : on N'EMPORTE PAS la fréquence de l'ancienne (c'est elle qui, rejouée sur la
     // nouvelle, changeait la fréquence nominale d'une carte pour tout le système). 0 = « celle
     // dont la carte tourne déjà » (AudioDeviceManager::chooseBestSampleRate).
-    if (!sameDevice) setup.sampleRate = 0;
+    if (!sameDevice) {
+        setup.sampleRate = 0;
+        // The inputs belong to the card they were opened on: another card starts with them closed
+        // (the user opens them again), never half-open on the previous card.
+        [self releaseInputMeter];
+        setup.inputDeviceName = {};
+        setup.inputChannels.clear();
+        setup.useDefaultInputChannels = false;
+    }
     auto err = dm.setAudioDeviceSetup(setup, true);
     if (!err.isEmpty()) {
         NSLog(@"[OBJ] ERROR setting device: %s", err.toRawUTF8());
@@ -10785,6 +10861,7 @@ static void objDumpPluginList(te::PluginList& pl,
     s.sampleRate = dev->getCurrentSampleRate();
     s.bufferSize = dev->getCurrentBufferSizeSamples();
     s.outputChannels = outs;
+    s.inputChannels = dev->getActiveInputChannels().countNumberOfSetBits();
     s.running = dev->isPlaying();
     // La décision de fréquence — sauf si la carte ne tourne plus à ce qu'elle avait décidé (le
     // système ou une autre application l'a changée depuis) : un message « passée à 48k » devant
@@ -10800,6 +10877,164 @@ static void objDumpPluginList(te::PluginList& pl,
     s.rateDecision = kind;
     s.deviceRateBeforeDecision = before > 0 ? before : s.sampleRate;
     return s;
+}
+
+// MARK: Audio inputs (on demand)
+//
+// The card's inputs stay CLOSED until -openAudioInputs, and then stay open until the device
+// changes (-setOutputDevice with another card, or -closeAudioInputs). Why on demand: opening an
+// input is what makes macOS ask for the microphone — and what switches AirPods from music to the
+// call profile. Neither may happen at launch for an app that has not been asked to record.
+// Opening is the SAME device as the output (`inputDeviceName = outputDeviceName`), so playback and
+// recording share one clock: no drift to compensate, no aggregate device.
+
+- (BOOL)audioInputsOpen {
+    auto* dev = _engine->getDeviceManager().deviceManager.getCurrentAudioDevice();
+    return dev != nullptr && dev->isOpen() && !dev->getActiveInputChannels().isZero();
+}
+
+- (void)ensureInputMeter {
+    if (_inputMeter != nullptr) return;
+    _inputMeter = std::make_unique<OBJInputMeter>();
+    _engine->getDeviceManager().deviceManager.addAudioCallback(_inputMeter.get());
+}
+
+- (void)releaseInputMeter {
+    if (_inputMeter == nullptr) return;
+    _engine->getDeviceManager().deviceManager.removeAudioCallback(_inputMeter.get());
+    _inputMeter.reset();
+}
+
+- (NSString* _Nullable)openAudioInputs {
+    if (gOBJAudioDisabled) return @"audio is disabled (--no-audio)";
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* dev = dm.getCurrentAudioDevice();
+    if (dev == nullptr || !dev->isOpen()) return @"no audio device is open";
+    if ([self audioInputsOpen]) { [self ensureInputMeter]; return nil; }
+
+    auto setup = dm.getAudioDeviceSetup();
+    const juce::String outName = setup.outputDeviceName;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    // JUCE deletes the current device BEFORE it checks that a new input name exists, and answers
+    // "No such device" with the output dead: look first, so a refusal costs nothing.
+    if (type == nullptr || !type->getDeviceNames(true).contains(outName))
+        return @"this device has no inputs";
+
+    // How many channels to ask for: a throw-away input-only object of the same card answers without
+    // opening anything (so without any microphone prompt). Asking for "all" with a default count
+    // would open none — the setup's default input count is 0.
+    int numIn = 0;
+    {
+        std::unique_ptr<juce::AudioIODevice> probe(type->createDevice({}, outName));
+        if (probe != nullptr) numIn = probe->getInputChannelNames().size();
+    }
+    if (numIn <= 0) return @"this device has no input channels";
+
+    NSLog(@"[OBJ] openAudioInputs : %s, %d canaux", outName.toRawUTF8(), numIn);
+    const BOOL wasPlaying = [self isCurrentlyPlaying];
+    [self stop];
+
+    const auto before = setup;
+    setup.inputDeviceName = outName;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange(0, numIn, true);
+    auto err = dm.setAudioDeviceSetup(setup, true);
+    NSString* failure = nil;
+    if (!err.isEmpty()) {
+        NSLog(@"[OBJ] ERROR opening the inputs: %s", err.toRawUTF8());
+        failure = [NSString stringWithUTF8String:err.toRawUTF8()];
+        // A failed reopening leaves the card closed: bring the output back as it was.
+        auto back = before;
+        dm.setAudioDeviceSetup(back, true);
+    } else {
+        [self ensureInputMeter];
+    }
+    if (wasPlaying) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
+        });
+    }
+    return failure;
+}
+
+- (void)closeAudioInputs {
+    [self releaseInputMeter];
+    if (![self audioInputsOpen]) return;
+    NSLog(@"[OBJ] closeAudioInputs");
+    const BOOL wasPlaying = [self isCurrentlyPlaying];
+    [self stop];
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto setup = dm.getAudioDeviceSetup();
+    setup.inputDeviceName = {};
+    setup.inputChannels.clear();
+    setup.useDefaultInputChannels = false;
+    auto err = dm.setAudioDeviceSetup(setup, true);
+    if (!err.isEmpty()) NSLog(@"[OBJ] ERROR closing the inputs: %s", err.toRawUTF8());
+    if (wasPlaying) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
+        });
+    }
+}
+
+- (NSArray<NSString*>*)audioInputChannelNames {
+    NSMutableArray* result = [NSMutableArray array];
+    if (![self audioInputsOpen]) return result;
+    auto* dev = _engine->getDeviceManager().deviceManager.getCurrentAudioDevice();
+    for (auto& n : dev->getInputChannelNames()) {
+        juce::String name = n;      // named local (toRawUTF8 trap)
+        [result addObject:[NSString stringWithUTF8String:name.toRawUTF8()]];
+    }
+    return result;
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)audioInputDevices {
+    NSMutableArray* result = [NSMutableArray array];
+    if (![self audioInputsOpen]) return result;
+    // getWaveInputDevices() flushes a pending rebuild first, so this never reads a stale list.
+    for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+        const auto& ch = wi->getChannels();
+        if (ch.isEmpty()) continue;
+        juce::String name = wi->getName();
+        [result addObject:@{ @"name": [NSString stringWithUTF8String:name.toRawUTF8()],
+                             @"first": @(ch[0].indexInDevice),
+                             @"count": @(ch.getNumChannels()),
+                             @"enabled": @(wi->isEnabled()) }];
+    }
+    return result;
+}
+
+- (NSArray<NSNumber*>*)audioInputPeaksDb {
+    NSMutableArray* result = [NSMutableArray array];
+    if (_inputMeter == nullptr || ![self audioInputsOpen]) return result;
+    const int n = _inputMeter->numDeviceChannels.load();
+    for (int c = 0; c < n; ++c) {
+        const float p = _inputMeter->peak[(size_t) c].exchange(0.0f);
+        [result addObject:@(p > 1.0e-6f ? std::max(-120.0, 20.0 * std::log10((double) p)) : -120.0)];
+    }
+    return result;
+}
+
+- (void)setAudioInputStereoPairs:(NSArray<NSNumber*>*)firstChannels {
+    std::vector<int> pairs;
+    for (NSNumber* n in firstChannels) pairs.push_back(n.intValue);
+    static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).inputPairs = pairs;
+    // The list is only described again when the card's channel names change: force it. Nothing to
+    // do while the inputs are closed (they will be described with these pairs when they open).
+    if (![self audioInputsOpen]) return;
+    auto& tdm = _engine->getDeviceManager();
+    tdm.applyWaveDeviceLayout(tdm.getCurrentWaveDeviceLayout());
+    tdm.dispatchPendingUpdates();
+}
+
+- (NSArray<NSNumber*>*)audioInputStereoPairs {
+    NSMutableArray* result = [NSMutableArray array];
+    auto* dev = _engine->getDeviceManager().deviceManager.getCurrentAudioDevice();
+    const int n = dev != nullptr ? dev->getInputChannelNames().size() : 0;
+    const auto& requested = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).inputPairs;
+    for (int first : objinput::validPairs(n, requested)) [result addObject:@(first)];
+    return result;
 }
 
 // MARK: Virtual card (--virtual-audio)

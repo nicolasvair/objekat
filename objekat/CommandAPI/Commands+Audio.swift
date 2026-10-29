@@ -155,7 +155,7 @@ extension CommandRegistry {
     /// `AudioDeviceStatus.shared` — the exact snapshot the title bar shows; `live` is read from
     /// the engine RIGHT NOW, so a script can assert the two agree instead of taking it on trust.
     @MainActor
-    private static func audioStatusPayload(settled: Bool? = nil) -> JSONValue {
+    static func audioStatusPayload(settled: Bool? = nil) -> JSONValue {
         let status = AudioDeviceStatus.shared
         let s = status.snapshot
         var obj: [String: JSONValue] = [
@@ -164,6 +164,7 @@ extension CommandRegistry {
             "sample_rate": .number(s.sampleRate),
             "buffer_size": .int(s.bufferSize),
             "output_channels": .int(s.outputChannels),
+            "input_channels": .int(s.inputChannels),
             "running": .bool(s.running),
             "rate_decision": .string(s.rateDecision.apiName),
             "device_rate_before": .number(s.deviceRateBeforeDecision),
@@ -182,6 +183,7 @@ extension CommandRegistry {
                 "sample_rate": .number(live.sampleRate),
                 "buffer_size": .int(live.bufferSize),
                 "output_channels": .int(live.outputChannels),
+                "input_channels": .int(live.inputChannels),
                 "running": .bool(live.running),
                 "rate_decision": .string(SampleRateDecision(raw: live.rateDecision).apiName),
                 "device_rate_before": .number(live.deviceRateBeforeDecision),
@@ -198,7 +200,7 @@ extension CommandRegistry {
     /// whatever the snapshot currently says rather than throwing: the device setter itself did
     /// not fail, only the confirmation took too long (a device that needs more time to restart).
     @MainActor
-    private static func awaitDeviceSettled(from before: Int, timeoutMs: Int = 3000) async -> Bool {
+    static func awaitDeviceSettled(from before: Int, timeoutMs: Int = 3000) async -> Bool {
         let started = ContinuousClock.now
         let budget = Duration.milliseconds(timeoutMs)
         while AudioDeviceStatus.shared.generation == before {

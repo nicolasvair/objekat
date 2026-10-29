@@ -2274,6 +2274,47 @@ the defaults). Never less than a block: a block-based callback cannot hand back 
 produced yet. A host that compensates a recording the way a real card needs must land on that
 figure.
 
+#### The card's inputs (`input.enable` / `disable` / `list` / `levels` / `set_pairs`)
+
+Recording starts from the card's INPUTS, and they are **closed at launch**: opening them on a real
+card makes macOS ask for the microphone (and wakes a Bluetooth headset into its call profile), so
+nothing opens them until a command — later, the Record tab — asks. They are the inputs of the SAME
+device as the output; there is no separate input card. These five `input.*` names sit beside the
+synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only the prefix.
+
+* `input.enable` — opens the inputs of the current output device, waits for the device to settle
+  (`audio.status.generation` moves), answers like `input.list`. A no-op when already open.
+  `invalid_state` with no device open (`--no-audio`, or the open failed), `engine_error` when the
+  card refuses (the output keeps playing: the previous setup is restored).
+* `input.disable` — closes them again; the output is untouched.
+* `input.list` — `{open, device, channels, channel_names, pairs, inputs, engine_devices}`.
+  `inputs` is what can be recorded from RIGHT NOW: the enabled devices, each
+  `{index, name, first, count, stereo, enabled}` (`first` 0-based, `count` 1 or 2).
+  `engine_devices` is everything the engine describes: **2N - 1 devices for N channels** (N monos,
+  then N - 1 neighbouring pairs), enabled or not. Both lists are empty while closed, `--no-audio`
+  included — never an error.
+* `input.levels` — `{open, channels: [{channel, peak_db}], inputs: [{index, name, first, count,
+  peak_db}]}`: the peak of each channel since the PREVIOUS call, in dB (floor -120), then cleared,
+  so poll at the rate you want to see. A stereo input reports the louder of its two channels.
+* `input.set_pairs {pairs: [int]}` — which neighbouring channels form ONE stereo input (the FIRST
+  channel of each pair, 0-based). A pair consumes its two channels; two overlapping pairs keep the
+  lower; a pair outside the card is ignored; `[]` goes back to all-mono. Engine-level for now (the
+  project model will own it); the pure rule is `objekat/Shared/OBJInputLayout.h`, asserted by
+  `tools/test_input_layout.cpp`.
+
+`audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed).
+Changing the output device closes the inputs; a rate or buffer change keeps them.
+
+**Settings.xml.** The inputs are on demand, so the engine's property storage never reads or writes
+the `wavein` items, and strips the input attributes (`audioInputDeviceName`, `audioDeviceInChans`)
+from the saved device setup: a launch always starts with the inputs closed, whatever a previous
+run left. An `audioDeviceName` from an older file is read as the OUTPUT name.
+
+Built app: the entitlement `com.apple.security.device.audio-input` and `NSMicrophoneUsageDescription`
+(localised: en/fr/es, `Resources/InfoPlist.xcstrings`) are what let the hardened runtime ask.
+`tools/scenario_inputs.py` asserts the family against the virtual card (a sine at 0.5 reads about
+-6 dB, silence below -90 dB, a loopback of the bip reads its peak).
+
 ### Export
 
 `export.run` returns a `job_id`: the render runs on its own thread, and `job.wait` closes the
