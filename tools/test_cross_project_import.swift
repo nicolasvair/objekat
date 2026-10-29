@@ -438,6 +438,7 @@ enum CrossProjectImportTest {
         do {
             var rec = group(startTime: 0, lane: 0, children: [])
             rec.recordInput = InputRef(first: 0, count: 2)
+            rec.recordTakeMode = .add
             var recChild = clip(startTime: 1, lane: 0)
             recChild.recordInput = InputRef(first: 2, count: 1)
             let g = group(startTime: 0, lane: 1, children: [recChild])
@@ -445,16 +446,27 @@ enum CrossProjectImportTest {
                                                   originFolder: originFolder, originTime: 0, originLane: 0)
             let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 5, pasteLane: 0))
             check("a pasted object loses its recording input", plan.clips[0].recordInput == nil)
+            check("... and its take mode (a zone without input has none to speak of)", plan.clips[0].recordTakeMode == nil)
             guard case .group(let kids, _) = plan.clips[1].kind else { check("pasted group", false); return }
             check("... and so does a child inside a pasted group", kids[0].recordInput == nil)
-            check("... while the source is untouched", rec.recordInput == InputRef(first: 0, count: 2))
+            check("... while the source is untouched", rec.recordInput == InputRef(first: 0, count: 2) && rec.recordTakeMode == .add)
 
             // ... but a copy WITHIN the project (cut half, duplicate, paste) keeps listening to the same input.
             let half = rec.derivedCopy(startTime: 1, duration: 2, lane: 0, fadeIn: 0, fadeOut: 0, plugins: [], kind: rec.kind)
             check("a derived copy inside the project keeps its recording input", half.recordInput == InputRef(first: 0, count: 2))
+            check("... and its take mode", half.recordTakeMode == .add)
             let codec = JSONDecoder()
             let again = try? codec.decode(SoundObject.self, from: JSONEncoder().encode(half))
             check("... and the input survives a save/load of the object", again?.recordInput == InputRef(first: 0, count: 2))
+            check("... and the take mode too (\"add\")", again?.recordTakeMode == .add)
+            let jsonText = (try? JSONEncoder().encode(half)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            check("... written as recordTakeMode: add", jsonText.contains("\"recordTakeMode\":\"add\""))
+            var plainZone = rec
+            plainZone.recordTakeMode = nil
+            check("the default mode writes NO key",
+                  !((try? JSONEncoder().encode(plainZone)).flatMap { String(data: $0, encoding: .utf8) } ?? "").contains("recordTakeMode"))
+            check("an \"add\" zone explicitly set back to mute reads nil",
+                  (try? codec.decode(SoundObject.self, from: JSONEncoder().encode(plainZone)))?.recordTakeMode == nil)
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"

@@ -1,8 +1,9 @@
 // The take being recorded, as the timeline draws it — `RecordProgress`, asserted with no screen and no
 // engine (the unit depends on Foundation only). Pinned down: the block runs from the press to the
 // playhead, bounded by the zone's window; it is absent while the head has not reached the window; it
-// stops growing at the window's end; and it sits on the lane the take will land on (below the lowest
-// child, shifted by the rows the children hold open), or on the zone's own row when the zone is closed.
+// stops growing at the window's end; and it sits on the lane the take will land on (the TOP lane of the
+// zone's takes: nothing lies above it, so no row held open by a child pushes it), or on the zone's own row
+// when the zone is closed.
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/RecordProgress.swift test_record_progress.swift \
@@ -45,15 +46,15 @@ enum Run {
 
         // ── Lane ───────────────────────────────────────────────────────────────────────────────────────────
         check("open zone on row 4, no child: the first row under it (5)",
-              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 0, childrenExpandedSpan: 0) == 5)
-        check("open zone, takes on lanes 0 and 1: the take goes on lane 2 (row 7)",
-              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 2, childrenExpandedSpan: 0) == 7)
-        check("... a child holding 3 extra rows open pushes it down by 3 (row 10)",
-              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 2, childrenExpandedSpan: 3) == 10)
+              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 0) == 5)
+        check("open zone, takes from lane 0: the take goes on the top one (row 5), whatever lies below",
+              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 0) == 5)
+        check("... takes starting on lane 2: row 7",
+              R.displayLane(groupDisplayLane: 4, opensInline: true, takeLane: 2) == 7)
         check("a closed zone: its own row",
-              R.displayLane(groupDisplayLane: 4, opensInline: false, takeLane: 2, childrenExpandedSpan: 3) == 4)
+              R.displayLane(groupDisplayLane: 4, opensInline: false, takeLane: 2) == 4)
         check("a zone at row 0, open, first take: row 1",
-              R.displayLane(groupDisplayLane: 0, opensInline: true, takeLane: 0, childrenExpandedSpan: 0) == 1)
+              R.displayLane(groupDisplayLane: 0, opensInline: true, takeLane: 0) == 1)
 
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)

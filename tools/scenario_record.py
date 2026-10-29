@@ -5,20 +5,27 @@
 Armed zones record the INPUTS they carry: one 32-bit float WAV per input and per take in
 `<project>/samples/rec/`, shared by every zone armed on that input. When the recording ends each zone
 receives a take (a child of the group, `RecordTakePlanner`): the file cropped to the zone's window with
-HANDLES, on the lane below the previous takes, which are muted whole; all of it in ONE undo point.
+HANDLES, on the TOP lane of the zone (the newest on top, the older takes go down by one lane), the
+previous takes being muted whole in the default "mute" take mode; all of it in ONE undo point.
 Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the scenario takes a minute).
 
   A  one zone: file name, WAV header (format 3, 32 bits, 48 kHz), sine content, handles (the file is
      longer than the object, the object's source offset points into it), the edge can be pulled out
   B  two zones on one input = ONE file; two inputs with the same name -> " (2)"; the previous take of a
-     zone is muted, the new one is on the lane below; ONE undo point (undo brings everything back)
-  C  a take that does not cross the zone's window: the object exists (whole capture, in the grey area),
-     the previous take is NOT muted
+     zone is muted, the new one is on the lane ABOVE it (the older goes down); ONE undo point (undo brings
+     everything back, lanes included)
+  C  a take that does not cross the zone's window: the object exists (whole capture, in the grey area,
+     on top), the previous take is NOT muted
   B2 the previous takes are muted when the recording STARTS (during the recording, in the same undo point
      as the take: one undo brings everything back); not when the press is past the window's end; a
      capture that stops before the window gives them back (one undo point either way); the red block of the take in
      progress (`rec.status` recording_start / progress): the window's part up to the head, on the lane
-     the take will land on
+     the take will land on (the top one)
+  T  the TAKE MODE of a zone ("mute" / "add"): `rec.set_take_mode` on one then on SEVERAL zones (one undo
+     point), refusals (a clip, a bad mode, an unknown group: nothing changes), two zones on the SAME input
+     one in each mode over three takes (add: nothing muted, all audible; lanes newest on top; ONE undo
+     brings back the lanes too), the mode saved in the file (absent for "mute", format 34) and read back,
+     `rec.assign` refused while recording, the red block on the top lane
   D  stereo pairs 1-2 and 2-3 share the channel 2: identical sample for sample in both files
   E  punch-in during playback (no graph rebuild at the press); a tab switch and a project replacement are
      refused while recording; unsaved project / nothing armed: refused
@@ -296,11 +303,12 @@ try:
         check("input 1 carries its own signal (0.25 sine at 1 kHz), input 0 its own",
               sine_rms_ok(wc[4][int(3 * SR):int(5 * SR), 0], 0.25)
               and sine_rms_ok(wa[4][int(3 * SR):int(5 * SR), 0], 0.5))
-        check("za: second take on the lane below, the first one muted",
-              takes[za]["lane"] == 1 and len(takes[za]["muted"]) == 1, takes[za])
+        check("za: second take on the TOP lane (0), the first one muted",
+              takes[za]["lane"] == 0 and len(takes[za]["muted"]) == 1, takes[za])
         ks = kids(c, za)
-        check("za: lanes 0 (muted, older, on top) then 1 (newest, audible)",
-              [k["lane"] for k in ks] == [0, 1] and [k["muted"] for k in ks] == [True, False], ks)
+        check("za: lanes 0 (newest, audible, on top) then 1 (older, muted, gone down)",
+              [k["lane"] for k in ks] == [0, 1] and [k["muted"] for k in ks] == [False, True]
+              and ks[0]["id"] == takes[za]["object"], ks)
         check("zb, zc: first take of their zone, lane 0, no mute", takes[zb]["lane"] == 0 and takes[zc]["lane"] == 0
               and takes[zb]["muted"] == [] and takes[zc]["muted"] == [])
         check("the take is cropped to each window (zb 4 -> 8)", near(takes[zb]["start"], 4, 1e-3)
@@ -308,11 +316,12 @@ try:
         check("ONE undo point for the whole stop", undo_depth(c) == d0 + 1, (d0, undo_depth(c)))
         c.send("edit.undo")
         ks = kids(c, za)
-        check("undo: the new take is gone, the previous one is audible again",
-              len(ks) == 1 and ks[0]["muted"] is False and kids(c, zb) == [] and kids(c, zc) == [])
+        check("undo: the new take is gone, the previous one is audible again AND back on lane 0",
+              len(ks) == 1 and ks[0]["muted"] is False and ks[0]["lane"] == 0 and kids(c, zb) == [] and kids(c, zc) == [])
         c.send("edit.redo")
         ks = kids(c, za)
-        check("redo: both takes, the older muted", [k["muted"] for k in ks] == [True, False])
+        check("redo: both takes, the older muted and below", [k["muted"] for k in ks] == [False, True]
+              and [k["lane"] for k in ks] == [0, 1])
         c.send("rec.arm", {"group": za, "on": False})
         c.send("rec.arm", {"group": zb, "on": False})
         c.send("rec.arm", {"group": zc, "on": False})
@@ -337,8 +346,9 @@ try:
               abs(t2["start"] - 6) < 0.15 and abs(t2["duration"] - 2) < 0.2 and near(t2["source_offset"], 0), t2)
         check("... and the previous take is NOT muted", t2["muted"] == [], t2)
         ks = kids(c, zd)
-        check("the zone holds both, none muted, the new one below",
-              [k["lane"] for k in ks] == [0, 1] and [k["muted"] for k in ks] == [False, False], ks)
+        check("the zone holds both, none muted, the new one on top",
+              [k["lane"] for k in ks] == [0, 1] and [k["muted"] for k in ks] == [False, False]
+              and ks[0]["id"] == t2["object"] and ks[1]["id"] == t1["object"], ks)
         c.send("rec.arm", {"group": zd, "on": False})
 
         # ── B2: the previous takes are muted when the recording STARTS ------------------------------
@@ -377,8 +387,8 @@ try:
         check("... on the zone's own row while it is closed", len(pr) == 1 and pr[0]["lane"] == gd, (pr, gd))
         c.send("group.expand", {"id": zm, "expanded": True})
         pr = c.send("rec.status")["progress"]
-        check("... on the lane below the previous take once the zone is open (zone row + 2)",
-              len(pr) == 1 and pr[0]["lane"] == zone_row(zm) + 2, (pr, zone_row(zm)))
+        check("... on the TOP lane once the zone is open (zone row + 1: the previous take goes down at the stop)",
+              len(pr) == 1 and pr[0]["lane"] == zone_row(zm) + 1, (pr, zone_row(zm)))
         c.send("group.expand", {"id": zm, "expanded": False})
         wait_pos(c, 5.6)
         pr = c.send("rec.status")["progress"]
@@ -387,18 +397,19 @@ try:
         t2 = r["last_takes"][0]
         check("rec.stop: no block any more, no start", c.send("rec.status")["progress"] == []
               and c.send("rec.status")["recording_start"] is None)
-        check("new take on the lane below, reporting the take muted at the press",
-              t2["lane"] == 1 and t2["muted"] == [t1["object"]], t2)
+        check("new take on the top lane, reporting the take muted at the press",
+              t2["lane"] == 0 and t2["muted"] == [t1["object"]], t2)
         check("... the press and the stop make ONE undo point", undo_depth(c) == d1 + 1, (d1, undo_depth(c)))
         ks = kids(c, zm)
-        check("lanes 0 (muted) then 1 (audible)", [k["muted"] for k in ks] == [True, False], ks)
+        check("lanes 0 (audible, newest) then 1 (muted, older)", [k["muted"] for k in ks] == [False, True]
+              and ks[0]["id"] == t2["object"] and ks[1]["id"] == t1["object"], ks)
         c.send("edit.undo")
         ks = kids(c, zm)
-        check("ONE undo: the new take is gone AND the previous one is audible again",
-              len(ks) == 1 and ks[0]["muted"] is False and undo_depth(c) == d1, ks)
+        check("ONE undo: the new take is gone AND the previous one is audible again, back on lane 0",
+              len(ks) == 1 and ks[0]["muted"] is False and ks[0]["lane"] == 0 and undo_depth(c) == d1, ks)
         c.send("edit.redo")
         ks = kids(c, zm)
-        check("redo: both takes, the older muted", [k["muted"] for k in ks] == [True, False], ks)
+        check("redo: both takes, the older muted and below", [k["muted"] for k in ks] == [False, True], ks)
 
         # pressed past the window's end: the audible take is left alone
         c.send("transport.seek", {"seconds": 6})
@@ -407,13 +418,14 @@ try:
         time.sleep(0.4)
         ks = kids(c, zm)
         check("pressed past the window's end: nothing muted, no undo point at the press",
-              [k["muted"] for k in ks] == [True, False] and undo_depth(c) == d2, (ks, d2, undo_depth(c)))
+              [k["muted"] for k in ks] == [False, True] and undo_depth(c) == d2, (ks, d2, undo_depth(c)))
         wait_pos(c, 7.5)
         check("... and no red block (the head is outside the window)", c.send("rec.status")["progress"] == [])
         t3 = c.send("rec.stop")["last_takes"][0]
         ks = kids(c, zm)
         check("... the take outside the window mutes nothing either",
-              t3["outside_window"] is True and t3["muted"] == [] and [k["muted"] for k in ks] == [True, False, False], (t3, ks))
+              t3["outside_window"] is True and t3["muted"] == [] and [k["muted"] for k in ks] == [False, False, True]
+              and ks[0]["id"] == t3["object"], (t3, ks))
         c.send("edit.undo")
         check("... undo removes it", len(kids(c, zm)) == 2 and undo_depth(c) == d2)
 
@@ -430,13 +442,143 @@ try:
         ks = kids(c, zm)
         check("stop at 0.7 s (before the window): the take is outside, the previous ones are audible again",
               len(t4) == 1 and t4[0]["outside_window"] is True and t4[0]["muted"] == []
-              and [k["muted"] for k in ks] == [True, False, False], (t4, ks))
+              and [k["muted"] for k in ks] == [False, False, True] and ks[0]["id"] == t4[0]["object"], (t4, ks))
         check("... still ONE undo point, and undo brings the muted state back", undo_depth(c) == d3 + 1)
         c.send("edit.undo")
         ks = kids(c, zm)
-        check("... undo: the new take is gone, as before the press", len(ks) == 2 and [k["muted"] for k in ks] == [True, False]
-              and undo_depth(c) == d3, ks)
+        check("... undo: the new take is gone, as before the press", len(ks) == 2 and [k["muted"] for k in ks] == [False, True]
+              and [k["lane"] for k in ks] == [0, 1] and undo_depth(c) == d3, ks)
         c.send("rec.arm", {"group": zm, "on": False})
+
+        # ── T: the take mode of a zone ----------------------------------------------------------------
+        section("T  take mode: mute / add, newest on top, several zones at once, saved, assign refused while recording")
+        c.send("audio.virtual.set_input", {"channel": 0, "signal": "sine", "frequency": 440, "amplitude": 0.5})
+        Pt = new_project(c, tmp, "pt")
+        zmu = make_zone(c, 0, 1, 5, 0)                 # the default mode
+        zad = make_zone(c, 0, 1, 5, 1)                 # the same input, same window; will be set to "add"
+        zad2 = make_zone(c, 1, 1, 5, 2)                # another zone for the multi-setting
+        modes = lambda: {z["id"]: z["take_mode"] for z in c.send("rec.status")["zones"]}
+        check("rec.status: every zone starts in \"mute\"", set(modes().values()) == {"mute"} and len(modes()) == 3, modes())
+        d0 = undo_depth(c)
+        r = c.send("rec.set_take_mode", {"group": zad, "mode": "add"})
+        check("set_take_mode (one group): the zone is \"add\", the others untouched",
+              modes()[zad] == "add" and modes()[zmu] == "mute" and modes()[zad2] == "mute", modes())
+        check("... ONE undo point", undo_depth(c) == d0 + 1, (d0, undo_depth(c)))
+        c.send("rec.set_take_mode", {"group": zad, "mode": "add"})
+        check("... the same mode again changes nothing: no undo point", undo_depth(c) == d0 + 1)
+        c.send("edit.undo")
+        check("undo: back to \"mute\"", modes()[zad] == "mute" and undo_depth(c) == d0, modes())
+        c.send("edit.redo")
+        check("redo: \"add\" again", modes()[zad] == "add")
+
+        d1 = undo_depth(c)
+        c.send("rec.set_take_mode", {"groups": [zmu, zad2, zad], "mode": "add"})
+        check("set_take_mode (several groups): the two that were in \"mute\" change, ONE undo point",
+              set(modes().values()) == {"add"} and undo_depth(c) == d1 + 1, (modes(), d1, undo_depth(c)))
+        c.send("edit.undo")
+        check("... ONE undo gives the two back (the third was already \"add\")",
+              modes()[zmu] == "mute" and modes()[zad2] == "mute" and modes()[zad] == "add", modes())
+        check("... and the undo stack is where it was", undo_depth(c) == d1, (d1, undo_depth(c)))
+
+        # refusals: nothing moves, not even for the valid ones in the list
+        bip = os.path.join(tmp, "bip.wav")
+        with wave.open(bip, "wb") as w:
+            w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+            w.writeframes((np.sin(np.arange(SR) * 2 * math.pi * 1000 / SR) * 8000).astype("<i2").tobytes())
+        c.send("object.add", {"path": bip, "lane": 6, "start": 20})
+        c.send("wait_idle", {"timeout_ms": 5000})
+        clip_id = [o["id"] for o in c.send("object.list")["objects"] if o["kind"] != "group" and o["display_lane"] == 6][0]
+        d2 = undo_depth(c)
+        check("a clip is not a recording zone: refused (invalid_state)",
+              refused(c, "rec.set_take_mode", group=clip_id, mode="add") == "invalid_state")
+        check("a list holding a clip: refused, and the VALID zone in it is left alone",
+              refused(c, "rec.set_take_mode", groups=[zmu, clip_id], mode="add") == "invalid_state"
+              and modes()[zmu] == "mute" and undo_depth(c) == d2, modes())
+        check("a bad mode: bad_params", refused(c, "rec.set_take_mode", group=zmu, mode="overdub") == "bad_params")
+        check("an unknown group: not_found",
+              refused(c, "rec.set_take_mode", group="00000000-0000-0000-0000-000000000000", mode="add") == "not_found")
+        check("neither group nor groups: bad_params", refused(c, "rec.set_take_mode", mode="add") == "bad_params")
+        check("an empty list: refused", refused(c, "rec.set_take_mode", groups=[], mode="add") is not None)
+        check("none of the refusals pushed an undo point or moved a zone", undo_depth(c) == d2 and modes()[zad] == "add")
+
+        # three takes on the same input: zmu (mute) and zad (add) side by side
+        c.send("rec.arm", {"group": zmu, "on": True})
+        c.send("rec.arm", {"group": zad, "on": True})
+        order = {zmu: [], zad: []}                                     # the takes, oldest first
+        for n in (1, 2, 3):
+            c.send("transport.seek", {"seconds": 0})
+            dN = undo_depth(c)
+            c.send("rec.start")
+            if n == 2:
+                time.sleep(0.4)
+                kz = kids(c, zad)
+                check("rec.start (add): nothing of this zone is muted at the press", all(k["muted"] is False for k in kz), kz)
+                kz = kids(c, zmu)
+                check("rec.start (mute): its previous take IS muted at the press", all(k["muted"] is True for k in kz), kz)
+                c.send("group.expand", {"id": zad, "expanded": True})
+                wait_pos(c, 2.5)
+                pr = {b["group"]: b for b in c.send("rec.status")["progress"]}
+                check("the red block of each zone is on its TOP lane (zone row + 1) in both modes",
+                      zad in pr and pr[zad]["lane"] == [o for o in c.send("object.list")["objects"] if o["id"] == zad][0]["display_lane"] + 1,
+                      pr)
+                c.send("group.expand", {"id": zad, "expanded": False})
+                # the zone's input is frozen at the press
+                before_assign = [z["input"] for z in c.send("rec.status")["zones"] if z["id"] == zmu]
+                check("rec.assign during a recording: invalid_state", refused(c, "rec.assign", group=zmu, first=1) == "invalid_state")
+                check("... the zone keeps its input", [z["input"] for z in c.send("rec.status")["zones"] if z["id"] == zmu] == before_assign)
+                check("rec.set_take_mode during a recording is accepted (counts from the next press)",
+                      refused(c, "rec.set_take_mode", group=zad2, mode="mute") is None)
+            wait_pos(c, 6.0)
+            r = c.send("rec.stop")
+            tk = {t["group"]: t for t in r["last_takes"]}
+            check("take %d: one per zone, both on lane 0 (the top)" % n,
+                  len(tk) == 2 and tk[zmu]["lane"] == 0 and tk[zad]["lane"] == 0, r["last_takes"])
+            check("take %d: ONE undo point" % n, undo_depth(c) == dN + 1, (dN, undo_depth(c)))
+            order[zmu].append(tk[zmu]["object"]); order[zad].append(tk[zad]["object"])
+            if n > 1:
+                check("take %d: the \"mute\" zone reports the take(s) it muted, the \"add\" zone none" % n,
+                      len(tk[zmu]["muted"]) == 1 and tk[zad]["muted"] == [], (tk[zmu]["muted"], tk[zad]["muted"]))
+        kmu, kad = kids(c, zmu), kids(c, zad)
+        newest_first = lambda ids: list(reversed(ids))
+        check("\"mute\" zone: lanes 0, 1, 2 read newest, middle, oldest", [k["lane"] for k in kmu] == [0, 1, 2]
+              and [k["id"] for k in kmu] == newest_first(order[zmu]), kmu)
+        check("\"add\" zone: the same order", [k["lane"] for k in kad] == [0, 1, 2]
+              and [k["id"] for k in kad] == newest_first(order[zad]), kad)
+        check("\"mute\": only the newest is audible", [k["muted"] for k in kmu] == [False, True, True], kmu)
+        check("\"add\": all three stay audible", [k["muted"] for k in kad] == [False, False, False], kad)
+        c.send("edit.undo")                                            # the third take, in both zones: ONE point
+        kmu, kad = kids(c, zmu), kids(c, zad)
+        check("ONE undo of the third recording: both zones are back to two takes, lanes 0 and 1",
+              [k["lane"] for k in kmu] == [0, 1] and [k["lane"] for k in kad] == [0, 1]
+              and [k["id"] for k in kmu] == newest_first(order[zmu][:2]) and [k["id"] for k in kad] == newest_first(order[zad][:2]),
+              (kmu, kad))
+        check("... mute zone: the newest of the two audible, the older muted; add zone: both audible",
+              [k["muted"] for k in kmu] == [False, True] and [k["muted"] for k in kad] == [False, False], (kmu, kad))
+        c.send("rec.arm", {"group": zmu, "on": False})
+        c.send("rec.arm", {"group": zad, "on": False})
+
+        # the file: "add" is written, "mute" is the absence of the key
+        c.send("project.save")
+        ptfile = [f for f in os.listdir(Pt) if f.endswith(".objekat")][0]
+        doc = json.load(open(os.path.join(Pt, ptfile)))
+        items = {i["id"]: i for i in doc["items"]}
+        check("saved: format 34", doc.get("version") == 34, doc.get("version"))
+        check("saved: the \"add\" zone carries recordTakeMode add", items[zad].get("recordTakeMode") == "add", items.get(zad, {}).keys())
+        check("saved: the \"mute\" zone carries NO key", "recordTakeMode" not in items[zmu], items[zmu].keys())
+        check("saved: the _readme describes the key", any("recordTakeMode" in line for line in doc.get("_readme", [])))
+        c.send("project.new")
+        c.send("project.open", {"path": os.path.join(Pt, ptfile)})
+        mm = modes()
+        check("reopened: the modes are back (add / mute / mute)", mm.get(zad) == "add" and mm.get(zmu) == "mute"
+              and mm.get(zad2) == "mute", mm)
+        old = json.load(open(os.path.join(Pt, ptfile)))
+        for i in old["items"]:
+            i.pop("recordTakeMode", None)
+        old["version"] = 33
+        oldp = os.path.join(Pt, "before34.objekat")
+        json.dump(old, open(oldp, "w"))
+        c.send("project.open", {"path": oldp})
+        check("a format 33 file (no key anywhere) opens with every zone in \"mute\"", set(modes().values()) == {"mute"}, modes())
 
         # ── D: stereo pairs 1-2 and 2-3 ------------------------------------------------------------
         section("D  pairs 1-2 and 2-3: the shared channel is identical")

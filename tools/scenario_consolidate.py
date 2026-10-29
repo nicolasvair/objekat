@@ -435,8 +435,8 @@ try:
         cmd("project.save")
         doc = read_json(ids["manifest"])
         st = cmd("project.get_state")
-        check("B5: version 33 on disk and in get_state",
-              doc.get("version") == 33 and st.get("version") == 33, (doc.get("version"), st.get("version")))
+        check("B5: version 34 on disk and in get_state",
+              doc.get("version") == 34 and st.get("version") == 34, (doc.get("version"), st.get("version")))
         check("B5: key objectDefinitions kept", "objectDefinitions" in doc
               and "consolidateDefinitions" not in doc, list(doc))
         dB = [d for d in doc["objectDefinitions"] if d["id"] == ids["b"]][0]

@@ -8,9 +8,10 @@ import Foundation
 //
 //   - WHERE in time: from the press of "record" to the playhead, BOUNDED BY THE ZONE'S WINDOW — what the
 //     take will show once it exists (the file is longer than the window, but only the window is seen);
-//   - ON WHICH LANE: the one the take will land on, below the lowest child of the zone — the lane
-//     `RecordTakePlanner.takeLane` gives — and not the zone's own row. A zone that is not open shows
-//     none of its children: there the block stays on the zone's own row.
+//   - ON WHICH LANE: the one the take will land on, the TOP lane of the zone's takes — the lane
+//     `RecordTakePlanner.takeLane` gives (the previous takes go down by one at the stop) — and not the
+//     zone's own row. Nothing of the zone lies above that lane, so no row held open by a child pushes it.
+//     A zone that is not open shows none of its children: there the block stays on the zone's own row.
 //
 // A plain Foundation unit with no model behind it, compiled and asserted alone
 // (tools/test_record_progress.swift).
@@ -35,11 +36,9 @@ enum RecordProgress {
     /// - Parameters:
     ///   - groupDisplayLane: the zone's own display lane.
     ///   - opensInline: the zone shows its children (it is open).
-    ///   - takeLane: the lane the take takes in the zone's own numbering (`RecordTakePlanner.takeLane`).
-    ///   - childrenExpandedSpan: the extra rows the zone's children hold open (their piano rolls,
-    ///     automation bands, open sub-groups): every child lies on a lane above the take's.
-    static func displayLane(groupDisplayLane: Int, opensInline: Bool, takeLane: Int,
-                            childrenExpandedSpan: Int) -> Int {
-        opensInline ? groupDisplayLane + 1 + takeLane + childrenExpandedSpan : groupDisplayLane
+    ///   - takeLane: the lane the take takes in the zone's own numbering (`RecordTakePlanner.takeLane`):
+    ///     the highest child's, so no child lies above it and no row held open adds to it.
+    static func displayLane(groupDisplayLane: Int, opensInline: Bool, takeLane: Int) -> Int {
+        opensInline ? groupDisplayLane + 1 + takeLane : groupDisplayLane
     }
 }

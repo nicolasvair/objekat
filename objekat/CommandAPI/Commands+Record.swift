@@ -295,8 +295,9 @@ extension CommandRegistry {
                  summary: """
                  Gives the group `group` the input (`first`, `count`) it will record, or takes it away when \
                  `first` is absent. Refused (`invalid_state`) for a group that cannot record (infinite, \
-                 looping, consolidated) and for anything that is not a group. One undo point, none when \
-                 nothing changes. Taking the input away disarms the zone.
+                 looping, consolidated) and for anything that is not a group, and while a recording is \
+                 running (`invalid_state`: the zone's input is frozen at the press, like the stereo pairs). \
+                 One undo point, none when nothing changes. Taking the input away disarms the zone.
                  """,
                  params: [ParamSpec("group", "uuid", "The group."),
                           ParamSpec("first", "int", required: false, "First channel; absent = clear."),
@@ -312,7 +313,50 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state,
                                    message: "only a finite, non-looping, non-consolidated group can record")
             }
+            guard !vm.isRecording else {
+                throw CommandError(code: .invalid_state,
+                                   message: "a recording is running: the zone's input cannot change until it stops")
+            }
             vm.assignRecordInput(ref, toGroup: id)
+            return Self.recordStatusJSON(vm)
+        }
+
+        register("rec.set_take_mode",
+                 summary: """
+                 Sets what a NEW take does to the takes already in a recording zone: `mode` "mute" (the default: \
+                 the previous takes crossing the zone's window are muted when the recording starts) or "add" \
+                 (nothing is muted, the older takes stay audible). `group` (one zone) or `groups` (several: the \
+                 hand's rule when the zone shown is part of the selection — ONE undo point for all). A zone is a \
+                 group that can record (finite, non-looping, non-consolidated), with or without an input; \
+                 anything else is refused (`invalid_state`) and NOTHING is changed. Saved in the project \
+                 (`recordTakeMode`, absent = "mute"). One undo point, none when no zone changes. A recording \
+                 under way keeps the mode read at the press. In both modes the new take goes on the TOP lane of \
+                 the zone and the older ones down by one.
+                 """,
+                 params: [ParamSpec("group", "uuid", required: false, "One zone."),
+                          ParamSpec("groups", "array<uuid>", required: false, "Several zones."),
+                          ParamSpec("mode", "string", "\"mute\" or \"add\".")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard p.raw["group"] != nil || p.raw["groups"] != nil else {
+                throw CommandError(code: .bad_params, message: "'group' or 'groups' required")
+            }
+            let ids = try p.raw["groups"] != nil ? p.uuids("groups") : [p.uuid("group")]
+            guard let mode = RecordTakeMode(rawValue: try p.string("mode")) else {
+                throw CommandError(code: .bad_params, message: "'mode' must be \"mute\" or \"add\"")
+            }
+            for id in ids {
+                guard let item = vm.find(id: id) else {
+                    throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+                }
+                guard EditViewModel.isRecordableZone(item) else {
+                    throw CommandError(code: .invalid_state,
+                                       message: "only a finite, non-looping, non-consolidated group is a recording zone")
+                }
+            }
+            guard vm.setRecordTakeMode(mode, groups: ids) else {
+                throw CommandError(code: .invalid_state, message: "no recording zone given")
+            }
             return Self.recordStatusJSON(vm)
         }
 
@@ -355,7 +399,8 @@ extension CommandRegistry {
         register("rec.status",
                  summary: """
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
-                 ({first, count}), `input_present` (the card has it), `armed`. `armed`: the ids of the \
+                 ({first, count}), `input_present` (the card has it), `armed`, `take_mode` ("mute" or \
+                 "add", see `rec.set_take_mode`). `armed`: the ids of the \
                  zones armed AND still able to record. `can_record`: the transport's record button is live \
                  (something armed, and `project_saved`). `recording`: a recording is under way, \
                  `recording_start` the instant it was pressed at (null otherwise). `progress`: while recording, the \
@@ -372,10 +417,12 @@ extension CommandRegistry {
                  summary: """
                  Records the inputs of the ARMED zones, like the transport's record button: stopped, it plays \
                  and records from the cursor (or from `seconds`); playing, it punches in at the current \
-                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. The \
-                 previous takes the new one will replace (the unmuted children crossing a zone's window) are \
-                 MUTED at once — except when the press is already past the window's end — in the undo point of \
-                 the take; a recording that gives nothing gives them back. \
+                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. In \
+                 the zone's default take mode ("mute", @see rec.set_take_mode) the previous takes the new one \
+                 will replace (the unmuted children crossing a zone's window) are MUTED at once — except when \
+                 the press is already past the window's end — in the undo point of the take; a recording that \
+                 gives nothing gives them back. In the "add" mode nothing is muted. The new take goes on the TOP \
+                 lane of the zone, the older ones down by one. \
                  `invalid_state` when nothing is armed, the project is not saved, the inputs are closed or a \
                  recording is already under way. A seek, `transport.stop` or `rec.stop` ends it.
                  """,
@@ -461,6 +508,7 @@ extension CommandRegistry {
                         "recordable": .bool(EditViewModel.isRecordableZone(item)),
                         "armed": .bool(vm.armedRecordZones.contains(item.id)),
                         "input_prefix": .stringOrNull(vm.recordZoneInputPrefix(of: item)),
+                        "take_mode": .string(vm.recordTakeMode(of: item.id).rawValue),
                     ]))
                 }
                 if case .group(let children, _) = item.kind { walk(children) }

@@ -127,6 +127,11 @@ struct SynopticActions {
     // The 'stems' zone (output): assigning the stem.
     var onAssignStem: ((UUID) -> Void)? = nil
 
+    // The 'input' zone (a recording zone, at the top): choosing the card input (nil = none), and the take mode
+    // (the receiver applies it to the whole selection when the object shown is part of it).
+    var onAssignRecordInput: ((InputRef?) -> Void)? = nil
+    var onSetRecordTakeMode: ((RecordTakeMode) -> Void)? = nil
+
     // The 'sends' zone (the foot): the level / on-off of a departure towards an aux. `id` = the
     // target aux for a departure, the sending object for a received send (an aux's head).
     var onSetSendLevel: ((UUID, Float) -> Void)? = nil
@@ -343,6 +348,30 @@ struct SynopticStem: Identifiable, Equatable {
     let name: String
     let color: Color
     let isCurrent: Bool
+}
+
+/// One input the 'input' zone's menu offers: the reference and the name the project gives it.
+struct SynopticRecordInputChoice: Identifiable, Equatable {
+    let ref: InputRef
+    let name: String
+    var id: InputRef { ref }
+}
+
+/// A recording zone's 'input' zone, carried over into the signal view (@see RecordInputZoneView).
+struct SynopticRecordInput: Equatable {
+    /// The input the zone records; nil = none ("None").
+    let ref: InputRef?
+    /// Its name (empty without input).
+    let name: String
+    /// The card has it right now. False = "absent": the zone keeps its input but cannot be armed.
+    let present: Bool
+    /// What a new take does to the previous ones.
+    let takeMode: RecordTakeMode
+    /// A recording is running: neither menu can be used (the zone's input is frozen at the press).
+    let locked: Bool
+    /// What the menu lists, in two sections.
+    let monoChoices: [SynopticRecordInputChoice]
+    let stereoChoices: [SynopticRecordInputChoice]
 }
 
 /// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.

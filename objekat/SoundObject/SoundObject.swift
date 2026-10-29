@@ -598,6 +598,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// duplicate, a paste in the project all keep listening to the same input), and
     /// `CrossProjectImport` clears it (another project's card is not this one's).
     var recordInput: InputRef? = nil
+    /// What a new take does to the takes already in this recording zone — session format 34. nil = the
+    /// default, `.mute` (the previous takes crossing the window are muted at the press); `.add` = they
+    /// stay audible. Meaningful only for a group with a `recordInput`. Stored as ABSENT for the default
+    /// (`RecordTakeMode.stored`). TOP LEVEL and carried like `recordInput`: `derivedCopy` keeps it
+    /// (a duplicate of a zone keeps its way of taking), `CrossProjectImport` clears the INPUT, not this.
+    var recordTakeMode: RecordTakeMode? = nil
     /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
     /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -1310,6 +1316,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     kind: kind)
         derived.araSource = inheritedARA
         derived.recordInput = recordInput
+        derived.recordTakeMode = recordTakeMode
         return derived
     }
 
@@ -1347,7 +1354,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1399,6 +1406,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
         try c.encodeIfPresent(araSource, forKey: .araSource)
         try c.encodeIfPresent(recordInput, forKey: .recordInput)
+        try c.encodeIfPresent(recordTakeMode?.stored, forKey: .recordTakeMode)
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1452,6 +1460,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         araSource      = try? c.decodeIfPresent(ARASource.self, forKey: .araSource)
         // An input reference this build cannot read reads as absent (the group is just not armable).
         recordInput    = try? c.decodeIfPresent(InputRef.self, forKey: .recordInput)
+        // Absent (or a value this build does not know) = the default, `.mute`; stored as nil.
+        recordTakeMode = (try? c.decodeIfPresent(RecordTakeMode.self, forKey: .recordTakeMode))?.stored
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }

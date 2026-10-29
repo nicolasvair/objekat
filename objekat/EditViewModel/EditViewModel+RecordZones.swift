@@ -125,10 +125,13 @@ extension EditViewModel {
 
     // MARK: Assigning
 
-    /// Gives a group its input (or takes it away with nil). Not when the group cannot record. One undo
-    /// point, none when nothing changes. Returns whether the group now has `ref`.
+    /// Gives a group its input (or takes it away with nil). Not when the group cannot record, and not
+    /// while a recording runs (the zone's input is frozen at the press, like the stereo pairs:
+    /// `inputPairsLocked`). One undo point, none when nothing changes. Returns whether the group now has
+    /// `ref`.
     @discardableResult
     func assignRecordInput(_ ref: InputRef?, toGroup id: UUID) -> Bool {
+        guard !isRecording else { return false }
         guard let item = find(id: id), Self.isRecordableZone(item) else { return false }
         if item.recordInput == ref { return true }
         pushUndo()

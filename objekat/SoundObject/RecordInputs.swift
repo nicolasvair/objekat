@@ -56,6 +56,22 @@ struct InputRef: Codable, Hashable, Sendable, Comparable {
     }
 }
 
+/// What a recording zone does to the takes already in it when a new take is recorded (session format 34).
+/// A choice of the ZONE (`SoundObject.recordTakeMode`; nil = `.mute`, the default, so a project written
+/// before format 34 behaves as it always did).
+enum RecordTakeMode: String, Codable, CaseIterable, Sendable {
+    /// The previous takes that cross the zone's window are muted when the recording starts.
+    case mute
+    /// Nothing is muted: the new take is added and the older ones stay audible.
+    case add
+
+    /// Whether a new take silences the previous ones.
+    var mutesPrevious: Bool { self == .mute }
+
+    /// The value a zone stores: the default is stored as ABSENT (one spelling for "mute").
+    var stored: RecordTakeMode? { self == .mute ? nil : self }
+}
+
 /// What a project keeps about the card's inputs: `ProjectDocument.recordInputs`.
 struct RecordInputsConfig: Codable, Equatable, Sendable {
     /// The card the pairs and names were made on. INDICATIVE only: nothing is matched against it.
