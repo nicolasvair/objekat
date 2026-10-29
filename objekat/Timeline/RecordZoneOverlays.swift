@@ -99,6 +99,9 @@ private final class BlinkingZoneNSView: NSView {
     private let dot = CAShapeLayer()
     var cornerRadius: CGFloat = 20 { didSet { if cornerRadius != oldValue { needsLayout = true } } }
 
+    /// The common origin of every blink (@see viewDidMoveToWindow).
+    private static let blinkEpoch = CACurrentMediaTime()
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -145,6 +148,10 @@ private final class BlinkingZoneNSView: NSView {
         blink.autoreverses = true
         blink.repeatCount = .infinity
         blink.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // One origin for every zone (and every redraw of this view): each animation would otherwise start
+        // at the instant its own layer is added, and the zones armed one after the other would blink out
+        // of step.
+        blink.beginTime = layer.convertTime(Self.blinkEpoch, from: nil)
         layer.add(blink, forKey: "blink")
     }
 }
