@@ -30,6 +30,8 @@ final class KeyboardClaim {
     enum Claimant: Equatable {
         case explorer
         case soundList
+        /// The Inputs tab's list: ↑ / ↓ (⇧ extends) and ⌘A, nothing else.
+        case inputs
         case valueField(UUID)
     }
 
@@ -39,7 +41,20 @@ final class KeyboardClaim {
     /// box's own `release`.
     private(set) var revocation: Int = 0
 
+    /// What ⌘A does while `.inputs` holds the claim: the Inputs tab registers it while it is on screen.
+    /// ⌘A is not a key the monitor lets through (it reaches `performSelectAllShortcut` by the monitor or by
+    /// the Edit menu), so the claimant is asked THERE, not in `owns(_:)`.
+    @ObservationIgnored var inputsSelectAll: (() -> Void)?
+
     private init() {}
+
+    /// ⌘A for whoever holds the claim, when it is a list that selects its own rows. True if it took it
+    /// (the timeline's "select all objects" must then not run).
+    func performSelectAll() -> Bool {
+        guard owner == .inputs, let all = inputsSelectAll else { return false }
+        all()
+        return true
+    }
 
     func claim(_ c: Claimant) {
         owner = c
@@ -64,6 +79,10 @@ final class KeyboardClaim {
             // Mot pour mot l'ancien test (TimelineKeyHandler): les 4 flèches, peu importe les
             // modificateurs — ne rien changer à ces deux revendicateurs.
             return [123, 124, 125, 126].contains(event.keyCode)
+
+        case .inputs:
+            // ↑ / ↓ seulement (une liste plate : ← / → ne veulent rien dire), ⇧ compris pour étendre.
+            return [125, 126].contains(event.keyCode)
 
         case .valueField:
             // `heldModifiers` lives on `TimelineView` (the type `TimelineKeyHandler.swift`
