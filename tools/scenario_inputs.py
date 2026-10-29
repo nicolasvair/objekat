@@ -311,6 +311,28 @@ try:
     proc = None
 
     # ════════════════════════════════════════════════════════════════════════════════════════
+    section("PHASE B2 — inputs opened in one run do not come back by themselves in the next")
+    proc = launch(SOCK, ["--virtual-audio"])
+    with ObjekatClient(SOCK) as c:
+        c.send("input.enable")
+        check("run 1: the inputs are open", c.send("input.list")["open"] is True)
+        time.sleep(0.5)
+    stop(proc, SOCK)
+    proc = None
+    check("run 1 left Settings.xml byte for byte as it was", digest(settings_bytes()) == before)
+    proc = launch(SOCK, ["--virtual-audio"])
+    with ObjekatClient(SOCK) as c:
+        lst = c.send("input.list")
+        st = c.send("audio.status")
+        check("run 2: the inputs are closed again at launch", lst["open"] is False and lst["inputs"] == [], lst)
+        check("run 2: audio.status.input_channels is 0 (no input opened behind the user's back)",
+              st["input_channels"] == 0 and st["live"]["input_channels"] == 0, st)
+        check("run 2: the output is running on the virtual card", st["device"] == CARD and st["running"] is True, st)
+    stop(proc, SOCK)
+    proc = None
+    check("run 2 left Settings.xml byte for byte as it was", digest(settings_bytes()) == before)
+
+    # ════════════════════════════════════════════════════════════════════════════════════════
     section("PHASE C — a normal launch on the real card")
     proc = launch(SOCK, [])
     with ObjekatClient(SOCK) as c:
