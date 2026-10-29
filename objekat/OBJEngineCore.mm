@@ -1272,6 +1272,7 @@ struct OBJLatencyWatcher : public juce::Timer {
 // Défini plus bas (MARK « Workgroup audio ») ; déclaré ici pour le veilleur ci-dessous.
 @interface OBJEngineCore ()
 - (void)rebindAudioWorkgroupIfDeviceChanged;
+- (void)syncInputMonitors;       // @see "Input monitoring"
 @end
 
 // Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
@@ -1329,6 +1330,9 @@ struct OBJDeviceChangeWatcher : public juce::ChangeListener {
         // remplacé tant que le transport est à l'arrêt, sans quoi les workers resteraient attachés
         // à l'ancien. @see -rebindAudioWorkgroupIfDeviceChanged.
         [owner rebindAudioWorkgroupIfDeviceChanged];
+        // An input that closed or vanished with the change stops being monitored; the others are
+        // re-attached to their hidden track (the engine rebuilt its devices).
+        [owner syncInputMonitors];
         if (owner.onAudioDeviceChanged) owner.onAudioDeviceChanged();
     }
 };
@@ -1799,6 +1803,11 @@ struct OBJExportLoadScope {
     // déduit de son clip (objOwningTrack) et son stem du folder de cette piste. Une table de
     // plus serait une occasion de plus de désynchroniser.
     std::vector<OBJPoolTrack>                                 _poolTracks;
+    // Input monitoring (@see -setAudioInputMonitor:first:count:). The inputs the hand asked to hear, and the
+    // hidden track each one plays through — NOT pool tracks, so nothing that prunes or counts the pool
+    // sees them. Both are keyed (first channel, channel count).
+    std::set<std::pair<int, int>>                             _monitoredInputs;
+    std::map<std::pair<int, int>, te::EditItemID>             _inputTrackIDs;
     // objectID d'un ENFANT de groupe → groupID du container qui l'héberge. Sa présence
     // signifie « cet objet ne vit pas sur une piste du pool mais dans un ContainerClip ».
     std::unordered_map<std::string, std::string>              _childOwnerMap;
@@ -2712,6 +2721,8 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
         _edit = te::Edit::createEdit(std::move(options));
     }
     _poolTracks.clear();
+    _monitoredInputs.clear();       // (the Edit is built once, at launch: nothing is monitored yet)
+    _inputTrackIDs.clear();
     _childOwnerMap.clear();
     _containerClipMap.clear();
     _groupBoundsMap.clear();
@@ -10960,6 +10971,8 @@ static void objDumpPluginList(te::PluginList& pl,
 
 - (void)closeAudioInputs {
     [self releaseInputMeter];
+    _monitoredInputs.clear();
+    [self syncInputMonitors];
     if (![self audioInputsOpen]) return;
     NSLog(@"[OBJ] closeAudioInputs");
     const BOOL wasPlaying = [self isCurrentlyPlaying];
@@ -11026,6 +11039,7 @@ static void objDumpPluginList(te::PluginList& pl,
     auto& tdm = _engine->getDeviceManager();
     tdm.applyWaveDeviceLayout(tdm.getCurrentWaveDeviceLayout());
     tdm.dispatchPendingUpdates();
+    [self syncInputMonitors];       // a pair may have swallowed a monitored mono (or the reverse)
 }
 
 - (NSArray<NSNumber*>*)audioInputStereoPairs {
@@ -11034,6 +11048,106 @@ static void objDumpPluginList(te::PluginList& pl,
     const int n = dev != nullptr ? dev->getInputChannelNames().size() : 0;
     const auto& requested = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).inputPairs;
     for (int first : objinput::validPairs(n, requested)) [result addObject:@(first)];
+    return result;
+}
+
+// MARK: Input monitoring
+//
+// Hearing an input = a hidden AudioTrack of the Edit that the input device is TARGETED at, with the
+// device's monitor mode ON (Tracktion plays a live input through the track it targets when the mode
+// is `on`, recording or not, stopped or playing). The track lives outside `_poolTracks`, so no
+// pruning or counting of the pool ever sees it, and outside the model, so the app's solo (a matter of
+// the model's gains, not Tracktion's solo) does not silence it: the monitored sound stays audible
+// whatever is soloed. It plays to the master like any track, so the Main's FX are on it.
+//
+// `-syncInputMonitors` is the only place that touches any of this and it is idempotent: it is called
+// after every change of the wanted set, of the pairs, and of the device. It first forgets what no
+// longer exists, then attaches each wanted input to its track, then drops the tracks nobody wants.
+
+- (te::AudioTrack*)hiddenInputTrackForKey:(std::pair<int, int>)key create:(BOOL)create {
+    if (!_edit) return nullptr;
+    if (auto it = _inputTrackIDs.find(key); it != _inputTrackIDs.end())
+        if (auto* t = dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, it->second)))
+            return t;
+    if (!create) return nullptr;
+    auto track = _edit->insertNewAudioTrack(te::TrackInsertPoint(nullptr, nullptr), nullptr);
+    if (!track) return nullptr;
+    track->setName(juce::String("Input ") + juce::String(key.first + 1)
+                   + (key.second == 2 ? juce::String("-") + juce::String(key.first + 2) : juce::String()));
+    _inputTrackIDs[key] = track->itemID;
+    return track.get();
+}
+
+- (void)syncInputMonitors {
+    if (!_edit) return;
+    // Which inputs exist now. `getWaveInputDevices()` flushes a pending rebuild first.
+    std::set<std::pair<int, int>> live;
+    std::map<std::pair<int, int>, te::WaveInputDevice*> deviceOf;
+    if ([self audioInputsOpen])
+        for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+            const auto& ch = wi->getChannels();
+            if (ch.isEmpty() || !wi->isEnabled()) continue;
+            const std::pair<int, int> key { ch[0].indexInDevice, ch.getNumChannels() };
+            live.insert(key);
+            deviceOf[key] = wi;
+        }
+    for (auto it = _monitoredInputs.begin(); it != _monitoredInputs.end(); )
+        it = live.count(*it) ? std::next(it) : _monitoredInputs.erase(it);
+
+    if (!_monitoredInputs.empty()) _edit->getTransport().ensureContextAllocated();
+    auto* epc = _edit->getCurrentPlaybackContext();
+
+    // Attach what is wanted.
+    for (auto& key : _monitoredInputs) {
+        auto* wi = deviceOf[key];
+        auto* track = [self hiddenInputTrackForKey:key create:YES];
+        if (!wi || !track) continue;
+        wi->setMonitorMode(te::InputDevice::MonitorMode::on);
+        if (auto* inst = epc ? epc->getInputFor(wi) : nullptr) {
+            if (!inst->getTargets().contains(track->itemID)) {
+                auto res = inst->setTarget(track->itemID, true, nullptr);
+                if (!res) NSLog(@"[OBJ] input monitoring: %s", res.error().toRawUTF8());
+            }
+        }
+    }
+
+    // Let go of what is not wanted any more: the target, the monitor mode, the track.
+    for (auto it = _inputTrackIDs.begin(); it != _inputTrackIDs.end(); ) {
+        if (_monitoredInputs.count(it->first)) { ++it; continue; }
+        const auto key = it->first;
+        if (auto dv = deviceOf.find(key); dv != deviceOf.end()) {
+            if (auto* inst = epc ? epc->getInputFor(dv->second) : nullptr)
+                [[maybe_unused]] auto res = inst->removeTarget(it->second, nullptr);
+            dv->second->setMonitorMode(te::InputDevice::MonitorMode::automatic);   // the engine's default
+        }
+        if (auto* t = te::findTrackForID(*_edit, it->second)) _edit->deleteTrack(t);
+        it = _inputTrackIDs.erase(it);
+    }
+}
+
+- (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count {
+    const std::pair<int, int> key { (int) first, (int) count };
+    if (on) {
+        if (![self audioInputsOpen]) return @"the inputs are closed";
+        bool exists = false;
+        for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+            const auto& ch = wi->getChannels();
+            if (!ch.isEmpty() && wi->isEnabled() && ch[0].indexInDevice == key.first
+                && ch.getNumChannels() == key.second) { exists = true; break; }
+        }
+        if (!exists) return @"no such input";
+        _monitoredInputs.insert(key);
+    } else {
+        _monitoredInputs.erase(key);
+    }
+    [self syncInputMonitors];
+    return nil;
+}
+
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>*)audioInputMonitors {
+    NSMutableArray* result = [NSMutableArray array];
+    for (auto& key : _monitoredInputs)
+        [result addObject:@{ @"first": @(key.first), @"count": @(key.second) }];
     return result;
 }
 

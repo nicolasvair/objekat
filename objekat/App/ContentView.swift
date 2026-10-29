@@ -30,7 +30,7 @@ struct ContentView: View {
 
     /// The left panel's tabs. The inspector is a tab of its own ("Object") — it used to be docked
     /// under the list with a draggable separator; it now gets the panel's whole height.
-    enum LeftPanelTab { case objet, liste, sons }
+    enum LeftPanelTab { case objet, liste, sons, entrees }
 
     /// The selection the LIST itself just made (a click or an arrow in it), or nil. Selecting an
     /// object brings the "Object" tab forward on its own — except when the selection comes from
@@ -74,6 +74,7 @@ struct ContentView: View {
                         tabButton(L("panel.tab.object"), tab: .objet)
                         tabButton(L("panel.tab.list"), tab: .liste)
                         tabButton(L("panel.tab.sounds"), tab: .sons)
+                        tabButton(L("panel.tab.inputs"), tab: .entrees)
                     }
                     .frame(height: 28)
                     Divider()
@@ -91,6 +92,7 @@ struct ContentView: View {
                                             }
                                         }
                         case .objet: ObjectInspectorView(viewModel: viewModel)
+                        case .entrees: InputsPanelView(viewModel: viewModel)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

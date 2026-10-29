@@ -33,3 +33,75 @@ extension EditViewModel {
         return true
     }
 }
+
+// MARK: - What the Inputs tab and the `input.*` commands do
+
+extension EditViewModel {
+
+    /// The card's channel count while its inputs are open, else 0.
+    var recordChannelCount: Int {
+        guard let engine, engine.audioInputsOpen() else { return 0 }
+        return engine.audioInputChannelNames().count
+    }
+
+    /// The bound a pairing is checked against: the card's channel count while open, else a limit so
+    /// wide that nothing is cut — the pairs are channel NUMBERS, and a pair the present card cannot
+    /// hold is "absent", not forgotten (it comes back with a card that has the channels). Validation
+    /// against the real card is `InputPairing.visibleInputs`'s job, at the moment it is listed.
+    var recordChannelLimit: Int { recordChannelCount > 0 ? recordChannelCount : 1_000 }
+
+    /// The name shown for an input: the one the project gave it, else "In 3" / "In 1-2".
+    func inputName(_ ref: InputRef) -> String {
+        if let custom = recordInputs.customName(for: ref) { return custom }
+        return ref.isStereo ? L("inputs.name.stereo", ref.first + 1, ref.first + 2)
+                            : L("inputs.name.mono", ref.first + 1)
+    }
+
+    func renameInput(_ ref: InputRef, to name: String) {
+        editRecordInputs { $0.rename(ref, to: name) }
+    }
+
+    /// Reads channels `first` and `first + 1` as ONE stereo input.
+    @discardableResult
+    func pairInputs(first: Int) -> Bool {
+        let limit = recordChannelLimit
+        return editRecordInputs { $0.pair(first, channelCount: limit) }
+    }
+
+    @discardableResult
+    func unpairInputs(first: Int) -> Bool {
+        editRecordInputs { $0.unpair(first) }
+    }
+
+    /// Replaces every pair (the machine's door).
+    @discardableResult
+    func setInputPairs(_ firsts: [Int]) -> Bool {
+        let limit = recordChannelLimit
+        return editRecordInputs { $0.setPairs(firsts, channelCount: limit) }
+    }
+
+    /// Opens the card's inputs. nil on success, otherwise why not.
+    func enableRecordInputs() -> String? {
+        guard let engine else { return "no engine" }
+        return engine.openAudioInputs()
+    }
+
+    /// Hears (or stops hearing) an input in the mix. nil on success, otherwise why not.
+    func setInputMonitor(_ ref: InputRef, on: Bool) -> String? {
+        guard let engine else { return "no engine" }
+        return engine.setAudioInputMonitor(on, first: ref.first, count: ref.count)
+    }
+
+    /// The inputs being heard right now (the engine owns this; it is not saved).
+    var monitoredInputs: [InputRef] {
+        (engine?.audioInputMonitors() ?? []).compactMap { d in
+            guard let f = d["first"]?.intValue, let c = d["count"]?.intValue else { return nil }
+            return InputRef(first: f, count: c)
+        }
+    }
+
+    /// What the tab lists, in order: every pair, then the monos no pair holds.
+    var visibleRecordInputs: [InputRef] {
+        InputPairing.visibleInputs(channelCount: recordChannelCount, pairs: recordInputs.pairs)
+    }
+}

@@ -54,8 +54,11 @@ extension CommandRegistry {
                  The card's inputs. `inputs` is what can be recorded from right now — the ENABLED \
                  devices, mono or stereo (`first` = first channel, 0-based; `count` = 1 or 2). \
                  `engine_devices` is everything the engine describes (2N - 1 for N channels: \
-                 N monos then N - 1 neighbouring pairs), enabled or not. Both are empty while the \
-                 inputs are closed (`open: false`), `--no-audio` included — never an error.
+                 N monos then N - 1 neighbouring pairs), enabled or not. `record_inputs` is what the \
+                 Inputs tab lists — every declared pair then the monos no pair holds — with the project's \
+                 `name` for each (`custom` when one was typed) and whether it is `monitored`. All are \
+                 empty while the inputs are closed (`open: false`), `--no-audio` included — never an \
+                 error.
                  """,
                  undo: .none) { _ in
             Self.inputListPayload(try CommandContext.shared.requireEngine())
@@ -90,21 +93,91 @@ extension CommandRegistry {
                  channel of each (0 = channels 1+2, 2 = channels 3+4). A paired channel's mono is no longer \
                  offered, but pairs may OVERLAP (0 and 1 = channels 1+2 and 2+3: both stereo inputs \
                  exist, channel 2 is read by each), a pair outside the card is ignored. `[]` goes \
-                 back to all-mono. Answers like `input.list` (`pairs` = the ones in force). \
-                 Engine-level for now — the project model will own this later.
+                 back to all-mono. Answers like `input.list` (`pairs` = the ones in force). The pairs \
+                 are kept IN THE PROJECT (`recordInputs`), outside the undo, and mark it modified. \
+                 While the inputs are closed they are kept as given: a pair the card cannot hold is \
+                 simply not offered.
                  """,
                  params: [ParamSpec("pairs", "array", "First channel of each stereo pair, 0-based.")],
                  undo: .none) { p in
-            let engine = try CommandContext.shared.requireEngine()
-            let values = try p.array("pairs").map { v -> NSNumber in
+            let vm = try CommandContext.shared.requireViewModel()
+            let values = try p.array("pairs").map { v -> Int in
                 guard let i = v.intValue else {
                     throw CommandError(code: .bad_params, message: "'pairs' must be a list of integers")
                 }
-                return NSNumber(value: i)
+                return i
             }
-            engine.setAudioInputStereoPairs(values)
-            return Self.inputListPayload(engine)
+            vm.setInputPairs(values)
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
         }
+
+        register("input.pair",
+                 summary: "Reads channels `first` and `first + 1` (0-based) as ONE stereo input, next to the " +
+                          "pairs already declared. A no-op when it exists already. Answers like `input.list`.",
+                 params: [ParamSpec("first", "int", "First channel of the pair, 0-based.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let first = try p.int("first")
+            guard first >= 0 else { throw CommandError(code: .bad_params, message: "'first' must be >= 0") }
+            vm.pairInputs(first: first)
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
+        }
+
+        register("input.unpair",
+                 summary: "Takes the stereo pair that starts on channel `first` (0-based) apart: its two monos " +
+                          "are offered again (unless another pair holds them). The names are kept.",
+                 params: [ParamSpec("first", "int", "First channel of the pair, 0-based.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.unpairInputs(first: try p.int("first"))
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
+        }
+
+        register("input.set_name",
+                 summary: """
+                 Names an input (`first`, `count` 1 = mono or 2 = stereo pair, 0-based). An empty name \
+                 goes back to the default ("In 3" / "In 1-2"). Kept in the project, outside the undo; \
+                 the project is marked modified. Works whether or not the inputs are open.
+                 """,
+                 params: [ParamSpec("first", "int", "First channel, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("name", "string", "The name; empty = the default.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ref = try Self.inputRef(p)
+            vm.renameInput(ref, to: try p.string("name", or: ""))
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
+        }
+
+        register("input.monitor",
+                 summary: """
+                 Hears an input (`on` true) or stops hearing it (`on` false) in the mix, through a hidden \
+                 track that the project does not see: the app's solo does not silence it. `first`, `count` \
+                 as in `input.set_name`. `invalid_state` when the inputs are closed or the input does \
+                 not exist. Not saved, and not the project's: monitoring survives a project change or a tab \
+                 switch, and stops when the inputs close, when the card changes or when a pairing \
+                 swallows the input. Answers like `input.list` (`monitored`).
+                 """,
+                 params: [ParamSpec("first", "int", "First channel, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("on", "bool", "Hear it or not.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let ref = try Self.inputRef(p)
+            if let why = vm.setInputMonitor(ref, on: try p.bool("on")) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            return Self.inputListPayload(try CommandContext.shared.requireEngine())
+        }
+    }
+
+    private static func inputRef(_ p: CommandParams) throws -> InputRef {
+        let first = try p.int("first")
+        let count = try p.int("count", or: 1)
+        guard first >= 0, count == 1 || count == 2 else {
+            throw CommandError(code: .bad_params, message: "'first' must be >= 0 and 'count' 1 or 2")
+        }
+        return InputRef(first: first, count: count)
     }
 
     // MARK: Shared helpers
@@ -147,6 +220,22 @@ extension CommandRegistry {
             "pairs": .array(engine.audioInputStereoPairs().map { .int($0.intValue) }),
             "inputs": .array(all.filter { $0.enabled }.enumerated().map { inputJSON($1, index: $0) }),
             "engine_devices": .array(all.map { inputJSON($0) }),
+            "record_inputs": recordInputsJSON(),
         ])
+    }
+
+    /// What the Inputs tab lists — every pair, then the monos no pair holds — with the NAME the project
+    /// gives each (`custom` = a name was typed, else the default) and whether it is being heard.
+    /// Empty while the inputs are closed (the card's channels are unknown).
+    @MainActor
+    private static func recordInputsJSON() -> JSONValue {
+        guard let vm = CommandContext.shared.viewModel else { return .array([]) }
+        let heard = Set(vm.monitoredInputs)
+        return .array(vm.visibleRecordInputs.map { ref in
+            .object(["first": .int(ref.first), "count": .int(ref.count), "stereo": .bool(ref.isStereo),
+                     "name": .string(vm.inputName(ref)),
+                     "custom": .bool(vm.recordInputs.customName(for: ref) != nil),
+                     "monitored": .bool(heard.contains(ref))])
+        })
     }
 }

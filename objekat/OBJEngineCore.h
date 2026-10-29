@@ -983,6 +983,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)setAudioInputStereoPairs:(NSArray<NSNumber*>* _Nonnull)firstChannels;
 /// The pairs actually in force (declared, inside the card, sorted, no duplicate).
 - (NSArray<NSNumber*>* _Nonnull)audioInputStereoPairs;
+/// MONITORING: hears an input (`first`/`count` as `audioInputDevices` gives them) in the mix, through
+/// a hidden track of the Edit that the model knows nothing about — so the app's solo, which works on
+/// the model's gains, does not silence it. nil on success, otherwise why not (inputs closed, no such
+/// input). The state lives with the ENGINE, not with the project: it survives a new project, an
+/// opened one and a tab switch (the Edit is never replaced), and is dropped when the inputs close,
+/// when the card changes and when the input stops existing (a pairing that swallows it).
+- (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count;
+/// The inputs being monitored right now, as `{first, count}`, ordered.
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)audioInputMonitors;
 
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices
