@@ -200,7 +200,9 @@ final class ObjekatSession {
             playheadPosition = viewModel.cursorPosition
             engine.seek(to: playheadPosition)
         }
-        if let why = viewModel.beginRecording() { return why }
+        // The instant of the press: the playhead where it is when playing (a punch-in), the caret otherwise.
+        let pressedAt = isPlaying ? engine.currentPlaybackPosition() : viewModel.cursorPosition
+        if let why = viewModel.beginRecording(startTime: pressedAt) { return why }
         isPlaying = true
         return nil
     }

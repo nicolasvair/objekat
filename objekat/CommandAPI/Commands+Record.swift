@@ -302,8 +302,12 @@ extension CommandRegistry {
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
                  ({first, count}), `input_present` (the card has it), `armed`. `armed`: the ids of the \
                  zones armed AND still able to record. `can_record`: the transport's record button is live \
-                 (something armed, and `project_saved`). `recording`: a recording is under way. \
-                 `last_takes`: what the last recording gave (see `rec.stop`).
+                 (something armed, and `project_saved`). `recording`: a recording is under way, \
+                 `recording_start` the instant it was pressed at (null otherwise). `progress`: while recording, the \
+                 red block of each zone as the timeline draws it — `group`, `lane` (the display lane the take \
+                 will land on; the zone's own row if it is closed), `start`, `end` (press to playhead, inside the \
+                 zone's window; a zone the head has not reached is absent). `last_takes`: what the last recording \
+                 gave (see `rec.stop`).
                  """,
                  undo: .none) { _ in
             Self.recordStatusJSON(try CommandContext.shared.requireViewModel())
@@ -313,7 +317,10 @@ extension CommandRegistry {
                  summary: """
                  Records the inputs of the ARMED zones, like the transport's record button: stopped, it plays \
                  and records from the cursor (or from `seconds`); playing, it punches in at the current \
-                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. \
+                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. The \
+                 previous takes the new one will replace (the unmuted children crossing a zone's window) are \
+                 MUTED at once — except when the press is already past the window's end — in the undo point of \
+                 the take; a recording that gives nothing gives them back. \
                  `invalid_state` when nothing is armed, the project is not saved, the inputs are closed or a \
                  recording is already under way. A seek, `transport.stop` or `rec.stop` ends it.
                  """,
@@ -351,13 +358,6 @@ extension CommandRegistry {
         }
     }
 
-    @MainActor
-    private static func recordPlanJSON(_ plan: RecordZonePlanner.Plan, group: UUID?, applied: Bool) -> JSONValue {
-        var o: [String: JSONValue] = ["applied": .bool(applied)]
-        switch plan {
-        case .create(let start, let end, let parent):
-            o["outcome"] = .string("create")
-            o["start"] = .number(start)
     /// The answer of a drop of several inputs: one plan per lane (`recordPlanJSON`'s, plus the `lane`).
     @MainActor
     private static func recordPlansJSON(_ plans: [RecordZonePlanner.Plan], groups: [UUID?], lane: Int,
@@ -372,6 +372,13 @@ extension CommandRegistry {
                         "drops": .array(drops)])
     }
 
+    @MainActor
+    private static func recordPlanJSON(_ plan: RecordZonePlanner.Plan, group: UUID?, applied: Bool) -> JSONValue {
+        var o: [String: JSONValue] = ["applied": .bool(applied)]
+        switch plan {
+        case .create(let start, let end, let parent):
+            o["outcome"] = .string("create")
+            o["start"] = .number(start)
             o["end"] = .number(end)
             o["parent"] = .stringOrNull(parent?.uuidString)
         case .assign(let id):
@@ -409,6 +416,11 @@ extension CommandRegistry {
                         "can_record": .bool(vm.canRecord),
                         "project_saved": .bool(vm.projectURL != nil),
                         "recording": .bool(vm.isRecording),
+                        "recording_start": vm.recordingStartTime.map { .number($0) } ?? .null,
+                        "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b in
+                            .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
+                                     "start": .number(b.start), "end": .number(b.end)])
+                        }),
                         "last_takes": .array(vm.lastRecordingTakes.map { t in
                             .object(["group": .string(t.group.uuidString), "object": .string(t.object.uuidString),
                                      "path": .string(t.path), "start": .number(t.start),

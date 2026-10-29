@@ -1293,6 +1293,10 @@ final class EditViewModel {
     /// The zones the recording in flight was started for, and what the last one gave them
     /// (@see EditViewModel+Recording).
     var recordingZones: [RecordingZone] = []
+    /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
+    /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
+    var recordingStartTime: Double? = nil
+    @ObservationIgnored var recordingMuteLog = RecordingMuteLog()
     var lastRecordingTakes: [RecordTakeReport] = []
     /// What releasing the input drag in flight HERE would do — the ghosts under the cursor (one per input
     /// carried, on consecutive lanes), written by the timeline's drop delegate and read by

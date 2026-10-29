@@ -12,7 +12,10 @@ import Foundation
 //     the SOURCE, the model's convention, speed 1);
 //   - it goes on the lane BELOW the lowest child (older takes on top, the newest at the bottom);
 //   - every direct child not muted yet that crosses the window is muted whole — the previous takes stop
-//     being heard, the new one replaces them. One undo gives it all back;
+//     being heard, the new one replaces them. One undo gives it all back. They are muted when the
+//     recording STARTS (`mutesAtStart`: they would be heard while the next one is played), unless the
+//     press already lies beyond the window; at the stop `plan` is told which ones were (`mutedAtStart`)
+//     and says which of them to give back when the capture turns out not to cross the window;
 //   - a capture that does not cross the window at all (record pressed after the zone ended, or stopped
 //     before it began) still gives an object, over the WHOLE capture, in the grey area of the zone —
 //     there it is outside the window, hence silent — and then nothing is muted: the zone would go dumb.
@@ -50,22 +53,47 @@ enum RecordTakePlanner {
 
     struct Plan: Equatable {
         let take: Take
-        /// The children to mute, in the order given.
+        /// The children that end up muted by this take, in the order given (those muted at the start
+        /// included).
         let mutedIDs: [UUID]
+        /// Children muted at the start that must be heard again: the capture did not cross the window.
+        var unmuteIDs: [UUID] = []
     }
 
-    static func plan(windowStart: Double, windowEnd: Double, children: [Child], capture: Capture) -> Plan {
-        let lane = (children.map(\.lane).max() ?? -1) + 1
+    /// The lane (the zone's own numbering) a take goes on: just below the lowest child.
+    static func takeLane(children: [Child]) -> Int { (children.map(\.lane).max() ?? -1) + 1 }
+
+    /// The unmuted children that cross the window.
+    private static func crossing(_ children: [Child], _ windowStart: Double, _ windowEnd: Double) -> [UUID] {
+        children.filter { !$0.isMuted && $0.start < windowEnd && $0.end > windowStart }.map(\.id)
+    }
+
+    /// The previous takes to mute when the recording STARTS at `startPosition`: the unmuted children that
+    /// cross the window — none when the press already lies at or beyond the window's end (the capture
+    /// cannot cross it, so nothing would replace them).
+    static func mutesAtStart(windowStart: Double, windowEnd: Double, children: [Child],
+                             startPosition: Double) -> [UUID] {
+        startPosition < windowEnd ? crossing(children, windowStart, windowEnd) : []
+    }
+
+    /// - Parameter mutedAtStart: the children `mutesAtStart` muted when the recording began. `children`
+    ///   still tells them muted; the plan reads them as they were before.
+    static func plan(windowStart: Double, windowEnd: Double, children: [Child], capture: Capture,
+                     mutedAtStart: Set<UUID> = []) -> Plan {
+        let lane = takeLane(children: children)
+        let before = children.map { c in
+            mutedAtStart.contains(c.id) ? Child(id: c.id, start: c.start, end: c.end, lane: c.lane, isMuted: false) : c
+        }
         let start = max(windowStart, capture.origin)
         let end = min(windowEnd, capture.origin + capture.length)
         guard end > start else {
             return Plan(take: Take(start: capture.origin, duration: capture.length, sourceOffset: 0,
                                    lane: lane, outsideWindow: true),
-                        mutedIDs: [])
+                        mutedIDs: [],
+                        unmuteIDs: before.map(\.id).filter { mutedAtStart.contains($0) })
         }
-        let muted = children.filter { !$0.isMuted && $0.start < windowEnd && $0.end > windowStart }.map(\.id)
         return Plan(take: Take(start: start, duration: end - start, sourceOffset: start - capture.origin,
                                lane: lane, outsideWindow: false),
-                    mutedIDs: muted)
+                    mutedIDs: crossing(before, windowStart, windowEnd))
     }
 }

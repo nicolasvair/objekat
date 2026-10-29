@@ -1079,6 +1079,17 @@ struct TimelineView: View {
                                        blockHeight: blockHeight)
                     .allowsHitTesting(false)
                     .zIndex(2.96)
+                // The take being recorded, only while recording; it reads the playhead itself.
+                if viewModel.isRecording {
+                    RecordingProgressOverlay(viewModel: viewModel,
+                                             position: playheadPosition,
+                                             pixelsPerSecond: pixelsPerSecond,
+                                             rulerHeight: rulerHeight,
+                                             laneStep: laneStep,
+                                             blockHeight: blockHeight)
+                        .allowsHitTesting(false)
+                        .zIndex(2.97)
+                }
                 ArmedRecordZonesOverlay(viewModel: viewModel,
                                         pixelsPerSecond: pixelsPerSecond,
                                         rulerHeight: rulerHeight,
