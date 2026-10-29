@@ -18,11 +18,11 @@
 //  and pairing two channels is only a matter of WHICH ones are enabled — the list itself is never
 //  rebuilt around a gesture. Order: the monos first (channel 0..N-1), then the pairs (0-1, 1-2, ...).
 //
-//  ENABLED means "worth opening": a mono is enabled when its channel is open and it is not part of ANY
-//  declared pair; a stereo device is enabled when it is declared and both its channels are open.
-//  Pairs may OVERLAP (decision 4 of the recording plan): 1-2 and 2-3 coexist, channel 2 is then read
-//  by both stereo devices, each independently and identically. Unpairing a pair gives its channels'
-//  monos back unless another pair still holds them.
+//  ENABLED means "worth opening": a mono is enabled when its channel is open — a declared pair does NOT
+//  take it away (the monos stay, so a pair 2-3 can still be made after a pair 1-2); a stereo device is
+//  enabled when it is declared and both its channels are open. Pairs may OVERLAP (decision 4 of the
+//  recording plan): 1-2 and 2-3 coexist, channel 2 is then read by both stereo devices AND by its mono,
+//  each independently and identically.
 //
 
 #ifndef OBJInputLayout_h
@@ -65,12 +65,9 @@ inline std::vector<Device> describe(int numChannels, const std::vector<bool>& op
 
     const std::vector<int> pairs = validPairs(numChannels, requestedPairs);
     auto isOpen = [&](int ch) { return ch >= 0 && ch < (int) open.size() && open[(size_t) ch]; };
-    auto isPaired = [&](int ch) {
-        return std::any_of(pairs.begin(), pairs.end(), [ch](int f) { return ch == f || ch == f + 1; });
-    };
 
     for (int ch = 0; ch < numChannels; ++ch)
-        out.push_back({ ch, 1, isOpen(ch) && !isPaired(ch) });
+        out.push_back({ ch, 1, isOpen(ch) });
 
     for (int first = 0; first + 1 < numChannels; ++first) {
         const bool declared = std::find(pairs.begin(), pairs.end(), first) != pairs.end();

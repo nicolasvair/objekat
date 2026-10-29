@@ -5,9 +5,11 @@ import Combine
 ///
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
 /// switches AirPods to the call profile, so nothing here does it on its own). Then one row per input:
-/// its number, a level dot, an editable name and a monitor button. Two NEIGHBOURING monos selected
-/// (⌘ or ⇧ click for the second) can be read as one stereo input; a stereo row has "Unlink". The names
-/// and the pairs belong to the project and are outside the undo (@see EditViewModel+Record);
+/// its number, a level dot, an editable name, the listening level and a monitor button. The pairs come first, then every
+/// mono (a pair does not take its monos away). The right-click menu works on the selection (⌘ or ⇧ click
+/// to extend it) when the row is part of it, else on the row alone: two NEIGHBOURING monos can be linked
+/// as one stereo input, a pair can be removed. The names and the pairs belong to the project and are
+/// outside the undo (@see EditViewModel+Record);
 /// whether an input is being heard belongs to the engine and is not saved.
 ///
 /// Everything it shows is read from the model or from the engine on a 0.07 s poll, the stem strips'
@@ -21,8 +23,6 @@ struct InputsPanelView: View {
     @State private var monitored: Set<InputRef> = []
     @State private var selection: Set<InputRef> = []
     @State private var failure: String? = nil
-    @State private var renaming: InputRef? = nil
-    @State private var editText = ""
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -68,21 +68,13 @@ struct InputsPanelView: View {
     private var list: some View {
         let rows = viewModel.visibleRecordInputs
         return VStack(alignment: .leading, spacing: 0) {
-            if let first = InputPairing.pairableFirst(Array(selection)) {
-                HStack {
-                    Button(L("inputs.pair")) {
-                        viewModel.pairInputs(first: first)
-                        selection = []
-                    }
-                    .controlSize(.small)
-                    Spacer()
-                }
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                Divider()
-            }
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows, id: \.self) { ref in row(ref) }
+                    // The void under the rows: a click there ends a rename (committing it), like a click
+                    // on the canvas. Not an ancestor gesture, which would also fire over the field.
+                    Color.clear.frame(height: 60).contentShape(Rectangle())
+                        .onTapGesture { viewModel.renamingInput = nil }
                 }
             }
         }
@@ -96,29 +88,23 @@ struct InputsPanelView: View {
                 .foregroundStyle(.secondary)
                 .frame(minWidth: 30, alignment: .trailing)
             StemVuDot(level: level(of: ref))
-            if renaming == ref {
-                TextField(noLabel, text: $editText)
-                    .font(.system(.caption, weight: .semibold))
-                    .textFieldStyle(.plain)
-                    .onSubmit { viewModel.renameInput(ref, to: editText); renaming = nil }
-                    .onExitCommand { renaming = nil }
+            if viewModel.renamingInput == ref {
+                // Leaving commits what was typed, Esc cancels (@see MarkerRenameField).
+                MarkerRenameField(initial: viewModel.inputName(ref),
+                                  font: .system(.caption, weight: .semibold),
+                                  commitsOnFocusLoss: true) { value in
+                    if let value { viewModel.renameInput(ref, to: value) }
+                    if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
+                }
             } else {
                 Text(viewModel.inputName(ref))
                     .font(.system(.caption, weight: .semibold))
                     .lineLimit(1)
-                    .onTapGesture { editText = viewModel.inputName(ref); renaming = ref }
+                    .onTapGesture { viewModel.renamingInput = ref }
                     .help(L("inputs.rename.help"))
             }
             Spacer(minLength: 4)
-            if ref.isStereo {
-                Button(L("inputs.unpair")) {
-                    viewModel.unpairInputs(first: ref.first)
-                    selection.remove(ref)
-                }
-                .buttonStyle(.plain)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
+            monitorGainBox(ref, heard: monitored.contains(ref))
             Button {
                 _ = viewModel.setInputMonitor(ref, on: !monitored.contains(ref))
                 tick()
@@ -138,12 +124,54 @@ struct InputsPanelView: View {
         // this input (@see RecordZonePlanner, InputDragSession).
         .onDrag { InputDragSession.shared.begin(InputDragSession.carried(ref, selection: selection)) }
         .onTapGesture {
-            renaming = nil
+            viewModel.renamingInput = nil
             let extend = NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift)
             if extend {
                 if isSelected { selection.remove(ref) } else { selection.insert(ref) }
             } else {
                 selection = [ref]
+            }
+        }
+        .contextMenu { contextMenu(for: ref) }
+    }
+
+    /// The most a DRAG may raise the listening level above where it started (a typed value is only held
+    /// to the box's range).
+    private static let monitorRiseLimit: Double = 6
+    private static let gainRange = Double(GainStageValues.gainRange.lowerBound)...Double(GainStageValues.gainRange.upperBound)
+
+    /// The listening level of the input, in dB: the synoptic's gain box (drag, ⇧ fine, arrows, typing,
+    /// double-click = 0 dB). Hearing only — it does not touch what is recorded. Greyed and inert while the
+    /// input is not heard.
+    private func monitorGainBox(_ ref: InputRef, heard: Bool) -> some View {
+        DragValueBox(value: viewModel.inputMonitorGain(ref),
+                     format: { $0 == 0 ? "0 dB" : String(format: "%+.0f dB", $0) },
+                     range: Self.gainRange,
+                     pointsPerStep: 6, snap: true, width: 44,
+                     keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
+                     dragRiseLimit: Self.monitorRiseLimit,
+                     help: L("inputs.monitorGain.help"),
+                     onChange: { _ = viewModel.setInputMonitorGain(ref, db: $0); tick() },
+                     onReset: { _ = viewModel.setInputMonitorGain(ref, db: 0); tick() })
+            .opacity(heard ? 1 : 0.4)
+            .disabled(!heard)
+    }
+
+    /// The right-click menu: it acts on the selection when the row belongs to it, else on the row alone.
+    @ViewBuilder
+    private func contextMenu(for ref: InputRef) -> some View {
+        let target = selection.contains(ref) ? Array(selection) : [ref]
+        if let first = InputPairing.pairableFirst(target), !viewModel.recordInputs.pairs.contains(first) {
+            Button(L("inputs.pair")) {
+                viewModel.pairInputs(first: first)
+                selection = []
+            }
+        }
+        let pairs = target.filter(\.isStereo)
+        if !pairs.isEmpty {
+            Button(L("inputs.unpair")) {
+                for pair in pairs { viewModel.unpairInputs(first: pair.first) }
+                selection.subtract(pairs)
             }
         }
     }

@@ -20,6 +20,7 @@ extension TimelineView {
         // click sets it again a few lines down. Leaving is not cancelling — what was typed is
         // committed on the way out (@see MarkerRenameField).
         viewModel.renamingID = nil
+        viewModel.renamingInput = nil
 
         // "Choose object" armed (a plugin editor's Sidechain strip): a click on an object sets the
         // key, a click anywhere else leaves the mode. It takes priority over every other reading.

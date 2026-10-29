@@ -92,6 +92,21 @@ extension EditViewModel {
         return engine.setAudioInputMonitor(on, first: ref.first, count: ref.count)
     }
 
+    /// Sets the LISTENING level of an input in dB, held to the synoptic's gain range (-24...+24). Hearing
+    /// only: the recording is taken before it. The engine owns it, it is not saved. nil on success,
+    /// otherwise why not.
+    func setInputMonitorGain(_ ref: InputRef, db: Double) -> String? {
+        guard let engine else { return "no engine" }
+        let range = GainStageValues.gainRange
+        let clamped = min(max(Float(db), range.lowerBound), range.upperBound)
+        return engine.setAudioInputMonitorGain(clamped, first: ref.first, count: ref.count)
+    }
+
+    /// The listening level of an input in dB (0 until one was set).
+    func inputMonitorGain(_ ref: InputRef) -> Double {
+        Double(engine?.audioInputMonitorGainFirst(ref.first, count: ref.count) ?? 0)
+    }
+
     /// The inputs being heard right now (the engine owns this; it is not saved).
     var monitoredInputs: [InputRef] {
         (engine?.audioInputMonitors() ?? []).compactMap { d in
@@ -100,7 +115,7 @@ extension EditViewModel {
         }
     }
 
-    /// What the tab lists, in order: every pair, then the monos no pair holds.
+    /// What the tab lists, in order: every pair (by first channel), then every mono.
     var visibleRecordInputs: [InputRef] {
         InputPairing.visibleInputs(channelCount: recordChannelCount, pairs: recordInputs.pairs)
     }

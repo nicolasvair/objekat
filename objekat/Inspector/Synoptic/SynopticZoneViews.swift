@@ -91,6 +91,9 @@ struct DragValueBox: View {
     var allowsFine: Bool = true
     /// true = the box follows the length of what it shows (`width` becomes a minimum).
     var fitsContent: Bool = false
+    /// A DRAG cannot raise the value by more than this above where the drag started (nil = no limit);
+    /// the keyboard (arrows, typing) is bounded by `range` only. @see DragRiseLimit.
+    var dragRiseLimit: Double? = nil
     /// Reads a direct keyboard entry (nil = refuse). By default: a plain number.
     var parse: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
     var help: String = ""
@@ -242,7 +245,7 @@ struct DragValueBox: View {
                     let travel = -Double(v.translation.height) / Double(pointsPerStep)
                     let raw = s + fineAdjust.effective(travel, fine: fine)
                     let val = snap ? FineAdjust.snapped(raw, to: 1, fine: fine) : raw
-                    onChange(clamp(val))
+                    onChange(clamp(DragRiseLimit.clamp(start: s, proposed: val, limit: dragRiseLimit)))
                 }
                 .onEnded { _ in start = nil }
         )

@@ -14,7 +14,7 @@ output; the engine describes one mono input per channel plus one stereo input pe
       train -> 0 dB; a read CLEARS the peak
     * the loopback input carries the output (and is silent when nothing plays): the proof that the
       meter, a second audio callback, does not leak into the speakers
-    * pairs: a paired channel loses its mono, overlapping pairs (1+2 and 2+3) COEXIST and each reads
+    * pairs: a paired channel KEEPS its mono (the monos stay), overlapping pairs (1+2 and 2+3) COEXIST and each reads
       the common channel on its own, a pair outside the card is ignored, `[]` goes back to all-mono; a stereo input reports its louder channel
     * a rate change and a buffer change leave the inputs where they were
     * `input.disable` / `input.enable` again
@@ -218,8 +218,8 @@ try:
         # -- stereo pairs -------------------------------------------------------------------
         lst = c.send("input.set_pairs", {"pairs": [0]})
         check("pair 1+2: pairs in force [0]", lst["pairs"] == [0], lst["pairs"])
-        check("pair 1+2: the stereo input and monos 3, 4 are offered",
-              shape(lst) == [(2, 1), (3, 1), (0, 2)], shape(lst))
+        check("pair 1+2: the stereo input AND the four monos are offered",
+              shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1), (0, 2)], shape(lst))
         check("pair 1+2: still 7 engine devices", len(lst["engine_devices"]) == 7)
         r = peaks(c, 0.5)
         stereo = [d for d in r["inputs"] if d["count"] == 2]
@@ -228,11 +228,12 @@ try:
               len(stereo) == 1 and abs(stereo[0]["peak_db"] - (-6.02)) <= 0.5, r["inputs"])
 
         lst = c.send("input.set_pairs", {"pairs": [0, 2]})
-        check("pairs 1+2 and 3+4: two stereo inputs only", shape(lst) == [(0, 2), (2, 2)], shape(lst))
+        check("pairs 1+2 and 3+4: two stereo inputs besides the four monos",
+              shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (2, 2)], shape(lst))
         lst = c.send("input.set_pairs", {"pairs": [1, 0]})
         check("overlapping pairs (2+3, 1+2) COEXIST: both in force", lst["pairs"] == [0, 1], lst["pairs"])
-        check("overlap: both stereo inputs and only mono 4 are offered",
-              shape(lst) == [(3, 1), (0, 2), (1, 2)], shape(lst))
+        check("overlap: both stereo inputs and the four monos are offered",
+              shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1), (0, 2), (1, 2)], shape(lst))
         r = peaks(c, 0.5)
         st = {d["first"]: d["peak_db"] for d in r["inputs"] if d["count"] == 2}
         check("overlap: pair 1+2 reads channel 1 (-6 dB), pair 2+3 reads channel 3 (-12 dB): %s" % st,
@@ -240,7 +241,8 @@ try:
         lst = c.send("input.set_pairs", {"pairs": [3, 7, -1]})
         check("pairs outside the card are ignored: back to 4 monos", lst["pairs"] == [] and len(lst["inputs"]) == 4, lst)
         lst = c.send("input.set_pairs", {"pairs": [1]})
-        check("pair 2+3: monos 1 and 4 and the stereo input", shape(lst) == [(0, 1), (3, 1), (1, 2)], shape(lst))
+        check("pair 2+3: the four monos and the stereo input",
+              shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1), (1, 2)], shape(lst))
         lst = c.send("input.set_pairs", {"pairs": []})
         check("[] -> all mono again", shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1)], shape(lst))
         check("a non-integer pair is refused", refused(c, "input.set_pairs", pairs=["a"]) == "bad_params")
@@ -265,7 +267,8 @@ try:
         c.send("input.set_pairs", {"pairs": [2]})
         c.send("audio.set_buffer_size", {"frames": 256})
         lst = c.send("input.list")
-        check("a declared pair survives a buffer change", shape(lst) == [(0, 1), (1, 1), (2, 2)], shape(lst))
+        check("a declared pair survives a buffer change",
+              shape(lst) == [(0, 1), (1, 1), (2, 1), (3, 1), (2, 2)], shape(lst))
         c.send("input.set_pairs", {"pairs": []})
         c.send("audio.set_sample_rate", {"hz": 48000})
 
