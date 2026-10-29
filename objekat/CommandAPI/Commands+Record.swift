@@ -301,7 +301,7 @@ extension CommandRegistry {
 
         register("rec.stop",
                  summary: """
-                 Ends the recording (and playback). Each armed zone receives its take: `takes` lists them \
+                 Ends the recording (and playback). Each armed zone receives its take; the answer is `rec.status`, whose `last_takes` lists them \
                  (`group`, `object`, `path`, `start`, `duration`, `source_offset`, `lane`, `outside_window`, \
                  `muted` = the previous takes muted). All of it is ONE undo point. `invalid_state` when not \
                  recording.

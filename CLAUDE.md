@@ -2725,6 +2725,41 @@ What has landed since mid-August, in order:
   negative half is asserted: Esc does nothing else), the cheat sheet rows, and the three languages of the
   changed texts.
 
+- **Audio recording on armed groups** (29 October 2026, branch `feat/audio-recording`, NOT on `main`;
+  increments 5 and 6 of `docs/plan_enregistrement_audio.md`, after the inputs, the pairs and the zones).
+  The transport's record button (and `rec.start` / `rec.stop`, shortcut **⌘⌥R**, provisional — tested BEFORE
+  the ⌘-only branch, ⌘R stays "rename") records the inputs of the ARMED groups on hidden per-input tracks
+  through Tracktion's own transport, which compensates the card's and the graph's latency: stopped, play and
+  record from the caret; playing, a punch-in at the position (the graph is pre-warmed at arm time, so the
+  press rebuilds nothing). ONE 32-bit float WAV per input and per take, at the card's rate, in
+  `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for same-name inputs), shared by every
+  group armed on that input (`RecordFileNaming`, pure). At the stop each group gets a TAKE: a child with
+  HANDLES (cropped to the group's window, `sourceOffset` into the file), on the lane BELOW the previous takes,
+  the unmuted previous ones that cross the window MUTED whole, all in ONE undo (`RecordTakePlanner`, pure). A
+  take that does not cross the window is still created over the whole capture (grey zone) and mutes nothing.
+  Guards: unsaved project (record refused), tab switch / `tab.new` / `project.new` refused while recording
+  (`tabSwitchBlocker`, `Quiescence`), a card change during the recording (`OBJDeviceChangeWatcher`) and the
+  application quitting END it cleanly with the files kept and the takes in the project; a disk full relies
+  on Tracktion's own check (not testable here). The take in progress is NOT drawn (not simple; the takes
+  appear at the stop).
+  **The calibration is NOT within 1 ms, and that is Tracktion's, not ours**: measured on the virtual card
+  with an impulse played at 1.000 s through the loopback, the recorded impulse sits at 1.000 s + **0 or ONE
+  block** (+5.333 ms at 256 samples in the usual case; bs 64/128/512 give +1 block too), varying from take to
+  take; the same with a 20 ms latency plugin on the Main. The origin we compute (`punchTimes.start`) is right;
+  the residue is in Tracktion's stream-to-edit mapping and a start race. Left as is — fixing it means an engine
+  patch (or a constant `recordAdjustMs` that would only fix the constant half), the architect's call.
+  A trap found measuring: a record pressed within ~250 ms of a change of DECLARED latency (an FX with latency
+  added) compensates the OLD one for that take, the PDC resync (`checkLatencyAndRebuild`) running on a tick.
+  Verified with no screen: Debug build, 0 new warning; `test_record_take_planner.swift` 28 and
+  `test_record_file_naming.swift` 14; `tools/scenario_record.py` 77 assertions on `--virtual-audio` (file, WAV
+  header, content, handles and the edge pulled, two zones one file, " (2)", mute and lane order, one undo,
+  outside-window take, pairs 1-2 / 2-3 identical on the shared channel, punch-in without rebuild, refusals,
+  calibration, buffer-size change during a recording); non-regression suites green; Settings.xml byte-identical.
+  Commands: `rec.start`, `rec.stop`; `rec.status` gains `recording` and `last_takes`.
+  **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⌥R shortcut (no key event
+  can be sent headless), the takes on screen (handles, grey zone, muted ones), the file really heard back, a
+  real card (latency of a real interface, a device unplugged mid-recording), a disk really full.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

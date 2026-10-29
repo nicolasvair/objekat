@@ -2321,7 +2321,7 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   swallows the input.
 
 **Recording zones (`rec.*`).** A zone is a GROUP with a `recordInput` (saved with the object, in the
-undo). Nothing records yet; these are the doors of the drop, the assignment and the arming.
+undo). These are the doors of the drop, the assignment, the arming and the recording itself.
 
 * `rec.drop {first, count?, lane, time, visible_secs?, dry_run?}` — what releasing a row of the Inputs
   tab on the timeline does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
@@ -2340,10 +2340,35 @@ undo). Nothing records yet; these are the doors of the drop, the assignment and 
   the same input too.
 * `rec.status` — `zones` (`id`, `name`, `input`, `input_present`, `recordable`, `armed`), `armed` (ids
   armed AND still able to record), `can_record` (the transport's record button is live: something
-  armed and a saved project), `project_saved`, `recording` (false until recording exists).
+  armed and a saved project), `project_saved`, `recording` (a recording is under way) and `last_takes`
+  (the takes of the last recording, below).
+* `rec.start {seconds?}` — the transport's record button. Stopped: plays AND records from the cursor (or
+  from `seconds`); playing: punches in at the current position (the graph is not rebuilt). It records the
+  inputs of the ARMED zones on hidden per-input tracks, through Tracktion's transport, which compensates
+  the latency of the card and of the graph. ONE 32-bit float WAV per input and per take, at the card's
+  rate, in `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for an input of the same
+  name), shared by every zone armed on that input. `invalid_state` when nothing is armed, the project is
+  unsaved, the inputs are closed or a recording is already under way. While it lasts a tab switch,
+  `tab.new`/`tab.open`/`project.new`/`project.open` are refused, `wait_idle` is not idle, and a seek or
+  `transport.play` ends it first.
+* `rec.stop` — ends the recording and playback; answers like `rec.status`. Each armed zone receives its
+  TAKE: a child of the group holding the whole capture, cropped to the group's window with HANDLES
+  (`source_offset` points into the file), on the lane BELOW the previous takes, whose unmuted ones that
+  cross the window are MUTED whole. A take that does not cross the window is created anyway over the
+  whole capture and mutes nothing (`outside_window`). ONE undo point for the lot. `last_takes`:
+  `{group, object, path, start, duration, source_offset, lane, outside_window, muted}`.
+  `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
+  the application quitting, end it the same way: the files are kept and the takes land in the project.
+  Calibration (virtual card, loopback): the impulse comes back within ONE block of its place (0 or +1
+  block, +5.3 ms at 256 samples), also with a latency plugin on the Main; a recording pressed within
+  ~250 ms of a change of declared latency still compensates the previous one (the PDC resync tick).
 
 `tools/test_record_zone_planner.swift` asserts the planner alone; `tools/scenario_record_zones.py`
-asserts the family against the virtual card.
+asserts the zones against the virtual card; `tools/test_record_take_planner.swift` and
+`tools/test_record_file_naming.swift` assert the take planning and the file names;
+`tools/scenario_record.py` records for real on the virtual card (65+ assertions: file, header, content,
+handles, mute, lane order, one undo, punch-in, calibration, card change during recording).
+The keyboard shortcut ⌘⌥R (provisional) is the record button; ⌘R stays "rename".
 
 `audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed).
 Changing the output device closes the inputs; a rate or buffer change keeps them.

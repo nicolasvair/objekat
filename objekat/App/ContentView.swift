@@ -108,6 +108,7 @@ struct ContentView: View {
                     isPaused: session.pausedAt != nil,
                     onTogglePlayback: { if session.isPlaying { session.stop() } else { session.play() } },
                     onTogglePause: { session.togglePause() },
+                    onToggleRecord: { session.toggleRecording() },
                     onMoveCursor: { t in
                         viewModel.cursorPosition = max(0, t)
                     },

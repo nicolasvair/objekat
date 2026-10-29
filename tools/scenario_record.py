@@ -19,6 +19,8 @@ Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the sc
      refused while recording; unsaved project / nothing armed: refused
   F  CALIBRATION: loopback of the virtual card, an impulse played at t = 1.000 s must be recorded at
      1.000 s (+-1 ms) once the file's position on the timeline is applied
+  F2 same, with a 20 ms latency plugin on the Main
+  H  the buffer size changes during a recording: clean stop, the take is kept, the file is valid
   G  Settings.xml is byte for byte what it was
 
 Settings.xml is only READ (hash). Run on the virtual card ONLY.
@@ -435,6 +437,63 @@ try:
         # here), varying from take to take: said, not hidden (see the report of increment 5).
         n_ok = sum(1 for at, *_ in results if abs(at - 1.0) <= 0.001)
         print("       KNOWN: +-1 ms met by %d take(s) of %d (the residue is 0 or one block)" % (n_ok, len(results)))
+
+
+        # ── F2: CALIBRATION with a declared latency on the Main --------------------------------------
+        section("F2 CALIBRATION with a 20 ms latency plugin on the Main")
+        main_id = c.send("stem.list")["main"]
+        c.send("debug.add_test_plugin", {"host": main_id, "type": "latencyTester", "latency_ms": 20})
+        c.send("wait_idle", {"timeout_ms": 5000})
+        # The PDC resync (`checkLatencyAndRebuild`) re-reads the plugins' latency on a ~250 ms tick: a rec
+        # pressed inside that window would still compensate the OLD latency (known, measured: +20 ms).
+        time.sleep(1.0)
+        res2 = []
+        for k in range(3):
+            c.send("transport.seek", {"seconds": 0})
+            c.send("rec.start")
+            wait_pos(c, 3.0)
+            r = c.send("rec.stop")
+            t = r["last_takes"][0]
+            tag, ch, sr, bits, arr = read_wav(t["path"])
+            x = np.abs(arr[:, 0])
+            i = int(np.argmax(x))
+            at = (t["start"] - t["source_offset"]) + i / sr
+            res2.append((at, float(x[i])))
+            c.send("edit.undo")
+            time.sleep(1.1)
+        for k, (at, pk) in enumerate(res2):
+            print("       impulse found at %.5f s (peak %.3f)" % (at, pk))
+            check("main latency: take %d, the impulse is back (peak > 0.1)" % (k + 1), pk > 0.1, pk)
+            check("main latency: take %d within ONE BLOCK of 1.000 s (error %+.3f ms)" % (k + 1, (at - 1.0) * 1000),
+                  abs(at - 1.0) <= blk + 0.0005, at)
+        c.send("edit.undo")                                           # the test plugin
+
+        # ── H: the card changes during a recording -------------------------------------------------
+        section("H  buffer size changed during a recording: clean stop, takes kept")
+        P5 = new_project(c, tmp, "p5")
+        c.send("audio.virtual.set_input", {"channel": 0, "signal": "sine", "frequency": 440, "amplitude": 0.5})
+        zh = make_zone(c, 0, 0, 20, 0)
+        c.send("rec.arm", {"group": zh, "on": True})
+        c.send("transport.seek", {"seconds": 0})
+        c.send("rec.start")
+        wait_pos(c, 1.5)
+        c.send("audio.set_buffer_size", {"frames": 128})
+        deadline = time.time() + 10
+        while time.time() < deadline and c.send("rec.status")["recording"]:
+            time.sleep(0.1)
+        st = c.send("rec.status")
+        check("the recording stopped by itself", st["recording"] is False, st)
+        check("... the transport stopped too", c.send("transport.state")["playing"] is False)
+        lt = st["last_takes"]
+        check("... the take is in the project", len(lt) == 1, lt)
+        if lt:
+            tag, ch, sr, bits, arr = read_wav(lt[0]["path"])
+            check("... the file is a valid WAV holding the sine (>= 1 s)", arr.shape[0] / sr >= 1.0
+                  and sine_rms_ok(arr[int(0.5 * sr):int(1.0 * sr), 0], 0.5), (arr.shape, sr))
+        b = c.send("audio.set_buffer_size", {"frames": 256})
+        check("the card is back to 256", b["buffer_size"] == 256, b)
+        check("the project is not stuck: a new recording starts", refused(c, "rec.start") is None)
+        c.send("rec.stop")
 
         # ── G: Settings.xml ---------------------------------------------------------------------------
         section("G  Settings.xml untouched")
