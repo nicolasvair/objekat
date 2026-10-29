@@ -2756,8 +2756,9 @@ What has landed since mid-August, in order:
   `recordProgressBlocks(head:)`; `rec.status` exposes `recording_start` and `progress`. (3) **Dragging several
   inputs**: select N rows in the Inputs tab and drag one — `InputDragSession` carries `[InputRef]` (the old
   one-input payload is still read); `RecordZonePlanner.planMany` takes one lane per input DOWNWARDS in channel
-  order, EACH with its own end (40 % of the view or the next object; a time selection gives in/out on the lanes
-  it covers), a GLOBAL refusal if one lane is refused (all ghosts red), a lane holding a group = the input
+  order, EACH with its own end (40 % of the view or the next object), EXCEPT on a time selection: ALL the lanes take its
+  in/out (those outside the selection's lanes too — same length for all), and only a lane whose object starts before
+  the selection's end stops at that object (an object covering the selection's start refuses the lot), a GLOBAL refusal if one lane is refused (all ghosts red), a lane holding a group = the input
   assigned to it; `dropRecordInputs` = ONE undo, the zones selected; `rec.drop` accepts `inputs: [{first,count}]`.
   (4) The hand cursor over a live [ o ] (Selection tool), and all the armed zones' blinks start from a common
   origin (`blinkEpoch`, synchronised).

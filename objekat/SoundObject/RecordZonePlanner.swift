@@ -10,7 +10,9 @@ import Foundation
 //   - on a GROUP that can record  -> the input is assigned to it (`.assign`)
 //   - on a group that cannot (infinite, looping, an instance of a consolidated object), or on any other
 //     object (a clip, a MIDI clip, an aux)                                               -> refused
-//   - on a time selection (the point lies in it, on one of its lanes) -> a zone with exactly its in/out
+//   - on a time selection (the point lies in it, on one of its lanes) -> a zone with exactly its in/out,
+//     except that an object of the lane starting inside the selection stops the zone at its start
+//     ("the object behind"); an object covering the selection's start refuses the lane (`overlap`)
 //   - on empty room  -> a zone from the point, 40 % of the view wide, or up to the next object of the
 //     lane if that is closer; shorter than max(1 s, 24 px) -> refused
 //   - inside an open group (the lane is one of its sub-lanes) the zone is a sub-group (`parent`)
@@ -19,6 +21,9 @@ import Foundation
 // the order given (the channels'). Each lane is planned by the rules above on its own — so each zone has
 // its own end (40 % of the view, or the next object of ITS lane) — and the refusal is GLOBAL: one lane
 // refused refuses the lot (a drop that made three of four zones would be a gesture nobody asked for).
+// ONE exception to "on its own": dropped on a time selection, EVERY lane takes the selection's in/out,
+// those outside the selection's lanes included (all the zones have the selection's length); only a lane
+// whose object starts before the selection's end is shorter, up to that object ("the object behind").
 //
 // A plain Foundation unit with no model behind it, compiled and asserted alone
 // (tools/test_record_zone_planner.swift).
@@ -114,8 +119,16 @@ enum RecordZonePlanner {
         if let s = selection, s.lanes.contains(displayLane), t >= s.start, t <= s.end {
             let start = max(0, s.start)
             guard s.end - start > 0 else { return .refuse(.tooShort) }
-            if laneObjects.contains(where: { $0.start < s.end && $0.end > start }) { return .refuse(.overlap) }
-            return .create(start: start, end: s.end, parent: parent?.id)
+            // The selection's start lies on an object of the lane (or one starts exactly there): no room.
+            if laneObjects.contains(where: { $0.start <= start && $0.end > start }) { return .refuse(.overlap) }
+            var end = s.end
+            // An object that begins inside the selection is "behind": the zone stops where it starts.
+            if let behind = laneObjects.filter({ $0.start > start && $0.start < s.end }).map(\.start).min() {
+                end = behind
+                let floor = max(minSeconds, pixelsPerSecond > 0 ? minPixels / pixelsPerSecond : minSeconds)
+                guard end - start >= floor - 1e-9 else { return .refuse(.tooShort) }
+            }
+            return .create(start: start, end: end, parent: parent?.id)
         }
 
         var end = t + viewShare * max(0, visibleSpanSecs)
@@ -139,14 +152,27 @@ enum RecordZonePlanner {
 
     /// One plan per input, on the lanes `firstLane`, `firstLane + 1`… (`count` of them). `context` reads a
     /// lane; the instant, the view and the zoom are the hand's, the same for all.
+    ///
+    /// Dropped on a time selection (the instant lies in it and one of the lanes aimed at is one of its
+    /// lanes), the selection rules ALL the lanes: each takes its in/out whether or not it is one of the
+    /// selection's lanes, and each stops earlier only for an object of ITS lane that starts before the
+    /// selection's end. Otherwise each lane follows the ordinary rules on its own.
     static func planMany(time: Double, firstLane: Int, count: Int, visibleSpanSecs: Double,
                          pixelsPerSecond: Double, context: (Int) -> LaneContext?) -> [Plan] {
-        (0 ..< max(0, count)).map { i in
-            let lane = firstLane + i
-            guard let c = context(lane) else { return .refuse(.onObject) }
+        let lanes = (0 ..< max(0, count)).map { firstLane + $0 }
+        let contexts = lanes.map { context($0) }
+        let t = max(0, time)
+        var dropped: Selection?
+        for (lane, c) in zip(lanes, contexts) {
+            if let s = c?.selection, s.lanes.contains(lane), t >= s.start, t <= s.end { dropped = s; break }
+        }
+        return zip(lanes, contexts).map { lane, c in
+            guard let c else { return .refuse(.onObject) }
+            // The selection, made to cover this lane: the planner still asks the lane's own objects.
+            let selection = dropped.map { Selection(start: $0.start, end: $0.end, lanes: [lane]) } ?? c.selection
             return plan(time: time, displayLane: lane, visibleSpanSecs: visibleSpanSecs,
                         pixelsPerSecond: pixelsPerSecond, laneObjects: c.objects,
-                        selection: c.selection, parent: c.parent)
+                        selection: selection, parent: c.parent)
         }
     }
 

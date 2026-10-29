@@ -2342,7 +2342,7 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   lane, time, ...}` — what releasing a row (or several selected rows) of the Inputs tab on the timeline
   does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
   after the input, from `time` for 40 % of the view (`visible_secs`, default 100) or up to the next
-  object of the lane, at least max(1 s, 24 px). Over the time selection: its in/out. Over a group that
+  object of the lane, at least max(1 s, 24 px). Over the time selection: its in/out (stopping at an object of the lane that starts inside it; `overlap` if an object covers its start). Over a group that
   can record: the input is assigned to it. Over a clip, a group that cannot record (infinite, looping,
   consolidated) or with less room than the floor: refused. In an open group's sub-lane the zone is a
   sub-group (`parent`). `time` is NOT snapped. Answers `outcome` (`create` | `assign` | `refuse`),
@@ -2350,7 +2350,10 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   `parent`, `target`, `group`, `applied`. One undo point for a change, none for a refusal.
   SEVERAL inputs (`inputs`, an empty list or a `count` other than 1 / 2 is `bad_params`): one lane per
   input, DOWNWARDS from `lane` in the order given, EACH with its own end (the rule above applies lane by
-  lane: the next object of THAT lane, or the selection's in/out on the lanes it covers); ONE refused lane
+  lane: the next object of THAT lane) — except when the point lies on a time selection: ALL the lanes, those
+  outside the selection's lanes included, take its in/out (same length), and only a lane with an object that
+  starts before the selection's end stops at that object (an object covering the selection's start: `overlap`,
+  and the lot is refused); ONE refused lane
   refuses the lot (nothing created, no undo point); a lane holding a group takes the input as an assignment.
   The answer is `applied`, `refused` and `drops`: one object per lane (`outcome`, `reason`, `start`, `end`,
   `parent`, `target`, `lane`, `group`). One undo point for the lot; the new zones end up selected.

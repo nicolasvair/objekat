@@ -5,7 +5,8 @@
 The Inputs tab selects N inputs and drags one of them: N zones (or assignments) in ONE gesture, ONE undo
 point. One lane per input, DOWNWARDS from the lane of the hand, in the order given (the channels'); each
 lane has its OWN end (the existing rule: 40 % of the view, or the next object of that lane; a time
-selection gives its in/out); the refusal is GLOBAL (one lane refused, nothing is done and no undo point is
+selection gives its in/out to ALL the lanes, a lane whose object starts before the selection's end stopping
+at that object); the refusal is GLOBAL (one lane refused, nothing is done and no undo point is
 pushed); a lane holding a group that can record gives that group the input (assign), like a single drop.
 Driven on `--virtual-audio` (4 inputs). The view is 100 s wide for the planner (`visible_secs`).
 
@@ -15,7 +16,10 @@ Driven on `--virtual-audio` (4 inputs). The view is 100 s wide for the planner (
   C  global refusal: a clip under the 3rd lane, nothing is created, no undo point
   D  assignment: a zone already on the 2nd lane takes its input; the other two lanes make zones; ONE undo
      point whose undo gives the previous input back
-  E  a time selection over the three lanes: its in/out for each, and it is consumed
+  E  a time selection over the three lanes: its in/out for each, and it is consumed; lanes outside the
+     selection's lanes take them too
+  E2 an object behind on one lane shortens that lane only (also outside the selection's lanes); a clip
+     over the selection's start refuses the lot
   F  a stereo pair and a mono, in an open group's sub-lanes: sub-groups
   G  malformed `inputs`; the single form (first / count) still works
   H  Settings.xml is byte for byte what it was
@@ -222,9 +226,46 @@ try:
         check("the selection is consumed", "time_selection" not in c.send("selection.get"))
         c.send("timesel.set", {"start": 70, "end": 74, "lanes": [8, 9]})
         r = multi(c, mono(0, 1, 2), 8, 71.0, dry_run=True)
-        check("a lane outside the selection follows the ordinary rule (71 -> 111)",
-              near(r["drops"][0]["start"], 70) and near(r["drops"][1]["end"], 74)
-              and near(r["drops"][2]["start"], 71) and near(r["drops"][2]["end"], 111), r)
+        check("a lane outside the selection's lanes takes the selection's in/out too (70 -> 74 for all three)",
+              all(near(d["start"], 70) and near(d["end"], 74) for d in r["drops"]), r)
+        c.send("timesel.set", {"start": 70, "end": 74, "lanes": [9, 10]})
+        r = multi(c, mono(0, 1, 2), 8, 71.0, dry_run=True)
+        check("the hand on a lane outside the selection, the next ones inside: the selection rules all three",
+              r["refused"] is False and all(near(d["start"], 70) and near(d["end"], 74) for d in r["drops"]), r)
+        c.send("timesel.clear")
+        wipe(c)
+
+        # an object BEHIND on one lane shortens that lane only; the others keep the selection's end
+        section("E2 time selection, an object behind")
+        behind = clip(c, 9, 76, 4)
+        c.send("timesel.set", {"start": 70, "end": 80, "lanes": [8, 9, 10]})
+        d0 = undo_depth(c)
+        r = multi(c, mono(0, 1, 2), 8, 72.0)
+        ds = r["drops"]
+        check("lane 8: 70 -> 80, lane 9: 70 -> 76 (stops at the clip), lane 10: 70 -> 80",
+              r["applied"] and near(ds[0]["start"], 70) and near(ds[0]["end"], 80)
+              and near(ds[1]["start"], 70) and near(ds[1]["end"], 76)
+              and near(ds[2]["start"], 70) and near(ds[2]["end"], 80), r)
+        check("... ONE undo point", undo_depth(c) == d0 + 1, (d0, undo_depth(c)))
+        check("... the selection is consumed", "time_selection" not in c.send("selection.get"))
+        c.send("edit.undo")
+        # the same, the selection NOT covering the lane of the object behind
+        c.send("timesel.set", {"start": 70, "end": 80, "lanes": [8, 10]})
+        r = multi(c, mono(0, 1, 2), 8, 72.0, dry_run=True)
+        ds = r["drops"]
+        check("a lane outside the selection's lanes is shortened by its object too (80 / 76 / 80)",
+              near(ds[0]["end"], 80) and near(ds[1]["end"], 76) and near(ds[2]["end"], 80)
+              and all(near(d["start"], 70) for d in ds), r)
+        # an object covering the selection's start refuses the lot
+        c.send("timesel.clear")
+        wipe(c)
+        clip(c, 10, 66, 5)   # 66 -> 71: covers the selection's start (70), not the point (72)
+        c.send("timesel.set", {"start": 70, "end": 80, "lanes": [8, 9, 10]})
+        n0 = len(objs(c))
+        r = multi(c, mono(0, 1, 2), 8, 72.0)
+        check("a clip over the selection's start refuses the lot (overlap), nothing created",
+              r["refused"] is True and r["applied"] is False and r["drops"][2]["reason"] == "overlap"
+              and len(objs(c)) == n0, r)
         c.send("timesel.clear")
         wipe(c)
 

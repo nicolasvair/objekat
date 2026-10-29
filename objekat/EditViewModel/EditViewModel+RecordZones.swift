@@ -241,7 +241,9 @@ extension EditViewModel {
                                        label: inputName(ref), kind: .group(children: [], isExpanded: false))
                 zone.recordInput = ref
                 let placed = placeClip(zone, snapshot: laneEntries)
-                if let s = timeSelection, s.timeRange.lowerBound == start, s.timeRange.upperBound == end { spent = true }
+                // A zone of the selection starts at its in and ends at its out, or earlier (an object behind).
+                if let s = timeSelection, start == max(0, s.timeRange.lowerBound),
+                   end <= s.timeRange.upperBound { spent = true }
                 groups[i] = placed.id
             }
         }

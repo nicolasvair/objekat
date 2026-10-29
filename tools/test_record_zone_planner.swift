@@ -4,7 +4,9 @@
 // an existing group that takes the input, a sub-lane of an open group (the zone is a sub-group), and the
 // groups that cannot record (infinite, looping, consolidated). And `planMany`, for several inputs dragged
 // at once: one lane per input downwards, each with its OWN end (40 % of the view or the next object of its
-// lane), a group on a lane takes its input, the refusal of one lane refuses the lot.
+// lane), a group on a lane takes its input, the refusal of one lane refuses the lot. Dropped on a time
+// selection: EVERY lane takes its in/out (the lanes outside the selection's included), and only a lane
+// whose object starts before the selection's end is shorter, up to that object.
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/RecordZonePlanner.swift test_record_zone_planner.swift \
@@ -87,7 +89,17 @@ enum Run {
         check("... even under the floor (the selection decides)", isCreate(plan(10.1, sel: .init(start: 10, end: 10.2, lanes: [2])), 10, 10.2))
         check("outside the selection: the ordinary rule", isCreate(plan(30, sel: sel), 30, 70))
         check("on another lane than the selection's: the ordinary rule", isCreate(plan(14, lane: 5, sel: sel), 14, 54))
-        check("a selection over an object of the lane is refused", plan(14, objs: [clip(16, 25)], sel: sel) == .refuse(.overlap))
+        check("an object starting inside the selection stops the zone at its start (the object behind)",
+              isCreate(plan(14, objs: [clip(16, 25)], sel: sel), 12, 16))
+        check("... the nearest of several objects behind wins", isCreate(plan(14, objs: [clip(17, 20), clip(15, 16)], sel: sel), 12, 15))
+        check("... a group behind stops it too", isCreate(plan(14, objs: [group(16, 25)], sel: sel), 12, 16))
+        check("... an object before the selection does not matter", isCreate(plan(14, objs: [clip(2, 12)], sel: sel), 12, 18))
+        check("... too little room before the object behind (under the floor) is refused",
+              plan(12.5, objs: [clip(13, 25)], sel: sel) == .refuse(.tooShort))
+        check("... room of 2.4 s at 10 px/s is enough", isCreate(plan(14, objs: [clip(14.4, 25)], sel: sel), 12, 14.4))
+        check("an object covering the selection's start refuses it (overlap)", plan(14, objs: [clip(5, 13)], sel: sel) == .refuse(.overlap))
+        check("an object starting exactly at the selection's start refuses it (overlap)", plan(14, objs: [clip(12, 13)], sel: sel) == .refuse(.overlap))
+        check("an object ending exactly at the selection's start is fine", isCreate(plan(14, objs: [clip(5, 12)], sel: sel), 12, 18))
         check("a selection beside an object is fine", isCreate(plan(14, objs: [clip(18, 25)], sel: sel), 12, 18))
         check("a selection starting before 0 starts at 0", isCreate(plan(1, sel: .init(start: -3, end: 4, lanes: [2])), 0, 4))
 
@@ -140,9 +152,37 @@ enum Run {
         let onSel = many(14, n: 3, sel: tsel)
         check("on a time selection covering the three lanes: its in/out for each", onSel.allSatisfy { isCreate($0, 12, 18) })
         let partial = many(14, n: 3, sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))
-        check("a lane outside the selection follows the ordinary rule", isCreate(partial[0], 12, 18) && isCreate(partial[1], 12, 18) && isCreate(partial[2], 14, 54))
-        let overlap = many(14, n: 3, lanes: [3: P.LaneContext(objects: [clip(16, 25)], selection: tsel, parent: nil)], sel: tsel)
-        check("a selection over an object of one lane refuses the lot", overlap[1] == .refuse(.overlap) && P.isRefused(overlap))
+        check("a lane outside the selection's lanes takes the selection's in/out too (all the same length)",
+              partial.allSatisfy { isCreate($0, 12, 18) })
+        // The hand above the selection's lanes: the lanes below are in it, so the lot follows the selection.
+        let handAbove = many(14, lane: 1, n: 3, sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))
+        check("hand on a lane outside the selection, one of the next lanes inside it: the selection rules all three",
+              handAbove.allSatisfy { isCreate($0, 12, 18) })
+        let noLane = many(14, lane: 6, n: 3, sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))
+        check("no lane of the drop in the selection: the ordinary rule everywhere", noLane.allSatisfy { isCreate($0, 14, 54) })
+        let outTime = many(30, n: 3, sel: tsel)
+        check("the point outside the selection's time: the ordinary rule everywhere", outTime.allSatisfy { isCreate($0, 30, 70) })
+
+        func selCtx(_ objs: [P.LaneObject], sel: P.Selection) -> P.LaneContext { .init(objects: objs, selection: sel, parent: nil) }
+        let behind = many(14, n: 3, lanes: [3: selCtx([clip(16, 25)], sel: tsel)], sel: tsel)
+        check("an object behind shortens THAT lane only: 12-18 / 12-16 / 12-18",
+              isCreate(behind[0], 12, 18) && isCreate(behind[1], 12, 16) && isCreate(behind[2], 12, 18) && !P.isRefused(behind))
+        let behindOut = many(14, n: 3, lanes: [4: selCtx([clip(15, 25)], sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))],
+                             sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))
+        check("... also on a lane outside the selection's lanes: 12-18 / 12-18 / 12-15",
+              isCreate(behindOut[0], 12, 18) && isCreate(behindOut[1], 12, 18) && isCreate(behindOut[2], 12, 15))
+        let covered = many(14, n: 3, lanes: [3: selCtx([clip(5, 13)], sel: tsel)], sel: tsel)
+        check("an object covering the selection's start on one lane refuses the lot",
+              covered[1] == .refuse(.overlap) && P.isRefused(covered))
+        let tightBehind = many(12.5, n: 3, lanes: [4: selCtx([clip(13, 25)], sel: tsel)], sel: tsel)
+        check("an object behind leaving too little room refuses the lot", tightBehind[2] == .refuse(.tooShort) && P.isRefused(tightBehind))
+        let grp = many(14, n: 3, lanes: [3: selCtx([group(10, 20, id: gid)], sel: tsel)], sel: tsel)
+        check("a group under the point on a lane still takes the input; the others follow the selection",
+              isCreate(grp[0], 12, 18) && grp[1] == .assign(group: gid) && isCreate(grp[2], 12, 18))
+        let clipUnder = many(14, n: 2, lanes: [3: selCtx([clip(10, 20)], sel: tsel)], sel: tsel)
+        check("a clip under the point on a lane still refuses the lot", clipUnder[1] == .refuse(.onObject) && P.isRefused(clipUnder))
+        let one = many(14, n: 1, sel: tsel)
+        check("a single input on a selection: its in/out", one == [plan(14, sel: tsel)] && isCreate(one[0], 12, 18))
 
         let inGroup = many(10, n: 2, parent: open)
         check("in an open group: sub-groups, one per lane", inGroup.allSatisfy { isCreate($0, 10, 50, parent: pid) })
