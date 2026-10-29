@@ -979,9 +979,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// Empty while the inputs are closed.
 - (NSArray<NSNumber*>* _Nonnull)audioInputPeaksDb;
 /// Declares which neighbouring channels are one stereo input: the FIRST channel of each pair
-/// (0 = channels 1+2). An overlap keeps the lower pair. Re-describes the inputs at once.
+/// (0 = channels 1+2). Overlapping pairs (1+2 and 2+3) coexist. Re-describes the inputs at once.
 - (void)setAudioInputStereoPairs:(NSArray<NSNumber*>* _Nonnull)firstChannels;
-/// The pairs actually in force (declared, inside the card, without overlap).
+/// The pairs actually in force (declared, inside the card, sorted, no duplicate).
 - (NSArray<NSNumber*>* _Nonnull)audioInputStereoPairs;
 
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un

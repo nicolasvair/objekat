@@ -14,8 +14,8 @@ output; the engine describes one mono input per channel plus one stereo input pe
       train -> 0 dB; a read CLEARS the peak
     * the loopback input carries the output (and is silent when nothing plays): the proof that the
       meter, a second audio callback, does not leak into the speakers
-    * pairs: declared pairs consume their channels, an overlap keeps the lower one, a pair outside
-      the card is ignored, `[]` goes back to all-mono; a stereo input reports its louder channel
+    * pairs: a paired channel loses its mono, overlapping pairs (1+2 and 2+3) COEXIST and each reads
+      the common channel on its own, a pair outside the card is ignored, `[]` goes back to all-mono; a stereo input reports its louder channel
     * a rate change and a buffer change leave the inputs where they were
     * `input.disable` / `input.enable` again
     * Settings.xml is byte for byte what it was
@@ -24,7 +24,8 @@ output; the engine describes one mono input per channel plus one stereo input pe
     surprise for AirPods), and Settings.xml carries no input device. The real card's inputs are
     never opened here; that one is for the eye.
 
-Settings.xml is backed up first and restored byte for byte at the end.
+Settings.xml is backed up first and restored byte for byte at the end. OBJ_SKIP_REAL_CARD=1 skips
+phases B and C, the two that can open the machine's real card (unattended runs).
 
     ./scenario_inputs.py /path/to/objekat.app
 
@@ -229,7 +230,13 @@ try:
         lst = c.send("input.set_pairs", {"pairs": [0, 2]})
         check("pairs 1+2 and 3+4: two stereo inputs only", shape(lst) == [(0, 2), (2, 2)], shape(lst))
         lst = c.send("input.set_pairs", {"pairs": [1, 0]})
-        check("overlapping pairs (2+3, 1+2): the lower one wins", lst["pairs"] == [0], lst["pairs"])
+        check("overlapping pairs (2+3, 1+2) COEXIST: both in force", lst["pairs"] == [0, 1], lst["pairs"])
+        check("overlap: both stereo inputs and only mono 4 are offered",
+              shape(lst) == [(3, 1), (0, 2), (1, 2)], shape(lst))
+        r = peaks(c, 0.5)
+        st = {d["first"]: d["peak_db"] for d in r["inputs"] if d["count"] == 2}
+        check("overlap: pair 1+2 reads channel 1 (-6 dB), pair 2+3 reads channel 3 (-12 dB): %s" % st,
+              abs(st.get(0, 0) - (-6.02)) <= 0.5 and abs(st.get(1, 0) - (-12.04)) <= 0.5, st)
         lst = c.send("input.set_pairs", {"pairs": [3, 7, -1]})
         check("pairs outside the card are ignored: back to 4 monos", lst["pairs"] == [] and len(lst["inputs"]) == 4, lst)
         lst = c.send("input.set_pairs", {"pairs": [1]})
@@ -292,23 +299,26 @@ try:
 
     # ════════════════════════════════════════════════════════════════════════════════════════
     section("PHASE B — --virtual-audio --no-audio")
-    proc = launch(SOCK, ["--virtual-audio", "--no-audio"])
-    with ObjekatClient(SOCK) as c:
-        lst = c.send("input.list")
-        check("--no-audio: an empty list, no error", lst["open"] is False and lst["inputs"] == [], lst)
-        lv = c.send("input.levels")
-        check("--no-audio: empty levels, no error", lv["open"] is False and lv["channels"] == [], lv)
-        pr = c.send("input.set_pairs", {"pairs": [0]})
-        check("--no-audio: declaring a pair is harmless", pr["inputs"] == [], pr)
-        st = c.send("audio.status")
-        if st["device"] is None:
-            check("--no-audio: input.enable is refused (invalid_state)", refused(c, "input.enable") == "invalid_state")
-        else:
-            # The known pre-existing limitation (command_api.md, "audio.*"): a real card opened
-            # despite --no-audio. Opening ITS inputs here would raise the microphone prompt.
-            print("  ..   --no-audio opened a real device (known limitation): input.enable not exercised")
-    stop(proc, SOCK)
-    proc = None
+    if os.environ.get("OBJ_SKIP_REAL_CARD") == "1":
+        print("  ..   skipped (OBJ_SKIP_REAL_CARD=1): --no-audio may still open the real card")
+    else:
+        proc = launch(SOCK, ["--virtual-audio", "--no-audio"])
+        with ObjekatClient(SOCK) as c:
+            lst = c.send("input.list")
+            check("--no-audio: an empty list, no error", lst["open"] is False and lst["inputs"] == [], lst)
+            lv = c.send("input.levels")
+            check("--no-audio: empty levels, no error", lv["open"] is False and lv["channels"] == [], lv)
+            pr = c.send("input.set_pairs", {"pairs": [0]})
+            check("--no-audio: declaring a pair is harmless", pr["inputs"] == [], pr)
+            st = c.send("audio.status")
+            if st["device"] is None:
+                check("--no-audio: input.enable is refused (invalid_state)", refused(c, "input.enable") == "invalid_state")
+            else:
+                # The known pre-existing limitation (command_api.md, "audio.*"): a real card opened
+                # despite --no-audio. Opening ITS inputs here would raise the microphone prompt.
+                print("  ..   --no-audio opened a real device (known limitation): input.enable not exercised")
+        stop(proc, SOCK)
+        proc = None
 
     # ════════════════════════════════════════════════════════════════════════════════════════
     section("PHASE B2 — inputs opened in one run do not come back by themselves in the next")
@@ -334,22 +344,27 @@ try:
 
     # ════════════════════════════════════════════════════════════════════════════════════════
     section("PHASE C — a normal launch on the real card")
-    proc = launch(SOCK, [])
-    with ObjekatClient(SOCK) as c:
-        st = c.send("audio.status")
-        lst = c.send("input.list")
-        print("  ..   the normal launch opened: %s (%s)" % (st["device"], st["type"]))
-        check("the real card is not the virtual one", st["device"] != CARD)
-        check("on a real card too, the inputs are closed at launch",
-              lst["open"] is False and lst["inputs"] == [], lst)
-        check("on a real card too, audio.status.input_channels is 0",
-              st["input_channels"] == 0 and st["live"]["input_channels"] == 0, st)
-        time.sleep(1.0)
-    stop(proc, SOCK)
-    proc = None
-    final = settings_bytes()
-    check("Settings.xml carries no input device after a normal launch",
-          final is None or re.search(rb'audioInputDeviceName="[^"]+"', final) is None)
+    # OBJ_SKIP_REAL_CARD=1 leaves the machine's real card (and Settings.xml) alone: set it for any
+    # unattended run, phase C is the one phase that opens the real OUTPUT.
+    if os.environ.get("OBJ_SKIP_REAL_CARD") == "1":
+        print("  ..   skipped (OBJ_SKIP_REAL_CARD=1)")
+    else:
+        proc = launch(SOCK, [])
+        with ObjekatClient(SOCK) as c:
+            st = c.send("audio.status")
+            lst = c.send("input.list")
+            print("  ..   the normal launch opened: %s (%s)" % (st["device"], st["type"]))
+            check("the real card is not the virtual one", st["device"] != CARD)
+            check("on a real card too, the inputs are closed at launch",
+                  lst["open"] is False and lst["inputs"] == [], lst)
+            check("on a real card too, audio.status.input_channels is 0",
+                  st["input_channels"] == 0 and st["live"]["input_channels"] == 0, st)
+            time.sleep(1.0)
+        stop(proc, SOCK)
+        proc = None
+        final = settings_bytes()
+        check("Settings.xml carries no input device after a normal launch",
+              final is None or re.search(rb'audioInputDeviceName="[^"]+"', final) is None)
 finally:
     stop(proc, SOCK)
     if original is not None and os.path.exists(BACKUP):

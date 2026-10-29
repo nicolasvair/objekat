@@ -95,17 +95,28 @@ int main()
         check("two pairs -> only the two stereo devices", show(f) == "0- 1- 2- 3- 0-1+ 1-2- 2-3+ ", show(f));
     }
 
-    // ---- overlap: the lower pair wins -----------------------------------------------------
+    // ---- overlap: 1-2 and 2-3 COEXIST (decision 4) -----------------------------------------
     {
-        check("validPairs: 1-2 and 2-3 together keep the lower",
-              validPairs(4, { 1, 0 }) == std::vector<int>({ 0 }) );
-        check("validPairs: 2-3 then 1-2 (unsorted) keeps 1-2",
-              validPairs(4, { 2, 1 }) == std::vector<int>({ 1 }));
-        check("validPairs: 0, 1, 2 -> 0 and 2", validPairs(4, { 0, 1, 2 }) == std::vector<int>({ 0, 2 }));
+        check("validPairs: 1-2 and 2-3 together are both kept",
+              validPairs(4, { 1, 0 }) == std::vector<int>({ 0, 1 }));
+        check("validPairs: unsorted input comes back sorted", validPairs(4, { 2, 1 }) == std::vector<int>({ 1, 2 }));
+        check("validPairs: 0, 1, 2 -> all three", validPairs(4, { 0, 1, 2 }) == std::vector<int>({ 0, 1, 2 }));
         check("validPairs: duplicates collapse", validPairs(4, { 2, 2, 2 }) == std::vector<int>({ 2 }));
+        // The plan's case: pairs 0-1 and 1-2 declared together. Both stereo devices are enabled, the
+        // three monos they cover are not, the untouched channel 3 keeps its mono.
         const auto d = describe(4, all(4), { 1, 0 });
-        check("overlapping declaration -> the lower pair is enabled, the other is not",
-              show(d) == "0- 1- 2+ 3+ 0-1+ 1-2- 2-3- ", show(d));
+        check("1-2 and 2-3 declared -> both stereo devices on, monos 0,1,2 off, mono 3 on",
+              show(d) == "0- 1- 2- 3+ 0-1+ 1-2+ 2-3- ", show(d));
+        // The shared channel is read by BOTH devices: each one's indexInDevice is the card channel
+        // itself, so channel 1 (the common one) is the second of the first pair and the first of the
+        // second pair.
+        const Device& a = d[4];        // pair 0-1
+        const Device& b = d[5];        // pair 1-2
+        check("the common channel is channel 1 of both devices", a.first + 1 == b.first && a.count == 2 && b.count == 2);
+        // Unpairing 0-1 hands monos 0 back; channel 1 stays covered by pair 1-2 so its mono stays off.
+        const auto u = describe(4, all(4), { 1 });
+        check("pair 0-1 removed, 1-2 kept -> mono 0 back, monos 1,2 still off",
+              show(u) == "0+ 1- 2- 3+ 0-1- 1-2+ 2-3- ", show(u));
     }
 
     // ---- pairs that cannot exist on this card ------------------------------------------------
@@ -142,19 +153,24 @@ int main()
                 for (int b = 0; b < 6; ++b) if (mask & (1 << b)) req.push_back(b * 2 - (b & 1));   // a mix of overlaps
                 const auto d = describe(n, all(n), req);
                 if ((int) d.size() != 2 * n - 1) { ok = false; why = "count n=" + std::to_string(n); break; }
-                // no channel is enabled twice (a mono and a stereo covering it)
-                std::vector<int> use((size_t) n, 0);
+                // every channel is covered at least once; a channel under an enabled STEREO device
+                // never also has its mono enabled; a channel under no pair is covered exactly once
+                std::vector<int> mono((size_t) n, 0), stereo((size_t) n, 0);
                 for (const auto& x : d)
                     if (x.enabled)
                         for (int c = 0; c < x.count; ++c) {
                             if (x.first + c >= n) { ok = false; why = "past the end"; break; }
-                            ++use[(size_t) (x.first + c)];
+                            ++(x.count == 1 ? mono : stereo)[(size_t) (x.first + c)];
                         }
-                for (int c = 0; c < n; ++c)
-                    if (use[(size_t) c] != 1) { ok = false; why = "channel " + std::to_string(c) + " used " + std::to_string(use[(size_t) c]) + " times (n=" + std::to_string(n) + " mask=" + std::to_string(mask) + ")"; }
+                for (int c = 0; c < n; ++c) {
+                    const int total = mono[(size_t) c] + stereo[(size_t) c];
+                    if (total < 1) { ok = false; why = "channel " + std::to_string(c) + " not covered (n=" + std::to_string(n) + " mask=" + std::to_string(mask) + ")"; }
+                    if (mono[(size_t) c] > 0 && stereo[(size_t) c] > 0) { ok = false; why = "channel " + std::to_string(c) + " mono AND stereo"; }
+                    if (mono[(size_t) c] > 1) { ok = false; why = "mono counted twice"; }
+                }
             }
         }
-        check("sweep: with everything open, every channel is enabled exactly once, whatever is declared", ok, why);
+        check("sweep: with everything open, every channel is covered, a paired one by stereo only, whatever is declared", ok, why);
     }
 
     std::printf("\n%d checks, %zu failed\n", total, fails.size());

@@ -18,10 +18,11 @@
 //  and pairing two channels is only a matter of WHICH ones are enabled — the list itself is never
 //  rebuilt around a gesture. Order: the monos first (channel 0..N-1), then the pairs (0-1, 1-2, ...).
 //
-//  ENABLED means "worth opening": a mono is enabled when its channel is open and it is not part of a
-//  declared pair; a stereo device is enabled when it is declared and both its channels are open. A
-//  declared pair consumes its two channels: 1-2 or 2-3, never both, so an overlap is resolved in
-//  favour of the LOWER one and the other is dropped (`validPairs`).
+//  ENABLED means "worth opening": a mono is enabled when its channel is open and it is not part of ANY
+//  declared pair; a stereo device is enabled when it is declared and both its channels are open.
+//  Pairs may OVERLAP (decision 4 of the recording plan): 1-2 and 2-3 coexist, channel 2 is then read
+//  by both stereo devices, each independently and identically. Unpairing a pair gives its channels'
+//  monos back unless another pair still holds them.
 //
 
 #ifndef OBJInputLayout_h
@@ -39,18 +40,17 @@ struct Device {
 };
 
 /// The declared pairs that can actually exist on a card of `numChannels` channels: each is the FIRST
-/// channel of a pair (`first`, `first + 1`), both inside the card, and no two overlap. Sorted
-/// ascending, duplicates and overlaps dropped (the lower pair wins).
+/// channel of a pair (`first`, `first + 1`), both inside the card. Sorted ascending, duplicates
+/// dropped. Overlapping pairs (1-2 and 2-3) are KEPT: a pair is one more stereo input, it does not
+/// consume its channels.
 inline std::vector<int> validPairs(int numChannels, std::vector<int> requested)
 {
     std::sort(requested.begin(), requested.end());
     std::vector<int> out;
-    int nextFree = 0;                                  // first channel not yet consumed by a pair
     for (int first : requested) {
         if (first < 0 || first + 1 >= numChannels) continue;
-        if (first < nextFree) continue;                // shares a channel with the pair before it
+        if (!out.empty() && out.back() == first) continue;   // duplicate
         out.push_back(first);
-        nextFree = first + 2;
     }
     return out;
 }

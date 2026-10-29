@@ -2297,9 +2297,10 @@ synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only
   peak_db}]}`: the peak of each channel since the PREVIOUS call, in dB (floor -120), then cleared,
   so poll at the rate you want to see. A stereo input reports the louder of its two channels.
 * `input.set_pairs {pairs: [int]}` — which neighbouring channels form ONE stereo input (the FIRST
-  channel of each pair, 0-based). A pair consumes its two channels; two overlapping pairs keep the
-  lower; a pair outside the card is ignored; `[]` goes back to all-mono. Engine-level for now (the
-  project model will own it); the pure rule is `objekat/Shared/OBJInputLayout.h`, asserted by
+  channel of each pair, 0-based). A paired channel's mono is no longer offered, but pairs may
+  OVERLAP (`[0, 1]` = channels 1+2 and 2+3: both stereo inputs exist, and channel 2 is read by each
+  independently); a pair outside the card is ignored; `[]` goes back to all-mono. Engine-level for
+  now (the project model will own it); the pure rule is `objekat/Shared/OBJInputLayout.h`, asserted by
   `tools/test_input_layout.cpp`.
 
 `audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed).
@@ -2492,6 +2493,14 @@ on the card. If OBJEKAT's card changes while one listens, the pass stops, is rec
 new card and resumes at the same position. `tools/scenario_export_preview.py` compares
 `output_device` with `audio.status.device` whenever a device is open, and skips that block when
 none is (`--no-audio`).
+
+**Under `--virtual-audio`, the export audition still sounds on the REAL card.** The listening runs on its
+own `AVAudioEngine`, outside the engine's `AudioDeviceManager` where the virtual card lives; it cannot
+resolve the name "OBJ Virtual", falls back on the system's default output (said in the log,
+`[EXPORT-AUDITION]`), and `output_device` then names that real device, not the virtual one. So a scenario
+run on the virtual card must not call `export.preview {listen: true}` (it would play out loud), and
+`output_device` can differ from `audio.status.device` there. Nothing else of the virtual card leaks: this
+is the only audio path that bypasses it.
 
 `audible_seconds` is deliberately **not** the progress: the render runs ahead of the writer, which
 flushes its header every six seconds of audio (`numSamplesPerFlush`). That flush is what makes the

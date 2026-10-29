@@ -87,11 +87,11 @@ extension CommandRegistry {
         register("input.set_pairs",
                  summary: """
                  Declares which neighbouring channels form ONE stereo input: `pairs` lists the FIRST \
-                 channel of each (0 = channels 1+2, 2 = channels 3+4). A pair consumes its two \
-                 channels (their monos stop being offered), two overlapping pairs keep the lower \
-                 one, a pair outside the card is ignored. `[]` goes back to all-mono. Answers like \
-                 `input.list` (`pairs` = the ones in force). Engine-level for now — the project \
-                 model will own this later.
+                 channel of each (0 = channels 1+2, 2 = channels 3+4). A paired channel's mono is no longer \
+                 offered, but pairs may OVERLAP (0 and 1 = channels 1+2 and 2+3: both stereo inputs \
+                 exist, channel 2 is read by each), a pair outside the card is ignored. `[]` goes \
+                 back to all-mono. Answers like `input.list` (`pairs` = the ones in force). \
+                 Engine-level for now — the project model will own this later.
                  """,
                  params: [ParamSpec("pairs", "array", "First channel of each stereo pair, 0-based.")],
                  undo: .none) { p in

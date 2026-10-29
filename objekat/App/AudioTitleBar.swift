@@ -119,7 +119,10 @@ struct AudioSettingsMenu: View {
                     AudioDeviceStatus.shared.snapshot.name ?? AudioOutputDevice.shared.name
                 },
                 set: { name in
-                    AudioOutputDevice.shared.name = name       // publishes and persists (previews aligned)
+                    // `--virtual-audio` is a test fixture: it must not become the remembered choice.
+                    if !OBJEngineCore.isVirtualAudio() {
+                        AudioOutputDevice.shared.name = name   // publishes and persists (previews aligned)
+                    }
                     viewModel.engine?.setOutputDevice(name)    // applies to the engine
                 })
     }
