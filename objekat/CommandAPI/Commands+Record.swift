@@ -193,7 +193,10 @@ extension CommandRegistry {
                  summary: """
                  Drops the input (`first`, `count`) on the timeline at display lane `lane` and instant \
                  `time` — exactly what releasing a row of the Inputs tab there does, the same planner \
-                 (RecordZonePlanner). On empty room: a new empty group named after the input, from `time` \
+                 (RecordZonePlanner). SEVERAL inputs: `inputs` [{first, count?}] in place of `first` — one \
+                 lane per input, downwards from `lane` in the order given, each with its own end, the \
+                 refusal of one lane refusing the lot, ONE undo point; the answer is then `applied`, \
+                 `refused` and `drops` (one `outcome` object per lane, with its `lane` and `group`). On empty room: a new empty group named after the input, from `time` \
                  for 40 % of the view (`visible_secs` is the view's width in seconds, default 100) or up \
                  to the next object of the lane, at least max(1 s, 24 px). Over the time selection: the \
                  selection's in/out. Over a group that can record: the input is assigned to it. Over a \
@@ -203,8 +206,10 @@ extension CommandRegistry {
                  without changing anything. One undo point for a change, none for a refusal. \
                  `outcome`: create | assign | refuse (`reason` says why).
                  """,
-                 params: [ParamSpec("first", "int", "First channel of the input, 0-based."),
+                 params: [ParamSpec("first", "int", required: false, "First channel of the input, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("inputs", "array<object>", required: false,
+                                    "Several inputs [{first, count?}], instead of first / count."),
                           ParamSpec("lane", "int", "Display lane under the cursor."),
                           ParamSpec("time", "number", "Instant under the cursor, seconds."),
                           ParamSpec("visible_secs", "number", required: false,
@@ -212,12 +217,33 @@ extension CommandRegistry {
                           ParamSpec("dry_run", "bool", required: false, "Plan only.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            let ref = try Self.inputRef(p)
             let lane = try p.int("lane")
             guard lane >= 0 else { throw CommandError(code: .bad_params, message: "'lane' must be >= 0") }
             let time = try p.double("time")
             let visible = try p.double("visible_secs", or: 100)
             let pps = vm.pixelsPerSecond
+            if p.raw["inputs"] != nil {
+                var refs: [InputRef] = []
+                for (k, e) in try p.array("inputs").enumerated() {
+                    guard let first = e["first"]?.intValue, first >= 0,
+                          [1, 2].contains(e["count"]?.intValue ?? 1) else {
+                        throw CommandError(code: .bad_params,
+                                           message: "inputs[\(k)]: needs 'first' >= 0 and 'count' 1 or 2")
+                    }
+                    refs.append(InputRef(first: first, count: e["count"]?.intValue ?? 1))
+                }
+                guard !refs.isEmpty else { throw CommandError(code: .bad_params, message: "'inputs' is empty") }
+                if try p.bool("dry_run", or: false) {
+                    let plans = vm.planRecordDrops(count: refs.count, displayLane: lane, time: time,
+                                                   visibleSpanSecs: visible, pixelsPerSecond: pps)
+                    return Self.recordPlansJSON(plans, groups: [], lane: lane, applied: false)
+                }
+                let r = vm.dropRecordInputs(refs, displayLane: lane, time: time, visibleSpanSecs: visible,
+                                            pixelsPerSecond: pps)
+                return Self.recordPlansJSON(r.plans, groups: r.groups, lane: lane,
+                                            applied: !RecordZonePlanner.isRefused(r.plans))
+            }
+            let ref = try Self.inputRef(p)
             if try p.bool("dry_run", or: false) {
                 let plan = vm.planRecordDrop(displayLane: lane, time: time, visibleSpanSecs: visible,
                                              pixelsPerSecond: pps)
@@ -276,8 +302,12 @@ extension CommandRegistry {
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
                  ({first, count}), `input_present` (the card has it), `armed`. `armed`: the ids of the \
                  zones armed AND still able to record. `can_record`: the transport's record button is live \
-                 (something armed, and `project_saved`). `recording`: a recording is under way. \
-                 `last_takes`: what the last recording gave (see `rec.stop`).
+                 (something armed, and `project_saved`). `recording`: a recording is under way, \
+                 `recording_start` the instant it was pressed at (null otherwise). `progress`: while recording, the \
+                 red block of each zone as the timeline draws it — `group`, `lane` (the display lane the take \
+                 will land on; the zone's own row if it is closed), `start`, `end` (press to playhead, inside the \
+                 zone's window; a zone the head has not reached is absent). `last_takes`: what the last recording \
+                 gave (see `rec.stop`).
                  """,
                  undo: .none) { _ in
             Self.recordStatusJSON(try CommandContext.shared.requireViewModel())
@@ -287,7 +317,10 @@ extension CommandRegistry {
                  summary: """
                  Records the inputs of the ARMED zones, like the transport's record button: stopped, it plays \
                  and records from the cursor (or from `seconds`); playing, it punches in at the current \
-                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. \
+                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. The \
+                 previous takes the new one will replace (the unmuted children crossing a zone's window) are \
+                 MUTED at once — except when the press is already past the window's end — in the undo point of \
+                 the take; a recording that gives nothing gives them back. \
                  `invalid_state` when nothing is armed, the project is not saved, the inputs are closed or a \
                  recording is already under way. A seek, `transport.stop` or `rec.stop` ends it.
                  """,
@@ -323,6 +356,20 @@ extension CommandRegistry {
             session.stop()
             return Self.recordStatusJSON(session.viewModel)
         }
+    }
+
+    /// The answer of a drop of several inputs: one plan per lane (`recordPlanJSON`'s, plus the `lane`).
+    @MainActor
+    private static func recordPlansJSON(_ plans: [RecordZonePlanner.Plan], groups: [UUID?], lane: Int,
+                                        applied: Bool) -> JSONValue {
+        let drops = plans.enumerated().map { i, plan -> JSONValue in
+            guard case .object(var o) = recordPlanJSON(plan, group: i < groups.count ? groups[i] : nil,
+                                                       applied: applied) else { return .null }
+            o["lane"] = .int(lane + i)
+            return .object(o)
+        }
+        return .object(["applied": .bool(applied), "refused": .bool(RecordZonePlanner.isRefused(plans)),
+                        "drops": .array(drops)])
     }
 
     @MainActor
@@ -369,6 +416,11 @@ extension CommandRegistry {
                         "can_record": .bool(vm.canRecord),
                         "project_saved": .bool(vm.projectURL != nil),
                         "recording": .bool(vm.isRecording),
+                        "recording_start": vm.recordingStartTime.map { .number($0) } ?? .null,
+                        "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b in
+                            .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
+                                     "start": .number(b.start), "end": .number(b.end)])
+                        }),
                         "last_takes": .array(vm.lastRecordingTakes.map { t in
                             .object(["group": .string(t.group.uuidString), "object": .string(t.object.uuidString),
                                      "path": .string(t.path), "start": .number(t.start),

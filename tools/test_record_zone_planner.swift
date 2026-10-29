@@ -2,7 +2,9 @@
 // engine (the unit depends on Foundation only). Pinned down: the 40 % of the view, the stop at the next
 // object of the lane, the floor max(1 s, 24 px), the refusal on a clip, the time selection's exact in/out,
 // an existing group that takes the input, a sub-lane of an open group (the zone is a sub-group), and the
-// groups that cannot record (infinite, looping, consolidated).
+// groups that cannot record (infinite, looping, consolidated). And `planMany`, for several inputs dragged
+// at once: one lane per input downwards, each with its OWN end (40 % of the view or the next object of its
+// lane), a group on a lane takes its input, the refusal of one lane refuses the lot.
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/RecordZonePlanner.swift test_record_zone_planner.swift \
@@ -100,6 +102,51 @@ enum Run {
         // ── Odd inputs ─────────────────────────────────────────────────────────────────────────────────────
         check("pps = 0 does not divide by zero (the second is the floor)", isCreate(plan(0, pps: 0), 0, 40))
         check("an empty selection span is refused", plan(5, sel: .init(start: 5, end: 5, lanes: [2])) == .refuse(.tooShort))
+
+        // ── Several inputs at once (planMany) ──────────────────────────────────────────────────────────────
+        func many(_ t: Double, lane: Int = 2, n: Int, span: Double = 100, pps: Double = 10,
+                  lanes: [Int: P.LaneContext] = [:], sel: P.Selection? = nil, parent: P.Parent? = nil) -> [P.Plan] {
+            P.planMany(time: t, firstLane: lane, count: n, visibleSpanSecs: span, pixelsPerSecond: pps) { l in
+                if let c = lanes[l] { return c }
+                return P.LaneContext(objects: [], selection: sel, parent: parent)
+            }
+        }
+        func ctx(_ objs: [P.LaneObject]) -> P.LaneContext { .init(objects: objs, selection: nil, parent: nil) }
+
+        let three = many(10, n: 3)
+        check("three inputs on an empty room: three plans", three.count == 3)
+        check("... the same start and the same end on three free lanes",
+              three.allSatisfy { isCreate($0, 10, 50) })
+        check("one input = the single plan", many(10, n: 1) == [plan(10)])
+        check("no input = no plan", many(10, n: 0).isEmpty)
+
+        let ends = many(10, n: 3, lanes: [3: ctx([clip(30, 40)]), 4: ctx([clip(20, 25)])])
+        check("each lane has its OWN end: 50 / 30 / 20", isCreate(ends[0], 10, 50) && isCreate(ends[1], 10, 30) && isCreate(ends[2], 10, 20))
+        check("... and nothing is refused", !P.isRefused(ends))
+
+        let mixed = many(15, n: 3, lanes: [3: ctx([group(10, 20, id: gid)])])
+        check("a group on the second lane takes its input; the others make zones",
+              isCreate(mixed[0], 15, 55) && mixed[1] == .assign(group: gid) && isCreate(mixed[2], 15, 55))
+
+        let onClip = many(15, n: 3, lanes: [4: ctx([clip(10, 20)])])
+        check("a clip on the third lane refuses that lane", onClip[2] == .refuse(.onObject))
+        check("... the other plans are what they would be alone, but the lot is refused", isCreate(onClip[0], 15, 55) && P.isRefused(onClip))
+        let tight = many(10, n: 2, lanes: [2: ctx([clip(10.5, 20)])])
+        check("too little room on the first lane refuses the lot", tight[0] == .refuse(.tooShort) && P.isRefused(tight))
+        check("a lane that is not a row of the timeline (nil) refuses",
+              P.planMany(time: 10, firstLane: 2, count: 3, visibleSpanSecs: 100, pixelsPerSecond: 10) { $0 == 3 ? nil : ctx([]) }[1] == .refuse(.onObject))
+
+        let tsel = P.Selection(start: 12, end: 18, lanes: [2, 3, 4])
+        let onSel = many(14, n: 3, sel: tsel)
+        check("on a time selection covering the three lanes: its in/out for each", onSel.allSatisfy { isCreate($0, 12, 18) })
+        let partial = many(14, n: 3, sel: P.Selection(start: 12, end: 18, lanes: [2, 3]))
+        check("a lane outside the selection follows the ordinary rule", isCreate(partial[0], 12, 18) && isCreate(partial[1], 12, 18) && isCreate(partial[2], 14, 54))
+        let overlap = many(14, n: 3, lanes: [3: P.LaneContext(objects: [clip(16, 25)], selection: tsel, parent: nil)], sel: tsel)
+        check("a selection over an object of one lane refuses the lot", overlap[1] == .refuse(.overlap) && P.isRefused(overlap))
+
+        let inGroup = many(10, n: 2, parent: open)
+        check("in an open group: sub-groups, one per lane", inGroup.allSatisfy { isCreate($0, 10, 50, parent: pid) })
+        check("in a container that cannot record: refused", P.isRefused(many(10, n: 2, parent: .init(id: pid, allowed: false))))
 
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)

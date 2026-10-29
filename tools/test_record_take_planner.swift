@@ -2,7 +2,9 @@
 // (the unit depends on Foundation only). Pinned down: the take is the file cropped to the zone's window
 // (handles = the matter around it, reachable through `sourceOffset`), the lane below the lowest child, the
 // previous unmuted takes crossing the window muted whole, and a capture outside the window (an object over
-// the whole capture in the grey area, nothing muted).
+// the whole capture in the grey area, nothing muted). And the mute AT THE START of the recording
+// (`mutesAtStart`, then `plan(... mutedAtStart:)` which reads those children as they were and gives back
+// the ones the capture turns out not to replace).
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/RecordTakePlanner.swift test_record_take_planner.swift \
@@ -99,6 +101,34 @@ enum Run {
         check("no children: lane 0", plan(0, 5, origin: 0, length: 5).take.lane == 0)
         let neg = plan(0, 5, [child(0, 5, lane: -2, id: t1)], origin: 0, length: 5)
         check("a child on a negative lane: the take goes just below it", neg.take.lane == -1)
+
+        // ── Muting at the START of the recording ───────────────────────────────────────────────────────────
+        let o1 = UUID(), o2 = UUID(), o3 = UUID(), om = UUID()
+        let prev = [child(10, 20, lane: 0, id: o1), child(12, 18, lane: 1, id: o2), child(30, 40, lane: 2, id: o3),
+                    child(10, 20, lane: 3, muted: true, id: om)]
+        let m0 = P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev, startPosition: 0)
+        check("start: the unmuted children crossing the window, in order", m0 == [o1, o2])
+        check("start: an already muted one and one outside are left alone", !m0.contains(om) && !m0.contains(o3))
+        check("start inside the window: still muted", P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev, startPosition: 15) == [o1, o2])
+        check("start at the window's end: nothing (the capture cannot cross it)",
+              P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev, startPosition: 20).isEmpty)
+        check("start beyond the window: nothing", P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev, startPosition: 99).isEmpty)
+        check("no previous take: nothing", P.mutesAtStart(windowStart: 10, windowEnd: 20, children: [], startPosition: 0).isEmpty)
+
+        // At the stop the children are already muted: the plan reads them as they were.
+        let nowMuted = prev.map { c in [o1, o2].contains(c.id) ? child(c.start, c.end, lane: c.lane, muted: true, id: c.id) : c }
+        let s1 = P.plan(windowStart: 10, windowEnd: 20, children: nowMuted, capture: .init(origin: 5, length: 30),
+                        mutedAtStart: [o1, o2])
+        check("stop after a mute at the start: the plan still lists them as muted", s1.mutedIDs == [o1, o2])
+        check("... nothing to give back", s1.unmuteIDs.isEmpty)
+        check("... the take goes below the lowest child (lane 4)", s1.take.lane == 4)
+        let s2 = P.plan(windowStart: 10, windowEnd: 20, children: nowMuted, capture: .init(origin: 25, length: 4),
+                        mutedAtStart: [o1, o2])
+        check("capture outside the window: nothing muted, the early mutes are given back",
+              s2.take.outsideWindow && s2.mutedIDs.isEmpty && s2.unmuteIDs == [o1, o2])
+        let s3 = P.plan(windowStart: 10, windowEnd: 20, children: prev, capture: .init(origin: 5, length: 30))
+        check("without mutedAtStart the plan is what it was (mutes at the stop)", s3.mutedIDs == [o1, o2] && s3.unmuteIDs.isEmpty)
+        check("takeLane = the plan's lane", P.takeLane(children: prev) == 4 && P.takeLane(children: []) == 0)
 
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)

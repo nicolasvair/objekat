@@ -14,6 +14,11 @@ Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the sc
      zone is muted, the new one is on the lane below; ONE undo point (undo brings everything back)
   C  a take that does not cross the zone's window: the object exists (whole capture, in the grey area),
      the previous take is NOT muted
+  B2 the previous takes are muted when the recording STARTS (during the recording, in the same undo point
+     as the take: one undo brings everything back); not when the press is past the window's end; a
+     capture that stops before the window gives them back (one undo point either way); the red block of the take in
+     progress (`rec.status` recording_start / progress): the window's part up to the head, on the lane
+     the take will land on
   D  stereo pairs 1-2 and 2-3 share the channel 2: identical sample for sample in both files
   E  punch-in during playback (no graph rebuild at the press); a tab switch and a project replacement are
      refused while recording; unsaved project / nothing armed: refused
@@ -333,6 +338,103 @@ try:
         check("the zone holds both, none muted, the new one below",
               [k["lane"] for k in ks] == [0, 1] and [k["muted"] for k in ks] == [False, False], ks)
         c.send("rec.arm", {"group": zd, "on": False})
+
+        # ── B2: the previous takes are muted when the recording STARTS ------------------------------
+        section("B2 previous takes muted at the press, red block, one undo point, stop before the window")
+        Pm = new_project(c, tmp, "pm")
+        zm = make_zone(c, 0, 1, 5, 0)                  # window 1 -> 5 s
+        c.send("rec.arm", {"group": zm, "on": True})
+        c.send("transport.seek", {"seconds": 0})
+        d0 = undo_depth(c)
+        c.send("rec.start")
+        check("no previous take: nothing to mute, no undo point at the press", undo_depth(c) == d0)
+        wait_pos(c, 6.0)
+        t1 = c.send("rec.stop")["last_takes"][0]
+        check("first take: nothing muted, ONE undo point", t1["muted"] == [] and undo_depth(c) == d0 + 1, t1)
+
+        def zone_row(gid):
+            return [o for o in c.send("object.list")["objects"] if o["id"] == gid][0]["display_lane"]
+
+        c.send("transport.seek", {"seconds": 0})
+        d1 = undo_depth(c)
+        c.send("rec.start")
+        time.sleep(0.4)
+        ks = kids(c, zm)
+        check("rec.start: the previous take is muted AT ONCE (during the recording)",
+              len(ks) == 1 and ks[0]["id"] == t1["object"] and ks[0]["muted"] is True, ks)
+        check("... in ONE undo point pushed by the press", undo_depth(c) == d1 + 1, (d1, undo_depth(c)))
+        st = c.send("rec.status")
+        check("rec.status: recording_start = the press (0 s)", near(st["recording_start"], 0, 0.05), st["recording_start"])
+        check("... the head has not reached the window: no red block yet", st["progress"] == [], st["progress"])
+        wait_pos(c, 3.0)
+        st = c.send("rec.status")
+        gd = zone_row(zm)
+        pr = st["progress"]
+        check("red block: the zone's window from its start (1 s) to the head (~3 s)",
+              len(pr) == 1 and pr[0]["group"] == zm and near(pr[0]["start"], 1, 1e-6) and 2.9 < pr[0]["end"] < 3.6, pr)
+        check("... on the zone's own row while it is closed", len(pr) == 1 and pr[0]["lane"] == gd, (pr, gd))
+        c.send("group.expand", {"id": zm, "expanded": True})
+        pr = c.send("rec.status")["progress"]
+        check("... on the lane below the previous take once the zone is open (zone row + 2)",
+              len(pr) == 1 and pr[0]["lane"] == zone_row(zm) + 2, (pr, zone_row(zm)))
+        c.send("group.expand", {"id": zm, "expanded": False})
+        wait_pos(c, 5.6)
+        pr = c.send("rec.status")["progress"]
+        check("... bounded to the window's end (5 s)", len(pr) == 1 and near(pr[0]["end"], 5, 1e-6), pr)
+        r = c.send("rec.stop")
+        t2 = r["last_takes"][0]
+        check("rec.stop: no block any more, no start", c.send("rec.status")["progress"] == []
+              and c.send("rec.status")["recording_start"] is None)
+        check("new take on the lane below, reporting the take muted at the press",
+              t2["lane"] == 1 and t2["muted"] == [t1["object"]], t2)
+        check("... the press and the stop make ONE undo point", undo_depth(c) == d1 + 1, (d1, undo_depth(c)))
+        ks = kids(c, zm)
+        check("lanes 0 (muted) then 1 (audible)", [k["muted"] for k in ks] == [True, False], ks)
+        c.send("edit.undo")
+        ks = kids(c, zm)
+        check("ONE undo: the new take is gone AND the previous one is audible again",
+              len(ks) == 1 and ks[0]["muted"] is False and undo_depth(c) == d1, ks)
+        c.send("edit.redo")
+        ks = kids(c, zm)
+        check("redo: both takes, the older muted", [k["muted"] for k in ks] == [True, False], ks)
+
+        # pressed past the window's end: the audible take is left alone
+        c.send("transport.seek", {"seconds": 6})
+        d2 = undo_depth(c)
+        c.send("rec.start")
+        time.sleep(0.4)
+        ks = kids(c, zm)
+        check("pressed past the window's end: nothing muted, no undo point at the press",
+              [k["muted"] for k in ks] == [True, False] and undo_depth(c) == d2, (ks, d2, undo_depth(c)))
+        wait_pos(c, 7.5)
+        check("... and no red block (the head is outside the window)", c.send("rec.status")["progress"] == [])
+        t3 = c.send("rec.stop")["last_takes"][0]
+        ks = kids(c, zm)
+        check("... the take outside the window mutes nothing either",
+              t3["outside_window"] is True and t3["muted"] == [] and [k["muted"] for k in ks] == [True, False, False], (t3, ks))
+        c.send("edit.undo")
+        check("... undo removes it", len(kids(c, zm)) == 2 and undo_depth(c) == d2)
+
+        # stopped before the window: the capture does not cross it, so the mute of the press is given back
+        c.send("transport.seek", {"seconds": 0})
+        d3 = undo_depth(c)
+        c.send("rec.start")
+        time.sleep(0.4)
+        ks = kids(c, zm)
+        check("press at 0, window at 1 s: the audible take is muted during the recording",
+              [k["muted"] for k in ks] == [True, True] and undo_depth(c) == d3 + 1, (ks, d3, undo_depth(c)))
+        wait_pos(c, 0.7)
+        t4 = c.send("rec.stop")["last_takes"]
+        ks = kids(c, zm)
+        check("stop at 0.7 s (before the window): the take is outside, the previous ones are audible again",
+              len(t4) == 1 and t4[0]["outside_window"] is True and t4[0]["muted"] == []
+              and [k["muted"] for k in ks] == [True, False, False], (t4, ks))
+        check("... still ONE undo point, and undo brings the muted state back", undo_depth(c) == d3 + 1)
+        c.send("edit.undo")
+        ks = kids(c, zm)
+        check("... undo: the new take is gone, as before the press", len(ks) == 2 and [k["muted"] for k in ks] == [True, False]
+              and undo_depth(c) == d3, ks)
+        c.send("rec.arm", {"group": zm, "on": False})
 
         # ── D: stereo pairs 1-2 and 2-3 ------------------------------------------------------------
         section("D  pairs 1-2 and 2-3: the shared channel is identical")

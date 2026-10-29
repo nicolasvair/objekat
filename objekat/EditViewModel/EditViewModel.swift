@@ -1293,11 +1293,16 @@ final class EditViewModel {
     /// The zones the recording in flight was started for, and what the last one gave them
     /// (@see EditViewModel+Recording).
     var recordingZones: [RecordingZone] = []
+    /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
+    /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
+    var recordingStartTime: Double? = nil
+    @ObservationIgnored var recordingMuteLog = RecordingMuteLog()
     var lastRecordingTakes: [RecordTakeReport] = []
-    /// What releasing the input drag in flight HERE would do — the ghost under the cursor, written by
-    /// the timeline's drop delegate and read by `RecordDropGhostOverlay` only (a separate view, so that
-    /// the cursor's movement does not invalidate the timeline). nil = no input drag over the timeline.
-    var recordDropGhost: RecordDropGhost? = nil
+    /// What releasing the input drag in flight HERE would do — the ghosts under the cursor (one per input
+    /// carried, on consecutive lanes), written by the timeline's drop delegate and read by
+    /// `RecordDropGhostOverlay` only (a separate view, so that the cursor's movement does not invalidate
+    /// the timeline). Empty = no input drag over the timeline.
+    var recordDropGhosts: [RecordDropGhost] = []
     var cmdKeyHeld: Bool = false
     var effectiveSnapEnabled: Bool { snapEnabled != cmdKeyHeld }
     /// ⌥ held at this instant. The counterpart of `cmdKeyHeld` above, and for the same reason:

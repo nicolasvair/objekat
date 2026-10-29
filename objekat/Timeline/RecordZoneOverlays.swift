@@ -3,10 +3,10 @@ import AppKit
 
 // MARK: - What the timeline lays over a recording zone, apart from the Canvas
 //
-// Two small layers, each its own view so that what moves in them invalidates nothing else:
+// Three small layers, each its own view so that what moves in them invalidates nothing else:
 //
-//  - `RecordDropGhostOverlay`: the zone about to be born (or the group about to take the input, or the
-//    refusal) under an input being dragged. It is the only reader of `recordDropGhost`, whose value
+//  - `RecordDropGhostOverlay`: the zones about to be born (or the groups about to take an input, or the
+//    refusal) under the inputs being dragged. It is the only reader of `recordDropGhosts`, whose value
 //    changes with the cursor — read in `TimelineView`'s body, that would rebuild the whole timeline
 //    on every pixel (the same reason as `FileDropGhostOverlay`).
 //
@@ -14,6 +14,11 @@ import AppKit
 //    Core Animation opacity animation on a layer of its own: the render server runs it, so there is no
 //    SwiftUI body, no Canvas pass and no Swift code per frame — the cost of the blink is nothing the
 //    timeline can feel, and with no zone armed no view exists, so nothing animates at all.
+//
+//  - `RecordingProgressOverlay`: the take being recorded — a translucent red block per zone, on the lane
+//    the take will land on, from the press to the playhead and inside the zone's window (@see
+//    RecordProgress). It reads the playhead through a closure, like `PlayheadLine`: the tick redraws this
+//    view and nothing else. Mounted only while recording.
 
 // MARK: The ghost under an input being dragged
 
@@ -26,7 +31,7 @@ struct RecordDropGhostOverlay: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let g = viewModel.recordDropGhost {
+            ForEach(Array(viewModel.recordDropGhosts.enumerated()), id: \.offset) { _, g in
                 let refused = g.kind == .refused
                 let w = max(refused ? 24 : 3, (g.end - g.start) * pixelsPerSecond)
                 let colour: Color = refused ? .red : .accentColor
@@ -52,6 +57,33 @@ struct RecordDropGhostOverlay: View {
                     .offset(x: g.start * pixelsPerSecond, y: rulerHeight + Double(g.displayLane) * laneStep)
             }
         }
+    }
+}
+
+// MARK: The take in progress
+
+struct RecordingProgressOverlay: View {
+    let viewModel: EditViewModel
+    /// A READER, not a value (@see TimelineView.playheadPosition): only this view's body calls it.
+    let position: () -> Double
+    let pixelsPerSecond: Double
+    let rulerHeight: Double
+    let laneStep: Double
+    let blockHeight: Double
+
+    var body: some View {
+        let blocks = viewModel.recordProgressBlocks(head: position())
+        ZStack(alignment: .topLeading) {
+            ForEach(blocks, id: \.group) { b in
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(RecordZoneIcon.red.opacity(0.30))
+                    .overlay(RoundedRectangle(cornerRadius: 3)
+                        .strokeBorder(RecordZoneIcon.red.opacity(0.75), lineWidth: 1))
+                    .frame(width: max(1, (b.end - b.start) * pixelsPerSecond), height: blockHeight)
+                    .offset(x: b.start * pixelsPerSecond, y: rulerHeight + Double(b.displayLane) * laneStep)
+            }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -99,6 +131,9 @@ private final class BlinkingZoneNSView: NSView {
     private let dot = CAShapeLayer()
     var cornerRadius: CGFloat = 20 { didSet { if cornerRadius != oldValue { needsLayout = true } } }
 
+    /// The common origin of every blink (@see viewDidMoveToWindow).
+    private static let blinkEpoch = CACurrentMediaTime()
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -145,6 +180,10 @@ private final class BlinkingZoneNSView: NSView {
         blink.autoreverses = true
         blink.repeatCount = .infinity
         blink.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // One origin for every zone (and every redraw of this view): each animation would otherwise start
+        // at the instant its own layer is added, and the zones armed one after the other would blink out
+        // of step.
+        blink.beginTime = layer.convertTime(Self.blinkEpoch, from: nil)
         layer.add(blink, forKey: "blink")
     }
 }

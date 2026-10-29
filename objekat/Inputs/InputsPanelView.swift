@@ -136,7 +136,7 @@ struct InputsPanelView: View {
         .contentShape(Rectangle())
         // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
         // this input (@see RecordZonePlanner, InputDragSession).
-        .onDrag { InputDragSession.shared.begin(ref) }
+        .onDrag { InputDragSession.shared.begin(InputDragSession.carried(ref, selection: selection)) }
         .onTapGesture {
             renaming = nil
             let extend = NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift)
