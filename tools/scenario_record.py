@@ -18,8 +18,11 @@ Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the sc
   E  punch-in during playback (no graph rebuild at the press); a tab switch and a project replacement are
      refused while recording; unsaved project / nothing armed: refused
   F  CALIBRATION: loopback of the virtual card, an impulse played at t = 1.000 s must be recorded at
-     1.000 s (+-1 ms) once the file's position on the timeline is applied
-  F2 same, with a 20 ms latency plugin on the Main
+     1.000 s once the file's position on the timeline is applied: to the SAMPLE (error 0, +-1 at most),
+     for the buffer sizes 64 / 128 / 256 / 512 / 1024, 4 takes started cold (seek 0, rec.start) and 4
+     punched in during playback (play from 0, rec.start at 0.2 s); ONE error value per size. The card
+     announces its latencies the way CoreAudio does (buffers included): their sum is the loopback delay
+  F2 same, with a 20 ms latency plugin on the Main (bs 256, 3 cold + 3 punch-in)
   H  the buffer size changes during a recording: clean stop, the take is kept, the file is valid
   G  Settings.xml is byte for byte what it was
 
@@ -395,7 +398,7 @@ try:
         c.send("tab.close", {"discard": True})                         # the new tab (the active one)
 
         # ── F: CALIBRATION ---------------------------------------------------------------------------
-        section("F  CALIBRATION: an impulse played at t = 1.000 s is recorded at 1.000 s")
+        section("F  CALIBRATION: an impulse played at t = 1.000 s is recorded at 1.000 s (to the sample)")
         P4 = new_project(c, tmp, "p4")
         imp = os.path.join(tmp, "impulse.wav")
         with wave.open(imp, "wb") as w:
@@ -406,66 +409,66 @@ try:
         c.send("object.add", {"path": imp, "lane": 5, "start": 0})
         c.send("wait_idle", {"timeout_ms": 5000})
         c.send("audio.virtual.set_input", {"channel": 0, "signal": "loopback"})
-        vs = c.send("audio.virtual.status")
         zf = make_zone(c, 0, 0, 4, 0)
         c.send("rec.arm", {"group": zf, "on": True})
-        results = []
-        for k in range(4):
-            c.send("transport.seek", {"seconds": 0})
-            c.send("rec.start")
-            wait_pos(c, 3.0)
-            r = c.send("rec.stop")
-            t = r["last_takes"][0]
-            tag, ch, sr, bits, arr = read_wav(t["path"])
-            x = np.abs(arr[:, 0])
-            i = int(np.argmax(x))
-            # the file's first sample sits at (take start - source offset) on the timeline
-            at = (t["start"] - t["source_offset"]) + i / sr
-            results.append((at, float(x[i]), i, t["start"] - t["source_offset"]))
-            c.send("edit.undo")            # no replay of this take (it would come back through the loopback)
-            time.sleep(1.1)                # a different file name each time
-        blk = vs.get("block_size", 256) / SR
-        print("       virtual card: loopback_delay = %s samples (%.2f ms), block %s samples (%.2f ms)" %
-              (vs.get("loopback_delay"), 1000.0 * vs.get("loopback_delay", 0) / SR, vs.get("block_size"), 1000 * blk))
-        for at, pk, i, org in results:
-            print("       impulse found at %.5f s on the timeline (file sample %d, file origin %.5f s, peak %.3f)" % (at, i, org, pk))
-        for k, (at, pk, i, org) in enumerate(results):
-            check("take %d: the impulse is back (peak > 0.1)" % (k + 1), pk > 0.1, pk)
-            check("take %d: within ONE BLOCK of 1.000 s (error %+.3f ms)" % (k + 1, (at - 1.0) * 1000),
-                  abs(at - 1.0) <= blk + 0.0005, at)
-        # The plan asked for +-1 ms. Tracktion's own compensation leaves a residue of 0 or ONE block (5.33 ms
-        # here), varying from take to take: said, not hidden (see the report of increment 5).
-        n_ok = sum(1 for at, *_ in results if abs(at - 1.0) <= 0.001)
-        print("       KNOWN: +-1 ms met by %d take(s) of %d (the residue is 0 or one block)" % (n_ok, len(results)))
 
+        def measure(mode, n):
+            """n takes of the impulse through the loopback. mode: "cold" (seek 0, rec.start) or "punch"
+            (play from 0, rec.start at 0.2 s). -> [(error in samples, peak, file origin on the timeline)]."""
+            out = []
+            for _ in range(n):
+                c.send("transport.seek", {"seconds": 0})
+                if mode == "punch":
+                    c.send("transport.play")
+                    wait_pos(c, 0.2)
+                c.send("rec.start")
+                wait_pos(c, 3.0)
+                t = c.send("rec.stop")["last_takes"][0]
+                tag, ch, sr, bits, arr = read_wav(t["path"])
+                x = np.abs(arr[:, 0])
+                i = int(np.argmax(x))
+                # the file's first sample sits at (take start - source offset) on the timeline
+                org = t["start"] - t["source_offset"]
+                out.append((int(round((org + i / sr - 1.0) * sr)), float(x[i]), org))
+                c.send("edit.undo")        # no replay of this take (it would come back through the loopback)
+                time.sleep(1.1)            # a different file name each time
+            return out
+
+        def judge(tag, res, mode):
+            errs = [e for e, _, _ in res]
+            print("       %s: error in samples per take %s" % (tag, errs))
+            for k, (e, pk, org) in enumerate(res):
+                check("%s take %d: the impulse is back (peak > 0.1)" % (tag, k + 1), pk > 0.1, pk)
+                check("%s take %d: error %+d sample(s), expected 0 (+-1)" % (tag, k + 1, e), abs(e) <= 1, e)
+                if mode == "punch":
+                    check("%s take %d: starts where it was pressed, before the impulse (%.3f s < 0.95 s)" % (tag, k + 1, org),
+                          org < 0.95, org)
+            return errs
+
+        for bs in (64, 128, 256, 512, 1024):
+            b = c.send("audio.set_buffer_size", {"frames": bs})
+            time.sleep(0.5)
+            vs = c.send("audio.virtual.status")
+            check("bs %d: the card runs at it" % bs, vs.get("block_size") == bs and b["buffer_size"] == bs, (vs.get("block_size"), b))
+            check("bs %d: announced in + out latency (%s + %s) = loopback_delay (%s)" %
+                  (bs, vs.get("announced_input_latency"), vs.get("announced_output_latency"), vs.get("loopback_delay")),
+                  vs.get("announced_input_latency", -1) + vs.get("announced_output_latency", -1) == vs.get("loopback_delay"), vs)
+            check("bs %d: loopback_delay = 2*bs + 64 + 96" % bs, vs.get("loopback_delay") == 2 * bs + 160, vs.get("loopback_delay"))
+            errs = judge("bs %d cold" % bs, measure("cold", 4), "cold") + judge("bs %d punch-in" % bs, measure("punch", 4), "punch")
+            check("bs %d: ONE error value over the 8 takes (%s)" % (bs, sorted(set(errs))), len(set(errs)) == 1, errs)
+        c.send("audio.set_buffer_size", {"frames": 256})
+        time.sleep(0.5)
 
         # ── F2: CALIBRATION with a declared latency on the Main --------------------------------------
-        section("F2 CALIBRATION with a 20 ms latency plugin on the Main")
+        section("F2 CALIBRATION with a 20 ms latency plugin on the Main (bs 256)")
         main_id = c.send("stem.list")["main"]
         c.send("debug.add_test_plugin", {"host": main_id, "type": "latencyTester", "latency_ms": 20})
         c.send("wait_idle", {"timeout_ms": 5000})
         # The PDC resync (`checkLatencyAndRebuild`) re-reads the plugins' latency on a ~250 ms tick: a rec
         # pressed inside that window would still compensate the OLD latency (known, measured: +20 ms).
         time.sleep(1.0)
-        res2 = []
-        for k in range(3):
-            c.send("transport.seek", {"seconds": 0})
-            c.send("rec.start")
-            wait_pos(c, 3.0)
-            r = c.send("rec.stop")
-            t = r["last_takes"][0]
-            tag, ch, sr, bits, arr = read_wav(t["path"])
-            x = np.abs(arr[:, 0])
-            i = int(np.argmax(x))
-            at = (t["start"] - t["source_offset"]) + i / sr
-            res2.append((at, float(x[i])))
-            c.send("edit.undo")
-            time.sleep(1.1)
-        for k, (at, pk) in enumerate(res2):
-            print("       impulse found at %.5f s (peak %.3f)" % (at, pk))
-            check("main latency: take %d, the impulse is back (peak > 0.1)" % (k + 1), pk > 0.1, pk)
-            check("main latency: take %d within ONE BLOCK of 1.000 s (error %+.3f ms)" % (k + 1, (at - 1.0) * 1000),
-                  abs(at - 1.0) <= blk + 0.0005, at)
+        errs2 = judge("main latency cold", measure("cold", 3), "cold") + judge("main latency punch-in", measure("punch", 3), "punch")
+        check("main latency: ONE error value over the 6 takes (%s)" % sorted(set(errs2)), len(set(errs2)) == 1, errs2)
         c.send("edit.undo")                                           # the test plugin
 
         # ── H: the card changes during a recording -------------------------------------------------
