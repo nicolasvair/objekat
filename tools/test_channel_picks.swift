@@ -7,6 +7,7 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \

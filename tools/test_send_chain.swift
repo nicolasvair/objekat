@@ -6,6 +6,7 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \

@@ -37,6 +37,7 @@
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/CrossProjectImport.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/SoundObject/PluginIDUniqueness.swift \
 //         ../objekat/SoundObject/PluginIDReport.swift \
 //         ../objekat/Shared/BridgeScope.swift \
@@ -430,6 +431,23 @@ enum CrossProjectImportTest {
                   kids[0].araSource != nil && kids[0].araSource?.plugin.id != araChild.araSource?.plugin.id
                   && kids[0].araSource?.plugin.id != pasted?.plugin.id)
             check("... and keeps its archive", kids[0].araSource?.archive == archive)
+        }
+
+        // MARK: - A recording input belongs to the SOURCE project's card: it does not cross
+
+        do {
+            var rec = group(startTime: 0, lane: 0, children: [])
+            rec.recordInput = InputRef(first: 0, count: 2)
+            var recChild = clip(startTime: 1, lane: 0)
+            recChild.recordInput = InputRef(first: 2, count: 1)
+            let g = group(startTime: 0, lane: 1, children: [recChild])
+            let cb = CrossProjectImport.Clipboard(clips: [rec, g], comments: [], consolidateDefinitions: [:],
+                                                  originFolder: originFolder, originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 5, pasteLane: 0))
+            check("a pasted object loses its recording input", plan.clips[0].recordInput == nil)
+            guard case .group(let kids, _) = plan.clips[1].kind else { check("pasted group", false); return }
+            check("... and so does a child inside a pasted group", kids[0].recordInput == nil)
+            check("... while the source is untouched", rec.recordInput == InputRef(first: 0, count: 2))
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"

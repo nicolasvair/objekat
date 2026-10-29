@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 32
+    static let formatVersion = 33
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -28,7 +28,8 @@ enum SessionSchema {
         "PROJECT FOLDER — this file lives at its root; several versions can live side by side and",
         "share: samples/ (imported sounds), samples/consolidate/ (baked consolidated objects plus",
         "their sidecars *_objectstate.json — a project saved before format 16 keeps them in",
-        "samples/objects/ instead, which the app still reads), waveforms/ (display caches, throwaway).",
+        "samples/objects/ instead, which the app still reads), samples/rec/ (audio recorded from the",
+        "sound card, format 33), waveforms/ (display caches, throwaway).",
         "File paths are RELATIVE to that folder when the file lives in it: the folder can be",
         "moved. A path outside the folder stays absolute.",
         "",
@@ -262,6 +263,21 @@ enum SessionSchema {
         "  is not drawn at all while the group is folded. It is this section's second trap, the",
         "  first being the two frames of a marker just above.",
         "  Markers, regions and comments are purely visual — nothing here changes what is heard.",
+        "",
+        "recordInputs — the sound card's RECORDING INPUTS as this project names them: { deviceName?,",
+        "  pairs?, names? }. The card's channels are numbered from 1 on screen (0-based in `pairs`).",
+        "  pairs — the FIRST channel (0-based) of each declared stereo pair, ascending: [0, 1] = the",
+        "  pairs 1-2 and 2-3. Pairs may OVERLAP; a channel under a pair has no mono input of its own",
+        "  until the pair is removed. names — a custom name by input key: \"3\" for the mono input on",
+        "  channel 3, \"1-2\" for the stereo pair of channels 1 and 2; an input with no entry is called",
+        "  \"In 3\" / \"In 1-2\". deviceName is the card these were made on, INDICATIVE only: a project",
+        "  opened on another card keeps the same channel numbers. Absent = no pair, no name (every",
+        "  session written before format 33). Purely a setting: it is outside the undo history.",
+        "recordInput — on a GROUP only: { first, count } the card input this group listens to when it is",
+        "  armed for recording (first 0-based, count 1 = mono or 2 = stereo pair). A group with an input",
+        "  is a RECORDING ZONE. Absent = none. The input is a channel number, not a device: if the card",
+        "  no longer offers it, the assignment is kept and the group simply cannot be armed. Recordings",
+        "  themselves go to samples/rec/ and are ordinary clips (RELATIVE paths, like consolidated waves).",
         "",
         "IDS — every `id` in this file is UNIQUE in the whole project, whatever it names: items (at every",
         "  depth of the tree), plugins (plain ones, racks, `fxBlock` entries AND the instances they hold,",

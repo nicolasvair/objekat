@@ -1275,6 +1275,11 @@ final class EditViewModel {
     /// What the script canvases keep in THIS project, by `remember` key (the spectral editor's monitoring
     /// level). Written into the project document, replaced on every load, emptied by a new project.
     var canvasSettings: [String: CanvasProjectSettings] = [:]
+    /// The names and stereo pairs of the sound card's recording inputs, kept IN THE PROJECT (format 33).
+    /// Outside the undo: a name or a pairing is a setting of the session, not an edit of the matter.
+    /// Written through `setRecordInputs` / `editRecordInputs` (@see EditViewModel+Record), which also
+    /// tell the engine which pairs to describe.
+    var recordInputs = RecordInputsConfig()
     var cmdKeyHeld: Bool = false
     var effectiveSnapEnabled: Bool { snapEnabled != cmdKeyHeld }
     /// ⌥ held at this instant. The counterpart of `cmdKeyHeld` above, and for the same reason:

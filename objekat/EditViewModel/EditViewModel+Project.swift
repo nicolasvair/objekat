@@ -266,7 +266,8 @@ extension EditViewModel {
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                         comments: comments.isEmpty ? nil : comments,
                         fxLinks: fxLinksDoc(for: items, stems: capturedStems),
-                        canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings)
+                        canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings,
+                        recordInputs: recordInputs.isEmpty ? nil : recordInputs)
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
@@ -381,6 +382,7 @@ extension EditViewModel {
         markerLanes = []
         comments = []
         canvasSettings = [:]        // another project starts the editors at their defaults
+        setRecordInputs(RecordInputsConfig())   // ... and the card's inputs unpaired, unnamed
         consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil

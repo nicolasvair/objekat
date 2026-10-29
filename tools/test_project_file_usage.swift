@@ -180,6 +180,13 @@ enum ProjectFileUsageTest {
           U.relativeMarks(of: "/tmp/p/samples/sources/a.wav", folder: URL(fileURLWithPath: "/private/tmp/p")).contains("samples/sources/a.wav"))
     check("dot-dot is folded",
           U.relativeMarks(of: "/Users/n/Projects/P/samples/../samples/sources/a.wav", folder: folder).contains("samples/sources/a.wav"))
+    check("samples/rec is counted: a relative take path marks itself",
+          U.relativeMarks(of: "samples/rec/In 1-2 2026-10-29 10-00-00.wav", folder: folder)
+              .contains("samples/rec/In 1-2 2026-10-29 10-00-00.wav"))
+    check("samples/rec is counted: ANOTHER project's take path is redirected to this folder's",
+          U.relativeMarks(of: "/Users/n/Other/samples/rec/take.wav", folder: folder).contains("samples/rec/take.wav"))
+    check("samples/rec does not mark a twin in the consolidation folders",
+          !U.relativeMarks(of: "samples/rec/take.wav", folder: folder).contains("samples/consolidate/take.wav"))
     check("a deeper sub-folder of samples is not redirected",
           !U.relativeMarks(of: "/ext/samples/consolidate/deep/x.wav", folder: folder).contains("samples/consolidate/x.wav"))
 
@@ -194,6 +201,7 @@ enum ProjectFileUsageTest {
         ("samples/objects/Old_bbbbbbbb_objectstate.json", 1),
         ("samples/sources/cap.wav", 300),
         ("samples/other/alien.wav", 999),
+        ("samples/rec/take.wav", 777),
         ("samples/root.wav", 999),
         ("samples/consolidate/deep/inner.wav", 999),
         ("samples/consolidate/.DS_Store", 6),
@@ -209,6 +217,8 @@ enum ProjectFileUsageTest {
           !ids(uni).contains("samples/other/alien.wav") && !ids(uni).contains("samples/root.wav")
           && !ids(uni).contains("samples/consolidate/deep/inner.wav") && !ids(uni).contains("notes.txt")
           && !ids(uni).contains("Project.objekat") && !ids(uni).contains("waveforms/readme.txt"))
+    check("universe: a recording of samples/rec is never offered for deletion",
+          !ids(uni).contains("samples/rec/take.wav") && !uni.contains { $0.files.contains("samples/rec/take.wav") })
     check("universe: dot files are never listed",
           !uni.contains { $0.files.contains { $0.hasSuffix(".DS_Store") } })
     let v1 = uni.first { $0.id == "samples/consolidate/Kick_aaaaaaaa_v1.wav" }

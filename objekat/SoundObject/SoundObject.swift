@@ -588,6 +588,16 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// (`derivedCopy` does, with a NEW plugin id; the copies that start from `var n = o` inherit
     /// the SAME id, which `EditViewModel.copiedARASource(of:)` must then replace).
     var araSource: ARASource? = nil
+    /// The card input a recording zone listens to — session format 33. Meaningful only for a GROUP:
+    /// a group with an input is a "recording zone" the transport's record button fills with takes
+    /// (@see docs/plan_enregistrement_audio.md). Keyed by channel number, not by device, so a
+    /// project opened on another card falls back on the same numbers; an input the card does not
+    /// have is shown "absent" and the assignment is kept.
+    ///
+    /// TOP LEVEL, like `araSource`, and the same rule: `derivedCopy` carries it (a cut half, a
+    /// duplicate, a paste in the project all keep listening to the same input), and
+    /// `CrossProjectImport` clears it (another project's card is not this one's).
+    var recordInput: InputRef? = nil
     /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
     /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -1299,6 +1309,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     channelMode: channelMode,
                     kind: kind)
         derived.araSource = inheritedARA
+        derived.recordInput = recordInput
         return derived
     }
 
@@ -1336,7 +1347,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1387,6 +1398,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // Written only when it says something: LR is the overwhelming case (a key absent = LR).
         if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
         try c.encodeIfPresent(araSource, forKey: .araSource)
+        try c.encodeIfPresent(recordInput, forKey: .recordInput)
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1438,6 +1450,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // A source this build cannot read (written by a later one) is dropped, not fatal: the object
         // then plays its file, dry. Absent in every session before format 20.
         araSource      = try? c.decodeIfPresent(ARASource.self, forKey: .araSource)
+        // An input reference this build cannot read reads as absent (the group is just not armable).
+        recordInput    = try? c.decodeIfPresent(InputRef.self, forKey: .recordInput)
         kind       = try c.decode(Kind.self, forKey: .kind)
     }
 }

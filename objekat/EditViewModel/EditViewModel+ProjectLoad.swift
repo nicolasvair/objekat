@@ -231,6 +231,7 @@ extension EditViewModel {
         markerLanes = doc.markerLanes ?? []
         comments = doc.comments ?? []
         canvasSettings = doc.canvasSettings ?? [:]
+        setRecordInputs(doc.recordInputs ?? RecordInputsConfig())
         consolidateEditStack.removeAll()
         resetTransientSessionState(preservingClipboard: preservingClipboard)
 

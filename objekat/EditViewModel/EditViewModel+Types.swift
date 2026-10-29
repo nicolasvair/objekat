@@ -44,6 +44,9 @@ struct ProjectDocument: Codable {
     /// viewport (changing it never marks the project modified). nil/absent ⇒ none. See
     /// `CanvasProjectSettings`.
     var canvasSettings: [String: CanvasProjectSettings]?
+    /// The card's recording inputs as this project knows them: the stereo pairs declared and the names
+    /// given (format 33). nil/absent ⇒ none (every session written before). See `RecordInputsConfig`.
+    var recordInputs: RecordInputsConfig?
     /// TRANSIENT, never encoded: what `LegacyGainMigration` did to this document when it was decoded
     /// (nil = not decoded from a file). Read by the load to report it (`project.load_status`).
     var legacyGainMigration: LegacyGainMigration.Report? = nil
@@ -51,7 +54,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings
+        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -69,7 +72,8 @@ struct ProjectDocument: Codable {
          markerLanes: [MarkerLane]? = nil,
          comments: [TimelineComment]? = nil,
          fxLinks: [FXLink]? = nil,
-         canvasSettings: [String: CanvasProjectSettings]? = nil) {
+         canvasSettings: [String: CanvasProjectSettings]? = nil,
+         recordInputs: RecordInputsConfig? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -84,6 +88,7 @@ struct ProjectDocument: Codable {
         self.comments = comments
         self.fxLinks = fxLinks
         self.canvasSettings = canvasSettings
+        self.recordInputs = recordInputs
     }
 }
 

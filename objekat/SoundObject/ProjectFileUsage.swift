@@ -18,6 +18,9 @@ import Foundation
 //     old one: those are the orphans this exists for;
 //   • `samples/objects/` — the legacy place of the same files, read for ever, never written;
 //   • `samples/sources/` — the sources a "Save a copy" capsule embeds;
+//   • `samples/rec/` — the recordings of the card (format 33). NOT in the universe below: a take is the
+//     user's own material, never offered for deletion; a clip pointing there is merely counted as using
+//     the file (`relativeMarks`), so the same folder seen from a duplicated project resolves;
 //   • `waveforms/<basename>.wfc` — the display caches (regenerable, named after the source file).
 // A normal clip points at an ABSOLUTE external path: this unit never lists it, so it can never
 // propose to delete it (the universe below is the whole of what may ever be offered).
@@ -245,7 +248,7 @@ nonisolated enum ProjectFileUsage {
             for i in stride(from: comps.count - 3, through: 0, by: -1) where comps[i] == "samples" {
                 guard i + 3 == comps.count else { continue }
                 let leaf = comps[i + 1]
-                guard ["consolidate", "objects", "sources"].contains(leaf) else { continue }
+                guard ["consolidate", "objects", "sources", "rec"].contains(leaf) else { continue }
                 let file = comps[i + 2]
                 marks.insert("samples/\(leaf)/\(file)")
                 if leaf == "consolidate" { marks.insert("samples/objects/\(file)") }
