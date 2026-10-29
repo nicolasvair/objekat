@@ -2742,12 +2742,27 @@ What has landed since mid-August, in order:
   application quitting END it cleanly with the files kept and the takes in the project; a disk full relies
   on Tracktion's own check (not testable here). The take in progress is NOT drawn (not simple; the takes
   appear at the stop).
-  **The calibration is NOT within 1 ms, and that is Tracktion's, not ours**: measured on the virtual card
-  with an impulse played at 1.000 s through the loopback, the recorded impulse sits at 1.000 s + **0 or ONE
-  block** (+5.333 ms at 256 samples in the usual case; bs 64/128/512 give +1 block too), varying from take to
-  take; the same with a 20 ms latency plugin on the Main. The origin we compute (`punchTimes.start`) is right;
-  the residue is in Tracktion's stream-to-edit mapping and a start race. Left as is — fixing it means an engine
-  patch (or a constant `recordAdjustMs` that would only fix the constant half), the architect's call.
+  **The calibration is to the SAMPLE (engine patch `0047`, 2026-10-29)**: an impulse played at 1.000 s
+  through a loopback is recorded at 1.000 s, error 0 (the scenarios accept +-1), at every buffer size
+  (64 / 128 / 256 / 512 / 1024), started cold (seek 0 + `rec.start`) or punched in during playback,
+  on the virtual card (loopback) AND on a real CoreAudio loop (BlackHole 16ch, `tools/calib_record_device.py`).
+  Before it, the error was a whole number of BLOCKS, varying from take to take (0, +-1, +-2 blocks). Three
+  causes, all closed: (D1) the engine converted the input block's stream time through a reference that had
+  not advanced yet (`DeviceManager` hands the inputs over BEFORE `fillNextNodeBlock`), so every block landed
+  one block too early — `0047` asks the context for the edit time of the block about to be rendered
+  (`EditPlaybackContext::getUnloopedEditTimeOfNextBlock`); (D2) a start race: `performRecord` posts the
+  position then the play, the play is consumed before the inputs but the position only in `process()`, so
+  the first block was mapped with a stale play head — the block is now skipped for a context that has not
+  started while `hasPendingImmediatePositionChange()` (seen at bs 512 / 1024 started cold: every take on the virtual card, 2 of 6 and 6 of 6 on BlackHole); (D3)
+  the negative-adjustment branch (first block later than the compensation, frequent at bs 64 where the
+  press lands 3-5 blocks into the stream) wrote the silence and LOST the block — it now adds it. And (D4)
+  the virtual card announced `inlat`/`outlat` WITHOUT the buffers while JUCE CoreAudio includes them
+  (`deviceLatency + safetyOffset + framesInBuffer + streamLatency`): it now announces `inlat + bs` /
+  `outlat + bs` (`audio.virtual.status.announced_*_latency`, sum = `loopback_delay`). The patch is in
+  `engine-patches/3.5/0047-*.patch`, branch `objekat-record-0047` on the local engine, NOT published on the
+  fork; the next free number is `0048`. Not touched: MIDI, retrospective recording, resync, export.
+  Residual (not a defect): on a card whose latency is ~0, the block skipped by the D2 guard is real audio
+  replaced by silence at the very start of a take — no real card has that latency.
   A trap found measuring: a record pressed within ~250 ms of a change of DECLARED latency (an FX with latency
   added) compensates the OLD one for that take, the PDC resync (`checkLatencyAndRebuild`) running on a tick.
   Verified with no screen: Debug build, 0 new warning; `test_record_take_planner.swift` 28 and
