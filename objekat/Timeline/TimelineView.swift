@@ -1418,6 +1418,14 @@ struct TimelineView: View {
         // `relinquish`, which would release the claim on every mouse movement only to lay it again
         // just after (@see CursorClaim).
         if openPianoRollBandContains(pos) || openAutomationBandContains(pos) { return }
+        // The [ o ] of a recording zone is a button too (the Selection tool only, and only while the
+        // click would take it: an absent input, greyed, is not one) — the same test, in the same order,
+        // as the tap handler's.
+        if viewModel.activeTool == .toolSelection, recordIconHit(at: pos) != nil {
+            TimelineCursorKeeper.set(NSCursor.pointingHand)
+            hoverStore.clearZoneAndCut()
+            return
+        }
         // The hem is a button: a pointing hand, and no editing zone lights up underneath
         // (the bottom of the block is otherwise `.move`).
         if viewModel.activeTool == .toolSelection, automationBezelHit(at: pos) != nil {
