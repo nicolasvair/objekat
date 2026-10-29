@@ -100,7 +100,7 @@ extension EditViewModel {
         }
     }
 
-    /// What the tab lists, in order: every pair, then the monos no pair holds.
+    /// What the tab lists, in order: every pair (by first channel), then every mono.
     var visibleRecordInputs: [InputRef] {
         InputPairing.visibleInputs(channelCount: recordChannelCount, pairs: recordInputs.pairs)
     }

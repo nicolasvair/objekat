@@ -123,18 +123,19 @@ struct Main {
         let vis = InputPairing.visibleInputs(channelCount: 4, pairs: [])
         check("4 channels, no pair: 4 monos", vis.count == 4 && vis.allSatisfy { !$0.isStereo })
         let vis2 = InputPairing.visibleInputs(channelCount: 4, pairs: [0])
-        check("1-2 paired: the pair, then the monos 3 and 4",
-              vis2 == [InputRef(first: 0, count: 2), InputRef(first: 2, count: 1), InputRef(first: 3, count: 1)])
+        check("1-2 paired: the pair FIRST, then the four monos (they stay)",
+              vis2 == [InputRef(first: 0, count: 2)] + (0 ..< 4).map { InputRef(first: $0, count: 1) })
         let vis3 = InputPairing.visibleInputs(channelCount: 4, pairs: [1, 0])
-        check("1-2 AND 2-3: both pairs, channel 4 alone, no mono under a pair",
-              vis3 == [InputRef(first: 0, count: 2), InputRef(first: 1, count: 2), InputRef(first: 3, count: 1)])
+        check("1-2 AND 2-3: both pairs (by first channel), then the four monos",
+              vis3 == [InputRef(first: 0, count: 2), InputRef(first: 1, count: 2)] + (0 ..< 4).map { InputRef(first: $0, count: 1) })
         check("a pair outside the card is not listed",
-              InputPairing.visibleInputs(channelCount: 2, pairs: [1]).count == 2)
+              InputPairing.visibleInputs(channelCount: 2, pairs: [1]).count == 2
+              && !InputPairing.visibleInputs(channelCount: 2, pairs: [1]).contains { $0.isStereo })
         check("no channel, nothing to list", InputPairing.visibleInputs(channelCount: 0, pairs: [0]).isEmpty)
         check("a mono is present while no pair holds it",
               InputPairing.isPresent(mono3, channelCount: 4, pairs: [0]))
-        check("... and absent once a pair holds it",
-              !InputPairing.isPresent(mono3, channelCount: 4, pairs: [1]))
+        check("... and still present once a pair holds it (the monos stay)",
+              InputPairing.isPresent(mono3, channelCount: 4, pairs: [1]))
         check("a mono on a smaller card is absent, not forgotten",
               !InputPairing.isPresent(mono3, channelCount: 2, pairs: []))
 

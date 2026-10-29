@@ -145,16 +145,14 @@ enum InputPairing {
         return out
     }
 
-    /// What the Inputs tab lists: every valid pair, then the monos of the channels no pair holds.
-    /// Same rule as the engine (`objinput::describe`): a channel under ANY pair loses its mono line
-    /// until it is unpaired. Ordered by first channel (a mono before a pair starting on it).
+    /// What the Inputs tab lists: every valid pair FIRST (by first channel), then EVERY mono. A pair does
+    /// not take its monos away (same rule as the engine, `objinput::describe`): 2-3 can still be made
+    /// after 1-2, and the monos are what one picks to make a pair.
     static func visibleInputs(channelCount: Int, pairs: [Int]) -> [InputRef] {
         guard channelCount > 0 else { return [] }
         let valid = validate(pairs, channelCount: channelCount)
-        let held = Set(valid.flatMap { [$0, $0 + 1] })
-        var out = valid.map { InputRef(first: $0, count: 2) }
-        for ch in 0 ..< channelCount where !held.contains(ch) { out.append(InputRef(first: ch, count: 1)) }
-        return out.sorted()
+        return valid.map { InputRef(first: $0, count: 2) }
+            + (0 ..< channelCount).map { InputRef(first: $0, count: 1) }
     }
 
     /// Two selected inputs that can become a stereo pair: both MONO, on neighbouring channels.

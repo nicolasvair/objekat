@@ -11125,7 +11125,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto& tdm = _engine->getDeviceManager();
     tdm.applyWaveDeviceLayout(tdm.getCurrentWaveDeviceLayout());
     tdm.dispatchPendingUpdates();
-    [self syncInputMonitors];       // a pair may have swallowed a monitored mono (or the reverse)
+    [self syncInputMonitors];       // a monitored pair may be gone (or a declared one now exists)
 }
 
 - (NSArray<NSNumber*>*)audioInputStereoPairs {

@@ -9714,19 +9714,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Unlink"
+            "value": "Remove the pair"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Separar"
+            "value": "Eliminar el par"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Délier"
+            "value": "Supprimer la paire"
           }
         }
       }

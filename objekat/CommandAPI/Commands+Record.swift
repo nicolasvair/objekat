@@ -64,7 +64,7 @@ extension CommandRegistry {
                  devices, mono or stereo (`first` = first channel, 0-based; `count` = 1 or 2). \
                  `engine_devices` is everything the engine describes (2N - 1 for N channels: \
                  N monos then N - 1 neighbouring pairs), enabled or not. `record_inputs` is what the \
-                 Inputs tab lists — every declared pair then the monos no pair holds — with the project's \
+                 Inputs tab lists — every declared pair, then every mono — with the project's \
                  `name` for each (`custom` when one was typed) and whether it is `monitored`. All are \
                  empty while the inputs are closed (`open: false`), `--no-audio` included — never an \
                  error.
@@ -99,8 +99,8 @@ extension CommandRegistry {
         register("input.set_pairs",
                  summary: """
                  Declares which neighbouring channels form ONE stereo input: `pairs` lists the FIRST \
-                 channel of each (0 = channels 1+2, 2 = channels 3+4). A paired channel's mono is no longer \
-                 offered, but pairs may OVERLAP (0 and 1 = channels 1+2 and 2+3: both stereo inputs \
+                 channel of each (0 = channels 1+2, 2 = channels 3+4). A paired channel KEEPS its mono \
+                 (the monos always stay offered), and pairs may OVERLAP (0 and 1 = channels 1+2 and 2+3: both stereo inputs \
                  exist, channel 2 is read by each), a pair outside the card is ignored. `[]` goes \
                  back to all-mono. Answers like `input.list` (`pairs` = the ones in force). The pairs \
                  are kept IN THE PROJECT (`recordInputs`), outside the undo, and mark it modified. \
@@ -164,8 +164,8 @@ extension CommandRegistry {
                  track that the project does not see: the app's solo does not silence it. `first`, `count` \
                  as in `input.set_name`. `invalid_state` when the inputs are closed or the input does \
                  not exist. Not saved, and not the project's: monitoring survives a project change or a tab \
-                 switch, and stops when the inputs close, when the card changes or when a pairing \
-                 swallows the input. Answers like `input.list` (`monitored`).
+                 switch, and stops when the inputs close, when the card changes or when the pair \
+                 heard is taken apart. Answers like `input.list` (`monitored`).
                  """,
                  params: [ParamSpec("first", "int", "First channel, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
@@ -432,7 +432,7 @@ extension CommandRegistry {
         ])
     }
 
-    /// What the Inputs tab lists — every pair, then the monos no pair holds — with the NAME the project
+    /// What the Inputs tab lists — every pair, then every mono — with the NAME the project
     /// gives each (`custom` = a name was typed, else the default) and whether it is being heard.
     /// Empty while the inputs are closed (the card's channels are unknown).
     @MainActor

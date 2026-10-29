@@ -9,12 +9,12 @@ a known signal on each); the master's level is read through `stem.level` of the 
 
   A  names: defaults ("In 3" / "In 1-2"), a typed name, a blank name goes back to the default, the
      project is marked modified, nothing enters the undo history
-  B  pairs: 1-2 and 2-3 coexist, a pair swallows its monos, unpair gives them back and keeps the names
+  B  pairs: 1-2 and 2-3 coexist, the pairs are listed FIRST and every mono STAYS, unpair keeps the names
   C  the file: names and pairs are written to the project (format 33), come back on reopening, a
      project without the key opens with defaults, a new project forgets them
   D  monitoring: silent master -> the input is heard (stopped), the other inputs are not, a stereo
      input is heard, a solo elsewhere does not silence it, monitoring stops with the inputs and with a
-     pairing that swallows the input but NOT with a new or opened project (it is the card's, not
+     pair heard being taken apart, but NOT with a new or opened project (it is the card's, not
      the project's); refusals when the inputs are closed
   E  Settings.xml is byte for byte what it was
 
@@ -141,17 +141,19 @@ try:
         # ── B: pairs ----------------------------------------------------------------------------
         section("B  pairs")
         lst = c.send("input.pair", {"first": 0})
-        check("pair 1-2: the pair and monos 3, 4", names(lst) == [(0, 2, "In 1-2"), (2, 1, "Voix"), (3, 1, "In 4")], names(lst))
+        check("pair 1-2: the pair FIRST, then the four monos (they stay)",
+              names(lst) == [(0, 2, "In 1-2"), (0, 1, "In 1"), (1, 1, "In 2"), (2, 1, "Voix"), (3, 1, "In 4")], names(lst))
         lst = c.send("input.pair", {"first": 1})
-        check("pair 2-3 coexists with 1-2: no mono 2 or 3, mono 4 stays",
-              names(lst) == [(0, 2, "In 1-2"), (1, 2, "In 2-3"), (3, 1, "In 4")], names(lst))
+        check("pair 2-3 coexists with 1-2: both pairs first, the four monos still there",
+              names(lst) == [(0, 2, "In 1-2"), (1, 2, "In 2-3"), (0, 1, "In 1"), (1, 1, "In 2"), (2, 1, "Voix"), (3, 1, "In 4")],
+              names(lst))
         c.send("input.set_name", {"first": 0, "count": 2, "name": "Guitare"})
         lst = c.send("input.unpair", {"first": 1})
-        check("unpair 2-3: mono 3 comes back WITH its name, mono 2 stays under 1-2",
-              names(lst) == [(0, 2, "Guitare"), (2, 1, "Voix"), (3, 1, "In 4")], names(lst))
+        check("unpair 2-3: the pair is gone, the monos are as they were (names kept)",
+              names(lst) == [(0, 2, "Guitare"), (0, 1, "In 1"), (1, 1, "In 2"), (2, 1, "Voix"), (3, 1, "In 4")], names(lst))
         check("pairs in force are [0]", lst["pairs"] == [0], lst["pairs"])
         lst = c.send("input.unpair", {"first": 0})
-        check("unpair 1-2: four monos again", [r[:2] for r in names(lst)] == [(0, 1), (1, 1), (2, 1), (3, 1)], names(lst))
+        check("unpair 1-2: the four monos alone", [r[:2] for r in names(lst)] == [(0, 1), (1, 1), (2, 1), (3, 1)], names(lst))
         lst = c.send("input.pair", {"first": 0})
         check("pairing again finds the pair's name", recs(lst)[(0, 2)]["name"] == "Guitare", names(lst))
         lst = c.send("input.pair", {"first": 3})
@@ -179,7 +181,8 @@ try:
         c.send("project.open", {"path": path})
         lst = c.send("input.list")
         check("reopened: pairs and names are back",
-              names(lst) == [(0, 2, "Guitare"), (1, 2, "In 2-3"), (3, 1, "In 4")] and lst["pairs"] == [0, 1], names(lst))
+              [r[:2] for r in names(lst)] == [(0, 2), (1, 2), (0, 1), (1, 1), (2, 1), (3, 1)]
+              and names(lst)[0][2] == "Guitare" and lst["pairs"] == [0, 1], names(lst))
         # a project written before format 33: no key at all
         old = json.load(open(path))
         old.pop("recordInputs", None)
@@ -236,18 +239,19 @@ try:
         check("a solo on another object leaves the monitored input audible (%.3f)" % solo, solo > 0.8, solo)
         c.send("solo.clear")
 
-        # a pairing that swallows a monitored mono drops its monitoring
+        # a pair no longer swallows the monos: a monitored mono keeps being heard when a pair is made
         c.send("input.unpair", {"first": 0})
         check("unpairing drops the monitoring of the pair",
               all(not d["monitored"] for d in c.send("input.list")["record_inputs"]))
         c.send("input.monitor", {"first": 0, "on": True})
         lst = c.send("input.pair", {"first": 0})
-        check("a pairing that swallows a monitored mono drops its monitoring",
-              all(not d["monitored"] for d in lst["record_inputs"]), lst["record_inputs"])
+        check("a pairing leaves a monitored mono monitored (the monos stay)",
+              recs(lst)[(0, 1)]["monitored"] is True and recs(lst)[(0, 2)]["monitored"] is False, lst["record_inputs"])
         time.sleep(0.5)
         master_level(c)
-        after_swallow = master_level(c)
-        check("... and the master is silent again (%.3f)" % after_swallow, after_swallow < 0.05, after_swallow)
+        after_pair = master_level(c)
+        check("... and the master still carries it (%.3f)" % after_pair, after_pair > 0.8, after_pair)
+        c.send("input.monitor", {"first": 0, "on": False})
         c.send("input.unpair", {"first": 0})
 
         check("monitoring an input that does not exist is refused", refused(c, "input.monitor", first=9, on=True) == "invalid_state")

@@ -997,7 +997,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// the model's gains, does not silence it. nil on success, otherwise why not (inputs closed, no such
 /// input). The state lives with the ENGINE, not with the project: it survives a new project, an
 /// opened one and a tab switch (the Edit is never replaced), and is dropped when the inputs close,
-/// when the card changes and when the input stops existing (a pairing that swallows it).
+/// when the card changes and when the input stops existing (a pair taken apart).
 - (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count;
 /// The inputs being monitored right now, as `{first, count}`, ordered.
 - (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)audioInputMonitors;

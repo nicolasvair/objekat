@@ -5,9 +5,11 @@ import Combine
 ///
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
 /// switches AirPods to the call profile, so nothing here does it on its own). Then one row per input:
-/// its number, a level dot, an editable name and a monitor button. Two NEIGHBOURING monos selected
-/// (⌘ or ⇧ click for the second) can be read as one stereo input; a stereo row has "Unlink". The names
-/// and the pairs belong to the project and are outside the undo (@see EditViewModel+Record);
+/// its number, a level dot, an editable name and a monitor button. The pairs come first, then every
+/// mono (a pair does not take its monos away). The right-click menu works on the selection (⌘ or ⇧ click
+/// to extend it) when the row is part of it, else on the row alone: two NEIGHBOURING monos can be linked
+/// as one stereo input, a pair can be removed. The names and the pairs belong to the project and are
+/// outside the undo (@see EditViewModel+Record);
 /// whether an input is being heard belongs to the engine and is not saved.
 ///
 /// Everything it shows is read from the model or from the engine on a 0.07 s poll, the stem strips'
@@ -68,18 +70,6 @@ struct InputsPanelView: View {
     private var list: some View {
         let rows = viewModel.visibleRecordInputs
         return VStack(alignment: .leading, spacing: 0) {
-            if let first = InputPairing.pairableFirst(Array(selection)) {
-                HStack {
-                    Button(L("inputs.pair")) {
-                        viewModel.pairInputs(first: first)
-                        selection = []
-                    }
-                    .controlSize(.small)
-                    Spacer()
-                }
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                Divider()
-            }
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows, id: \.self) { ref in row(ref) }
@@ -110,15 +100,6 @@ struct InputsPanelView: View {
                     .help(L("inputs.rename.help"))
             }
             Spacer(minLength: 4)
-            if ref.isStereo {
-                Button(L("inputs.unpair")) {
-                    viewModel.unpairInputs(first: ref.first)
-                    selection.remove(ref)
-                }
-                .buttonStyle(.plain)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            }
             Button {
                 _ = viewModel.setInputMonitor(ref, on: !monitored.contains(ref))
                 tick()
@@ -144,6 +125,26 @@ struct InputsPanelView: View {
                 if isSelected { selection.remove(ref) } else { selection.insert(ref) }
             } else {
                 selection = [ref]
+            }
+        }
+        .contextMenu { contextMenu(for: ref) }
+    }
+
+    /// The right-click menu: it acts on the selection when the row belongs to it, else on the row alone.
+    @ViewBuilder
+    private func contextMenu(for ref: InputRef) -> some View {
+        let target = selection.contains(ref) ? Array(selection) : [ref]
+        if let first = InputPairing.pairableFirst(target), !viewModel.recordInputs.pairs.contains(first) {
+            Button(L("inputs.pair")) {
+                viewModel.pairInputs(first: first)
+                selection = []
+            }
+        }
+        let pairs = target.filter(\.isStereo)
+        if !pairs.isEmpty {
+            Button(L("inputs.unpair")) {
+                for pair in pairs { viewModel.unpairInputs(first: pair.first) }
+                selection.subtract(pairs)
             }
         }
     }
