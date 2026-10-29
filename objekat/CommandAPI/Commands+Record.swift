@@ -9,7 +9,7 @@ import Foundation
 ///
 /// `input.list` describes what the engine offers — one mono input per channel, plus one stereo
 /// input per declared neighbouring pair — and `input.levels` reads the peak meters. Nothing here
-/// records: that comes with the recording increments.
+/// records: that is `rec.start` / `rec.stop` below.
 extension CommandRegistry {
 
     func registerRecordCommands() {
@@ -267,10 +267,52 @@ extension CommandRegistry {
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
                  ({first, count}), `input_present` (the card has it), `armed`. `armed`: the ids of the \
                  zones armed AND still able to record. `can_record`: the transport's record button is live \
-                 (something armed, and `project_saved`). `recording` is false until recording exists.
+                 (something armed, and `project_saved`). `recording`: a recording is under way. \
+                 `last_takes`: what the last recording gave (see `rec.stop`).
                  """,
                  undo: .none) { _ in
             Self.recordStatusJSON(try CommandContext.shared.requireViewModel())
+        }
+
+        register("rec.start",
+                 summary: """
+                 Records the inputs of the ARMED zones, like the transport's record button: stopped, it plays \
+                 and records from the cursor (or from `seconds`); playing, it punches in at the current \
+                 position. One file per input in `<project>/samples/rec/`, shared by the zones armed on it. \
+                 `invalid_state` when nothing is armed, the project is not saved, the inputs are closed or a \
+                 recording is already under way. A seek, `transport.stop` or `rec.stop` ends it.
+                 """,
+                 params: [ParamSpec("seconds", "number", required: false,
+                                    "Where to start when stopped; default = the cursor.")],
+                 undo: .none) { p in
+            let session = try CommandContext.shared.requireSession()
+            let vm = session.viewModel
+            guard vm.canRecord else {
+                throw CommandError(code: .invalid_state,
+                                   message: vm.projectURL == nil ? "the project has not been saved"
+                                                                 : "no zone is armed")
+            }
+            if !session.isPlaying, let seconds = try p.optionalDouble("seconds") { session.seek(to: seconds) }
+            if let why = session.startRecording() {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            return Self.recordStatusJSON(vm)
+        }
+
+        register("rec.stop",
+                 summary: """
+                 Ends the recording (and playback). Each armed zone receives its take: `takes` lists them \
+                 (`group`, `object`, `path`, `start`, `duration`, `source_offset`, `lane`, `outside_window`, \
+                 `muted` = the previous takes muted). All of it is ONE undo point. `invalid_state` when not \
+                 recording.
+                 """,
+                 undo: .handled) { _ in
+            let session = try CommandContext.shared.requireSession()
+            guard session.viewModel.isRecording else {
+                throw CommandError(code: .invalid_state, message: "not recording")
+            }
+            session.stop()
+            return Self.recordStatusJSON(session.viewModel)
         }
     }
 
@@ -317,7 +359,14 @@ extension CommandRegistry {
                         "armed": .array(vm.armedRecordZones.map { .string($0.uuidString) }),
                         "can_record": .bool(vm.canRecord),
                         "project_saved": .bool(vm.projectURL != nil),
-                        "recording": .bool(false)])
+                        "recording": .bool(vm.isRecording),
+                        "last_takes": .array(vm.lastRecordingTakes.map { t in
+                            .object(["group": .string(t.group.uuidString), "object": .string(t.object.uuidString),
+                                     "path": .string(t.path), "start": .number(t.start),
+                                     "duration": .number(t.duration), "source_offset": .number(t.sourceOffset),
+                                     "lane": .int(t.lane), "outside_window": .bool(t.outsideWindow),
+                                     "muted": .array(t.muted.map { .string($0.uuidString) })])
+                        })])
     }
 
     private static func inputRef(_ p: CommandParams) throws -> InputRef {

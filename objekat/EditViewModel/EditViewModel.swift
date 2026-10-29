@@ -1284,7 +1284,16 @@ final class EditViewModel {
     /// file, not in the undo (like the playback loop), forgotten by a new project / an opening.
     /// Read through `armedRecordZones`, which keeps only the ones still able to record
     /// (@see EditViewModel+RecordZones).
-    var armedGroupIDs: Set<UUID> = []
+    var armedGroupIDs: Set<UUID> = [] {
+        didSet { if armedGroupIDs != oldValue { syncArmedInputs() } }   // the engine readies their tracks
+    }
+    /// A recording is under way (session state, like the arming). It pins the document: no tab switch,
+    /// no New / Open until it ends (@see `tabSwitchBlocker`, `exportPinsActiveDocument`).
+    var isRecording = false
+    /// The zones the recording in flight was started for, and what the last one gave them
+    /// (@see EditViewModel+Recording).
+    var recordingZones: [RecordingZone] = []
+    var lastRecordingTakes: [RecordTakeReport] = []
     /// What releasing the input drag in flight HERE would do — the ghost under the cursor, written by
     /// the timeline's drop delegate and read by `RecordDropGhostOverlay` only (a separate view, so that
     /// the cursor's movement does not invalidate the timeline). nil = no input drag over the timeline.

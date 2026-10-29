@@ -100,6 +100,7 @@ extension EditViewModel {
         pushUndo()
         update(id: id) { $0.recordInput = ref }
         if ref == nil { armedGroupIDs.remove(id) }
+        syncArmedInputs()   // an armed zone changed input: the hidden tracks follow
         isDirty = true
         return true
     }

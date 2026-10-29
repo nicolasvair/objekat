@@ -13,6 +13,7 @@ struct TransportView: View {
     @Bindable var viewModel: EditViewModel
     let onPlay: () -> Void
     let onStop: () -> Void
+    let onRecord: () -> Void
 
     private let timeSigOptions: [String] = ["2/4", "3/4", "4/4", "5/4", "6/8", "7/8", "12/8"]
 
@@ -86,17 +87,20 @@ struct TransportView: View {
             }
             .buttonStyle(.bordered)
 
-            // Record: live when a zone is armed AND the project has a folder for the takes. It does
-            // nothing yet — the recording itself is the next increment; this is its door.
+            // Record: live when a zone is armed AND the project has a folder for the takes. Pressed while
+            // stopped it plays and records from the caret; while playing, it punches in; while recording
+            // it stops (the take ends where the button was pressed again).
             Button {
+                if viewModel.isRecording { onStop() } else { onRecord() }
             } label: {
-                Image(systemName: "circle.fill")
+                Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "circle.fill")
                     .frame(width: 16)
-                    .foregroundStyle(viewModel.canRecord ? RecordZoneIcon.red : Color.primary)
+                    .foregroundStyle(viewModel.canRecord || viewModel.isRecording ? RecordZoneIcon.red : Color.primary)
             }
             .buttonStyle(.bordered)
-            .disabled(!viewModel.canRecord)
-            .help(viewModel.canRecord ? L("transport.record.help")
+            .disabled(!viewModel.canRecord && !viewModel.isRecording)
+            .help(viewModel.isRecording ? L("transport.record.stop.help")
+                  : viewModel.canRecord ? L("transport.record.help")
                   : viewModel.armedRecordZones.isEmpty ? L("transport.record.help.noArm")
                   : L("transport.record.help.noProject"))
 

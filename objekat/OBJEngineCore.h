@@ -993,6 +993,24 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// The inputs being monitored right now, as `{first, count}`, ordered.
 - (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)audioInputMonitors;
 
+// RECORDING (@see docs/plan_enregistrement_audio.md). One hidden track per input, targeted by the input
+// device (the same track that carries the monitoring); Tracktion's transport records into it and does
+// the latency compensation (device + graph). Main thread throughout.
+/// Prepares the inputs that are about to record (`{first, count}` each): their hidden track exists and is
+/// targeted, so that pressing record needs no graph rebuild. Replaces the previous set. Harmless while the
+/// inputs are closed (nothing is prepared). Not saved.
+- (void)setAudioInputsArmed:(NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)inputs;
+/// Starts recording the given inputs (`{first, count, path}` — the WAV file each one writes, 32-bit float at
+/// the device's rate). Stopped: records from the transport position, playing: punches in at the current
+/// position. nil on success, otherwise why not (nothing is left half-started).
+- (NSString* _Nullable)startRecordingInputs:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)inputs;
+- (BOOL)isRecordingNow;
+/// Called on the main thread when a recording is over, however it ended (-stop, a position change, the
+/// card). Each take is `{first, count, path, origin, length, sampleRate}`: the file, the timeline instant
+/// of its first sample and its length in seconds. The clips the engine made are already gone from the
+/// hidden tracks; the files stay.
+@property (nonatomic, copy, nullable) void (^onRecordingFinished)(NSArray<NSDictionary<NSString*, id>*>* _Nonnull takes);
+
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices
 // changée). Coalescé par JUCE. Ne porte rien : le récepteur relit -audioDeviceSnapshot

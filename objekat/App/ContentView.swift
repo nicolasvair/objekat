@@ -49,7 +49,8 @@ struct ContentView: View {
                 totalDuration: viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0,
                 viewModel: viewModel,
                 onPlay: { session.play() },
-                onStop: { session.stop() }
+                onStop: { session.stop() },
+                onRecord: { session.toggleRecording() }
             )
 
             // An export in progress: a full-width strip, right under the transport. It pushes the rest

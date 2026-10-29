@@ -98,6 +98,22 @@ final class ObjekatSession {
                 }
             }
         }
+        // The takes of a recording arrive here, whoever ended it (our `stop`, a seek Tracktion refused to
+        // survive, the card going away): the model gets them, and the transport reads stopped.
+        engine.onRecordingFinished = { [weak self] takes in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let files = takes.compactMap { d -> RecordedFile? in
+                    guard let first = d["first"] as? Int, let count = d["count"] as? Int,
+                          let path = d["path"] as? String, let origin = d["origin"] as? Double,
+                          let length = d["length"] as? Double else { return nil }
+                    return RecordedFile(ref: InputRef(first: first, count: count), path: path, origin: origin,
+                                        length: length, sampleRate: d["sampleRate"] as? Double ?? 0)
+                }
+                self.viewModel.completeRecording(files: files)
+                if self.isPlaying { self.stop() }
+            }
+        }
         // Fixes the bug flagged by project_load_progress_plan: a project load stops the engine
         // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
         // left the transport showing ▶ although the sound had already stopped.
@@ -138,7 +154,7 @@ final class ObjekatSession {
         // Objekat's loop mode is on but Tracktion is not looping yet: we turn it on as soon as the
         // playhead ENTERS the region. The end bound is EXCLUDED — a cursor sitting exactly on the
         // loop's end is AFTER it (like a clip's right edge), and we read straight on.
-        if viewModel.loopModeEnabled,
+        if viewModel.loopModeEnabled, !viewModel.isRecording,
            !tracktionLoopActive,
            let r = viewModel.loopRegion,
            playheadPosition >= r.lowerBound,
@@ -159,7 +175,7 @@ final class ObjekatSession {
         // The anti-reentrance guard (step 4): a project load owns the engine and the transport for
         // its whole duration — starting playback mid-load would race `applyProjectDocument`'s own
         // `engine?.stop()`/rebuild.
-        guard !viewModel.isLoadingProject else { return }
+        guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
         pausedAt = nil   // a plain playback starts from the cursor, not from the pause
         playheadPosition = viewModel.cursorPosition
         engine.seek(to: playheadPosition)
@@ -167,12 +183,41 @@ final class ObjekatSession {
         engine.play()
     }
 
+    /// Record: the armed zones' inputs are recorded from here to the next stop. Stopped, it plays AND
+    /// records from the caret; playing, it is a punch-in on the fly at the current position (the hidden
+    /// tracks were readied when the zones were armed, so the graph is not rebuilt under the music).
+    /// Loop is out of it: a loop under recording would make Tracktion cut a take per lap. nil on success,
+    /// otherwise why not.
+    func startRecording() -> String? {
+        guard !viewModel.isLoadingProject else { return "a project is loading" }
+        guard !viewModel.isRecording else { return "already recording" }
+        if tracktionLoopActive {
+            engine.deactivateTracktionLoop()
+            tracktionLoopActive = false
+        }
+        if !isPlaying {
+            pausedAt = nil
+            playheadPosition = viewModel.cursorPosition
+            engine.seek(to: playheadPosition)
+        }
+        if let why = viewModel.beginRecording() { return why }
+        isPlaying = true
+        return nil
+    }
+
+    /// The record button and ⌘⌥R: stops a recording, or starts one when a zone is armed (and tells why not).
+    func toggleRecording() {
+        if viewModel.isRecording { stop(); return }
+        guard viewModel.canRecord else { return }
+        if let why = startRecording() { viewModel.notify(L("transport.record.failed"), why) }
+    }
+
     /// ⌥space: suspends playback WITHOUT moving the playhead, and resumes exactly there. Touches
     /// nothing about solo — pausing and resuming must give back the exact same listening, and so
     /// must a plain stop; only the playhead differs between the two (the cursor vs. where it was
     /// cut).
     func togglePause() {
-        guard !viewModel.isLoadingProject else { return }
+        guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
         if isPlaying {
             engine.stop()
             isPlaying = false
@@ -212,6 +257,7 @@ final class ObjekatSession {
     /// Moves the cursor AND the playhead. It is the path `transport.seek` takes: setting the
     /// cursor without moving the playhead would leave the screen at odds with the engine.
     func seek(to seconds: Double) {
+        if viewModel.isRecording { stop() }   // a position change ends a recording (Tracktion's rule too)
         let t = max(0, seconds)
         viewModel.cursorPosition = t
         playheadPosition = t
@@ -224,6 +270,7 @@ final class ObjekatSession {
     /// Unlike `seek(to:)` it keeps a pause a pause.
     func jumpPlayhead(to seconds: Double) {
         guard !viewModel.isLoadingProject else { return }
+        if viewModel.isRecording { stop() }
         let t = max(0, seconds)
         viewModel.cursorPosition = t
         playheadPosition = t

@@ -127,7 +127,7 @@ extension CommandRegistry {
             // on a copy still being cloned): refused, like a tab switch. @see ExportJob.pinsActiveDocument
             guard !vm.exportPinsActiveDocument else {
                 throw CommandError(code: .invalid_state,
-                                   message: "a direct export is running (or preparing): "
+                                   message: "a direct export is running (or preparing), or a recording: "
                                           + "the project cannot be replaced until it ends")
             }
             vm.newProjectDiscardingChanges()
@@ -163,7 +163,7 @@ extension CommandRegistry {
             let url = URL(fileURLWithPath: path)
             guard !vm.exportPinsActiveDocument else {
                 throw CommandError(code: .invalid_state,
-                                   message: "a direct export is running (or preparing): "
+                                   message: "a direct export is running (or preparing), or a recording: "
                                           + "the project cannot be replaced until it ends")
             }
             // Tabs: this file may already be open in a tab. Never a second copy: the tab holding it

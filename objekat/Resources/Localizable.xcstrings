@@ -14860,6 +14860,29 @@
         }
       }
     },
+    "project.refused.recording.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A recording is running: the project cannot be replaced until it stops."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay una grabación en curso: el proyecto no se puede reemplazar hasta que se detenga."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un enregistrement est en cours : le projet ne peut pas être remplacé avant son arrêt."
+          }
+        }
+      }
+    },
     "project.reload.refused.busy": {
       "extractionState": "manual",
       "localizations": {
@@ -20702,6 +20725,29 @@
         }
       }
     },
+    "tabs.switch.refused.recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs while recording."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña durante una grabación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet pendant un enregistrement."
+          }
+        }
+      }
+    },
     "tabs.switch.refused.render": {
       "extractionState": "manual",
       "localizations": {
@@ -21093,25 +21139,48 @@
         }
       }
     },
+    "transport.record.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recording not possible"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede grabar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement impossible"
+          }
+        }
+      }
+    },
     "transport.record.help": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Record (recording itself arrives with the next increment)"
+            "value": "Record the armed zones (from the caret, or on the fly during playback)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Grabar (la grabación llega en el siguiente incremento)"
+            "value": "Grabar las zonas armadas (desde el cursor, o al vuelo durante la reproducción)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Enregistrer (l'enregistrement arrive à l'incrément suivant)"
+            "value": "Enregistrer les zones armées (depuis le curseur, ou à la volée pendant la lecture)"
           }
         }
       }
@@ -21158,6 +21227,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Enregistrez d'abord le projet : les prises vont dans son dossier"
+          }
+        }
+      }
+    },
+    "transport.record.stop.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop recording"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detener la grabación"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrêter l'enregistrement"
           }
         }
       }

@@ -435,6 +435,16 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // off the device itself: the channels its active input mask holds.
     std::vector<int> inputPairs;      // first channel of each declared stereo pair; main thread only
 
+    // The file each hidden input track records into, by the track's raw item ID (@see -startRecordingInputs:).
+    // Tracktion asks for it, on the main thread, when a recording is prepared; an empty File = its default.
+    std::map<uint64_t, juce::File> recordFiles;
+
+    juce::File getFileForNewAudioRecording (te::Track& track, const juce::String&) override
+    {
+        auto it = recordFiles.find (track.itemID.getRawID());
+        return it != recordFiles.end() ? it->second : juce::File();
+    }
+
     void describeWaveDevices (std::vector<te::WaveDeviceDescription>& descs,
                               juce::AudioIODevice& device, bool isInput) override
     {
@@ -1273,6 +1283,7 @@ struct OBJLatencyWatcher : public juce::Timer {
 @interface OBJEngineCore ()
 - (void)rebindAudioWorkgroupIfDeviceChanged;
 - (void)syncInputMonitors;       // @see "Input monitoring"
+- (void)stopRecordingIfActive;   // @see "Recording"
 @end
 
 // Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
@@ -1322,6 +1333,32 @@ struct OBJInputMeter : public juce::AudioIODeviceCallback {
     }
 };
 
+// Listens to the transport while inputs record: collects the clip Tracktion makes for each recorded file
+// (on the hidden input track) and says when the recording stopped. The clips are read and removed by
+// -finishRecording, once the stop call has returned (never from inside Tracktion's own callback).
+struct OBJRecordListener : public te::TransportControl::Listener {
+    struct Capture {
+        te::EditItemID target;
+        te::Clip::Ptr  clip;
+        juce::File     file;
+        double         origin = 0.0;     // timeline instant of the file's first sample
+    };
+    std::vector<Capture> captures;
+    std::function<void()> onStopped;
+
+    void recordingFinished(te::InputDeviceInstance&, te::EditItemID target,
+                           const juce::ReferenceCountedArray<te::Clip>& clips) override {
+        for (auto* c : clips) {
+            auto* wc = dynamic_cast<te::WaveAudioClip*>(c);
+            if (wc == nullptr) continue;
+            const auto pos = wc->getPosition();
+            captures.push_back({ target, te::Clip::Ptr(c), wc->getOriginalFile(),
+                                 (pos.time.getStart() - pos.offset).inSeconds() });
+        }
+    }
+    void recordingStopped(te::SyncPoint, bool) override { if (onStopped) onStopped(); }
+};
+
 struct OBJDeviceChangeWatcher : public juce::ChangeListener {
     __unsafe_unretained OBJEngineCore* owner = nil;   // même convention que les autres veilleurs
     void changeListenerCallback(juce::ChangeBroadcaster*) override {
@@ -1330,6 +1367,8 @@ struct OBJDeviceChangeWatcher : public juce::ChangeListener {
         // remplacé tant que le transport est à l'arrêt, sans quoi les workers resteraient attachés
         // à l'ancien. @see -rebindAudioWorkgroupIfDeviceChanged.
         [owner rebindAudioWorkgroupIfDeviceChanged];
+        // A recording does not survive its card changing under it: it ends cleanly, the files are kept.
+        [owner stopRecordingIfActive];
         // An input that closed or vanished with the change stops being monitored; the others are
         // re-attached to their hidden track (the engine rebuilt its devices).
         [owner syncInputMonitors];
@@ -1808,6 +1847,12 @@ struct OBJExportLoadScope {
     // sees them. Both are keyed (first channel, channel count).
     std::set<std::pair<int, int>>                             _monitoredInputs;
     std::map<std::pair<int, int>, te::EditItemID>             _inputTrackIDs;
+    // Recording: the inputs prepared to record (their hidden track exists and is targeted), the file each
+    // one is writing, and the listener collecting the result. @see -startRecordingInputs:.
+    std::set<std::pair<int, int>>                             _armedInputs;
+    std::map<std::pair<int, int>, juce::File>                 _recordFiles;
+    std::unique_ptr<OBJRecordListener>                        _recordListener;
+    bool                                                      _recordingActive;
     // objectID d'un ENFANT de groupe → groupID du container qui l'héberge. Sa présence
     // signifie « cet objet ne vit pas sur une piste du pool mais dans un ContainerClip ».
     std::unordered_map<std::string, std::string>              _childOwnerMap;
@@ -6802,6 +6847,9 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 
 - (void)stop {
     if (_edit) _edit->getTransport().stop(false, false);
+    // A recording ends with the transport: collect its takes now, in the same call (the stop is
+    // synchronous), so whoever stopped can rely on them being delivered when this returns.
+    if (_recordingActive) [self finishRecording];
     if (_wgRebindPending) [self rebindAudioWorkgroupIfDeviceChanged];
 }
 
@@ -10970,8 +11018,10 @@ static void objDumpPluginList(te::PluginList& pl,
 }
 
 - (void)closeAudioInputs {
+    [self stopRecordingIfActive];
     [self releaseInputMeter];
     _monitoredInputs.clear();
+    _armedInputs.clear();
     [self syncInputMonitors];
     if (![self audioInputsOpen]) return;
     NSLog(@"[OBJ] closeAudioInputs");
@@ -11093,16 +11143,25 @@ static void objDumpPluginList(te::PluginList& pl,
         }
     for (auto it = _monitoredInputs.begin(); it != _monitoredInputs.end(); )
         it = live.count(*it) ? std::next(it) : _monitoredInputs.erase(it);
+    for (auto it = _armedInputs.begin(); it != _armedInputs.end(); )
+        it = live.count(*it) ? std::next(it) : _armedInputs.erase(it);
 
-    if (!_monitoredInputs.empty()) _edit->getTransport().ensureContextAllocated();
+    // A hidden track serves an input that is heard OR armed to record (and one being recorded keeps its
+    // track whatever happens: the target cannot change while Tracktion records into it).
+    std::set<std::pair<int, int>> wanted = _monitoredInputs;
+    wanted.insert(_armedInputs.begin(), _armedInputs.end());
+
+    if (!wanted.empty()) _edit->getTransport().ensureContextAllocated();
     auto* epc = _edit->getCurrentPlaybackContext();
 
-    // Attach what is wanted.
-    for (auto& key : _monitoredInputs) {
+    // Attach what is wanted. Heard = monitor mode `on`; armed only = `off` (a recording is NOT heard
+    // unless the hand asked to hear the input: with a microphone and speakers that would be feedback).
+    for (auto& key : wanted) {
         auto* wi = deviceOf[key];
         auto* track = [self hiddenInputTrackForKey:key create:YES];
         if (!wi || !track) continue;
-        wi->setMonitorMode(te::InputDevice::MonitorMode::on);
+        wi->setMonitorMode(_monitoredInputs.count(key) ? te::InputDevice::MonitorMode::on
+                                                       : te::InputDevice::MonitorMode::off);
         if (auto* inst = epc ? epc->getInputFor(wi) : nullptr) {
             if (!inst->getTargets().contains(track->itemID)) {
                 auto res = inst->setTarget(track->itemID, true, nullptr);
@@ -11113,7 +11172,7 @@ static void objDumpPluginList(te::PluginList& pl,
 
     // Let go of what is not wanted any more: the target, the monitor mode, the track.
     for (auto it = _inputTrackIDs.begin(); it != _inputTrackIDs.end(); ) {
-        if (_monitoredInputs.count(it->first)) { ++it; continue; }
+        if (wanted.count(it->first) || _recordFiles.count(it->first)) { ++it; continue; }
         const auto key = it->first;
         if (auto dv = deviceOf.find(key); dv != deviceOf.end()) {
             if (auto* inst = epc ? epc->getInputFor(dv->second) : nullptr)
@@ -11149,6 +11208,135 @@ static void objDumpPluginList(te::PluginList& pl,
     for (auto& key : _monitoredInputs)
         [result addObject:@{ @"first": @(key.first), @"count": @(key.second) }];
     return result;
+}
+
+// MARK: Recording
+//
+// The inputs that record are the ones that already have a hidden track (@see "Input monitoring"): the input
+// device is targeted at its track, the destination is armed (`setRecordingEnabled`), and Tracktion's own
+// transport does the rest — `record` (from the position when stopped, punch-in at the position when playing),
+// the latency compensation (device + graph), the file written on a thread of its own, `stop`. What it hands
+// back is a clip of the recorded file on the hidden track; the app has no use for it (a take is a child of a
+// GROUP, made by Swift from the facts below), so it is read and removed, the file staying where it is.
+//
+// The file is chosen here, not by Tracktion: `OBJEngineBehaviour::getFileForNewAudioRecording` answers from
+// `recordFiles`, filled for the length of one recording.
+
+- (BOOL)isRecordingNow { return _recordingActive; }
+
+- (void)setAudioInputsArmed:(NSArray<NSDictionary<NSString*, NSNumber*>*>*)inputs {
+    std::set<std::pair<int, int>> wanted;
+    for (NSDictionary* d in inputs)
+        wanted.insert({ (int) [d[@"first"] integerValue], (int) [d[@"count"] integerValue] });
+    if (_recordingActive || wanted == _armedInputs) return;     // never reshuffled under a recording
+    _armedInputs = wanted;
+    [self syncInputMonitors];
+}
+
+- (NSString* _Nullable)startRecordingInputs:(NSArray<NSDictionary<NSString*, id>*>*)inputs {
+    if (!_edit) return @"no edit";
+    if (_recordingActive) return @"already recording";
+    if (inputs.count == 0) return @"no input to record";
+    if (![self audioInputsOpen]) return @"the inputs are closed";
+
+    std::map<std::pair<int, int>, juce::File> files;
+    for (NSDictionary* d in inputs) {
+        const std::pair<int, int> key { (int) [d[@"first"] integerValue], (int) [d[@"count"] integerValue] };
+        NSString* path = d[@"path"];
+        if (path.length == 0) return @"an input has no file";
+        files[key] = juce::File(juce::String::fromUTF8([path UTF8String]));
+    }
+
+    // Prepare the tracks and targets (a no-op for the ones the arming already prepared).
+    _armedInputs.clear();
+    for (auto& kv : files) _armedInputs.insert(kv.first);
+    [self syncInputMonitors];
+    auto* epc = _edit->getCurrentPlaybackContext();
+    if (epc == nullptr) return @"no playback context";
+
+    auto& behaviour = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour());
+    std::vector<std::pair<te::InputDeviceInstance*, te::EditItemID>> armed;
+    for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+        const auto& ch = wi->getChannels();
+        if (ch.isEmpty() || !wi->isEnabled()) continue;
+        const std::pair<int, int> key { ch[0].indexInDevice, ch.getNumChannels() };
+        if (!files.count(key)) continue;
+        auto* inst = epc->getInputFor(wi);
+        auto it = _inputTrackIDs.find(key);
+        if (inst == nullptr || it == _inputTrackIDs.end() || !inst->getTargets().contains(it->second))
+            return @"an input has no track";
+        // WAV, 32 bits: JUCE writes float at that depth (the header says so: format 3).
+        wi->setOutputFormat("WAV");
+        wi->setBitDepth(32);
+        armed.push_back({ inst, it->second });
+        behaviour.recordFiles[it->second.getRawID()] = files[key];
+    }
+    if (armed.size() != files.size()) {
+        behaviour.recordFiles.clear();
+        return @"an input is not on the card";
+    }
+
+    _recordFiles = files;
+    _recordListener = std::make_unique<OBJRecordListener>();
+    _recordListener->onStopped = [self] {
+        // A stop Tracktion decided itself (a position change under recording, say): collect the takes
+        // as soon as it has returned. `-stop` collects first when it is the one stopping.
+        dispatch_async(dispatch_get_main_queue(), ^{ if (self->_recordingActive) [self finishRecording]; });
+    };
+    auto& transport = _edit->getTransport();
+    transport.addListener(_recordListener.get());
+    _recordingActive = true;
+    if (!transport.isPlaying()) [self rebindAudioWorkgroupIfDeviceChanged];
+    for (auto& a : armed) a.first->setRecordingEnabled(a.second, true);
+    transport.record(false);
+    if (!transport.isRecording()) {
+        [self finishRecording];
+        return @"the transport could not start recording";
+    }
+    return nil;
+}
+
+- (void)stopRecordingIfActive {
+    if (_recordingActive) [self stop];
+}
+
+- (void)finishRecording {
+    if (!_recordingActive) return;
+    _recordingActive = false;
+    auto listener = std::move(_recordListener);
+    if (_edit && listener) _edit->getTransport().removeListener(listener.get());
+
+    // What was recorded: the file, where its first sample sits on the timeline, how long it is.
+    NSMutableArray* takes = [NSMutableArray array];
+    if (listener)
+        for (auto& cap : listener->captures) {
+            std::pair<int, int> key { -1, 0 };
+            for (auto& kv : _inputTrackIDs) if (kv.second == cap.target) key = kv.first;
+            if (key.first < 0 || !cap.file.existsAsFile()) continue;
+            te::AudioFile af(*_engine, cap.file);
+            const double length = af.getLength();
+            if (length <= 0.0) continue;
+            juce::String path = cap.file.getFullPathName();
+            [takes addObject:@{ @"first": @(key.first), @"count": @(key.second),
+                                @"path": [NSString stringWithUTF8String:path.toRawUTF8()],
+                                @"origin": @(cap.origin), @"length": @(length),
+                                @"sampleRate": @(af.getSampleRate()) }];
+        }
+
+    // The clips Tracktion made on the hidden tracks go (the files stay), and the destinations are
+    // disarmed so that the next playback is just playback.
+    if (listener)
+        for (auto& cap : listener->captures) if (cap.clip != nullptr) cap.clip->removeFromParent();
+    if (_edit)
+        if (auto* epc = _edit->getCurrentPlaybackContext())
+            for (auto* wi : _engine->getDeviceManager().getWaveInputDevices())
+                if (auto* inst = epc->getInputFor(wi))
+                    for (auto& kv : _inputTrackIDs) inst->setRecordingEnabled(kv.second, false);
+    _recordFiles.clear();
+    static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).recordFiles.clear();
+    [self syncInputMonitors];
+
+    if (self.onRecordingFinished) self.onRecordingFinished(takes);
 }
 
 // MARK: Virtual card (--virtual-audio)
