@@ -320,6 +320,49 @@ struct Main {
                   "a folded bin offers no point (its inside is not laid)")
         }
 
+        // MARK: the 'input' zone of a recording zone: at the very top, outside the frame
+        func zone(input: Bool, sends: [SynopticSend] = []) -> SynopticLayout.Diagram {
+            SynopticLayout.diagram(for: trunk, mix: true, stems: true, input: input, sends: sends, sendsEnabled: true,
+                                   objectFrame: true)
+        }
+        let plain = zone(input: false), rec = zone(input: true)
+        check(plain.inputZone == nil, "no input zone unless asked")
+        if let iz = rec.inputZone, let f = rec.objectFrame, let pf = plain.objectFrame {
+            check(near(iz.minY, SynopticLayout.margin), "the input zone is at the top margin")
+            check(near(iz.width, SynopticLayout.stemsZoneW) && near(iz.height, SynopticLayout.inputZoneH),
+                  "the input zone has the stems zone's width and its own two-row height")
+            check(near(iz.midX, f.midX), "the input zone is centred on the frame")
+            check(iz.maxY < f.minY, "the input zone lies OUTSIDE the frame, above it")
+            check(near(f.minY - iz.maxY, SynopticLayout.inputGap), "the frame starts an inputGap under the zone")
+            let shift = SynopticLayout.inputZoneH + SynopticLayout.inputGap
+            check(near(f.minY - pf.minY, shift) && near(f.height, pf.height) && near(f.width, pf.width),
+                  "the frame moves down by the zone and the wire, and keeps its size")
+            check(near(rec.canvasSize.height - plain.canvasSize.height, shift), "the canvas grows by the same amount")
+            check(near(rec.outPill.minY - plain.outPill.minY, shift) && near(rec.clipZone!.minY - plain.clipZone!.minY, shift),
+                  "everything under the head moves down together")
+            check(zip(rec.placement.cards, plain.placement.cards).allSatisfy { near($0.frame.minY - $1.frame.minY, shift) },
+                  "the cards move down together")
+            check(near(rec.sourcePill.width, plain.sourcePill.width) && near(rec.sourcePill.minX, plain.sourcePill.minX),
+                  "the head keeps its width and its place across")
+            let wire = rec.placement.cables.filter { $0.carries == .recordInput }
+            check(wire.count == 1 && near(wire[0].from.y, iz.maxY) && near(wire[0].to.y, f.minY)
+                  && near(wire[0].from.x, iz.midX) && wire[0].style == .connector,
+                  "ONE wire from the zone's foot to the frame's top")
+            // the send columns follow (their taps are on the trunk, which moved)
+            let withSends = zone(input: true, sends: oneSend)
+            check(withSends.sendCards.count == 1 && withSends.sendCards[0].frame.minY > withSends.outPill.maxY,
+                  "sends still lie under the stems with an input zone above")
+        } else {
+            check(false, "the input zone is laid")
+        }
+        // the wire's look follows the input: one wire for a mono input, two for a pair, neutral without
+        var flow = SynopticWidthFlow.compute(root: trunk, sourceWidth: 2, channels: [:])
+        check(flow.look(.recordInput) == nil, "no input: the wire keeps the neutral line")
+        flow.recordInputWidth = 1
+        check(flow.look(.recordInput)?.count == 1, "a mono input: one wire")
+        flow.recordInputWidth = 2
+        check(flow.look(.recordInput)?.count == 2 && flow.look(.recordInput)?.isOrange == false, "a stereo pair: two plain wires")
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

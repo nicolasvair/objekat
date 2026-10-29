@@ -333,7 +333,7 @@ try:
         send("project.save")
         with open(manifest, "r", encoding="utf-8") as f:
             doc = json.load(f)
-        check("the session is written as format 33", doc.get("version") == 33, doc.get("version"))
+        check("the session is written as format 34", doc.get("version") == 34, doc.get("version"))
 
         def clips(items):
             for o in items:

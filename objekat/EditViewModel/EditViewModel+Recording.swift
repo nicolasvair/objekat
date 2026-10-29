@@ -8,19 +8,25 @@ import Foundation
 // child of the group (`RecordTakePlanner` decides where, how long, on which lane, and which previous
 // children are muted), all of it in ONE undo point.
 //
-// The previous takes the new one will replace are muted when the recording STARTS (they would be heard
-// while the next one is played), in the same undo point as the take: `beginRecording` pushes it BEFORE the
-// first change, `completeRecording` adds the takes to it — or, when nothing was recorded, gives the mutes
-// back and drops the point.
+// The take lands on the TOP lane of the group's takes and the previous ones go down by one lane (the
+// newest on top), in whatever take mode the zone has.
+//
+// In the default take mode ("mute") the previous takes the new one will replace are muted when the
+// recording STARTS (they would be heard while the next one is played), in the same undo point as the
+// take: `beginRecording` pushes it BEFORE the first change, `completeRecording` adds the takes to it —
+// or, when nothing was recorded, gives the mutes back and drops the point. In the other mode ("add",
+// `SoundObject.recordTakeMode`) nothing is muted: the older takes stay audible. The mode is read at the
+// press and kept in `RecordingZone`, so changing it during a recording only counts for the next one.
 //
 // What lives here is the session's side of that: which zones a recording was started for (frozen at the
 // press — arming may move meanwhile), and the model work at the start and at the end. The engine side is
 // `OBJEngineCore.startRecordingInputs:` / `onRecordingFinished`; the transport side is `ObjekatSession`.
 
-/// A zone and the input it records, as they were when "record" was pressed.
+/// A zone, the input it records and its take mode, as they were when "record" was pressed.
 struct RecordingZone: Equatable {
     let id: UUID
     let ref: InputRef
+    var mode: RecordTakeMode = .mute
 }
 
 /// A file the engine finished writing: its input, where it is, the timeline instant of its first sample
@@ -78,6 +84,27 @@ extension EditViewModel {
         return (start, start + group.duration)
     }
 
+    // MARK: The zone's take mode
+
+    /// What a new take does to the takes already in `id`'s zone (the default, `.mute`, when it never chose).
+    func recordTakeMode(of id: UUID) -> RecordTakeMode { find(id: id)?.recordTakeMode ?? .mute }
+
+    /// Sets the take mode of several zones at once ("mute the previous takes" / "add, mute nothing"). ONE
+    /// undo point, pushed before the first change and not at all when no zone changes. Refused (false, nothing
+    /// done) when `groups` is empty or one of them is not a group that can record (an infinite, looping or
+    /// consolidated group, a clip…). A recording under way is not touched: it keeps the mode read at the press.
+    @discardableResult
+    func setRecordTakeMode(_ mode: RecordTakeMode, groups ids: [UUID]) -> Bool {
+        guard !ids.isEmpty,
+              ids.allSatisfy({ id in find(id: id).map(Self.isRecordableZone) ?? false }) else { return false }
+        let changing = ids.filter { recordTakeMode(of: $0) != mode }
+        guard !changing.isEmpty else { return true }
+        pushUndo()
+        for id in changing { update(id: id) { $0.recordTakeMode = mode.stored } }
+        isDirty = true
+        return true
+    }
+
     // MARK: Telling the engine which inputs are about to record
 
     /// Prepares the hidden tracks of the armed zones' inputs, so that pressing "record" — above all in the
@@ -102,7 +129,8 @@ extension EditViewModel {
         guard let engine else { return "no engine" }
         guard let folder = projectFolder else { return "the project has not been saved: there is no folder for the takes" }
         let zones: [RecordingZone] = armedRecordZones.compactMap { id in
-            find(id: id)?.recordInput.map { RecordingZone(id: id, ref: $0) }
+            guard let zone = find(id: id), let ref = zone.recordInput else { return nil }
+            return RecordingZone(id: id, ref: ref, mode: zone.recordTakeMode ?? .mute)
         }
         guard !zones.isEmpty else { return "no zone is armed" }
 
@@ -127,7 +155,8 @@ extension EditViewModel {
             let window = recordWindow(of: group)
             let ids = RecordTakePlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
                                                      children: takePlannerChildren(children),
-                                                     startPosition: startTime)
+                                                     startPosition: startTime,
+                                                     mutesPrevious: zone.mode.mutesPrevious)
             guard !ids.isEmpty else { continue }
             if log.undoDepthAfterPush == nil { pushUndo(); log.undoDepthAfterPush = undoStack.count }
             setMuted(ids, true)
@@ -177,8 +206,7 @@ extension EditViewModel {
                                                  windowStart: window.start, windowEnd: window.end) else { return nil }
             let lane = RecordProgress.displayLane(
                 groupDisplayLane: e.displayLane, opensInline: e.item.showsChildrenInline,
-                takeLane: RecordTakePlanner.takeLane(children: takePlannerChildren(children)),
-                childrenExpandedSpan: children.reduce(0) { $0 + $1.expandedSpan })
+                takeLane: RecordTakePlanner.takeLane(children: takePlannerChildren(children)))
             return RecordProgressBlock(group: zone.id, displayLane: lane, start: span.start, end: span.end)
         }
     }
@@ -211,7 +239,8 @@ extension EditViewModel {
             let window = recordWindow(of: group)
             let plan = RecordTakePlanner.plan(
                 windowStart: window.start, windowEnd: window.end, children: takePlannerChildren(children),
-                capture: .init(origin: file.origin, length: file.length), mutedAtStart: Set(early))
+                capture: .init(origin: file.origin, length: file.length),
+                mutesPrevious: zone.mode.mutesPrevious, mutedAtStart: Set(early))
 
             if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
             var take = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
@@ -221,6 +250,8 @@ extension EditViewModel {
             take.fileSize = Self.fileSize(atPath: file.path)
             setMuted(plan.mutedIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
             setMuted(plan.unmuteIDs, false)
+            // The newest on top: the previous takes go down by one lane, the take takes the top one.
+            updateMany(Set(plan.shiftIDs)) { $0.lane += 1 }
             addChild(take, toGroupID: zone.id)
             reports.append(RecordTakeReport(group: zone.id, object: take.id, path: file.path,
                                             start: plan.take.start, duration: plan.take.duration,

@@ -25,15 +25,26 @@ func check(_ name: String, _ ok: Bool) {
 struct Holder: Codable {
     var recordInputs: RecordInputsConfig?
     var recordInput: InputRef?
-    enum CodingKeys: String, CodingKey { case recordInputs, recordInput }
-    init(recordInputs: RecordInputsConfig? = nil, recordInput: InputRef? = nil) {
+    /// As `SoundObject` holds it (format 34): nil = the default ("mute"); the default is written as ABSENT, and an
+    /// unknown value reads as the default.
+    var recordTakeMode: RecordTakeMode?
+    enum CodingKeys: String, CodingKey { case recordInputs, recordInput, recordTakeMode }
+    init(recordInputs: RecordInputsConfig? = nil, recordInput: InputRef? = nil, recordTakeMode: RecordTakeMode? = nil) {
         self.recordInputs = recordInputs
         self.recordInput = recordInput
+        self.recordTakeMode = recordTakeMode
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         recordInputs = try? c.decodeIfPresent(RecordInputsConfig.self, forKey: .recordInputs)
         recordInput = try? c.decodeIfPresent(InputRef.self, forKey: .recordInput)
+        recordTakeMode = (try? c.decodeIfPresent(RecordTakeMode.self, forKey: .recordTakeMode))?.stored
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(recordInputs, forKey: .recordInputs)
+        try c.encodeIfPresent(recordInput, forKey: .recordInput)
+        try c.encodeIfPresent(recordTakeMode?.stored, forKey: .recordTakeMode)
     }
 }
 
@@ -78,6 +89,24 @@ struct Main {
 
         let old = try dec.decode(Holder.self, from: Data("{}".utf8))
         check("no key at all reads as nil (format 32)", old.recordInputs == nil && old.recordInput == nil)
+
+        // MARK: The zone's take mode (format 34)
+
+        let addJSON = try enc.encode(Holder(recordInput: pair12, recordTakeMode: .add))
+        check("add is written", (String(data: addJSON, encoding: .utf8) ?? "").contains("\"recordTakeMode\":\"add\""))
+        check("add round trips", try dec.decode(Holder.self, from: addJSON).recordTakeMode == .add)
+        let muteJSON = try enc.encode(Holder(recordInput: pair12, recordTakeMode: .mute))
+        check("mute (the default) is written as an ABSENT key",
+              !(String(data: muteJSON, encoding: .utf8) ?? "").contains("recordTakeMode"))
+        check("... and reads back as the default (nil)", try dec.decode(Holder.self, from: muteJSON).recordTakeMode == nil)
+        check("no key at all = mute (a project written before format 34)", old.recordTakeMode == nil)
+        check("an explicit \"mute\" in a file reads as the default", try dec.decode(Holder.self, from: Data(#"{"recordTakeMode":"mute"}"#.utf8)).recordTakeMode == nil)
+        check("an unknown mode reads as the default, not as a failure",
+              try dec.decode(Holder.self, from: Data(#"{"recordInput":{"first":0,"count":1},"recordTakeMode":"overdub"}"#.utf8)).recordTakeMode == nil)
+        check("a wrong type reads as the default", try dec.decode(Holder.self, from: Data(#"{"recordTakeMode":3}"#.utf8)).recordTakeMode == nil)
+        check("only add silences nothing", RecordTakeMode.mute.mutesPrevious && !RecordTakeMode.add.mutesPrevious)
+        check("stored: add stays, mute goes", RecordTakeMode.add.stored == .add && RecordTakeMode.mute.stored == nil)
+        check("two modes", RecordTakeMode.allCases == [.mute, .add])
 
         // MARK: A hand-edited file degrades, it does not fail
 

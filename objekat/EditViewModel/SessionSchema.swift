@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 33
+    static let formatVersion = 34
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -278,6 +278,12 @@ enum SessionSchema {
         "  is a RECORDING ZONE. Absent = none. The input is a channel number, not a device: if the card",
         "  no longer offers it, the assignment is kept and the group simply cannot be armed. Recordings",
         "  themselves go to samples/rec/ and are ordinary clips (RELATIVE paths, like consolidated waves).",
+        "recordTakeMode (format 34) — on a GROUP that can record: what a NEW take does to the takes already in it.",
+        "  \"add\" = nothing is muted, the older takes stay audible. Absent = \"mute\" (the default, and every",
+        "  session written before format 34): the previous takes crossing the group's window are muted when the",
+        "  recording starts. WRITTEN ONLY WHEN \"add\". Whatever the mode, the newest take goes on the TOP lane of",
+        "  the group (the lowest `lane` among its children) and the older ones down by one. A build from before",
+        "  format 34 ignores the key (the group mutes again) and saving from it drops the key.",
         "",
         "IDS — every `id` in this file is UNIQUE in the whole project, whatever it names: items (at every",
         "  depth of the tree), plugins (plain ones, racks, `fxBlock` entries AND the instances they hold,",

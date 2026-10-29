@@ -1,10 +1,12 @@
 // What a finished recording becomes in a zone — `RecordTakePlanner`, asserted with no screen and no engine
 // (the unit depends on Foundation only). Pinned down: the take is the file cropped to the zone's window
-// (handles = the matter around it, reachable through `sourceOffset`), the lane below the lowest child, the
-// previous unmuted takes crossing the window muted whole, and a capture outside the window (an object over
-// the whole capture in the grey area, nothing muted). And the mute AT THE START of the recording
-// (`mutesAtStart`, then `plan(... mutedAtStart:)` which reads those children as they were and gives back
-// the ones the capture turns out not to replace).
+// (handles = the matter around it, reachable through `sourceOffset`), the TOP lane of the zone's takes (the
+// newest on top; every existing child goes down by one lane, `shiftIDs`), the previous unmuted takes
+// crossing the window muted whole in the default "mute" mode and NOTHING muted in the "add" mode
+// (`mutesPrevious` false), and a capture outside the window (an object over the whole capture in the grey
+// area, nothing muted). And the mute AT THE START of the recording (`mutesAtStart`, then
+// `plan(... mutedAtStart:)` which reads those children as they were and gives back the ones the capture
+// turns out not to replace).
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/RecordTakePlanner.swift test_record_take_planner.swift \
@@ -75,7 +77,8 @@ enum Run {
                     child(0, 10, lane: 3, id: before),          // ends exactly where the window starts
                     child(20, 30, lane: 4, id: after)]           // starts exactly where it ends
         let e = plan(10, 20, kids, origin: 8, length: 20)
-        check("lane: below the lowest child (older on top)", e.take.lane == 5)
+        check("lane: the top lane of the takes (the newest on top)", e.take.lane == 0)
+        check("lane: every existing child goes down by one", e.shiftIDs == [t1, t2, gone, before, after])
         check("mute: the unmuted children crossing the window, in order", e.mutedIDs == [t1, t2])
         check("mute: an already muted one is left alone", !e.mutedIDs.contains(gone))
         check("mute: touching the window is not crossing it",
@@ -89,7 +92,7 @@ enum Run {
               && near(out1.take.sourceOffset, 0))
         check("after the zone: flagged outside", out1.take.outsideWindow)
         check("after the zone: previous takes NOT muted", out1.mutedIDs.isEmpty)
-        check("after the zone: still below the others", out1.take.lane == 1)
+        check("after the zone: still on top of the others, which go down", out1.take.lane == 0 && out1.shiftIDs == [t1])
         let out2 = plan(10, 20, origin: 0, length: 10)                                       // ends where the zone begins
         check("before the zone (touching): outside, whole", out2.take.outsideWindow && near(out2.take.duration, 10))
         let out3 = plan(10, 20, origin: 20, length: 4)                                       // begins where the zone ends
@@ -100,7 +103,11 @@ enum Run {
         check("an empty capture does not cross anything", z.take.outsideWindow && z.mutedIDs.isEmpty)
         check("no children: lane 0", plan(0, 5, origin: 0, length: 5).take.lane == 0)
         let neg = plan(0, 5, [child(0, 5, lane: -2, id: t1)], origin: 0, length: 5)
-        check("a child on a negative lane: the take goes just below it", neg.take.lane == -1)
+        check("a child on a negative lane: the take takes its lane, the child goes down", neg.take.lane == -2
+              && neg.shiftIDs == [t1])
+        let gap = plan(0, 5, [child(0, 5, lane: 3, id: t1), child(0, 5, lane: 5, id: t2)], origin: 0, length: 5)
+        check("takes starting on lane 3: the new one takes lane 3, both go down", gap.take.lane == 3 && gap.shiftIDs == [t1, t2])
+        check("no children: nothing to shift", plan(0, 5, origin: 0, length: 5).shiftIDs.isEmpty)
 
         // ── Muting at the START of the recording ───────────────────────────────────────────────────────────
         let o1 = UUID(), o2 = UUID(), o3 = UUID(), om = UUID()
@@ -121,14 +128,51 @@ enum Run {
                         mutedAtStart: [o1, o2])
         check("stop after a mute at the start: the plan still lists them as muted", s1.mutedIDs == [o1, o2])
         check("... nothing to give back", s1.unmuteIDs.isEmpty)
-        check("... the take goes below the lowest child (lane 4)", s1.take.lane == 4)
+        check("... the take goes on the top lane (lane 0), the four children go down", s1.take.lane == 0
+              && s1.shiftIDs == [o1, o2, o3, om])
         let s2 = P.plan(windowStart: 10, windowEnd: 20, children: nowMuted, capture: .init(origin: 25, length: 4),
                         mutedAtStart: [o1, o2])
         check("capture outside the window: nothing muted, the early mutes are given back",
               s2.take.outsideWindow && s2.mutedIDs.isEmpty && s2.unmuteIDs == [o1, o2])
         let s3 = P.plan(windowStart: 10, windowEnd: 20, children: prev, capture: .init(origin: 5, length: 30))
         check("without mutedAtStart the plan is what it was (mutes at the stop)", s3.mutedIDs == [o1, o2] && s3.unmuteIDs.isEmpty)
-        check("takeLane = the plan's lane", P.takeLane(children: prev) == 4 && P.takeLane(children: []) == 0)
+        check("takeLane = the plan's lane (the top one)", P.takeLane(children: prev) == 0 && P.takeLane(children: []) == 0)
+
+        // ── The "add" mode: nothing is muted, nothing given back ─────────────────────────────────────────────
+        check("add: no mute at the start", P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev, startPosition: 0,
+                                                          mutesPrevious: false).isEmpty)
+        check("add (explicit true): the default mode still mutes", P.mutesAtStart(windowStart: 10, windowEnd: 20, children: prev,
+                                                                                  startPosition: 0, mutesPrevious: true) == [o1, o2])
+        let ad = P.plan(windowStart: 10, windowEnd: 20, children: prev, capture: .init(origin: 5, length: 30), mutesPrevious: false)
+        check("add: the plan mutes nothing", ad.mutedIDs.isEmpty && ad.unmuteIDs.isEmpty)
+        check("add: the take is still cropped and on the top lane, the children down",
+              near(ad.take.start, 10) && near(ad.take.duration, 10) && ad.take.lane == 0 && ad.shiftIDs == [o1, o2, o3, om])
+        let adOut = P.plan(windowStart: 10, windowEnd: 20, children: prev, capture: .init(origin: 25, length: 4), mutesPrevious: false)
+        check("add, outside the window: flagged outside, nothing muted or given back",
+              adOut.take.outsideWindow && adOut.mutedIDs.isEmpty && adOut.unmuteIDs.isEmpty && adOut.shiftIDs.count == 4)
+
+        // ── The order after several takes: the newest on top, the older ones below, in either mode ──────────
+        func record(_ kids: [P.Child], mutesPrevious: Bool, _ id: UUID) -> [P.Child] {
+            let p = P.plan(windowStart: 10, windowEnd: 20, children: kids, capture: .init(origin: 5, length: 30),
+                           mutesPrevious: mutesPrevious)
+            let moved = kids.map { k in
+                P.Child(id: k.id, start: k.start, end: k.end, lane: p.shiftIDs.contains(k.id) ? k.lane + 1 : k.lane,
+                        isMuted: k.isMuted || p.mutedIDs.contains(k.id))
+            }
+            return moved + [P.Child(id: id, start: p.take.start, end: p.take.start + p.take.duration, lane: p.take.lane, isMuted: false)]
+        }
+        let a1 = UUID(), a2 = UUID(), a3 = UUID()
+        for mode in [true, false] {
+            var z = record([], mutesPrevious: mode, a1)
+            z = record(z, mutesPrevious: mode, a2)
+            z = record(z, mutesPrevious: mode, a3)
+            let order = z.sorted { $0.lane < $1.lane }.map(\.id)
+            check("\(mode ? "mute" : "add"): after three takes the lanes read newest, middle, oldest", order == [a3, a2, a1]
+                  && z.map(\.lane).sorted() == [0, 1, 2])
+            let audible = z.filter { !$0.isMuted }.map(\.id)
+            check("\(mode ? "mute" : "add"): audible = \(mode ? "the newest only" : "all three")",
+                  Set(audible) == (mode ? [a3] : [a1, a2, a3]))
+        }
 
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)

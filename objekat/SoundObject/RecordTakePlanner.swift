@@ -10,12 +10,16 @@ import Foundation
 //   - the take is the file CROPPED to the zone's window: it starts at max(window start, file origin) and
 //     ends at min(window end, file end); `sourceOffset` is how far into the file it starts (seconds of
 //     the SOURCE, the model's convention, speed 1);
-//   - it goes on the lane BELOW the lowest child (older takes on top, the newest at the bottom);
-//   - every direct child not muted yet that crosses the window is muted whole — the previous takes stop
-//     being heard, the new one replaces them. One undo gives it all back. They are muted when the
-//     recording STARTS (`mutesAtStart`: they would be heard while the next one is played), unless the
-//     press already lies beyond the window; at the stop `plan` is told which ones were (`mutedAtStart`)
-//     and says which of them to give back when the capture turns out not to cross the window;
+//   - it goes on the TOP lane of the zone's takes (the newest on top, the older ones below it): the
+//     lane of the highest child, and every existing direct child goes down by one lane to make room
+//     (`Plan.shiftIDs`), whatever the zone's take mode;
+//   - in the default mode (`mutesPrevious`, "mute") every direct child not muted yet that crosses the
+//     window is muted whole — the previous takes stop being heard, the new one replaces them; in the
+//     other ("add") nothing is muted and the older takes stay audible. One undo gives it all back. They
+//     are muted when the recording STARTS (`mutesAtStart`: they would be heard while the next one is
+//     played), unless the press already lies beyond the window; at the stop `plan` is told which ones
+//     were (`mutedAtStart`) and says which of them to give back when the capture turns out not to cross
+//     the window;
 //   - a capture that does not cross the window at all (record pressed after the zone ended, or stopped
 //     before it began) still gives an object, over the WHOLE capture, in the grey area of the zone —
 //     there it is outside the window, hence silent — and then nothing is muted: the zone would go dumb.
@@ -58,10 +62,13 @@ enum RecordTakePlanner {
         let mutedIDs: [UUID]
         /// Children muted at the start that must be heard again: the capture did not cross the window.
         var unmuteIDs: [UUID] = []
+        /// The children that go DOWN one lane, so that the take can sit on the top lane: all of them.
+        var shiftIDs: [UUID] = []
     }
 
-    /// The lane (the zone's own numbering) a take goes on: just below the lowest child.
-    static func takeLane(children: [Child]) -> Int { (children.map(\.lane).max() ?? -1) + 1 }
+    /// The lane (the zone's own numbering) a take goes on: the lane of the highest child (0 in an empty
+    /// zone) — the children are shifted down by one (`Plan.shiftIDs`) to make room.
+    static func takeLane(children: [Child]) -> Int { children.map(\.lane).min() ?? 0 }
 
     /// The unmuted children that cross the window.
     private static func crossing(_ children: [Child], _ windowStart: Double, _ windowEnd: Double) -> [UUID] {
@@ -70,17 +77,21 @@ enum RecordTakePlanner {
 
     /// The previous takes to mute when the recording STARTS at `startPosition`: the unmuted children that
     /// cross the window — none when the press already lies at or beyond the window's end (the capture
-    /// cannot cross it, so nothing would replace them).
+    /// cannot cross it, so nothing would replace them), and none in the "add" mode (`mutesPrevious`
+    /// false: the older takes stay audible).
     static func mutesAtStart(windowStart: Double, windowEnd: Double, children: [Child],
-                             startPosition: Double) -> [UUID] {
-        startPosition < windowEnd ? crossing(children, windowStart, windowEnd) : []
+                             startPosition: Double, mutesPrevious: Bool = true) -> [UUID] {
+        mutesPrevious && startPosition < windowEnd ? crossing(children, windowStart, windowEnd) : []
     }
 
-    /// - Parameter mutedAtStart: the children `mutesAtStart` muted when the recording began. `children`
-    ///   still tells them muted; the plan reads them as they were before.
+    /// - Parameters:
+    ///   - mutesPrevious: the zone's take mode: false = "add", the take mutes nothing.
+    ///   - mutedAtStart: the children `mutesAtStart` muted when the recording began. `children`
+    ///     still tells them muted; the plan reads them as they were before.
     static func plan(windowStart: Double, windowEnd: Double, children: [Child], capture: Capture,
-                     mutedAtStart: Set<UUID> = []) -> Plan {
+                     mutesPrevious: Bool = true, mutedAtStart: Set<UUID> = []) -> Plan {
         let lane = takeLane(children: children)
+        let shift = children.map(\.id)
         let before = children.map { c in
             mutedAtStart.contains(c.id) ? Child(id: c.id, start: c.start, end: c.end, lane: c.lane, isMuted: false) : c
         }
@@ -90,10 +101,12 @@ enum RecordTakePlanner {
             return Plan(take: Take(start: capture.origin, duration: capture.length, sourceOffset: 0,
                                    lane: lane, outsideWindow: true),
                         mutedIDs: [],
-                        unmuteIDs: before.map(\.id).filter { mutedAtStart.contains($0) })
+                        unmuteIDs: before.map(\.id).filter { mutedAtStart.contains($0) },
+                        shiftIDs: shift)
         }
         return Plan(take: Take(start: start, duration: end - start, sourceOffset: start - capture.origin,
                                lane: lane, outsideWindow: false),
-                    mutedIDs: crossing(before, windowStart, windowEnd))
+                    mutedIDs: mutesPrevious ? crossing(before, windowStart, windowEnd) : [],
+                    shiftIDs: shift)
     }
 }

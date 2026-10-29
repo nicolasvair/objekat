@@ -210,7 +210,7 @@ try:
         c.send("project.save")
         doc = json.load(open(path))
         ri = doc.get("recordInputs") or {}
-        check("written: format 33 with recordInputs", doc.get("version") == 33 and bool(ri), (doc.get("version"), ri))
+        check("written: format 34 with recordInputs", doc.get("version") == 34 and bool(ri), (doc.get("version"), ri))
         check("written: the pairs [0, 1] and the names", ri.get("pairs") == [0, 1] and ri.get("names", {}).get("3") == "Voix"
               and ri.get("names", {}).get("1-2") == "Guitare", ri)
         check("written: the card it was made on is indicated", isinstance(ri.get("deviceName"), str), ri)
