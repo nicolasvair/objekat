@@ -629,6 +629,9 @@ struct ClipMixZoneView: View {
                     .fixedSize()
                     .layoutPriority(1)
                 Spacer(minLength: 0)
+                if let by = mix.playedBy {
+                    playedByLabel(by)
+                } else {
                 HStack(spacing: 3) {
                     // keyStep = the DETENT itself (@see EditViewModel+Pan): the arrows walk the
                     // tenths, they do not halve them. The drag stays continuous here and is brought
@@ -653,6 +656,7 @@ struct ClipMixZoneView: View {
                     }
                     .automationLocked(mix.volumeAutomated)
                 }
+                }   // playedBy
                 HStack(spacing: 3) {
                     muteButton
                     soloButton
@@ -662,6 +666,21 @@ struct ClipMixZoneView: View {
             .frame(width: rect.width, height: rect.height, alignment: .leading)
             .position(x: rect.midX, y: rect.midY)
         }
+    }
+
+    /// An empty clip: no volume nor pan, the host's instrument plays its notes. Orange when nobody does.
+    private func playedByLabel(_ by: SynopticPlayedBy) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: by.hostName == nil ? "exclamationmark.triangle" : "pianokeys.inverse")
+                .font(.system(size: 9))
+                .foregroundStyle(by.hostName == nil ? Color.orange : Color.secondary)
+            Text(verbatim: by.hostName.map { L("synoptic.mix.playedBy", $0) } ?? L("synoptic.mix.noInstrument"))
+                .font(.system(size: 10, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundStyle(by.hostName == nil ? Color.orange : Color.secondary)
+        }
+        .help(by.hostName.map { L("synoptic.mix.playedBy.help", $0) } ?? L("synoptic.mix.noInstrument.help"))
     }
 
     private var muteButton: some View {
@@ -879,7 +898,6 @@ struct RecordInputZoneView: View {
                     inputMenu
                 }
                 takeModeMenu
-                if input.midi != nil { instrumentMenu }
             }
             .padding(.horizontal, 12)
             .frame(width: rect.width, height: rect.height, alignment: .center)
@@ -964,46 +982,6 @@ struct RecordInputZoneView: View {
             if choice.ref == input.ref { Label(choice.name, systemImage: "checkmark") }
             else { Text(verbatim: choice.name) }
         }
-    }
-
-    // MARK: The instrument (a MIDI zone)
-
-    /// The zone's instrument: played while the zone is armed, copied into each take. Without one an armed zone
-    /// still records, but its takes are MUTED — the icon says so, discreetly.
-    private var instrumentMenu: some View {
-        let name = input.midi?.instrumentName
-        return Menu {
-            Button { actions.onAddInstrument?() } label: { Text(L("synoptic.input.instrument.choose")) }
-            if name != nil {
-                Button { actions.onOpenInstrumentEditor?() } label: { Text(L("synoptic.input.instrument.edit")) }
-                Divider()
-                Button(role: .destructive) { actions.onRemoveInstrument?() } label: {
-                    Text(L("synoptic.input.instrument.remove"))
-                }
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: name == nil ? "exclamationmark.triangle" : "pianokeys.inverse")
-                    .font(.system(size: 9))
-                    .foregroundStyle(name == nil ? Color.orange : Color.secondary)
-                Text(verbatim: name ?? L("synoptic.input.instrument.none"))
-                    .font(.system(size: 10, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(name == nil ? Color.secondary : Color.primary)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 7))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 7).frame(height: 20)
-            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(maxWidth: .infinity)
-        .help(name == nil ? L("synoptic.input.instrument.warning") : L("synoptic.input.instrument.help"))
     }
 
     // MARK: The take mode

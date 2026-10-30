@@ -19138,121 +19138,6 @@
         }
       }
     },
-    "synoptic.input.instrument.choose": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose an instrument…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Elegir un instrumento…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choisir un instrument…"
-          }
-        }
-      }
-    },
-    "synoptic.input.instrument.edit": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Open the editor"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Abrir el editor"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ouvrir l'éditeur"
-          }
-        }
-      }
-    },
-    "synoptic.input.instrument.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The instrument played while the zone is armed, copied into each take."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El instrumento que suena mientras la zona está armada, copiado en cada toma."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "L'instrument joué pendant que la zone est armée, copié dans chaque prise."
-          }
-        }
-      }
-    },
-    "synoptic.input.instrument.none": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No instrument"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sin instrumento"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aucun instrument"
-          }
-        }
-      }
-    },
-    "synoptic.input.instrument.remove": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Remove the instrument"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Quitar el instrumento"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Retirer l'instrument"
-          }
-        }
-      }
-    },
     "synoptic.input.instrument.warning": {
       "extractionState": "manual",
       "localizations": {
@@ -19962,6 +19847,98 @@
           "stringUnit": {
             "state": "translated",
             "value": "groupe"
+          }
+        }
+      }
+    },
+    "synoptic.mix.noInstrument": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no instrument"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sin instrumento"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "aucun instrument"
+          }
+        }
+      }
+    },
+    "synoptic.mix.noInstrument.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No group above this clip carries an instrument: its notes are muted."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ningún grupo sobre este clip lleva un instrumento: sus notas están silenciadas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun groupe au-dessus de ce clip ne porte d'instrument : ses notes sont muettes."
+          }
+        }
+      }
+    },
+    "synoptic.mix.playedBy": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "played by %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tocado por %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "joué par %@"
+          }
+        }
+      }
+    },
+    "synoptic.mix.playedBy.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This clip has no volume, pan or effects of its own: the instrument of the group “%@” plays its notes."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este clip no tiene volumen, pan ni efectos propios: el instrumento del grupo «%@» toca sus notas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce clip n'a ni volume, ni pan, ni effets propres : l'instrument du groupe « %@ » joue ses notes."
           }
         }
       }

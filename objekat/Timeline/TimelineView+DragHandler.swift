@@ -686,7 +686,8 @@ extension TimelineView {
                     handleW: handleWidth(blockWidth: bw),
                     fadeInPx:  min(item.fadeIn  * pixelsPerSecond, bw),
                     fadeOutPx: min(item.fadeOut * pixelsPerSecond, bw),
-                    loopInPx: loopInPx, loopOutPx: loopOutPx)
+                    loopInPx: loopInPx, loopOutPx: loopOutPx,
+                    hasFades: !GroupInstrumentRule.isEmptyClip(item))
             }
 
             // TimeSelection: an empty canvas OR the top-centre zone of the hit
@@ -1895,7 +1896,8 @@ extension TimelineView {
                 }
             }
 
-            guard let item = hitItem else { return }
+            // An empty MIDI clip has no volume of its own (a host plays it, plan 2.5): nothing to grab.
+            guard let item = hitItem, !GroupInstrumentRule.isEmptyClip(item) else { return }
             let bx = hitAbsStart * pixelsPerSecond
             let bw = max(item.duration * pixelsPerSecond, 2)
             // The drag zone (the right 40%) bounded by the visible portion — aligned on the clamped rendering.
@@ -1976,7 +1978,7 @@ extension TimelineView {
                 }
             }
 
-            guard let item = hitItem else { return }
+            guard let item = hitItem, !GroupInstrumentRule.isEmptyClip(item) else { return }   // no pan on an empty clip (plan 2.5)
             // Pan is independent per clip → the whole selection (children of groups included),
             // like the pan scroll.
             if !viewModel.selectedIDs.contains(item.id) {

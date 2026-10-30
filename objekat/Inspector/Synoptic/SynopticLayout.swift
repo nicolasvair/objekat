@@ -869,8 +869,6 @@ enum SynopticLayout {
     // zone; TWO rows — the title plus the input's menu, then the take mode's menu.
     static let inputZoneW: CGFloat = stemsZoneW
     static let inputZoneH: CGFloat = 66
-    /// What a MIDI recording zone's input zone adds: the instrument row.
-    static let inputZoneMidiExtra: CGFloat = 26
     /// The wire between the input zone and the head zone.
     static let inputGap: CGFloat = 24
 
@@ -965,7 +963,7 @@ enum SynopticLayout {
                         midi: Bool = false, audioFile: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         stems: Bool = false,
-                        input: Bool = false, inputMidi: Bool = false,
+                        input: Bool = false,
                         sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
                         infiniteOption: Bool = false,
                         objectFrame: Bool = false, clipOptionsExpanded: Bool = true) -> Diagram {
@@ -1004,7 +1002,7 @@ enum SynopticLayout {
         // The 'input' zone, at the very top and outside the frame; the head (and so the frame) starts under it.
         let inputZone: CGRect? = input
             ? CGRect(x: centerX - inputZoneW / 2, y: margin, width: inputZoneW,
-                     height: inputZoneH + (inputMidi ? inputZoneMidiExtra : 0)) : nil
+                     height: inputZoneH) : nil
         let headTop = inputZone.map { $0.maxY + inputGap } ?? margin
 
         // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP

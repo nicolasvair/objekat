@@ -189,7 +189,7 @@ extension EditViewModel {
         guard let engine, let fb = block.fxBlock else { return }
         let out = fxOutput(of: block)
         for leaf in fb.plugins {
-            engine.setPlugin(leaf.id.uuidString, enabled: leaf.isEnabled && out.isEnabled,
+            engine.setPlugin(leaf.id.uuidString, enabled: engineEnabled(leaf.isEnabled && out.isEnabled, onHost: hostID),
                              forObjectID: hostID.uuidString)
         }
     }

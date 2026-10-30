@@ -207,7 +207,7 @@ extension EditViewModel {
 
     /// Serialises the model tree into the spec the engine compiler expects (recursive over the
     /// voices of a parallel block).
-    private func rackSpec(for plugins: [ObjectPlugin], topLevel: Bool = false) -> [[String: Any]] {
+    private func rackSpec(for plugins: [ObjectPlugin], topLevel: Bool = false, passive: Bool = false) -> [[String: Any]] {
         plugins.enumerated().compactMap { (k, p) in
             // A send's marker is not a plugin: the engine has nothing to resolve for it. It travels as an
             // ORDERING TOKEN, `{kind: "send", aux}`, at the root only (a marker lives nowhere else): the
@@ -225,7 +225,7 @@ extension EditViewModel {
             if let rack = p.rack {
                 return ["id": p.id.uuidString,
                         "kind": "rack",
-                        "voices": rack.voices.map { rackSpec(for: $0) },
+                        "voices": rack.voices.map { rackSpec(for: $0, passive: passive) },
                         // The effective gain (silence for muted branches) → the mute survives the recompile.
                         "wetDb": Self.effectiveWetDb(rack).map { Double($0) }]
             }
@@ -238,7 +238,7 @@ extension EditViewModel {
                 return ["id":      p.id.uuidString,
                         "kind":    "fxlink",
                         "plugins": rackSpec(for: block.plugins.map { leaf in
-                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l })]
+                            var l = leaf; l.isEnabled = leaf.isEnabled && out.isEnabled; return l }, passive: passive)]
             }
             var d: [String: Any] = [
                 "id":         p.id.uuidString,
@@ -246,7 +246,8 @@ extension EditViewModel {
                 "identifier": p.identifier,
                 "format":     p.formatName,
                 "name":       p.name,
-                "enabled":    p.isEnabled
+                // A passive chain (an empty clip's, a sub-group's below a host) is compiled but off: plan 2.5.
+                "enabled":    p.isEnabled && !passive
             ]
             if let s = p.stateXML, !s.isEmpty { d["stateXML"] = s }
             // What a one-input plugin is fed from a stereo signal (@see MonoFold). A plugin with NO choice (a
@@ -275,8 +276,13 @@ extension EditViewModel {
         let owner = find(id: objectID)
         let sendChains = sendChainSpec(sender: objectID, sends: sends ?? owner?.sends ?? [],
                                        isAux: owner?.isAux ?? false) { rackSpec(for: $0) }
+        // Plan 2.5: the FX of an empty clip, or of a sub-group below a host, are compiled but disabled. The walk up
+        // the tree is paid only by a chain that has something in it.
+        let passive = !plugins.isEmpty && (owner.map { o in
+            isChainPassive(o, ancestors: { ancestorChain(of: objectID) }) } ?? false)
+        if passive { passiveChainIDs.insert(objectID) } else { passiveChainIDs.remove(objectID) }
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
-                                                tree: rackSpec(for: plugins, topLevel: true),
+                                                tree: rackSpec(for: plugins, topLevel: true, passive: passive),
                                                 sendChains: sendChains) as? [String] ?? []
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
         if !failed.isEmpty {
@@ -421,6 +427,7 @@ extension EditViewModel {
         pushUndo()
         update(id: objectID) { $0.instruments = [inst] }
         if let updated = find(id: objectID) { syncInstruments(updated) }
+        refreshPassiveChains()      // a host appeared: the FX of the sub-groups below it go passive
         isDirty = true
     }
 
@@ -430,6 +437,7 @@ extension EditViewModel {
         pushUndo()
         update(id: objectID) { $0.instruments = [] }
         engine?.removeInstrument(forObjectID: objectID.uuidString)
+        refreshPassiveChains()      // the host is gone: the FX below it come back
         isDirty = true
     }
 
@@ -507,6 +515,7 @@ extension EditViewModel {
         if let gid {
             engine.setPluginLinkGroup(placed.id.uuidString, groupID: gid.uuidString)
         }
+        refreshPassiveChains()
         isDirty = true
     }
 
@@ -555,7 +564,8 @@ extension EditViewModel {
             return
         }
         pushUndo()
-        engine.setPlugin(pluginID.uuidString, enabled: newEnabled, forObjectID: engineHostKey(objectID).uuidString)
+        engine.setPlugin(pluginID.uuidString, enabled: engineEnabled(newEnabled, onHost: objectID),
+                         forObjectID: engineHostKey(objectID).uuidString)
         updateChainPlugins(objectID) { p in p = Self.settingEnabled(pluginID, newEnabled, in: p) }
         isDirty = true
     }

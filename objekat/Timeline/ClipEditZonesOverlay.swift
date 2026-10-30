@@ -30,7 +30,8 @@ enum ClipEditZone: Equatable {
                         blockWidth bw: Double, blockHeight bh: Double,
                         handleW: Double,
                         fadeInPx: Double, fadeOutPx: Double,
-                        loopInPx: Double? = nil, loopOutPx: Double? = nil) -> ClipEditZone {
+                        loopInPx: Double? = nil, loopOutPx: Double? = nil,
+                        hasFades: Bool = true) -> ClipEditZone {
         let loopTol = 5.0
         if let lip = loopInPx, abs(localX - lip) <= loopTol { return .loopIn }
         if let lop = loopOutPx, abs(localX - lop) <= loopTol { return .loopOut }
@@ -39,9 +40,10 @@ enum ClipEditZone: Equatable {
         // The HANDLES first: each edge's own band answers for that edge whatever lies over it. A
         // fade that is set is therefore ALWAYS grabbable by at least the handle, however short it
         // is on screen, and a long fade from the opposite edge can no longer confiscate it.
-        if handleW > 0 && localX < handleW      { return upper ? .fadeIn  : .trimLeft }
-        if handleW > 0 && localX > bw - handleW { return upper ? .fadeOut : .resizeRight }
-        if bh > 0, upper {
+        // An EMPTY MIDI clip has no fade of its own (a host plays it, plan 2.5): its upper handles are plain body.
+        if handleW > 0 && localX < handleW      { return upper ? (hasFades ? .fadeIn : .timeSelect) : .trimLeft }
+        if handleW > 0 && localX > bw - handleW { return upper ? (hasFades ? .fadeOut : .timeSelect) : .resizeRight }
+        if bh > 0, upper, hasFades {
             // Fade triangles: (0,0)-(fiPx,0)-(0,bh) and (bw-foPx,0)-(bw,0)-(bw,bh).
             if fadeInPx > 1, (localX / fadeInPx + localY / bh) <= 1 { return .fadeIn }
             if fadeOutPx > 1, ((bw - localX) / fadeOutPx + localY / bh) <= 1 { return .fadeOut }

@@ -19,20 +19,24 @@ extension EditViewModel {
         return [target] + ancestorChain(of: id)
     }
 
+    /// The words of a refusal (literal keys, so that `xcstrings.py orphans` sees them).
+    static func refusalText(_ refusal: GroupInstrumentRefusal) -> String {
+        switch refusal {
+        case .audioChild:             return L("groupInstrument.refused.audioChild")
+        case .auxChild:               return L("groupInstrument.refused.auxChild")
+        case .childWithInstrument:    return L("groupInstrument.refused.childWithInstrument")
+        case .consolidatedChild:      return L("groupInstrument.refused.consolidatedChild")
+        case .audioInput:             return L("groupInstrument.refused.audioInput")
+        case .insideInstrumentGroup:  return L("groupInstrument.refused.insideInstrumentGroup")
+        }
+    }
+
     /// Records and announces a refusal. Returns true if there was one.
     @discardableResult
     func refuseGroupInstrument(_ refusal: GroupInstrumentRefusal?) -> Bool {
         guard let refusal else { return false }
         groupInstrumentRefusal = refusal
-        let reason: String
-        switch refusal {
-        case .audioChild:             reason = L("groupInstrument.refused.audioChild")
-        case .auxChild:               reason = L("groupInstrument.refused.auxChild")
-        case .childWithInstrument:    reason = L("groupInstrument.refused.childWithInstrument")
-        case .consolidatedChild:      reason = L("groupInstrument.refused.consolidatedChild")
-        case .audioInput:             reason = L("groupInstrument.refused.audioInput")
-        case .insideInstrumentGroup:  reason = L("groupInstrument.refused.insideInstrumentGroup")
-        }
+        let reason = Self.refusalText(refusal)
         notify(L("groupInstrument.refused.title"), reason)
         return true
     }
@@ -118,5 +122,59 @@ extension EditViewModel {
     func takeGroupInstrumentRefusal() -> GroupInstrumentRefusal? {
         defer { groupInstrumentRefusal = nil }
         return groupInstrumentRefusal
+    }
+
+    // MARK: What the synoptic shows (E7)
+
+    /// Why the instrument slot of the group `id` is closed, as a sentence — nil when an instrument can be put there
+    /// (or when it already has one). Pure: nothing is announced, the slot only greys and says why in its tooltip.
+    func instrumentSlotRefusalText(of id: UUID) -> String? {
+        guard let object = find(id: id), object.isGroup, object.instruments.isEmpty else { return nil }
+        return GroupInstrumentRule.refusal(puttingInstrumentOn: object, ancestors: ancestorChain(of: id))
+            .map { Self.refusalText($0) }
+    }
+
+    /// The name of the group that plays the notes of the empty clip `object` (nil = nobody: it is muted).
+    func hostName(ofEmptyClip object: SoundObject) -> String? {
+        GroupInstrumentRule.host(of: object, ancestors: ancestorChain(of: object.id))
+            .flatMap { find(id: $0)?.displayName }
+    }
+
+    // MARK: Passive chains (plan 2.5)
+    //
+    // The FX of an empty clip, and of a sub-group below a host, are compiled but DISABLED on the engine side: an
+    // effect that has no MIDI to pass would eat the notes of the host (P11). The model keeps the user's choice
+    // (`isEnabled`), the engine gets `isEnabled && !passive`.
+
+    /// Is the chain of `object` passive? `ancestors` (parent first) is read only when the answer depends on it.
+    func isChainPassive(_ object: SoundObject, ancestors: () -> [SoundObject]) -> Bool {
+        if GroupInstrumentRule.isEmptyClip(object) { return true }
+        guard object.isGroup, object.instruments.isEmpty else { return false }
+        return ancestors().contains { $0.isGroup && !$0.instruments.isEmpty }
+    }
+
+    /// The on/off to hand the engine for a plugin of `hostID`: the user's choice, unless the chain is passive.
+    /// The hot pushes (a bypass with no recompile) go through here, otherwise a click would wake a passive FX.
+    func engineEnabled(_ enabled: Bool, onHost hostID: UUID) -> Bool {
+        guard enabled, let host = find(id: hostID) else { return enabled }
+        return !isChainPassive(host, ancestors: { ancestorChain(of: hostID) })
+    }
+
+    /// Recompiles the rack of every object whose passivity changed since it was last pushed (a host that appeared,
+    /// vanished or changed place). Cheap when nothing changed: one walk, no engine call.
+    func refreshPassiveChains() {
+        guard engine != nil else { return }
+        var changed: [SoundObject] = []
+        func walk(_ nodes: [SoundObject], underHost: Bool) {
+            for o in nodes {
+                let passive = GroupInstrumentRule.isEmptyClip(o) || (o.isGroup && o.instruments.isEmpty && underHost)
+                if !o.plugins.isEmpty, passive != passiveChainIDs.contains(o.id) { changed.append(o) }
+                if case .group(let children, _) = o.kind {
+                    walk(children, underHost: underHost || (o.isGroup && !o.instruments.isEmpty))
+                }
+            }
+        }
+        walk(items, underHost: false)
+        for o in changed { compileRack(objectID: o.id) }
     }
 }

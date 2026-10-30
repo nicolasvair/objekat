@@ -24,6 +24,12 @@ struct SynopticView: View {
     /// A MIDI clip: shows the 'MIDI' zone (the instrument) at the head instead of the Source pill.
     var isMIDI: Bool = false
     var midiInstrument: SynopticPlugin? = nil
+    /// A group whose instrument slot is closed (the rule refuses): the slot greys and this is its tooltip.
+    var instrumentSlotRefusal: String? = nil
+    /// An orange triangle on the empty slot: a MIDI recording zone with no instrument (its takes would be muted).
+    var instrumentWarning: Bool = false
+    /// An empty MIDI clip: its FX are compiled but off (plan 2.5), the chain is drawn greyed.
+    var fxPassive: Bool = false
     /// An audio clip: shows the 'audio file' zone (speed / st / bpm) at the head. nil otherwise.
     var audioFile: SynopticAudioFile? = nil
     /// The output mix (volume / pan / mute) in the 'clip' zone. nil for a bus.
@@ -266,6 +272,7 @@ struct SynopticView: View {
                 .position(x: vg.center.x + 48, y: vg.center.y)
             }
             }   // Group FX
+            .opacity(fxPassive ? 0.45 : 1)      // plan 2.5: compiled but off, the chain of an empty clip is greyed
 
             // The '+' on the wire mixer → stems: a send taken after the fader, its only gesture (D2) — a
             // click opens the same "Send to…" menu. Not in the FX group: a closed consolidated object keeps
@@ -510,7 +517,7 @@ struct SynopticView: View {
                                midi: isMIDI, audioFile: audioFile != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                stems: stems != nil || groupRouting != nil,
-                               input: recordInput != nil, inputMidi: recordInput?.midi != nil,
+                               input: recordInput != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                infiniteOption: infinite != nil,
                                // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
@@ -788,6 +795,21 @@ struct SynopticView: View {
                 .position(x: rect.maxX - 14, y: rect.minY + 11)
             }
 
+            // A GROUP's head is this zone too, so the 'infinite' option it used to carry sits here, beside the loop.
+            if let inf = infinite {
+                Button { actions.onToggleInfinite?() } label: {
+                    Image(systemName: "infinity")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(inf.isOn ? Color.accentColor : Color.secondary)
+                        .padding(4)
+                        .background(Circle()
+                            .fill((inf.isOn ? Color.accentColor : Color.secondary).opacity(inf.isOn ? 0.18 : 0.10)))
+                }
+                .buttonStyle(.plain)
+                .help(L("synoptic.infinite.help", inf.kindLabel))
+                .position(x: rect.maxX - (loop != nil ? 40 : 14), y: rect.minY + 11)
+            }
+
             if let slot {
                 if let inst = midiInstrument {
                     SynopticCardView(
@@ -806,21 +828,26 @@ struct SynopticView: View {
                     .frame(width: slot.width, height: slot.height)
                     .position(x: slot.midX, y: slot.midY)
                 } else {
+                    let closed = instrumentSlotRefusal != nil
                     Button { actions.onAddInstrument?() } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "plus")
+                            Image(systemName: instrumentWarning && !closed ? "exclamationmark.triangle" : "plus")
+                                .foregroundStyle(instrumentWarning && !closed ? Color.orange : Color.secondary)
                             Text(L("synoptic.instrument"))
                         }
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .frame(width: slot.width, height: slot.height)
                         .background(RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.secondary.opacity(0.5),
+                            .strokeBorder((instrumentWarning && !closed ? Color.orange : Color.secondary).opacity(0.5),
                                           style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(L("synoptic.addInstrument"))
+                    .disabled(closed)
+                    .opacity(closed ? 0.4 : 1)
+                    .help(instrumentSlotRefusal
+                          ?? (instrumentWarning ? L("synoptic.input.instrument.warning") : L("synoptic.addInstrument")))
                     .position(x: slot.midX, y: slot.midY)
                 }
             }

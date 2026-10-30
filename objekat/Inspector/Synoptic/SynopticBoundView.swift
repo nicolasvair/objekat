@@ -81,6 +81,12 @@ struct SynopticBoundView: View {
                                                        fxLinkInfo: { viewModel.synopticFXInfo($0) })
 
         let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0) }
+        // The instrument slot at the chain's head: a MIDI clip's, and now a GROUP's (a consolidated instance has none).
+        // A group where no instrument can go keeps the slot, greyed, with the reason in its tooltip.
+        let showsInstrumentSlot = obj.map { $0.isMIDI || ($0.isGroup && !$0.isConsolidateInstance) } ?? false
+        let instrumentSlotRefusal = obj.flatMap { viewModel.instrumentSlotRefusalText(of: $0.id) }
+        // A MIDI recording zone with no instrument records MUTED takes: the slot says so in orange.
+        let instrumentWarning = obj.map { $0.isGroup && $0.recordMidiInput != nil && $0.instruments.isEmpty } ?? false
         // What this view asks the engine to measure: every card's plugin (gain stages included) and the
         // instrument. Compared by value, so the registration follows the chain, not each render.
         let meteredIDs = meteredPluginIDs()
@@ -119,7 +125,10 @@ struct SynopticBoundView: View {
             return SynopticMix(title: title, volumeDb: vol, pan: pan, isMuted: o.isMuted,
                                solo: solo,
                                volumeAutomated: viewModel.isAutomated(.volume, on: o),
-                               panAutomated:    viewModel.isAutomated(.pan, on: o))
+                               panAutomated:    viewModel.isAutomated(.pan, on: o),
+                               // An empty clip: no volume nor pan, its host plays it (plan 2.5).
+                               playedBy: GroupInstrumentRule.isEmptyClip(o)
+                                   ? SynopticPlayedBy(hostName: viewModel.hostName(ofEmptyClip: o)) : nil)
         }
 
         // Output zone: a group's CHILD is routed to its group (read only, the stem being
@@ -149,8 +158,7 @@ struct SynopticBoundView: View {
             }
             let midiSide: SynopticMidiInput? = o.recordMidiInput.map { r in
                 SynopticMidiInput(ref: r, name: viewModel.midiInputName(r),
-                                  present: viewModel.resolvedMidiInput(r) != nil,
-                                  instrumentName: o.instruments.first?.name)
+                                  present: viewModel.resolvedMidiInput(r) != nil)
             }
             recordInput = SynopticRecordInput(
                 ref: o.recordInput,
@@ -252,7 +260,10 @@ struct SynopticBoundView: View {
                             selectedInstrumentID: $selectedInstrumentID, scrolls: scrolls,
                             // The object's frame takes the block's own colour (§B.5, D7); a bus has none.
                             frameColor: obj.map { $0.customColor ?? viewModel.stemColor(for: $0.id) },
-                            isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
+                            isMIDI: showsInstrumentSlot, midiInstrument: instLeaf,
+                            instrumentSlotRefusal: instrumentSlotRefusal,
+                            instrumentWarning: instrumentWarning,
+                            fxPassive: obj.map { o in viewModel.isChainPassive(o, ancestors: { viewModel.ancestorChain(of: o.id) }) } ?? false,
                             audioFile: audioFile, mix: mix, stems: stems,
                             recordInput: recordInput,
                             groupRouting: groupRouting,

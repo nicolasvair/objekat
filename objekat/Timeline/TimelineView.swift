@@ -1668,7 +1668,8 @@ struct TimelineView: View {
         let zone = ClipEditZone.resolve(localX: localX, localY: localY,
                                         blockWidth: bw, blockHeight: blockHeight,
                                         handleW: handleW, fadeInPx: fiPx, fadeOutPx: foPx,
-                                        loopInPx: loopInPx, loopOutPx: loopOutPx)
+                                        loopInPx: loopInPx, loopOutPx: loopOutPx,
+                                        hasFades: !GroupInstrumentRule.isEmptyClip(entry.item))
         // A radius aligned on the block's (see SoundObject.blockCornerRadius).
         let radius = entry.item.blockCornerRadius
         // The veil's pixels: the SAME layout the veil re-derives at every render (@see
@@ -1721,7 +1722,10 @@ struct TimelineView: View {
             return
         }
         let entry = blockEntry(at: pos)
-        let newID = entry?.item.id
+        // An empty MIDI clip has no volume nor pan of its own (plan 2.5): the Volume / Pan tools pass over it.
+        let skips = entry.map { GroupInstrumentRule.isEmptyClip($0.item) } == true
+            && viewModel.activeTool != .toolStemAssign
+        let newID = skips ? nil : entry?.item.id
         if toolHoveredID != newID { toolHoveredID = newID }
     }
 
@@ -3047,6 +3051,7 @@ struct TimelineView: View {
     private func canvasToolOverlay(for entry: LaneEntry, tools: ToolPartitionContext) -> CanvasToolOverlay? {
         guard tools.tool != .none, tools.tool != .stem else { return nil }
         let item = entry.item
+        if GroupInstrumentRule.isEmptyClip(item), tools.tool == .volume || tools.tool == .pan { return nil }
         let y = rulerHeight + Double(entry.displayLane) * laneStep
         guard y + blockHeight >= tools.rows.y0, y <= tools.rows.y1 else { return nil }
 

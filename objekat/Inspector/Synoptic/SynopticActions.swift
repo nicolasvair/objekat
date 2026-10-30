@@ -341,6 +341,15 @@ struct SynopticMix: Equatable {
     /// Volume / pan driven by an automation CURVE (their static setting is neutralised).
     var volumeAutomated: Bool = false
     var panAutomated: Bool = false
+    /// An EMPTY MIDI clip: it has no volume / pan of its own, a host plays its notes. Non-nil ⇒ the zone shows who
+    /// plays them in place of the volume and the pan (the mute stays: it is native, @see GroupInstrumentRule).
+    var playedBy: SynopticPlayedBy? = nil
+}
+
+/// Who plays the notes of an empty MIDI clip: the name of the group that carries the instrument, nil when there is
+/// none above the clip (its notes are muted — the zone says so in orange).
+struct SynopticPlayedBy: Equatable {
+    var hostName: String?
 }
 
 /// A stem badge ('stems' zone) carried over into the signal view.
@@ -365,15 +374,13 @@ struct SynopticMidiChoice: Identifiable, Equatable {
     var id: String { ref.id }
 }
 
-/// The MIDI side of a MIDI recording zone's 'input' zone: the input it listens to, and the instrument that is
-/// played while it is armed (and copied into each take). Non-nil ⇔ the zone's source is a MIDI input.
+/// The MIDI side of a MIDI recording zone's 'input' zone: the input it listens to. Non-nil ⇔ the zone's source is a
+/// MIDI input. (The zone's instrument lives on the group's own instrument slot, @see SynopticView.midiZoneView.)
 struct SynopticMidiInput: Equatable {
     let ref: MidiInputRef
     let name: String
     /// The device is listed right now. False = "absent": the zone keeps its input but cannot be armed.
     let present: Bool
-    /// The zone's instrument; nil = none (an armed zone then records MUTED takes).
-    let instrumentName: String?
 }
 
 /// A recording zone's 'input' zone, carried over into the signal view (@see RecordInputZoneView).

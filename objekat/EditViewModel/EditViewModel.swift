@@ -1320,6 +1320,9 @@ final class EditViewModel {
     /// The refusal of the last gesture that the rule of an instrument group turned down, until the command bus (or
     /// `edit { }`) reads it (@see EditViewModel+GroupInstrument). Session state, never saved.
     @ObservationIgnored var groupInstrumentRefusal: GroupInstrumentRefusal? = nil
+    /// The objects whose FX chain was last compiled PASSIVE (disabled on the engine side, plan 2.5): what
+    /// `refreshPassiveChains` compares against. Session state, never saved.
+    @ObservationIgnored var passiveChainIDs: Set<UUID> = []
     /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
     /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
     var midiInputs: [MidiInputInfo] = []

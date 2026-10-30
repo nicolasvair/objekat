@@ -255,6 +255,7 @@ extension EditViewModel {
         pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
         syncAllPluginTrims()      // a patched chain keeps its instances: only its trims move
         syncMidiZones()           // a zone's instrument / input may have moved with the undo
+        refreshPassiveChains()    // a host may have come or gone with the undo: the FX below it follow (plan 2.5)
 
         let rebuilt = items.count - kept.count
         NSLog("[UNDO] restored in %.0f ms — top-level: %d rebuilt, %d patched, %d untouched",

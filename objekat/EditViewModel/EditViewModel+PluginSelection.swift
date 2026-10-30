@@ -153,7 +153,8 @@ extension EditViewModel {
             }
         }
         for p in ownSelected {
-            engine.setPlugin(p.id.uuidString, enabled: newEnabled, forObjectID: engineHostKey(host).uuidString)
+            engine.setPlugin(p.id.uuidString, enabled: engineEnabled(newEnabled, onHost: host),
+                             forObjectID: engineHostKey(host).uuidString)
         }
         updateChainPlugins(host) { plugins in
             for p in ownSelected { plugins = Self.settingEnabled(p.id, newEnabled, in: plugins) }
