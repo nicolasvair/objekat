@@ -879,6 +879,7 @@ struct RecordInputZoneView: View {
                     inputMenu
                 }
                 takeModeMenu
+                if input.midi != nil { instrumentMenu }
             }
             .padding(.horizontal, 12)
             .frame(width: rect.width, height: rect.height, alignment: .center)
@@ -889,11 +890,15 @@ struct RecordInputZoneView: View {
         }
     }
 
-    private var isAbsent: Bool { input.ref != nil && !input.present }
+    private var isAbsent: Bool {
+        if let m = input.midi { return !m.present }
+        return input.ref != nil && !input.present
+    }
 
     // MARK: The input
 
     private var currentLabel: String {
+        if let m = input.midi { return m.present ? m.name : L("synoptic.input.absent", m.name) }
         guard input.ref != nil else { return L("synoptic.input.none") }
         return input.present ? input.name : L("synoptic.input.absent", input.name)
     }
@@ -913,14 +918,25 @@ struct RecordInputZoneView: View {
                     ForEach(input.monoChoices) { choice in choiceButton(choice) }
                 }
             }
+            if !input.midiChoices.isEmpty {
+                Section(L("synoptic.input.section.midi")) {
+                    ForEach(input.midiChoices) { choice in
+                        Button { actions.onAssignMidiInput?(choice.ref) } label: {
+                            if choice.ref.id == input.midi?.ref.id { Label(choice.name, systemImage: "checkmark") }
+                            else { Text(verbatim: choice.name) }
+                        }
+                    }
+                }
+            }
             Divider()
             Button { actions.onAssignRecordInput?(nil) } label: {
-                if input.ref == nil { Label(L("synoptic.input.none"), systemImage: "checkmark") }
+                if input.ref == nil && input.midi == nil { Label(L("synoptic.input.none"), systemImage: "checkmark") }
                 else { Text(L("synoptic.input.none")) }
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: input.ref?.isStereo == true ? "mic.and.signal.meter" : "mic")
+                Image(systemName: input.midi != nil ? ObjectKindIcon.recordMidiInput
+                                  : (input.ref?.isStereo == true ? "mic.and.signal.meter" : "mic"))
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                 Text(verbatim: currentLabel)
@@ -948,6 +964,46 @@ struct RecordInputZoneView: View {
             if choice.ref == input.ref { Label(choice.name, systemImage: "checkmark") }
             else { Text(verbatim: choice.name) }
         }
+    }
+
+    // MARK: The instrument (a MIDI zone)
+
+    /// The zone's instrument: played while the zone is armed, copied into each take. Without one an armed zone
+    /// still records, but its takes are MUTED — the icon says so, discreetly.
+    private var instrumentMenu: some View {
+        let name = input.midi?.instrumentName
+        return Menu {
+            Button { actions.onAddInstrument?() } label: { Text(L("synoptic.input.instrument.choose")) }
+            if name != nil {
+                Button { actions.onOpenInstrumentEditor?() } label: { Text(L("synoptic.input.instrument.edit")) }
+                Divider()
+                Button(role: .destructive) { actions.onRemoveInstrument?() } label: {
+                    Text(L("synoptic.input.instrument.remove"))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: name == nil ? "exclamationmark.triangle" : "pianokeys.inverse")
+                    .font(.system(size: 9))
+                    .foregroundStyle(name == nil ? Color.orange : Color.secondary)
+                Text(verbatim: name ?? L("synoptic.input.instrument.none"))
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(name == nil ? Color.secondary : Color.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .help(name == nil ? L("synoptic.input.instrument.warning") : L("synoptic.input.instrument.help"))
     }
 
     // MARK: The take mode

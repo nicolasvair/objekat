@@ -510,7 +510,7 @@ struct SynopticView: View {
                                midi: isMIDI, audioFile: audioFile != nil,
                                araCardWidth: audioFile?.ara.map { SynopticLayout.araCardWidth(name: $0.name) }, mix: mix != nil,
                                stems: stems != nil || groupRouting != nil,
-                               input: recordInput != nil,
+                               input: recordInput != nil, inputMidi: recordInput?.midi != nil,
                                sends: sends, sendsEnabled: canSend, receivedRows: receivedSends.count,
                                infiniteOption: infinite != nil,
                                // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.

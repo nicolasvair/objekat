@@ -11806,10 +11806,15 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     std::map<std::string, NSDictionary*> wanted;
     for (NSDictionary* d in _midiZonesWanted) {
         NSString* zone = d[@"zone"]; NSString* dev = d[@"device"];
-        if (zone.length == 0 || dev.length == 0) continue;
-        const std::string deviceID([dev UTF8String]);
-        auto device = [self midiDeviceForID:deviceID];
-        if (!device || !device->isEnabled()) continue;        // an absent device: nothing to play
+        if (zone.length == 0) continue;
+        // "editor": the zone's instrument alone, for its editor to open on while the zone is not armed (no device).
+        const bool editorOnly = [d[@"editor"] boolValue];
+        if (dev.length == 0 && !editorOnly) continue;
+        if (dev.length > 0) {
+            const std::string deviceID([dev UTF8String]);
+            auto device = [self midiDeviceForID:deviceID];
+            if (!device || !device->isEnabled()) continue;    // an absent device: nothing to play
+        }
         wanted[std::string([zone UTF8String])] = d;
     }
     if (!wanted.empty()) _edit->getTransport().ensureContextAllocated();
@@ -11831,10 +11836,16 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     for (auto& kv : wanted) {
         NSDictionary* d = kv.second;
         const std::string deviceID([d[@"device"] UTF8String]);
-        auto device = [self midiDeviceForID:deviceID];
+        auto device = deviceID.empty() ? nullptr : [self midiDeviceForID:deviceID];
         auto* track = [self hiddenMidiTrackForZone:kv.first];
-        if (!device || !track) continue;
+        if (!track || (!device && !deviceID.empty())) continue;
         auto& z = _midiZoneTracks[kv.first];
+        // A zone that stopped playing a device (armed → editor only) lets go of its target first.
+        if (z.deviceID != deviceID && !z.deviceID.empty()) {
+            if (auto old = [self midiDeviceForID:z.deviceID])
+                if (auto* oldIn = epc ? epc->getInputFor(old.get()) : nullptr)
+                    [[maybe_unused]] auto res = oldIn->removeTarget(z.track, nullptr);
+        }
         z.deviceID = deviceID;
         // The instrument: the zone's, by the model's id. Another id = another instrument.
         NSDictionary* inst = d[@"instrument"];
@@ -11854,6 +11865,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
                 }
             }
         }
+        if (!device) continue;                                // editor only: the instrument is all there is
         device->setMonitorMode(te::InputDevice::MonitorMode::on);
         if (auto* in = epc ? epc->getInputFor(device.get()) : nullptr) {
             if (!in->getTargets().contains(track->itemID)) {

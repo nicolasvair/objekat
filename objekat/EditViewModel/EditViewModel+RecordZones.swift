@@ -44,6 +44,11 @@ extension EditViewModel {
         return RecordZoneName.prefix(label: item.label, inputName: sourceName(source))
     }
 
+    /// The glyph written in front of the prefix: a mic for a card input, keys for a MIDI input.
+    func recordZoneInputGlyph(of item: SoundObject) -> String {
+        item.recordMidiInput != nil ? ObjectKindIcon.recordMidiInput : ObjectKindIcon.recordInput
+    }
+
     // MARK: Is the input there?
 
     /// Whether the card has `ref` right now. The channel count is `AudioDeviceStatus`'s — observable, and

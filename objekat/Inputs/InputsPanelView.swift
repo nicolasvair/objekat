@@ -43,7 +43,10 @@ struct InputsPanelView: View {
             if open {
                 list
             } else {
+                // The MIDI inputs do not need the card: they are there while the audio inputs are closed.
+                MidiInputsSection(viewModel: viewModel, focusList: { listFocused = true })
                 enableBar
+                Spacer(minLength: 0)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -96,6 +99,8 @@ struct InputsPanelView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    // The MIDI inputs ABOVE the card's (@see MidiInputsSection).
+                    MidiInputsSection(viewModel: viewModel, focusList: { listFocused = true })
                     if !pairs.isEmpty {
                         sectionHeader(L("inputs.section.stereo"))
                         ForEach(pairs, id: \.self) { ref in row(ref) }
@@ -215,10 +220,13 @@ struct InputsPanelView: View {
         .contentShape(Rectangle())
         // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
         // this input (@see RecordZonePlanner, InputDragSession).
-        .onDrag { InputDragSession.shared.begin(InputDragSession.carried(ref, selection: selection)) }
+        .onDrag { InputDragSession.shared.begin(sources: viewModel.draggedSources(startingFrom: .audio(ref))) }
         .onTapGesture {
             listFocused = true
             viewModel.renamingInput = nil
+            // A plain click on a card input lets go of the MIDI rows (⌘ / ⇧ keep them for a mixed drag).
+            let flags = NSEvent.modifierFlags
+            if !flags.contains(.command) && !flags.contains(.shift) { viewModel.selectedMidiInputs = [] }
             select(ref)
         }
         .contextMenu { contextMenu(for: ref) }

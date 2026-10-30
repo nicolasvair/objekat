@@ -52,6 +52,8 @@ enum ObjectKindIcon {
     /// The glyph of a recording zone's INPUT, in front of its name in the timeline
     /// ("[mic] Input → [folder] Group name", @see `RecordZoneName`).
     static let recordInput = "mic"
+    /// The same for a zone that listens to a MIDI input.
+    static let recordMidiInput = "pianokeys"
 }
 
 extension View {

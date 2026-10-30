@@ -130,6 +130,7 @@ struct SynopticActions {
     // The 'input' zone (a recording zone, at the top): choosing the card input (nil = none), and the take mode
     // (the receiver applies it to the whole selection when the object shown is part of it).
     var onAssignRecordInput: ((InputRef?) -> Void)? = nil
+    var onAssignMidiInput: ((MidiInputRef) -> Void)? = nil
     var onSetRecordTakeMode: ((RecordTakeMode) -> Void)? = nil
 
     // The 'sends' zone (the foot): the level / on-off of a departure towards an aux. `id` = the
@@ -357,6 +358,24 @@ struct SynopticRecordInputChoice: Identifiable, Equatable {
     var id: InputRef { ref }
 }
 
+/// One MIDI input the 'input' zone's menu offers.
+struct SynopticMidiChoice: Identifiable, Equatable {
+    let ref: MidiInputRef
+    let name: String
+    var id: String { ref.id }
+}
+
+/// The MIDI side of a MIDI recording zone's 'input' zone: the input it listens to, and the instrument that is
+/// played while it is armed (and copied into each take). Non-nil ⇔ the zone's source is a MIDI input.
+struct SynopticMidiInput: Equatable {
+    let ref: MidiInputRef
+    let name: String
+    /// The device is listed right now. False = "absent": the zone keeps its input but cannot be armed.
+    let present: Bool
+    /// The zone's instrument; nil = none (an armed zone then records MUTED takes).
+    let instrumentName: String?
+}
+
 /// A recording zone's 'input' zone, carried over into the signal view (@see RecordInputZoneView).
 struct SynopticRecordInput: Equatable {
     /// The input the zone records; nil = none ("None").
@@ -372,6 +391,10 @@ struct SynopticRecordInput: Equatable {
     /// What the menu lists, in two sections: the stereo pairs FIRST, then the monos ("None" last).
     let monoChoices: [SynopticRecordInputChoice]
     let stereoChoices: [SynopticRecordInputChoice]
+    /// The MIDI inputs the menu offers in a third section (the zone's source may be one of them).
+    var midiChoices: [SynopticMidiChoice] = []
+    /// Set when the zone's source is a MIDI input (then `ref` is nil): the zone also shows its instrument row.
+    var midi: SynopticMidiInput? = nil
 }
 
 /// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.

@@ -88,6 +88,20 @@ extension EditViewModel {
         (engine?.midiInputActivity() ?? [:]).mapValues { $0.intValue }
     }
 
+    /// What a drag that starts on `row` carries: when the row is part of the selection, every selected input
+    /// (the MIDI ones first, in the order of the list, then the card's by channel); otherwise the row alone.
+    /// The two lists share one gesture, so a selection holding both kinds is dragged whole.
+    func draggedSources(startingFrom row: RecordSource) -> [RecordSource] {
+        let inSelection: Bool
+        switch row {
+        case .audio(let r): inSelection = selectedRecordInputs.contains(r)
+        case .midi(let m): inSelection = selectedMidiInputs.contains(m.id)
+        }
+        guard inSelection else { return [row] }
+        let midi = midiInputs.filter { selectedMidiInputs.contains($0.id) }.map { RecordSource.midi($0.ref) }
+        return midi + selectedRecordInputs.sorted().map { RecordSource.audio($0) }
+    }
+
     // MARK: Playing the armed zones
 
     /// Tells the engine which MIDI zones are armed (device + instrument), so that each plays live. Before a
@@ -97,10 +111,16 @@ extension EditViewModel {
         guard !isRecording, let engine else { return }
         var wanted: [[String: Any]] = []
         var active: Set<UUID> = []
-        for id in armedRecordZones {
-            guard let zone = find(id: id), let ref = zone.recordMidiInput,
-                  let device = resolvedMidiInput(ref) else { continue }
-            var entry: [String: Any] = ["zone": id.uuidString, "device": device.id]
+        // The armed zones (their device plays the instrument) and the disarmed ones whose editor is open
+        // (the instrument alone, no device: "editor").
+        let armed = Set(armedRecordZones)
+        for id in armed.union(editingMidiZoneIDs) {
+            guard let zone = find(id: id), let ref = zone.recordMidiInput else { continue }
+            let device = resolvedMidiInput(ref)
+            if device == nil && !editingMidiZoneIDs.contains(id) { continue }
+            let playing = armed.contains(id) && device != nil
+            var entry: [String: Any] = ["zone": id.uuidString, "device": playing ? device!.id : ""]
+            if !playing { entry["editor"] = true }
             if let inst = zone.instruments.first {
                 var info: [String: Any] = ["pluginKey": inst.id.uuidString, "identifier": inst.identifier,
                                            "format": inst.formatName, "name": inst.name]
@@ -132,6 +152,27 @@ extension EditViewModel {
     }
 
     // MARK: The zone's instrument
+
+    /// Opens (or closes, when open) the editor of a MIDI zone's instrument. A zone that is not armed has no
+    /// instrument in the engine: a temporary instance is brought up for the editor and let go of when it
+    /// closes (the state turned in it is taken back into the model).
+    func openZoneInstrumentEditor(groupID: UUID) {
+        guard canHaveZoneInstrument(groupID), let inst = find(id: groupID)?.instruments.first else { return }
+        if isPluginEditorOpen(plug: inst) { closePluginEditor(plug: inst); return }
+        if !armedRecordZones.contains(groupID) {
+            editingMidiZoneIDs.insert(groupID)
+            syncMidiZones()
+        }
+        togglePluginEditor(objectID: groupID, plug: inst)
+    }
+
+    /// An editor closed: when it was a temporary one, the instance goes (and its state comes back to the model).
+    func releaseZoneInstrumentEditor(pluginKey: UUID) {
+        guard let zone = editingMidiZoneIDs.first(where: { find(id: $0)?.instruments.first?.id == pluginKey })
+        else { return }
+        editingMidiZoneIDs.remove(zone)
+        syncMidiZones()
+    }
 
     /// Whether a group can take an instrument: a MIDI recording zone.
     func canHaveZoneInstrument(_ id: UUID) -> Bool {

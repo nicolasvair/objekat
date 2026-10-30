@@ -196,6 +196,7 @@ extension EditViewModel {
     func clearInputsAndStemTransientState() {
         renamingInput = nil
         selectedRecordInputs = []
+        selectedMidiInputs = []
         openStemPopoverID = nil
         renamingStemID = nil
     }

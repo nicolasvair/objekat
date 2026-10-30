@@ -9777,6 +9777,29 @@
         }
       }
     },
+    "inputs.section.midi": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MIDI inputs"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entradas MIDI"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrées MIDI"
+          }
+        }
+      }
+    },
     "inputs.section.mono": {
       "extractionState": "manual",
       "localizations": {
@@ -18954,6 +18977,144 @@
         }
       }
     },
+    "synoptic.input.instrument.choose": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose an instrument…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elegir un instrumento…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisir un instrument…"
+          }
+        }
+      }
+    },
+    "synoptic.input.instrument.edit": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open the editor"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir el editor"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir l'éditeur"
+          }
+        }
+      }
+    },
+    "synoptic.input.instrument.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The instrument played while the zone is armed, copied into each take."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El instrumento que suena mientras la zona está armada, copiado en cada toma."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'instrument joué pendant que la zone est armée, copié dans chaque prise."
+          }
+        }
+      }
+    },
+    "synoptic.input.instrument.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No instrument"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin instrumento"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun instrument"
+          }
+        }
+      }
+    },
+    "synoptic.input.instrument.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove the instrument"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar el instrumento"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retirer l'instrument"
+          }
+        }
+      }
+    },
+    "synoptic.input.instrument.warning": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Without an instrument, this zone's takes will be muted."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin instrumento, las tomas de esta zona estarán silenciadas."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sans instrument, les prises de cette zone seront muettes."
+          }
+        }
+      }
+    },
     "synoptic.input.noCard": {
       "extractionState": "manual",
       "localizations": {
@@ -18996,6 +19157,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Aucune"
+          }
+        }
+      }
+    },
+    "synoptic.input.section.midi": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MIDI inputs"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entradas MIDI"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrées MIDI"
           }
         }
       }

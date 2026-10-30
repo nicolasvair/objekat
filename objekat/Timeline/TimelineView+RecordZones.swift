@@ -20,11 +20,11 @@ extension TimelineView {
     /// Inputs are hovering the timeline: lays the ghosts (one per input, on the lanes from the hand's
     /// downwards) and answers the cursor. nil when the drag in flight is not an input.
     func recordInputHover(at loc: CGPoint) -> DropOperation? {
-        guard let refs = InputDragSession.shared.current else { return nil }
+        guard let sources = InputDragSession.shared.current else { return nil }
         let p = recordDropPoint(at: loc)
-        let plans = viewModel.planRecordDrops(count: refs.count, displayLane: p.lane, time: p.time,
+        let plans = viewModel.planRecordDrops(count: sources.count, displayLane: p.lane, time: p.time,
                                               visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pixelsPerSecond)
-        let ghosts = viewModel.recordDropGhosts(for: plans, refs: refs, displayLane: p.lane, time: p.time)
+        let ghosts = viewModel.recordDropGhosts(for: plans, sources: sources, displayLane: p.lane, time: p.time)
         if viewModel.recordDropGhosts != ghosts { viewModel.recordDropGhosts = ghosts }
         return RecordZonePlanner.isRefused(plans) ? .forbidden : .copy
     }
@@ -40,10 +40,10 @@ extension TimelineView {
         let pps = pixelsPerSecond
         let vm = viewModel
         InputDragSession.shared.end()
-        InputDragSession.read(provider) { refs in
-            guard let refs else { return }
-            vm.dropRecordInputs(refs, displayLane: p.lane, time: p.time,
-                                visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pps)
+        InputDragSession.read(provider) { sources in
+            guard let sources else { return }
+            vm.dropRecordSources(sources, displayLane: p.lane, time: p.time,
+                                 visibleSpanSecs: p.visibleSecs, pixelsPerSecond: pps)
         }
     }
 
@@ -51,7 +51,7 @@ extension TimelineView {
     /// input is on the card. An absent one is not a button, the click is the block's.
     func recordIconHit(at point: CGPoint) -> UUID? {
         let channels = AudioDeviceStatus.shared.snapshot.inputChannels
-        for e in viewModel.laneEntries where e.item.recordInput != nil {
+        for e in viewModel.laneEntries where e.item.recordSource != nil {
             guard let state = viewModel.recordZoneIcon(of: e.item, channels: channels), state != .absent,
                   let hit = RecordZoneIcon.hitRect(in: clipRect(for: e)), hit.contains(point) else { continue }
             return e.item.id
