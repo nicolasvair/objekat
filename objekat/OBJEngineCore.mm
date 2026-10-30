@@ -3565,6 +3565,24 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     }
 }
 
+// Mute natif d'un clip MIDI (voir le commentaire du .h). `Clip::setMuted` écrit la propriété `mute`
+// de l'arbre du clip ; les nœuds MidiNode / LoopingMidiNode la lisent en temps réel.
+- (void)setMidiClipMuted:(BOOL)muted forID:(NSString*)uuid {
+    auto it = _midiClipMap.find(std::string([uuid UTF8String]));
+    if (it == _midiClipMap.end()) return;
+    it->second->setMuted(muted ? true : false);
+}
+
+- (BOOL)isMidiClipMutedForID:(NSString*)uuid {
+    auto it = _midiClipMap.find(std::string([uuid UTF8String]));
+    if (it == _midiClipMap.end()) return NO;
+    return it->second->isMuted() ? YES : NO;
+}
+
+- (BOOL)hasMidiClipForID:(NSString*)uuid {
+    return _midiClipMap.find(std::string([uuid UTF8String])) != _midiClipMap.end() ? YES : NO;
+}
+
 // Un arbre PLUGIN sérialisé (`getPluginStateXML`) porte l'`id` — l'EditItemID — de l'instance
 // D'ORIGINE, avec ses params et son chunk. L'insérer tel quel enregistre un SECOND EditItem
 // sous le même id : `Edit::addItem` assert, le registre `knownEditItems` ne retient que le

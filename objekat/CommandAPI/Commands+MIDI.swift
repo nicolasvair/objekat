@@ -149,5 +149,86 @@ extension CommandRegistry {
                                           followWindow: try p.bool("follow_window", or: false))
             return .object(["transposed": .int(count), "semitones": .int(delta)])
         }
+
+        #if DEBUG
+        // MARK: debug (E0 of plan_groupes_midi.md: engine proof, no production code)
+
+        register("debug.mount_instrument",
+                 summary: """
+                 DEBUG. Mounts a virtual instrument on the ENGINE side of ANY object (a group included),                  straight through `OBJEngineCore.setInstrument` — the model is NOT touched (no `instruments`                  entry, no undo point, nothing in the project file) and the view-model's guard that keeps an                  instrument off a group's container is bypassed on purpose. It is the experiment of                  `tools/scenario_group_midi_proof.py`: does a MIDI clip placed in a group play through the                  instrument mounted on the group's container? Plugin by `identifier` or `name` (+ `format`),                  as `instrument.set`. Answers `plugin_key` (the engine's key for the instance). Not present                  in Release builds.
+                 """,
+                 params: [ParamSpec("id", "uuid", "Object whose container receives the instrument."),
+                          ParamSpec("identifier", "string", required: false, "Exact identifier."),
+                          ParamSpec("name", "string", required: false, "Name, failing an identifier."),
+                          ParamSpec("format", "string", required: false, "Format to settle ties.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            guard vm.find(id: id) != nil else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            let available = try CommandAdapters.resolvePlugin(p, in: vm)
+            let info: [String: Any] = ["pluginKey": UUID().uuidString,
+                                       "identifier": available.identifier,
+                                       "format": available.formatName,
+                                       "name": available.name]
+            guard let key = engine.setInstrument(info, forObjectID: id.uuidString, stateXML: nil) else {
+                throw CommandError(code: .engine_error,
+                                   message: "the engine could not mount '\(available.name)' on \(id.uuidString)")
+            }
+            return .object(["id": .string(id.uuidString), "plugin_key": .string(key)])
+        }
+
+        register("debug.unmount_instrument",
+                 summary: "DEBUG. Takes off the instrument `debug.mount_instrument` (or the engine) holds on an object, engine side only. Answers `removed`.",
+                 params: [ParamSpec("id", "uuid", "Object whose container loses its instrument.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            engine.removeInstrument(forObjectID: id.uuidString)
+            return .object(["id": .string(id.uuidString)])
+        }
+
+        register("debug.midi_mute",
+                 summary: """
+                 DEBUG. Sets (or, with no `muted`, only reads) the NATIVE mute of the `te::MidiClip` behind a MIDI                  object — `OBJEngineCore.setMidiClipMuted:forID:` — which the engine reads in real time                  (`LiveClipLevel`) and which is NOT the fader the model drives for a clip with an instrument.                  Engine side only: the model, the undo stack and the dirty flag are not touched. Answers                  `engine_muted` as read BACK from the clip, and `found` (false: no MIDI clip under that id).                  Not present in Release builds.
+                 """,
+                 params: [ParamSpec("id", "uuid", "MIDI object."),
+                          ParamSpec("muted", "bool", required: false, "Omitted: read only.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            let id = try p.uuid("id")
+            if let muted = try p.optionalBool("muted") {
+                engine.setMidiClipMuted(muted, forID: id.uuidString)
+            }
+            let found = engine.hasMidiClip(forID: id.uuidString)
+            return .object(["id": .string(id.uuidString),
+                            "found": .bool(found),
+                            "engine_muted": .bool(found && engine.isMidiClipMuted(forID: id.uuidString))])
+        }
+
+        register("debug.transport_loop",
+                 summary: """
+                 DEBUG. Sets the TRANSPORT's loop region and its mode on the view-model — what ⌘L and the \
+                 transport bar's button do — since the public API has no door onto it (`transport.state` only \
+                 reads it). The playhead tick arms the engine loop when playback ENTERS the region. \
+                 `enabled: false` switches the mode off. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("start", "number", required: false, "Region start, seconds."),
+                          ParamSpec("end", "number", required: false, "Region end, seconds."),
+                          ParamSpec("enabled", "bool", required: false, "Loop mode (default true).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            if p.raw["start"] != nil || p.raw["end"] != nil {
+                let a = try p.double("start"), b = try p.double("end")
+                guard b > a else { throw CommandError(code: .bad_params, message: "'end' must come after 'start'") }
+                vm.loopRegion = a...b
+            }
+            vm.loopModeEnabled = try p.bool("enabled", or: true)
+            return .object(["enabled": .bool(vm.loopModeEnabled),
+                            "region": vm.loopRegion.map { .array([.number($0.lowerBound), .number($0.upperBound)]) } ?? .null])
+        }
+        #endif
     }
 }

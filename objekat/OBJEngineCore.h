@@ -101,6 +101,15 @@
 // lui-même via le tempo de l'édit) se répète tant que la fenêtre de l'objet le dépasse.
 // `enabled=NO` désactive. @see [[loop-item-plan]]
 - (void)setMidiLoop:(BOOL)enabled startBeats:(double)startBeats endBeats:(double)endBeats forID:(NSString*)uuid;
+// setMidiClipMuted : mute NATIF du te::MidiClip (propriété `mute` du clip, lue en temps réel par le
+// graphe — LiveClipLevel). Distinct du fader ObjGain que le modèle pilote pour un clip à instrument.
+// Un clip MIDI sans instrument propre ne peut pas être coupé au fader (rien à atténuer : il ne produit
+// pas d'audio, ses notes remontent à l'instrument de l'hôte), d'où cette porte. isMidiClipMutedForID
+// en est la relecture ; hasMidiClipForID dit si `uuid` désigne un clip MIDI du moteur.
+// @see plan_groupes_midi.md (E0 / E3)
+- (void)setMidiClipMuted:(BOOL)muted forID:(NSString*)uuid;
+- (BOOL)isMidiClipMutedForID:(NSString*)uuid;
+- (BOOL)hasMidiClipForID:(NSString*)uuid;
 - (NSString* _Nullable)setInstrument:(NSDictionary*)pluginInfo
                           forObjectID:(NSString*)uuid
                              stateXML:(NSString* _Nullable)stateXML;
