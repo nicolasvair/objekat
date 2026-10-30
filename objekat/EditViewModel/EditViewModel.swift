@@ -228,6 +228,14 @@ final class EditViewModel {
     var bakingIDs: Set<UUID> = [] {
         didSet { updateRenderProgressPolling() }
     }
+    /// Video imports under way (@see EditViewModel+VideoImport): the audio of a movie is extracted OFF
+    /// the model, so the document must stay in place for as long as one runs (`tabSwitchBlocker`,
+    /// `Quiescence`). The cancel switches are kept by job so that `video.import_cancel` stops them all.
+    var videoImportsInFlight = 0
+    var videoImportCancels: [UUID: VideoImportCancel] = [:]
+    /// What the hand's HUD would show: the file being imported and how far its audio has got (0...1).
+    var videoImportName: String? = nil
+    var videoImportFraction: Double = 0
     /// The dialogue policy: what the view-model does when it has to ask a question or
     /// report something. `.ask` (the default) = the historical behaviour, the modal shows.
     /// External driving switches it for the length of a command. See EditViewModel+Dialogs.

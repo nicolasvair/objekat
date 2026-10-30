@@ -235,6 +235,7 @@ final class CommandRegistry {
         // the method the interface already calls.
         registerObjectCommands()
         registerImportFolderCommands()
+        registerVideoCommands()
         registerGroupCommands()
         registerStemCommands()
         registerSoloCommands()
