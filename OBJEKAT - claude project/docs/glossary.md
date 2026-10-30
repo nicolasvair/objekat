@@ -86,6 +86,11 @@ source, not a translation.
 | intensité | intensity | intensidad | how much of the gain a point of the selection receives, 0–100 % |
 | original / résultat / différence | original / result / delta | original / resultado / diferencia | the three things one can listen to in a canvas: the source, what the operations make of it, and what they take away |
 | spectrogramme | spectrogram | espectrograma | time × frequency × level, drawn as an image |
+| clip vide | empty clip | clip vacío | a MIDI clip with no instrument of its own: it is played by the first ancestor group that carries one (its host); with no host it is silent. Volume, pan, fades, FX and sends are greyed |
+| instrument de groupe | group instrument | instrumento de grupo | the virtual instrument a GROUP carries: it plays the empty MIDI clips below it. Below it: no audio, no aux, no consolidated instance, no second instrument |
+| hôte (d'un clip vide) | host (of an empty clip) | anfitrión | the first ancestor group of an empty clip that carries an active instrument |
+| chaîne d'entrée | input chain | cadena de entrada | the FX of a card input, or the instrument of a MIDI input: heard, never recorded (the recording is taken from the device, before it); mounted on the engine only while the input is heard or the chain is open |
+| hôte d'entrée | input host | anfitrión de entrada | the stable id (uuid) an input's chain is addressed by, as a stem's is: `plugin.*` and the signal view take it as their host |
 
 ## What does not get translated
 

@@ -2881,23 +2881,60 @@ What has landed since mid-August, in order:
   payload key `midi`; a mixed drag takes one lane per source, MIDI first) onto the timeline to make a MIDI recording
   zone, or onto a group to give it the input. A zone has ONE source (`SoundObject.recordSource`: `.audio(InputRef)` or
   `.midi(MidiInputRef)`, computed over `recordInput` / `recordMidiInput`, session format 35); a MIDI input is found
-  again by id, else by its unique name (`MidiInputResolver`), else "absent" (kept, cannot be armed). A MIDI zone has
-  its own instrument, chosen in the synoptic Input block (stored in `SoundObject.instruments`, JSON key
-  `zoneInstruments` for groups): while the zone is armed, `syncMidiZones()` (engine `setMidiZones:`) plays it on a
-  hidden track fed by the device, so the keyboard is heard; a zone without instrument still records (muted take,
-  discreet warning). Takes are `.midiClip` children with handles, newest on top, in mute/add mode like audio takes,
-  one undo; the instrument is COPIED into each take with its live state (`copiedInstruments(of:)`). Rules: sustain (CC
+  again by id, else by its unique name (`MidiInputResolver`), else "absent" (kept, cannot be armed). A MIDI zone's
+  instrument is the GROUP's instrument (stored in `SoundObject.instruments`, JSON key `zoneInstruments` for groups),
+  chosen on the synoptic's instrument card; a zone without instrument still records (muted take, discreet warning).
+  **Since E4 (30 October 2026, format 36) arming no longer plays the instrument on a hidden track — see the paragraph
+  "MIDI groups and input chains" below; the hidden-track playing, the temporary editor instance and the copy of the
+  instrument into each take that this paragraph first described are gone.** Takes are `.midiClip` children with
+  handles, newest on top, in mute/add mode like audio takes, one undo, and always EMPTY clips (played by the zone's
+  instrument). Rules: sustain (CC
   64) is folded into note durations, other CC and pitch bend are ignored, no quantisation, a capture without note
   makes no take, a take outside the window is the whole capture (`MidiTakePlanner`, pure). Notes are timed against the
-  sound HEARD (output latency compensated, MIDI rescan suspended during a take). The editor of a disarmed zone's
-  instrument opens on a temporary instance (`openZoneInstrumentEditor`, engine `"editor": true`), released when the
-  window closes. Headless: `--virtual-midi` creates a virtual device; commands `input.list.midi_inputs`,
+  sound HEARD (output latency compensated, MIDI rescan suspended during a take). Headless: `--virtual-midi` creates a virtual device; commands `input.list.midi_inputs`,
   `input.levels.midi_activity`, `midi.virtual.status`, `midi.virtual.send`; `rec.assign`/`rec.drop` accept `midi`,
   `rec.status` reports `zones[].source`/`midi_input`/`instrument` and `last_takes[].source`/`notes`. Tests:
   `tools/scenario_midi_record.py` (72 OK, the one failure being the Settings.xml check rewritten by a GUI instance
   running beside it), `tools/test_midi_take_planner.swift` 23, `tools/test_input_drag_payload.swift` 17. Measured on
   the virtual card: a recorded note sits -8.6 ms [-10.0; -5.9] from the heard attack. **Not seen, not played**:
   everything on screen, a real USB keyboard, a third-party AU/VST editor on a disarmed zone.
+  **MIDI groups and input chains (30 October 2026, branch `main`, engine patch `0049` local, session format 36).**
+  Plan and the step-by-step record with every divergence: `docs/plan_groupes_midi.md` (E0-E12); decisions in
+  `architecture_decisions.md`; API in `command_api.md` ("Input chains", "Group instruments"). (1) **A group carries
+  the instrument**; the notes of an EMPTY MIDI clip (no instrument of its own) rise to the first ancestor group that
+  has one, else they are silent. One pure rule, `GroupInstrumentRule`, behind one door (`EditViewModel+GroupInstrument`:
+  `refusesAdding`, `refusesInstrument`, `refusesAudioInput`...): below an instrument group no audio, no aux, no
+  consolidated instance, no second instrument, no audio input; a refused gesture is refused WHOLE before its undo point
+  (`invalid_state` + `details.reason`). No migration, no dormant instrument: no old project recorded MIDI. An empty
+  clip is muted by the clip's NATIVE mute (`setMidiClipMuted`, driven by the effective silence of the clip and its
+  groups up to the host) and its FX are compiled but DISABLED engine-side (`isChainPassive`, `engineEnabled(_:onHost:)`:
+  every bypass path goes through it, or a click would wake a passive FX); consolidating an empty clip or a sub-group
+  under a host is refused; `derivedCopy` has `instruments: []` by default, so every group copy site passes
+  `copiedInstruments(of:)`. Patch `0049` fixes the sticky mute (`wasMute`), the held note at a window's end and the MIDI
+  timestamps after sub-blocks; the next free patch number is `0050`. (2) **An input carries a chain** (`InputChains`:
+  FX for a card input, one instrument for a MIDI input; `ProjectDocument.inputChains`, OPTIONAL key of format 36, in
+  the undo, parked with a tab; `EditViewModel+InputChains`). The chain colours what is HEARD: the recording is taken
+  from the device before the hidden track, so it is identical with or without. The chain is addressed by a stable
+  `hostID` like a stem's (`chainPlugins` / `updateChainPlugins` fall back on it, so `plugin.*`, `SynopticBoundView` and
+  the editors work unchanged). **Lazy mounting is the rule that matters**: `syncInputChains()` (idempotent, the only
+  decider) mounts a chain only while its input is HEARD, or it is open (`openInputHosts`: a popover, a script) or an
+  editor is open on one of its plugins (`editorHeldInputHosts`, `holdInputHost(_:forEditorOf:)`, released by
+  `editorDidClose(plugin:)`); unmounting captures the live states into the model first. Trap: the engine's Edit outlives
+  the project, so `_monitoredMidiInputs` survives `project.new` — `setInputChains` (the load door, also called by a new
+  project) switches every MIDI monitor off. Render clones are stripped of the hidden tracks
+  (`stripHiddenTracksFromRenderCopy:`). UI: `Inputs/InputFXButton.swift` (the « FX » popover on a card row and the
+  instrument button of a MIDI row), `Inspector/Synoptic/PluginPickerSheet.swift` (picker extracted from the synoptic),
+  greyed rows for absent inputs. (3) **A zone CREATED from an input inherits a COPY** (`inheritedChain(for:)`,
+  `dropRecordSources` `.create`; `rec.drop` answers `inherited`); `.assign` never touches a zone. Tests:
+  `tools/scenario_input_chains.py` (80: engine I1-I6, model M1-M6, inheritance H1-H6),
+  `tools/test_input_chains_codable.swift` 12, `scenario_group_instrument_doors.py` 87, `scenario_group_ui.py` 17,
+  `scenario_midi_mute.py`, `scenario_group_midi_proof.py` (P1-P13). The debug doors `debug.mount_instrument`,
+  `debug.midi_mute` (the proof scenarios still use them), `debug.input_host` and `debug.transport_loop` exist in DEBUG
+  builds only. **Not seen, not heard**: every pixel of E7 and E10 (instrument card, greyed empty-clip rows, FX popover,
+  instrument button, absent-input rows), a real MIDI keyboard through an input instrument, and a native editor
+  window kept alive by `holdInputHost` while its popover closes. The engine commit `f0648743dc2` (branch
+  `objekat-group-midi-0049`, patch `engine-patches/3.5/0049-...`) is NOT published on the fork and `main`'s gitlink
+  points at it: publishing is a push the user must validate.
   **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
   one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
   input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both

@@ -987,6 +987,53 @@ mixer's own copy to stereo (`.trunk`) can still be drawn on the wire after it. A
 that takes a pair draws both changes on its one segment (`WireLook.splitsAfter`). The head of a stereo audio
 clip keeps the file's menu (`fileLevelPoint`).
 
+## MIDI groups and the chains of the inputs (October 2026, session format 36)
+
+Plan and the step-by-step record: `docs/plan_groupes_midi.md` (E0-E12, with every divergence).
+
+### Decision: a group is the instrument host, and the notes rise to it
+
+A GROUP can carry an instrument. The notes of an EMPTY MIDI clip (no instrument of its own) rise to the first ancestor
+group that carries one; with no such ancestor they are silent. This is the engine's natural behaviour (the instrument sits
+at the head of the container's chain), so there is no routing to write. Consequences, all enforced by ONE pure rule
+(`GroupInstrumentRule`) behind ONE door in the view-model (`EditViewModel+GroupInstrument`): below an instrument group
+there is no audio clip, consolidated instance, aux, second instrument or audio input — the aux because
+`createAuxReturns` sums the return into the container where the instrument would overwrite it. A refused gesture
+is refused WHOLE, before its undo point (`invalid_state`, `details.reason` on the API). There is no migration and no
+dormant instrument: no project recorded MIDI before this, and a file that breaks the rule is not repaired on read — the rule
+governs gestures, not reading.
+
+An empty clip is muted by the clip's NATIVE mute, not by a fader (a group's fader would not stop the MIDI crossing a
+sub-group): silence is effective when the clip OR a group between it and its host is silenced. Its FX are compiled but
+DISABLED on the engine side (an external FX erases the MIDI buffer after processing and could eat the notes before the
+host); the model keeps the user's choice (`isChainPassive`, `engineEnabled(_:onHost:)`). The engine patch `0049` closes the
+notes that outlive a window or a mute. A zone no longer plays its own take through a hidden-track instrument: the take is an
+empty clip heard through the zone's instrument, like any other.
+
+### Decision: an input's chain is heard, never recorded — and it is mounted only while it matters
+
+The recording is taken from the device, BEFORE the input's hidden track, so FX there are listening-only by construction. An
+input's chain (`InputChains`: FX for a card input, one instrument for a MIDI input) is a PROJECT setting, an optional
+key of format 36 (no bump: an older build ignores it), in the undo and parked with a tab. It is addressed by a stable
+host id like a stem's, so `plugin.*`, the signal view and the editors take it with no new family.
+
+The cost rule is **lazy mounting**: the engine instantiates a chain only while its input is heard or the chain is open (a
+popover, an editor, a script). `syncInputChains` is the one function that decides, idempotent, called by every event that
+can change the answer; unmounting first CAPTURES the live states into the model. A project with five input instruments
+does not load five instruments. A MIDI device is targeted at the hidden track only while heard, because a device has one global
+monitor mode and several targets are allowed (a zone and an input can use the same device). An absent input keeps its chain,
+dormant. The render clones are stripped of the hidden tracks (`stripHiddenTracksFromRenderCopy:`), so no render ever
+reinstantiates them.
+
+The engine's Edit outlives the project, so session state it holds (which MIDI inputs are heard) is cleared by the
+load door (`setInputChains`), not left to the next project.
+
+### Decision: a zone created from an input inherits a COPY; an existing zone is never touched
+
+Dropping an input on empty room makes a zone with an independent copy of the input's FX or instrument (new ids, live state
+or the model's, no parameter link, a FX link bin flattened). Dropping it on an existing zone only assigns the source.
+Changing one side afterwards leaves the other alone: the input is the model of a setup, the zone is a take of it.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

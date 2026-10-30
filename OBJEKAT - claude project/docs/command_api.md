@@ -2374,6 +2374,52 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
 * `input.select {inputs: [{first, count?}]}` — REPLACES the Inputs tab's selection (`[]` empties it);
   `invalid_state` while the inputs are closed, `bad_params` for an input the tab does not list. No undo.
 * `input.selection` — the selected inputs, in the tab's order (stereo first). Read-only.
+
+**Input chains (FX on a card input, an instrument on a MIDI input).** An input can carry a chain of its own: FX for a
+card input (`inputChains.audio`, keyed like the names, "3" or "1-2"), ONE instrument for a MIDI input
+(`inputChains.midi`, by device id, found again by name when the id changes). They belong to the PROJECT (optional key of
+format 36, in the undo, parked and restored with a tab) and colour what is HEARD of the input: **a recording is taken
+from the device, before any chain** — the file is the same with or without them. A chain is addressed by a `host_id`
+(a uuid, stable as long as the chain exists), so `plugin.list` / `plugin.add` / `plugin.remove` / `plugin.set_param`... take
+it as their `host`, like a stem's. **MOUNTING is lazy**: the engine instantiates a chain only while its input is heard
+(`input.monitor`) or the chain is open; otherwise the plugin states live in the model, and a project with five input
+instruments does not load five instruments. A chain whose input is absent (a smaller card, a missing MIDI device) is kept,
+dormant.
+
+* `input.host {first, count?, open?}` or `{midi, open?}` — the host of an input's chain, made if there is none (an empty
+  chain is not written to the file). `open: true` (the default) mounts it and holds it mounted; `open: false` lets it go
+  (unmounted again unless the input is heard; the plugin states are kept). Answers `{host_id, kind: "audio" | "midi",
+  mounted, live, plugins, instrument}`. `plugin.add` or any `plugin.*` edit on an audio host opens it too, and it stays open until
+  `input.host {open: false}`. A MIDI host has no FX list: `plugin.list` shows its `instruments`, and the instrument is set
+  with `input.set_instrument`. `plugin.list` of an input host carries `is_input_host`.
+* `input.set_instrument {midi, identifier|name, format?}` — puts an instrument on a MIDI input (replacing any). `bad_params`
+  for a plugin that is not an instrument. One undo point. Answers `midi_inputs` like `input.list.midi_inputs`.
+* `input.remove_instrument {midi}` — takes it off; the input stops being heard. One undo point, none without one.
+* `input.monitor {midi, on}` — hears a MIDI input through its instrument (the card form is above). `invalid_state` without
+  an instrument. Not saved, not in the undo; ends with a new project or an opening.
+* `input.list` — `record_inputs[]` gain `host_id` (null without a chain) and `fx_count`. `input.list.midi_inputs` —
+  `{midi_inputs, zones, dormant_chains}`: `midi_inputs[]` is `{id, name, virtual, enabled, heard, instrument, host_id}` per
+  device (`instrument` is the plugin's name or null; `heard` is true only while monitored AND an instrument is there),
+  `zones` the MIDI recording zones, `dormant_chains` the chains whose device is not there (`host_id`, `midi_input`,
+  `instrument`).
+* `rec.drop` — a zone CREATED from an input that carries FX (card input) or an instrument (MIDI input) starts with an
+  independent copy of it: new ids, the live state (the model's when the chain is not mounted), no parameter link, a FX link
+  bin flattened to its plugins. The answer says so in `inherited` `{fx, instrument}`; absent when nothing was taken. A zone that
+  already exists (`outcome: "assign"`) is never touched. The input itself is unchanged.
+* `debug.input_host {op, ...}` (DEBUG builds) drives the ENGINE's input chains directly (register / unregister / live /
+  add_plugin / set_instrument / remove_instrument / level reads), without the model, the undo or the file — it is what
+  `tools/scenario_input_chains.py` uses for the engine-level cases. `debug.transport_loop {start, end, enabled?}`
+  (DEBUG) sets the transport's loop region on the view-model, since the public API has no door onto it.
+
+**Group instruments.** A GROUP can carry an instrument (`instrument.set` / `instrument.remove` accept any eligible group,
+beside a MIDI clip): it plays the notes of the EMPTY MIDI clips below it (a MIDI clip with no instrument of its own), a
+recorded take included. The rule (`GroupInstrumentRule`, one source for the hand and the API): below an instrument group
+there is no audio clip, no consolidated instance, no aux, no second instrument, and an audio input cannot be assigned to
+the group. Every gesture or command that would break it is refused WHOLE before its undo point, with `invalid_state`
+and `details.reason` (`audioChild`, `auxChild`, `childWithInstrument`, `consolidatedChild`, `audioInput`,
+`insideInstrumentGroup`). An empty clip is muted natively (`object.get`: `engine_midi_muted`), and `instrument_host` /
+`instrument_state` say who plays it; its FX are compiled but disabled on the engine side. Consolidating an empty clip or a
+sub-group under a host is refused (`consolidatedChild`).
 * `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
   absent (which disarms it). `invalid_state` for a group that cannot record, and while a recording is
   under way. One undo point.
