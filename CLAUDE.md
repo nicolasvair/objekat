@@ -2874,6 +2874,30 @@ What has landed since mid-August, in order:
   after it (the file is opened 5-15 ms after the press in a Debug build, often exactly one block), which is not a lost
   head — the single `aboutToStart` is the proof. The next free number is `0049`. Not seen: the real BlackHole loop (`tools/calib_record_device.py`), H3 on screen.
   ```
+  **MIDI recording (rec3-midi, 2026-10-30, no engine patch).** A MIDI input is a recording source like a card input:
+  the Inputs tab lists the MIDI inputs ABOVE the card's (also while the card inputs are closed), "All MIDI Ins"
+  (`all_midi_in`) first, each row with a keys glyph and a velocity bar (`MidiInputsSection`, selection
+  `selectedMidiInputs`, no rename in v1). A row is dragged like a card input (`InputDragSession.begin(sources:)`,
+  payload key `midi`; a mixed drag takes one lane per source, MIDI first) onto the timeline to make a MIDI recording
+  zone, or onto a group to give it the input. A zone has ONE source (`SoundObject.recordSource`: `.audio(InputRef)` or
+  `.midi(MidiInputRef)`, computed over `recordInput` / `recordMidiInput`, session format 35); a MIDI input is found
+  again by id, else by its unique name (`MidiInputResolver`), else "absent" (kept, cannot be armed). A MIDI zone has
+  its own instrument, chosen in the synoptic Input block (stored in `SoundObject.instruments`, JSON key
+  `zoneInstruments` for groups): while the zone is armed, `syncMidiZones()` (engine `setMidiZones:`) plays it on a
+  hidden track fed by the device, so the keyboard is heard; a zone without instrument still records (muted take,
+  discreet warning). Takes are `.midiClip` children with handles, newest on top, in mute/add mode like audio takes,
+  one undo; the instrument is COPIED into each take with its live state (`copiedInstruments(of:)`). Rules: sustain (CC
+  64) is folded into note durations, other CC and pitch bend are ignored, no quantisation, a capture without note
+  makes no take, a take outside the window is the whole capture (`MidiTakePlanner`, pure). Notes are timed against the
+  sound HEARD (output latency compensated, MIDI rescan suspended during a take). The editor of a disarmed zone's
+  instrument opens on a temporary instance (`openZoneInstrumentEditor`, engine `"editor": true`), released when the
+  window closes. Headless: `--virtual-midi` creates a virtual device; commands `input.list.midi_inputs`,
+  `input.levels.midi_activity`, `midi.virtual.status`, `midi.virtual.send`; `rec.assign`/`rec.drop` accept `midi`,
+  `rec.status` reports `zones[].source`/`midi_input`/`instrument` and `last_takes[].source`/`notes`. Tests:
+  `tools/scenario_midi_record.py` (72 OK, the one failure being the Settings.xml check rewritten by a GUI instance
+  running beside it), `tools/test_midi_take_planner.swift` 23, `tools/test_input_drag_payload.swift` 17. Measured on
+  the virtual card: a recorded note sits -8.6 ms [-10.0; -5.9] from the heard attack. **Not seen, not played**:
+  everything on screen, a real USB keyboard, a third-party AU/VST editor on a disarmed zone.
   **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
   one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
   input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both
