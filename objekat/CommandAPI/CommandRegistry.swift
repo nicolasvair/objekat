@@ -310,7 +310,29 @@ final class CommandRegistry {
         ["app.info", "project.load_status", "wait_idle", "app.dialogs", "project.cancel_load",
          "tab.list"]
 
+    /// A command the rule of an instrument group turned down (docs/plan_groupes_midi.md, E5) answers
+    /// `invalid_state` with `details.reason` = the refusal (@see GroupInstrumentRefusal), whatever the gesture it
+    /// drove: the doors record the refusal on the view-model, this wrapper is the one place that reads it back.
     func execute(name: String, params: CommandParams) async throws -> JSONValue {
+        let vm = CommandContext.shared.viewModel
+        vm?.groupInstrumentRefusal = nil
+        func refusalError(_ reason: GroupInstrumentRefusal) -> CommandError {
+            CommandError(code: .invalid_state, message: "refused by an instrument group: \(reason.rawValue)",
+                         details: .object(["reason": .string(reason.rawValue)]))
+        }
+        let result: JSONValue
+        do { result = try await executeCommand(name: name, params: params) }
+        catch {
+            // A door that refused did nothing, and a handler that expected its effect may complain about it
+            // (`instrument.set` finding no instrument): the refusal is the answer, not the complaint.
+            if let reason = vm?.takeGroupInstrumentRefusal() { throw refusalError(reason) }
+            throw error
+        }
+        if let reason = vm?.takeGroupInstrumentRefusal() { throw refusalError(reason) }
+        return result
+    }
+
+    private func executeCommand(name: String, params: CommandParams) async throws -> JSONValue {
         bootstrap()
         // An alias is resolved transparently: the caller sees the same behaviour as the
         // canonical name, undo policy included.

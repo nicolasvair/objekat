@@ -73,6 +73,11 @@ extension EditViewModel {
                                                  isAltCopy: isAltCopy, dt: dt, decision: rawDecision)
         else { NSSound.beep(); return .cancel }
 
+        // An instrument group takes no audio, no aux, no second instrument (E5): refused whole, before any undo point.
+        if case .reparent(let targetGroup, _) = decision, refusesAdding(ids: ids, toGroup: targetGroup) {
+            NSSound.beep()
+            return .cancel
+        }
         // Nothing is touched before the guards: a `cancel`, or a decision that needs a source
         // group the objects do not have, leaves no undo point behind.
         switch decision {

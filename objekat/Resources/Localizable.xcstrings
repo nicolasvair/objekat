@@ -7730,6 +7730,167 @@
         }
       }
     },
+    "groupInstrument.refused.audioChild": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un son ne peut pas y entrer."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A group that carries an instrument only takes empty MIDI clips: a sound cannot go in."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un grupo que lleva un instrumento solo recibe clips MIDI vacíos: un sonido no puede entrar."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.audioInput": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une entrée audio ne peut pas être branchée sur un groupe qui porte un instrument, ni sous lui."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "An audio input cannot be set on a group that carries an instrument, nor under one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede conectar una entrada de audio a un grupo que lleva un instrumento, ni debajo de uno."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.auxChild": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un objet aux ne peut pas y entrer."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A group that carries an instrument only takes empty MIDI clips: an aux object cannot go in."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un grupo que lleva un instrumento solo recibe clips MIDI vacíos: un objeto aux no puede entrar."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.childWithInstrument": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe n'a qu'un instrument par chaîne : ce clip ou ce groupe porte déjà le sien, ou un groupe au-dessus a le sien."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A chain has one instrument only: this clip or group already carries its own, or a group above it has one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una cadena solo tiene un instrumento: este clip o grupo ya lleva el suyo, o un grupo por encima tiene uno."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.consolidatedChild": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un objet consolidé ne peut pas entrer dans un groupe qui porte un instrument."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A consolidated object cannot go into a group that carries an instrument."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un objeto consolidado no puede entrar en un grupo que lleva un instrumento."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.insideInstrumentGroup": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce groupe est déjà sous un groupe qui porte un instrument : il n'en a qu'un par chaîne."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This group already sits under a group that carries an instrument: a chain has one instrument only."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este grupo ya está bajo un grupo que lleva un instrumento: una cadena solo tiene uno."
+          }
+        }
+      }
+    },
+    "groupInstrument.refused.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geste refusé"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gesture refused"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gesto rechazado"
+          }
+        }
+      }
+    },
     "help.cut.impossible": {
       "extractionState": "manual",
       "localizations": {

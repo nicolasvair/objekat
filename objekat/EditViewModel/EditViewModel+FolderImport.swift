@@ -200,10 +200,35 @@ extension EditViewModel {
     ///
     /// Does NOT push an undo point: the caller did, before this. Returns the ids of what was laid
     /// down at the level it landed on, in order.
+    /// Would laying `entries` down at `baseLane` break the rule of an instrument group (E5)? Audio files and
+    /// folders holding audio are refused whole by a group that carries an instrument. Asked by the timeline's drop
+    /// BEFORE its undo point, and again by `placeDropEntries`; says so once, when it refuses.
+    func refusesDropEntries(_ entries: [DropEntry], baseLane: Int, baseStart: Double, mode: FileDropMode) -> Bool {
+        guard !entries.isEmpty else { return false }
+        let folderMode = Self.folderMode(of: mode)
+        let slots = Self.fileDropLayout(durations: entries.map { $0.duration(mode: folderMode) },
+                                        mode: mode, baseLane: baseLane, baseStart: baseStart)
+        guard let first = slots.first,
+              let gid = placementGroupID(forDisplayLane: first.lane, snapshot: laneEntries) else { return false }
+        var probes: [SoundObject] = []
+        for (slot, entry) in zip(slots, entries) {
+            switch entry {
+            case .file(let f):
+                probes.append(Self.clipObject(for: f, start: slot.startTime, lane: slot.lane))
+            case .folder(let node):
+                if let plan = FolderImport.plan(node, start: slot.startTime, lane: slot.lane, mode: folderMode) {
+                    probes.append(Self.groupObject(for: plan))
+                }
+            }
+        }
+        return refusesAdding(probes, toGroup: gid)
+    }
+
     @discardableResult
     func placeDropEntries(_ entries: [DropEntry], baseLane: Int, baseStart: Double,
                           mode: FileDropMode) -> [UUID] {
         guard !entries.isEmpty else { return [] }
+        if refusesDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode) { return [] }
         let folderMode = Self.folderMode(of: mode)
         // One snapshot of the display lanes: those the user was looking at when he let go, not the
         // ones after the first additions.

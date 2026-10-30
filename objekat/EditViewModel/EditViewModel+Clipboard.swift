@@ -346,6 +346,9 @@ extension EditViewModel {
             targets.append((copy, spot.groupID, spot.lane))
         }
 
+        // An instrument group takes no audio, no aux, no second instrument (E5): the whole paste is refused, whole.
+        if refusesAdding(targets: targets.map { ($0.copy, $0.groupID) }) { return }
+
         var allPasted: [SoundObject] = []
         batchItemsMutation {
             for (copy, groupID, lane) in targets {
@@ -1020,27 +1023,35 @@ extension EditViewModel {
         // The one floor of every move (@see ZeroFloor): the carried objects stop at 0 (the drag
         // has floored `dt` already; this holds it for any other caller), their descendants follow.
         let dt = ZeroFloor.clampedDelta(startsAt: anchors.values.map(\.start), proposedDelta: rawDt)
+        let snapshot = laneEntries
+
+        // Anti-cycle: a moved item (or a descendant of a moved group) cannot
+        // serve as the target group.
+        var excluded = Set(anchors.keys)
+        func collectDescendants(_ objs: [SoundObject]) {
+            for o in objs {
+                excluded.insert(o.id)
+                if case .group(let ch, _) = o.kind { collectDescendants(ch) }
+            }
+        }
+        for id in anchors.keys {
+            if let obj = find(id: id), case .group(let ch, _) = obj.kind {
+                collectDescendants(ch)
+            }
+        }
+
+        // An instrument group takes no audio, no aux, no second instrument (E5): asked BEFORE anything is lifted out.
+        let carried: [SoundObject] = anchors.compactMap { id, anchor in
+            guard var obj = find(id: id) else { return nil }
+            obj.lane = max(0, anchor.lane + dl)
+            return obj
+        }
+        if refusesPlacing(carried, snapshot: snapshot, excludingGroups: excluded) { return }
+
         // A translate lifts each object out and puts it back somewhere else — another
         // lane, inside a group, out of one. Every one of those ENDS a crossfade, and
         // the fades have to go with it (@see withCrossfadeRefit).
         withCrossfadeRefit(around: Set(anchors.keys)) {
-            let snapshot = laneEntries
-
-            // Anti-cycle: a moved item (or a descendant of a moved group) cannot
-            // serve as the target group.
-            var excluded = Set(anchors.keys)
-            func collectDescendants(_ objs: [SoundObject]) {
-                for o in objs {
-                    excluded.insert(o.id)
-                    if case .group(let ch, _) = o.kind { collectDescendants(ch) }
-                }
-            }
-            for id in anchors.keys {
-                if let obj = find(id: id), case .group(let ch, _) = obj.kind {
-                    collectDescendants(ch)
-                }
-            }
-
             var placed: [SoundObject] = []
             for (id, anchor) in anchors {
                 guard var obj = find(id: id) else { continue }
@@ -1082,11 +1093,11 @@ extension EditViewModel {
         // The one floor of every move (@see ZeroFloor); the drag has applied it already.
         let dt = ZeroFloor.clampedDelta(startsAt: frags.map(\.startTime), proposedDelta: rawDt)
         let snapshot = laneEntries
+        let copies = frags.map { makeCopy($0, startTime: $0.startTime + dt, lane: max(0, $0.lane + dl)) }
+        // An instrument group takes no audio, no aux, no second instrument (E5): the whole translate is refused.
+        if refusesPlacing(copies, snapshot: snapshot) { return [] }
         var placed: [SoundObject] = []
-        for frag in frags {
-            let f = makeCopy(frag,
-                             startTime: frag.startTime + dt,
-                             lane: max(0, frag.lane + dl))
+        for f in copies {
             placed.append(placeClip(f, snapshot: snapshot))
         }
         for obj in placed { resolveOverlaps(for: obj.id) }

@@ -21,8 +21,15 @@ extension EditViewModel {
     }
 
     func edit(_ action: () -> Void) {
+        let itemsBefore = items, dirtyBefore = isDirty
         pushUndo()
+        groupInstrumentRefusal = nil
         action()
+        // A gesture the rule of an instrument group turned down changed nothing: it leaves no undo point behind.
+        if groupInstrumentRefusal != nil, items == itemsBefore {
+            _ = undoStack.popLast()
+            isDirty = dirtyBefore
+        }
     }
 
     func pushUndo() {

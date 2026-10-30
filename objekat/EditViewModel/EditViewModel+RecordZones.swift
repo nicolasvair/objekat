@@ -159,6 +159,8 @@ extension EditViewModel {
         guard !isRecording else { return false }
         guard let item = find(id: id), Self.isRecordableZone(item) else { return false }
         if item.recordSource == source { return true }
+        // An AUDIO source on a zone that carries (or sits under) an instrument is refused (E5).
+        if case .audio = source, refusesAudioInput(on: id) { return false }
         pushUndo()
         applyRecordSource(source, toGroup: id)
         return true
@@ -300,6 +302,22 @@ extension EditViewModel {
                                     visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
         var groups = [UUID?](repeating: nil, count: plans.count)
         guard !plans.isEmpty, !RecordZonePlanner.isRefused(plans) else { return (plans, groups) }
+
+        // An instrument group takes no audio source (E5): the whole drop is refused, whole, before any undo point.
+        for (i, plan) in plans.enumerated() {
+            guard case .audio = refs[i] else { continue }
+            switch plan {
+            case .assign(let id):
+                if find(id: id)?.recordSource != refs[i], refusesAudioInput(on: id) { return (plans, groups) }
+            case .create(let start, let end, _):
+                var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
+                                       label: nil, kind: .group(children: [], isExpanded: false))
+                zone.recordSource = refs[i]
+                if refusesPlacing([zone], snapshot: laneEntries) { return (plans, groups) }
+            case .refuse:
+                break
+            }
+        }
 
         let changes = plans.indices.contains { i in
             switch plans[i] {

@@ -1317,6 +1317,9 @@ final class EditViewModel {
     /// The zones the recording in flight was started for, and what the last one gave them
     /// (@see EditViewModel+Recording).
     var recordingZones: [RecordingZone] = []
+    /// The refusal of the last gesture that the rule of an instrument group turned down, until the command bus (or
+    /// `edit { }`) reads it (@see EditViewModel+GroupInstrument). Session state, never saved.
+    @ObservationIgnored var groupInstrumentRefusal: GroupInstrumentRefusal? = nil
     /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
     /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
     var midiInputs: [MidiInputInfo] = []

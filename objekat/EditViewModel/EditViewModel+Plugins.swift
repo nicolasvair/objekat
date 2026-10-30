@@ -415,6 +415,8 @@ extension EditViewModel {
     /// to the engine. No effect on any other object.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
         guard let obj = find(id: objectID), obj.isMIDI || obj.isGroup, engine != nil else { return }
+        // One instrument per chain, none below an instrument group, none over audio (E5): refused before the undo point.
+        if refusesInstrument(on: objectID) { return }
         let inst = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         update(id: objectID) { $0.instruments = [inst] }
@@ -475,6 +477,7 @@ extension EditViewModel {
               let inst = find(id: sourceObjectID)?.instruments.first(where: { $0.id == pluginID }),
               find(id: targetObjectID)?.isMIDI == true,
               sourceObjectID != targetObjectID else { return }
+        if refusesInstrument(on: targetObjectID) { return }
         let live = engine.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : inst.stateXML
         // The link membership of the instance laid down, one per gesture:

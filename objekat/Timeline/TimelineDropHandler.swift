@@ -320,6 +320,8 @@ extension TimelineView {
         }
         let baseLane  = max(0, Int((location.y - rulerHeight) / laneStep))
         let baseStart = max(0, vm.snappedTimePure(location.x / pixelsPerSecond))
+        // An instrument group takes no audio (E5): refused before the undo point, like every refused gesture.
+        if vm.refusesDropEntries(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode) { return }
         vm.pushUndo()
         // The same layout computation as the hover's ghost preview (`fileDropLayout`): what is laid
         // down has to be exactly what was shown under the cursor.

@@ -37,6 +37,21 @@ extension EditViewModel {
         let result = CrossProjectImport.plan(clipboard, target: target)
         guard !result.clips.isEmpty else { return }
 
+        typealias Placement = (copy: SoundObject, groupID: UUID?, lane: Int)
+        var targets: [Placement] = []
+        var maxAbsEnd = pasteTime
+
+        for copy in result.clips {
+            let targetDL = copy.lane
+            let spot = pastePlacement(targetDL: targetDL, anchorDL: pasteLane, snapshot: snapshot)
+            targets.append((copy, spot.groupID, spot.lane))
+            maxAbsEnd = max(maxAbsEnd, copy.startTime + copy.duration)
+        }
+
+        // An instrument group takes no audio, no aux, no second instrument (E5): the whole paste is refused, whole,
+        // before anything is registered on this side.
+        if refusesAdding(targets: targets.map { ($0.copy, $0.groupID) }) { return }
+
         // New consolidated definitions and where their wave actually lives (the source project's
         // OWN folder — media is never copied, @see `consolidateFallbackDirs`) are registered
         // BEFORE the objects that reference them are added, so the very first sync finds them.
@@ -48,17 +63,6 @@ extension EditViewModel {
         fxLinks += result.newFXLinks
         for (id, folder) in result.consolidateOriginFolders {
             consolidateOriginFolders[id] = folder
-        }
-
-        typealias Placement = (copy: SoundObject, groupID: UUID?, lane: Int)
-        var targets: [Placement] = []
-        var maxAbsEnd = pasteTime
-
-        for copy in result.clips {
-            let targetDL = copy.lane
-            let spot = pastePlacement(targetDL: targetDL, anchorDL: pasteLane, snapshot: snapshot)
-            targets.append((copy, spot.groupID, spot.lane))
-            maxAbsEnd = max(maxAbsEnd, copy.startTime + copy.duration)
         }
 
         var allPasted: [SoundObject] = []

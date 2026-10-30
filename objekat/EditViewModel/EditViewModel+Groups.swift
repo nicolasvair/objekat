@@ -679,6 +679,8 @@ extension EditViewModel {
         anchors: [UUID: (start: Double, lane: Int)],
         grabbedID: UUID, grabbedChildLane: Int, dt: Double
     ) {
+        // An instrument group takes no audio, no aux, no second instrument: the whole move is refused, whole.
+        if refusesAdding(ids: clipIDs, toGroup: groupID) { return }
         // Entering a container ENDS every crossfade the movers were in: a zone lives
         // between siblings of one lane, and these stop being siblings of what they
         // leave behind. Nothing put the zone's fades away, and each object went on
@@ -786,6 +788,7 @@ extension EditViewModel {
         anchors: [UUID: (start: Double, lane: Int)],
         grabbedID: UUID, grabbedChildLane: Int, dt: Double
     ) {
+        if refusesAdding(ids: childIDs, toGroup: targetGroupID) { return }
         // Changing container ENDS every crossfade the movers were in, both with what
         // they leave and with what they join (@see withCrossfadeRefit).
         withCrossfadeRefit(around: childIDs) {
@@ -873,6 +876,7 @@ extension EditViewModel {
               case .group(let srcChildren, _) = source.kind,
               find(id: targetGroupID) != nil else { return [] }
         guard let grabbedBaseLane = anchors[grabbedID]?.lane else { return [] }
+        if refusesAdding(ids: childIDs, toGroup: targetGroupID) { return [] }
         var copies: [SoundObject] = []
         for childID in childIDs {
             guard let child = srcChildren.first(where: { $0.id == childID }),

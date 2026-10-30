@@ -11,12 +11,14 @@ extension EditViewModel {
         let t1 = sel.timeRange.lowerBound
         let t2 = sel.timeRange.upperBound
         guard t2 > t1 else { return }
-        pushUndo()
         // sel.lanes = display lanes: an open group shifts the display lanes, so the
         // aux is routed through placeClip (a top-level base lane, or a child if the display lane
         // falls inside the child range of an open group) instead of using the raw lane.
         let displayLane = sel.lanes.min() ?? 0
         let aux = SoundObject(startTime: t1, duration: t2 - t1, lane: displayLane, kind: .aux)
+        // An aux is not a MIDI clip: an instrument group refuses it (E5), before any undo point.
+        if refusesPlacing([aux], snapshot: laneEntries) { return }
+        pushUndo()
         let placed = placeClip(aux, snapshot: laneEntries)   // model + syncAdd → engineAddAux
         selectedIDs = [placed.id]
         timeSelection = nil

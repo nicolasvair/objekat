@@ -639,6 +639,12 @@ extension CommandRegistry {
             if let name = try p.optionalString("name"), !name.isEmpty { object.label = name }
             // The same laying-down path as a drop from the Finder: `placeClip` decides whether the
             // target lane falls INSIDE an expanded group, and `resolveOverlaps` settles overlaps.
+            // An instrument group takes no audio (E5): the bus answers `invalid_state` with the reason.
+            let intoGroup = groupID ?? vm.placementGroupID(forDisplayLane: object.lane, snapshot: vm.laneEntries)
+            if vm.refusesAdding([object], toGroup: intoGroup) {
+                throw CommandError(code: .invalid_state, message: "refused by an instrument group",
+                                   details: .object(["reason": .string(vm.takeGroupInstrumentRefusal()?.rawValue ?? "")]))
+            }
             let placed: SoundObject
             if let groupID {
                 vm.addChild(object, toGroupID: groupID)
