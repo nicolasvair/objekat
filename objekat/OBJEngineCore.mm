@@ -2684,6 +2684,42 @@ static BOOL gOBJAudioDisabled = NO;
     tc.ensureContextAllocated();
 }
 
+// MARK: Pont d'horloge vidéo (plan-video §4.2) — petit bloc séparé, rien d'autre n'en dépend
+
+/// LA latence de sortie que la vidéo retranche à la position audible, en secondes — le seul endroit où elle
+/// se calcule. Ce que renvoie JUCE est la latence DÉCLARÉE du device ouvert (tampon de sortie + décalage de
+/// sécurité + latence du flux, selon le backend), 0 sans device (--no-audio) ou device virtuel muet.
+/// ⚠️ À REVOIR AU RETOUR de `feat/low-latency-monitoring` : cette branche touche au tampon et à la manière
+/// dont la latence d'une carte est annoncée ; si elle change ce que `getOutputLatencyInSamples` couvre (ou
+/// introduit une compensation d'écoute), c'est ICI, et nulle part ailleurs, que la vidéo doit suivre.
+static double objVideoOutputLatencySeconds(juce::AudioDeviceManager& jdm) {
+    auto* dev = jdm.getCurrentAudioDevice();
+    if (dev == nullptr || !dev->isOpen()) return 0.0;
+    const double sr = dev->getCurrentSampleRate();
+    return sr > 0.0 ? (double) dev->getOutputLatencyInSamples() / sr : 0.0;
+}
+
+// Main thread seulement (règle Tracktion : le contexte de lecture ne se touche pas d'ailleurs). `audible` =
+// getAudibleTimelineTime() : la position, en secondes de timeline, du bloc que le graphe est en train de
+// calculer, déjà corrigée de la latence INTERNE du graphe (PlayHeadPositionNode) — pas de celle de la carte,
+// que `latency` donne à part. Pendant le décompte de latence du départ le nœud RETIENT la position : l'image
+// attend le son. Sans graphe alloué, `audible` retombe sur la position du transport.
+- (void)videoClockSample:(double*)audible latency:(double*)latency playing:(BOOL*)playing {
+    if (audible)  *audible  = 0.0;
+    if (latency)  *latency  = 0.0;
+    if (playing)  *playing  = NO;
+    if (!_edit) return;
+    auto& tc = _edit->getTransport();
+    if (playing) *playing = (BOOL) tc.isPlaying();
+    double a = tc.getPosition().inSeconds();
+    if (auto* epc = tc.getCurrentPlaybackContext())
+        if (epc->isPlaybackGraphAllocated())
+            a = epc->getAudibleTimelineTime().inSeconds();
+    if (audible) *audible = a;
+    if (latency && _engine != nullptr && !gOBJAudioDisabled)
+        *latency = objVideoOutputLatencySeconds(_engine->getDeviceManager().deviceManager);
+}
+
 // MARK: Sonde multi-cœur (plan multi-cœur, étape 0)
 
 - (NSInteger)audioXRunCount {
