@@ -25,8 +25,11 @@ import Foundation
 /// A zone, the input it records and its take mode, as they were when "record" was pressed.
 struct RecordingZone: Equatable {
     let id: UUID
-    let ref: InputRef
+    let source: RecordSource
     var mode: RecordTakeMode = .mute
+
+    /// The card input, for an audio zone.
+    var ref: InputRef? { if case .audio(let r) = source { return r } else { return nil } }
 }
 
 /// A file the engine finished writing: its input, where it is, the timeline instant of its first sample
@@ -39,6 +42,8 @@ struct RecordedFile: Equatable {
     let sampleRate: Double
 }
 
+/// A MIDI zone's capture, notes included (rec3-midi): `RecordedMidi` is in EditViewModel+RecordMidi.
+
 /// What one zone received (`rec.stop` and `rec.status` answer with it).
 struct RecordTakeReport: Equatable {
     let group: UUID
@@ -50,6 +55,8 @@ struct RecordTakeReport: Equatable {
     let lane: Int
     let outsideWindow: Bool
     let muted: [UUID]
+    /// The notes of a MIDI take (0 for an audio one); the path is empty for it.
+    var notes: Int = 0
 }
 
 /// The block the timeline draws for a zone while it records (@see RecordProgress).
@@ -111,7 +118,7 @@ extension EditViewModel {
     /// middle of a playback — finds them ready and rebuilds nothing. Harmless when the inputs are closed.
     func syncArmedInputs() {
         guard !isRecording, let engine else { return }
-        let refs = Set(armedRecordZones.compactMap { find(id: $0)?.recordInput })
+        let refs = Set(armedRecordZones.compactMap { find(id: $0)?.recordInput })   // audio zones only
         engine.setAudioInputsArmed(refs.sorted { ($0.first, $0.count) < ($1.first, $1.count) }.map {
             ["first": NSNumber(value: $0.first), "count": NSNumber(value: $0.count)]
         })
@@ -138,25 +145,35 @@ extension EditViewModel {
     func beginRecording(startTime: Double, date: Date = Date()) -> String? {
         guard !isRecording else { return "already recording" }
         guard let engine else { return "no engine" }
-        guard let folder = projectFolder else { return "the project has not been saved: there is no folder for the takes" }
         let zones: [RecordingZone] = armedRecordZones.compactMap { id in
-            guard let zone = find(id: id), let ref = zone.recordInput else { return nil }
-            return RecordingZone(id: id, ref: ref, mode: zone.recordTakeMode ?? .mute)
+            guard let zone = find(id: id), let source = zone.recordSource else { return nil }
+            return RecordingZone(id: id, source: source, mode: zone.recordTakeMode ?? .mute)
         }
         guard !zones.isEmpty else { return "no zone is armed" }
 
-        // One file per input and per take, whatever the number of zones on it.
-        let recFolder = ConsolidateFolders.recordingsFolder(projectFolder: folder)
+        // One file per audio input and per take, whatever the number of zones on it. A MIDI zone writes no
+        // file: the project's folder is needed only when an audio zone is armed.
+        let audioRefs = Set(zones.compactMap(\.ref)).sorted(by: { ($0.first, $0.count) < ($1.first, $1.count) })
         var used = Set<String>()
         var inputs: [[String: Any]] = []
-        for ref in Set(zones.map(\.ref)).sorted(by: { ($0.first, $0.count) < ($1.first, $1.count) }) {
-            let name = RecordFileNaming.name(inputName: inputName(ref), date: date) { candidate in
-                used.contains(candidate)
-                    || FileManager.default.fileExists(atPath: recFolder.appendingPathComponent(candidate).path)
+        if !audioRefs.isEmpty {
+            guard let folder = projectFolder else { return "the project has not been saved: there is no folder for the takes" }
+            let recFolder = ConsolidateFolders.recordingsFolder(projectFolder: folder)
+            for ref in audioRefs {
+                let name = RecordFileNaming.name(inputName: inputName(ref), date: date) { candidate in
+                    used.contains(candidate)
+                        || FileManager.default.fileExists(atPath: recFolder.appendingPathComponent(candidate).path)
+                }
+                used.insert(name)
+                inputs.append(["first": ref.first, "count": ref.count,
+                               "path": recFolder.appendingPathComponent(name).path])
             }
-            used.insert(name)
-            inputs.append(["first": ref.first, "count": ref.count,
-                           "path": recFolder.appendingPathComponent(name).path])
+        }
+        // One entry per MIDI zone: the device it listens to (resolved now — the id may differ from the saved one).
+        for zone in zones {
+            guard case .midi(let ref) = zone.source else { continue }
+            guard let device = resolvedMidiInput(ref) else { return "the MIDI input of a zone is not there" }
+            inputs.append(["midi": device.id, "zone": zone.id.uuidString])
         }
 
         // The previous takes are muted now: ONE undo point, pushed before the first change.
@@ -227,7 +244,7 @@ extension EditViewModel {
     /// The engine says the recording is over, with the files it wrote. Each frozen zone that is still a
     /// recordable group gets its take — one undo point for the lot (the one `beginRecording` pushed for
     /// the mutes, when there was one), none if nothing was recorded: then the mutes are given back.
-    func completeRecording(files: [RecordedFile]) {
+    func completeRecording(files: [RecordedFile], midi: [RecordedMidi] = []) {
         guard isRecording else { return }
         let zones = recordingZones
         let log = recordingMuteLog
@@ -241,33 +258,52 @@ extension EditViewModel {
 
         for zone in zones {
             let early = log.mutedByZone[zone.id] ?? []
-            guard let file = files.first(where: { $0.ref == zone.ref }),
+            let file = zone.ref.flatMap { r in files.first(where: { $0.ref == r }) }
+            let capture = midi.first(where: { $0.zone == zone.id })
+            guard file != nil || capture != nil,
                   let group = find(id: zone.id), case .group(let children, _) = group.kind else {
                 // No take for this zone: what was muted for it is heard again.
                 if !early.isEmpty { setMuted(early, false) }
                 continue
             }
             let window = recordWindow(of: group)
+            let span: (origin: Double, length: Double) = file.map { ($0.origin, $0.length) }
+                ?? (capture?.origin ?? 0, capture?.length ?? 0)
             let plan = RecordTakePlanner.plan(
                 windowStart: window.start, windowEnd: window.end, children: takePlannerChildren(children),
-                capture: .init(origin: file.origin, length: file.length),
+                capture: .init(origin: span.origin, length: span.length),
                 mutesPrevious: zone.mode.mutesPrevious, mutedAtStart: Set(early))
 
-            if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
-            var take = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
+            // A MIDI take is made BEFORE the undo point is pushed: no note, no take (the mutes are given back).
+            var made: SoundObject
+            var path = ""
+            var noteCount = 0
+            if let file {
+                made = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
                                    lane: plan.take.lane,
                                    kind: .clip(filePath: file.path, sourceOffset: plan.take.sourceOffset,
                                                fileDuration: file.length, speedRatio: 1.0, isReversed: false))
-            take.fileSize = Self.fileSize(atPath: file.path)
+                made.fileSize = Self.fileSize(atPath: file.path)
+                path = file.path
+            } else if let capture, let m = midiTakeObject(from: capture, zone: group, plan: plan) {
+                made = m
+                if case .midiClip(let notes, _) = m.kind { noteCount = notes.count }
+            } else {
+                if !early.isEmpty { setMuted(early, false) }
+                continue
+            }
+            if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
+            let take = made
             setMuted(plan.mutedIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
             setMuted(plan.unmuteIDs, false)
             // The newest on top: the previous takes go down by one lane, the take takes the top one.
             updateMany(Set(plan.shiftIDs)) { $0.lane += 1 }
             addChild(take, toGroupID: zone.id)
-            reports.append(RecordTakeReport(group: zone.id, object: take.id, path: file.path,
+            reports.append(RecordTakeReport(group: zone.id, object: take.id, path: path,
                                             start: plan.take.start, duration: plan.take.duration,
                                             sourceOffset: plan.take.sourceOffset, lane: plan.take.lane,
-                                            outsideWindow: plan.take.outsideWindow, muted: plan.mutedIDs))
+                                            outsideWindow: plan.take.outsideWindow, muted: plan.mutedIDs,
+                                            notes: noteCount))
         }
         // Nothing recorded at all: the point pushed for the mutes holds a state identical to this one.
         if reports.isEmpty, let depth = log.undoDepthAfterPush, undoStack.count == depth {
@@ -276,5 +312,6 @@ extension EditViewModel {
         }
         lastRecordingTakes = reports
         syncArmedInputs()
+        syncMidiZones()
     }
 }

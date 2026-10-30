@@ -38,6 +38,12 @@
 + (void)setVirtualAudio:(BOOL)on spec:(NSString* _Nullable)spec;
 + (BOOL)isVirtualAudio;
 
+/// `--virtual-midi`: adds ONE in-process MIDI input, "OBJ Virtual MIDI", that `-sendVirtualMidiEvents:` feeds,
+/// so MIDI recording can be tested with no hardware. Same rule as above — set before the first construction.
+/// The MIDI device settings (`virtualmididevices`, `midiin`, `virtualmidiin`) never reach Settings.xml.
++ (void)setVirtualMidi:(BOOL)on;
++ (BOOL)isVirtualMidi;
+
 // Edit live — muté incrémentalement, jamais reconstruit
 - (void)addSoundObject:(OBJSoundObjectData*)data withID:(NSString*)uuid;
 - (void)removeSoundObjectWithID:(NSString*)uuid;
@@ -1016,8 +1022,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// targeted, so that pressing record needs no graph rebuild. Replaces the previous set. Harmless while the
 /// inputs are closed (nothing is prepared). Not saved.
 - (void)setAudioInputsArmed:(NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)inputs;
-/// Starts recording the given inputs (`{first, count, path}` — the WAV file each one writes, 32-bit float at
-/// the device's rate). Stopped: records from the transport position, playing: punches in at the current
+/// Starts recording the given inputs: audio ones `{first, count, path}` — the WAV file each one writes,
+/// 32-bit float at the device's rate; MIDI ones `{midi: deviceID, zone: uuid}` — the zone must be armed
+/// (`-setMidiZones:`), a MIDI take is its notes, in absolute seconds (see `onRecordingFinished`). Stopped: records from the transport position, playing: punches in at the current
 /// position. nil on success, otherwise why not (nothing is left half-started).
 - (NSString* _Nullable)startRecordingInputs:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)inputs;
 - (BOOL)isRecordingNow;
@@ -1030,8 +1037,37 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// Called on the main thread when a recording is over, however it ended (-stop, a position change, the
 /// card). Each take is `{first, count, path, origin, length, sampleRate}`: the file, the timeline instant
 /// of its first sample and its length in seconds. The clips the engine made are already gone from the
-/// hidden tracks; the files stay.
+/// hidden tracks; the files stay. A MIDI zone's take is `{zone, device, origin, length, notes: [{pitch,
+/// start, end, velocity}], sustain: [{time, down}]}` — seconds on the timeline (sustain = CC64 events); a zone that played no note has none.
 @property (nonatomic, copy, nullable) void (^onRecordingFinished)(NSArray<NSDictionary<NSString*, id>*>* _Nonnull takes);
+
+// MIDI INPUTS (rec3-midi). Tracktion's own MIDI devices — physical ones, the "All MIDI Ins" virtual one
+// (`all_midi_in`) and, under `--virtual-midi`, "OBJ Virtual MIDI". Independent of the audio inputs: they
+// exist whether or not the card's inputs are open. Main thread.
+/// Every MIDI input the engine knows (the per-track devices left out): `{id, identifier, name, virtual,
+/// enabled}`. `id` is Tracktion's device id (stable across launches for a given piece of hardware).
+- (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)midiInputDevices;
+/// The loudest note-on velocity (0...127) seen on each device since the last read, by device id, only for
+/// the devices that played something. Reading clears.
+- (NSDictionary<NSString*, NSNumber*>* _Nonnull)midiInputActivity;
+/// Called on the main thread after the list of MIDI devices changed (a device plugged, unplugged, enabled).
+/// Carries nothing: the receiver re-reads `-midiInputDevices`.
+@property (nonatomic, copy, nullable) void (^onMidiDevicesChanged)(void);
+/// The MIDI zones that are ARMED, each `{zone, device, instrument?}`: `zone` the group's uuid, `device` a
+/// MIDI input id, `instrument` the zone's virtual instrument `{pluginKey, identifier, format, name,
+/// stateXML?}`. Each gets a hidden track playing the device through the instrument (one track per ZONE: a
+/// device may feed several), released when the zone leaves the list. Replaces the previous set; kept as is
+/// while a recording runs. Not saved.
+- (void)setMidiZones:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)zones;
+/// The zones that have their hidden track right now (uuids).
+- (NSArray<NSString*>* _Nonnull)midiZonesLive;
+/// `--virtual-midi` only. `{active, device_id, name, sent, pending}`.
+- (NSDictionary<NSString*, id>* _Nonnull)virtualMidiStatus;
+/// `--virtual-midi` only. Plays events into the virtual device at `delay_ms` from now each: `{kind: "on"|"off"|"cc",
+/// note, velocity?, channel?, delay_ms?}` (for "cc": `note` is the controller, `velocity` the value). `device` (a MIDI input id) defaults to the virtual one; what goes
+/// to the virtual device also reaches "All MIDI Ins", as a physical device's would. nil on success.
+- (NSString* _Nullable)sendVirtualMidiEvents:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)events
+                                      device:(NSString* _Nullable)deviceID;
 
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices

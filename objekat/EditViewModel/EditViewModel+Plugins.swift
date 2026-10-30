@@ -384,6 +384,9 @@ extension EditViewModel {
     ///   keeps the original, immediate behaviour (default true).
     func syncInstruments(_ object: SoundObject, rewireLinks: Bool = true) {
         guard let engine else { return }
+        // A GROUP's instrument is its recording zone's: played on a hidden track while armed, never put on the
+        // container (an instrument writes its buffer and would overwrite the sum of the audio children).
+        if object.isGroup { syncMidiZones(); return }
         if let inst = object.instruments.first {
             var info: [String: Any] = [
                 "pluginKey":  inst.id.uuidString,
@@ -412,6 +415,7 @@ extension EditViewModel {
     /// Assigns a virtual instrument to a MIDI clip (replacing any current one), then pushes it
     /// to the engine. No effect on an object that is not a MIDI clip.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
+        if canHaveZoneInstrument(objectID) { setZoneInstrument(groupID: objectID, available: available); return }
         guard let obj = find(id: objectID), obj.isMIDI, engine != nil else { return }
         let inst = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
@@ -422,6 +426,7 @@ extension EditViewModel {
 
     /// Removes a MIDI clip's instrument (model + engine).
     func removeInstrument(objectID: UUID) {
+        if canHaveZoneInstrument(objectID) { removeZoneInstrument(groupID: objectID); return }
         guard find(id: objectID) != nil, engine != nil else { return }
         pushUndo()
         update(id: objectID) { $0.instruments = [] }

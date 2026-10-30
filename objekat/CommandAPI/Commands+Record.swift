@@ -245,6 +245,7 @@ extension CommandRegistry {
         }
 
         registerRecordZoneCommands()
+        registerRecordMidiCommands()
     }
 
     /// The pairing is fixed while a recording runs (changing it would stop the take and lose it).
@@ -267,7 +268,8 @@ extension CommandRegistry {
                  summary: """
                  Drops the input (`first`, `count`) on the timeline at display lane `lane` and instant \
                  `time` — exactly what releasing a row of the Inputs tab there does, the same planner \
-                 (RecordZonePlanner). SEVERAL inputs: `inputs` [{first, count?}] in place of `first` — one \
+                 (RecordZonePlanner). A MIDI input: `midi` (its id, see `input.list.midi_inputs`) in place of \
+                 `first`. SEVERAL inputs: `inputs` [{first, count?} | {midi}] in place of `first` — one \
                  lane per input, downwards from `lane` in the order given, each with its own end, the \
                  refusal of one lane refusing the lot, ONE undo point; the answer is then `applied`, \
                  `refused` and `drops` (one `outcome` object per lane, with its `lane` and `group`). On empty room: a new empty group named after the input, from `time` \
@@ -282,8 +284,9 @@ extension CommandRegistry {
                  """,
                  params: [ParamSpec("first", "int", required: false, "First channel of the input, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of first / count."),
                           ParamSpec("inputs", "array<object>", required: false,
-                                    "Several inputs [{first, count?}], instead of first / count."),
+                                    "Several inputs [{first, count?} | {midi}], instead of first / count."),
                           ParamSpec("lane", "int", "Display lane under the cursor."),
                           ParamSpec("time", "number", "Instant under the cursor, seconds."),
                           ParamSpec("visible_secs", "number", required: false,
@@ -297,14 +300,18 @@ extension CommandRegistry {
             let visible = try p.double("visible_secs", or: 100)
             let pps = vm.pixelsPerSecond
             if p.raw["inputs"] != nil {
-                var refs: [InputRef] = []
+                var refs: [RecordSource] = []
                 for (k, e) in try p.array("inputs").enumerated() {
+                    if let id = e["midi"]?.stringValue {
+                        refs.append(.midi(try Self.midiRef(id: id, vm: vm)))
+                        continue
+                    }
                     guard let first = e["first"]?.intValue, first >= 0,
                           [1, 2].contains(e["count"]?.intValue ?? 1) else {
                         throw CommandError(code: .bad_params,
-                                           message: "inputs[\(k)]: needs 'first' >= 0 and 'count' 1 or 2")
+                                           message: "inputs[\(k)]: needs 'midi', or 'first' >= 0 and 'count' 1 or 2")
                     }
-                    refs.append(InputRef(first: first, count: e["count"]?.intValue ?? 1))
+                    refs.append(.audio(InputRef(first: first, count: e["count"]?.intValue ?? 1)))
                 }
                 guard !refs.isEmpty else { throw CommandError(code: .bad_params, message: "'inputs' is empty") }
                 if try p.bool("dry_run", or: false) {
@@ -312,20 +319,21 @@ extension CommandRegistry {
                                                    visibleSpanSecs: visible, pixelsPerSecond: pps)
                     return Self.recordPlansJSON(plans, groups: [], lane: lane, applied: false)
                 }
-                let r = vm.dropRecordInputs(refs, displayLane: lane, time: time, visibleSpanSecs: visible,
-                                            pixelsPerSecond: pps)
+                let r = vm.dropRecordSources(refs, displayLane: lane, time: time, visibleSpanSecs: visible,
+                                             pixelsPerSecond: pps)
                 return Self.recordPlansJSON(r.plans, groups: r.groups, lane: lane,
                                             applied: !RecordZonePlanner.isRefused(r.plans))
             }
-            let ref = try Self.inputRef(p)
+            let source: RecordSource = try p.optionalString("midi").map { .midi(try Self.midiRef(id: $0, vm: vm)) }
+                ?? .audio(try Self.inputRef(p))
             if try p.bool("dry_run", or: false) {
                 let plan = vm.planRecordDrop(displayLane: lane, time: time, visibleSpanSecs: visible,
                                              pixelsPerSecond: pps)
                 return Self.recordPlanJSON(plan, group: nil, applied: false)
             }
-            let r = vm.dropRecordInput(ref, displayLane: lane, time: time, visibleSpanSecs: visible,
-                                       pixelsPerSecond: pps)
-            return Self.recordPlanJSON(r.plan, group: r.group, applied: !r.plan.isRefusal)
+            let r = vm.dropRecordSources([source], displayLane: lane, time: time, visibleSpanSecs: visible,
+                                         pixelsPerSecond: pps)
+            return Self.recordPlanJSON(r.plans[0], group: r.groups[0], applied: !r.plans[0].isRefusal)
         }
 
         register("rec.assign",
@@ -334,9 +342,12 @@ extension CommandRegistry {
                  `first` is absent. Refused (`invalid_state`) for a group that cannot record (infinite, \
                  looping, consolidated) and for anything that is not a group, and while a recording is \
                  running (`invalid_state`: the zone's input is frozen at the press, like the stereo pairs). \
-                 One undo point, none when nothing changes. Taking the input away disarms the zone.
+                 One undo point, none when nothing changes. Taking the input away disarms the zone. A MIDI \
+                 input: `midi` (an id from `input.list.midi_inputs`) in place of `first`; a zone has ONE source, \
+                 the new one replaces the other kind (and a MIDI zone's instrument goes with its MIDI input).
                  """,
                  params: [ParamSpec("group", "uuid", "The group."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of first / count."),
                           ParamSpec("first", "int", required: false, "First channel; absent = clear."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair).")],
                  undo: .handled) { p in
@@ -345,7 +356,8 @@ extension CommandRegistry {
             guard let item = vm.find(id: id) else {
                 throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
             }
-            let ref: InputRef? = try p.optionalInt("first") == nil ? nil : Self.inputRef(p)
+            let source: RecordSource? = try p.optionalString("midi").map { .midi(try Self.midiRef(id: $0, vm: vm)) }
+                ?? (try p.optionalInt("first") == nil ? nil : .audio(Self.inputRef(p)))
             guard item.isGroup, EditViewModel.isRecordableZone(item) else {
                 throw CommandError(code: .invalid_state,
                                    message: "only a finite, non-looping, non-consolidated group can record")
@@ -354,7 +366,7 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state,
                                    message: "a recording is running: the zone's input cannot change until it stops")
             }
-            vm.assignRecordInput(ref, toGroup: id)
+            vm.assignRecordSource(source, toGroup: id)
             return Self.recordStatusJSON(vm)
         }
 
@@ -478,8 +490,8 @@ extension CommandRegistry {
             }
             guard vm.canRecord else {
                 throw CommandError(code: .invalid_state,
-                                   message: vm.projectURL == nil ? "the project has not been saved"
-                                                                 : "no zone is armed")
+                                   message: vm.armedRecordZones.isEmpty ? "no zone is armed"
+                                                                        : "the project has not been saved")
             }
             if !session.isPlaying, let seconds = try p.optionalDouble("seconds") { session.seek(to: seconds) }
             vm.engine?.debugRecordStallMs = stall
@@ -546,8 +558,25 @@ extension CommandRegistry {
         var zones: [JSONValue] = []
         func walk(_ items: [SoundObject]) {
             for item in items {
+                if let midi = item.recordMidiInput {
+                    zones.append(.object([
+                        "id": .string(item.id.uuidString),
+                        "name": .string(vm.displayName(of: item)),
+                        "source": .string("midi"),
+                        "midi_input": .object(["id": .string(midi.id), "name": .string(vm.midiInputName(midi))]),
+                        "input_present": .bool(vm.resolvedMidiInput(midi) != nil),
+                        "recordable": .bool(EditViewModel.isRecordableZone(item)),
+                        "armed": .bool(vm.armedRecordZones.contains(item.id)),
+                        "input_prefix": .stringOrNull(vm.recordZoneInputPrefix(of: item)),
+                        "take_mode": .string(vm.recordTakeMode(of: item.id).rawValue),
+                        "instrument": item.instruments.first.map { .object(["id": .string($0.id.uuidString),
+                                                                            "name": .string($0.name),
+                                                                            "identifier": .string($0.identifier)]) } ?? .null,
+                    ]))
+                }
                 if let ref = item.recordInput {
                     zones.append(.object([
+                        "source": .string("audio"),
                         "id": .string(item.id.uuidString),
                         "name": .string(vm.displayName(of: item)),
                         "input": .object(["first": .int(ref.first), "count": .int(ref.count)]),
@@ -577,8 +606,29 @@ extension CommandRegistry {
                                      "path": .string(t.path), "start": .number(t.start),
                                      "duration": .number(t.duration), "source_offset": .number(t.sourceOffset),
                                      "lane": .int(t.lane), "outside_window": .bool(t.outsideWindow),
-                                     "muted": .array(t.muted.map { .string($0.uuidString) })])
+                                     "muted": .array(t.muted.map { .string($0.uuidString) }),
+                                     "source": .string(t.path.isEmpty ? "midi" : "audio"),
+                                     "notes": t.path.isEmpty ? Self.takeNotesJSON(vm, t.object) : .array([])])
                         })])
+    }
+
+    /// The notes of a MIDI take, as the model holds them (beats relative to the take; negative = handle).
+    @MainActor
+    private static func takeNotesJSON(_ vm: EditViewModel, _ id: UUID) -> JSONValue {
+        guard let take = vm.find(id: id), case .midiClip(let notes, _) = take.kind else { return .array([]) }
+        return .array(notes.map { n in
+            .object(["pitch": .int(n.pitch), "start_beat": .number(n.startBeat),
+                     "length_beats": .number(n.lengthBeats), "velocity": .int(n.velocity)])
+        })
+    }
+
+    /// A MIDI input id given by a client, as a project reference (the id must be one the engine lists).
+    @MainActor
+    static func midiRef(id: String, vm: EditViewModel) throws -> MidiInputRef {
+        guard let d = vm.midiInputs.first(where: { $0.id == id }) else {
+            throw CommandError(code: .not_found, message: "unknown MIDI input: \(id) (see input.list.midi_inputs)")
+        }
+        return d.ref
     }
 
     private static func inputRef(_ p: CommandParams) throws -> InputRef {

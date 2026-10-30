@@ -1201,6 +1201,7 @@ final class EditViewModel {
         // A recording zone nobody named is called after its input (and follows its renaming): not
         // memoised, `recordInputs` is not `items` and nothing here would empty the cache for it.
         if item.label == nil, item.isGroup, let ref = item.recordInput { return inputName(ref) }
+        if item.label == nil, item.isGroup, let ref = item.recordMidiInput { return midiInputName(ref) }
         guard item.label == nil, item.isGroup else { return item.displayName }
         if let cached = composedNameCache[item.id] { return cached }
         let name = item.displayName
@@ -1306,7 +1307,7 @@ final class EditViewModel {
     /// Read through `armedRecordZones`, which keeps only the ones still able to record
     /// (@see EditViewModel+RecordZones).
     var armedGroupIDs: Set<UUID> = [] {
-        didSet { if armedGroupIDs != oldValue { syncArmedInputs() } }   // the engine readies their tracks
+        didSet { if armedGroupIDs != oldValue { syncArmedInputs(); syncMidiZones() } }   // the engine readies their tracks
     }
     /// A recording is under way (session state, like the arming). It pins the document: no tab switch,
     /// no New / Open until it ends (@see `tabSwitchBlocker`, `exportPinsActiveDocument`).
@@ -1314,6 +1315,11 @@ final class EditViewModel {
     /// The zones the recording in flight was started for, and what the last one gave them
     /// (@see EditViewModel+Recording).
     var recordingZones: [RecordingZone] = []
+    /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
+    /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
+    var midiInputs: [MidiInputInfo] = []
+    /// The MIDI zones whose instrument the engine plays right now (armed and able to record).
+    @ObservationIgnored var activeMidiZoneIDs: Set<UUID> = []
     /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
     /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
     var recordingStartTime: Double? = nil

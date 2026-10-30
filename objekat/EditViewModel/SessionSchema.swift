@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 34
+    static let formatVersion = 35
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -284,6 +284,16 @@ enum SessionSchema {
         "  recording starts. WRITTEN ONLY WHEN \"add\". Whatever the mode, the newest take goes on the TOP lane of",
         "  the group (the lowest `lane` among its children) and the older ones down by one. A build from before",
         "  format 34 ignores the key (the group mutes again) and saving from it drops the key.",
+        "recordMidiInput (format 35) — on a GROUP only: { id, name } the MIDI input this group listens to when",
+        "  it is armed (a MIDI RECORDING ZONE). EXCLUSIVE of recordInput: a zone has one source (if a file",
+        "  carries both, recordInput wins). `id` is the device id the engine gave it, `name` the device's name",
+        "  as it was: a project opened where the id differs finds the input again by its name when exactly one",
+        "  present device bears it, else the input is \"absent\" and the assignment is kept.",
+        "zoneInstruments (format 35) — on a GROUP only: the virtual instrument of a MIDI recording zone (a list",
+        "  of at most one plugin, same shape as `instruments`; a group NEVER writes `instruments`). It sounds",
+        "  while the zone is armed and is COPIED, under a new id, into every take the zone records. Takes are",
+        "  ordinary `midiClip` children whose notes before the clip's start have a negative startBeat (the",
+        "  handles, like an audio take's). A build from before format 35 ignores both keys.",
         "",
         "IDS — every `id` in this file is UNIQUE in the whole project, whatever it names: items (at every",
         "  depth of the tree), plugins (plain ones, racks, `fxBlock` entries AND the instances they hold,",

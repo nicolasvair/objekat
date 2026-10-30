@@ -40,8 +40,8 @@ extension EditViewModel {
     /// nil when the zone has no name of its own (its default name is the input's) or is no zone. Only
     /// the timeline draws it — the list and the inspector show the name alone.
     func recordZoneInputPrefix(of item: SoundObject) -> String? {
-        guard item.isGroup, let ref = item.recordInput else { return nil }
-        return RecordZoneName.prefix(label: item.label, inputName: inputName(ref))
+        guard item.isGroup, let source = item.recordSource else { return nil }
+        return RecordZoneName.prefix(label: item.label, inputName: sourceName(source))
     }
 
     // MARK: Is the input there?
@@ -58,8 +58,13 @@ extension EditViewModel {
     /// How the [o] of a zone looks, nil when there is none (no input, or a group that cannot record).
     /// `channels` is the card's input channel count, read ONCE by the caller for a whole pass.
     func recordZoneIcon(of item: SoundObject, channels: Int) -> RecordZoneIcon.State? {
-        guard let ref = item.recordInput, Self.isRecordableZone(item) else { return nil }
-        guard InputPairing.isPresent(ref, channelCount: channels, pairs: recordInputs.pairs) else { return .absent }
+        guard let source = item.recordSource, Self.isRecordableZone(item) else { return nil }
+        switch source {
+        case .audio(let ref):
+            guard InputPairing.isPresent(ref, channelCount: channels, pairs: recordInputs.pairs) else { return .absent }
+        case .midi(let ref):
+            guard resolvedMidiInput(ref) != nil else { return .absent }
+        }
         return armedGroupIDs.contains(item.id) ? .armed : .idle
     }
 
@@ -68,8 +73,11 @@ extension EditViewModel {
         guard let item = find(id: id) else { return "unknown object" }
         guard item.isGroup else { return "only a group can record" }
         guard Self.isRecordableZone(item) else { return "an infinite, looping or consolidated group cannot record" }
-        guard let ref = item.recordInput else { return "the group has no input" }
-        guard isRecordInputPresent(ref) else { return "the group's input is not on the card (or the inputs are closed)" }
+        guard let source = item.recordSource else { return "the group has no input" }
+        guard isRecordSourcePresent(source) else {
+            if case .midi = source { return "the group's MIDI input is not there" }
+            return "the group's input is not on the card (or the inputs are closed)"
+        }
         return nil
     }
 
@@ -121,7 +129,12 @@ extension EditViewModel {
 
     /// The transport's record button is live: something is armed, and the project has a folder to put the
     /// takes in (a project never saved has none).
-    var canRecord: Bool { projectURL != nil && !armedRecordZones.isEmpty }
+    /// A zone that records only MIDI writes no file: it does not need the folder.
+    var canRecord: Bool {
+        let zones = armedRecordZones
+        guard !zones.isEmpty else { return false }
+        return projectURL != nil || zones.allSatisfy { find(id: $0)?.recordMidiInput != nil }
+    }
 
     // MARK: Assigning
 
@@ -131,19 +144,31 @@ extension EditViewModel {
     /// `ref`.
     @discardableResult
     func assignRecordInput(_ ref: InputRef?, toGroup id: UUID) -> Bool {
+        assignRecordSource(ref.map { .audio($0) }, toGroup: id)
+    }
+
+    /// Same, for a source that may be a MIDI input (a zone has ONE source: the new one replaces the other kind).
+    /// Changing a zone's kind of source does not carry its MIDI instrument along: it is dropped with the source.
+    @discardableResult
+    func assignRecordSource(_ source: RecordSource?, toGroup id: UUID) -> Bool {
         guard !isRecording else { return false }
         guard let item = find(id: id), Self.isRecordableZone(item) else { return false }
-        if item.recordInput == ref { return true }
+        if item.recordSource == source { return true }
         pushUndo()
-        applyRecordInput(ref, toGroup: id)
+        applyRecordSource(source, toGroup: id)
         return true
     }
 
     /// The change itself, for a caller that owns the undo point (a drop of several inputs makes ONE).
-    private func applyRecordInput(_ ref: InputRef?, toGroup id: UUID) {
-        update(id: id) { $0.recordInput = ref }
-        if ref == nil { armedGroupIDs.remove(id) }
+    private func applyRecordSource(_ source: RecordSource?, toGroup id: UUID) {
+        update(id: id) { o in
+            let wasMidi = o.recordMidiInput != nil
+            o.recordSource = source
+            if wasMidi, o.recordMidiInput == nil { o.instruments = [] }
+        }
+        if source == nil { armedGroupIDs.remove(id) }
         syncArmedInputs()   // an armed zone changed input: the hidden tracks follow
+        syncMidiZones()
         isDirty = true
     }
 
@@ -202,15 +227,22 @@ extension EditViewModel {
     /// The ghost for a plan: what the timeline draws under the cursor.
     func recordDropGhost(for plan: RecordZonePlanner.Plan, ref: InputRef, displayLane: Int,
                          time: Double) -> RecordDropGhost {
+        recordDropGhost(for: plan, source: .audio(ref), displayLane: displayLane, time: time)
+    }
+
+    /// Same, for a source that may be a MIDI input.
+    func recordDropGhost(for plan: RecordZonePlanner.Plan, source: RecordSource, displayLane: Int,
+                         time: Double) -> RecordDropGhost {
+        let name = sourceName(source)
         switch plan {
         case .create(let start, let end, _):
             return RecordDropGhost(kind: .create, displayLane: displayLane, start: start, end: end,
-                                   name: inputName(ref))
+                                   name: name)
         case .assign(let id):
             let entry = laneEntry(forID: id)
             let start = entry?.absStart ?? time
             return RecordDropGhost(kind: .assign, displayLane: displayLane, start: start,
-                                   end: start + (entry?.item.duration ?? 1), name: inputName(ref))
+                                   end: start + (entry?.item.duration ?? 1), name: name)
         case .refuse:
             return RecordDropGhost(kind: .refused, displayLane: displayLane, start: max(0, time),
                                    end: max(0, time) + 1, name: "")
@@ -220,13 +252,19 @@ extension EditViewModel {
     /// The ghosts of a drop of several inputs, one per lane: all red as soon as one lane is refused.
     func recordDropGhosts(for plans: [RecordZonePlanner.Plan], refs: [InputRef], displayLane: Int,
                           time: Double) -> [RecordDropGhost] {
+        recordDropGhosts(for: plans, sources: refs.map { .audio($0) }, displayLane: displayLane, time: time)
+    }
+
+    /// Same, for sources that may be MIDI inputs.
+    func recordDropGhosts(for plans: [RecordZonePlanner.Plan], sources: [RecordSource], displayLane: Int,
+                          time: Double) -> [RecordDropGhost] {
         let refused = RecordZonePlanner.isRefused(plans)
         return plans.indices.map { i in
             let lane = displayLane + i
             return refused
                 ? RecordDropGhost(kind: .refused, displayLane: lane, start: max(0, time),
                                   end: max(0, time) + 1, name: "")
-                : recordDropGhost(for: plans[i], ref: refs[i], displayLane: lane, time: time)
+                : recordDropGhost(for: plans[i], source: sources[i], displayLane: lane, time: time)
         }
     }
 
@@ -248,6 +286,15 @@ extension EditViewModel {
     @discardableResult
     func dropRecordInputs(_ refs: [InputRef], displayLane: Int, time: Double, visibleSpanSecs: Double,
                           pixelsPerSecond pps: Double) -> (plans: [RecordZonePlanner.Plan], groups: [UUID?]) {
+        dropRecordSources(refs.map { .audio($0) }, displayLane: displayLane, time: time,
+                          visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
+    }
+
+    /// The same drop, with sources that may be MIDI inputs (a mixed drag: one lane per source, in the order
+    /// given). A MIDI source makes a zone with the MIDI input and no instrument yet.
+    @discardableResult
+    func dropRecordSources(_ refs: [RecordSource], displayLane: Int, time: Double, visibleSpanSecs: Double,
+                           pixelsPerSecond pps: Double) -> (plans: [RecordZonePlanner.Plan], groups: [UUID?]) {
         let plans = planRecordDrops(count: refs.count, displayLane: displayLane, time: time,
                                     visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
         var groups = [UUID?](repeating: nil, count: plans.count)
@@ -256,7 +303,7 @@ extension EditViewModel {
         let changes = plans.indices.contains { i in
             switch plans[i] {
             case .create: return true
-            case .assign(let id): return find(id: id)?.recordInput != refs[i]
+            case .assign(let id): return find(id: id)?.recordSource != refs[i]
             case .refuse: return false
             }
         }
@@ -269,7 +316,7 @@ extension EditViewModel {
             case .refuse:
                 break
             case .assign(let id):
-                if find(id: id)?.recordInput != ref { applyRecordInput(ref, toGroup: id) }
+                if find(id: id)?.recordSource != ref { applyRecordSource(ref, toGroup: id) }
                 groups[i] = id
             case .create(let start, let end, _):
                 // The zone is born WITHOUT a label: its default name is its input's (`displayName(of:)`), as
@@ -278,7 +325,7 @@ extension EditViewModel {
                 // level, or inside the open group whose sub-lanes contain it (the same rule as the planner's).
                 var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
                                        label: nil, kind: .group(children: [], isExpanded: false))
-                zone.recordInput = ref
+                zone.recordSource = ref
                 let placed = placeClip(zone, snapshot: laneEntries)
                 // A zone of the selection starts at its in and ends at its out, or earlier (an object behind).
                 if let s = timeSelection, start == max(0, s.timeRange.lowerBound),
