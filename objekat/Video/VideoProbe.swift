@@ -200,7 +200,16 @@ nonisolated enum VideoProbe {
             guard let fd = formats.first else { continue }
             let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(fd)?.pointee
             let rate = asbd?.mSampleRate ?? 0
-            let start = range.start.isNumeric ? range.start.seconds : 0
+            // The track's REAL first instant. `timeRange.start` is the start of the track's edit list, 0
+            // for an audio that begins late behind an EMPTY edit (the movie holds a gap, then the
+            // samples): reading it said `start = 0`, the stream was "kept", and the M4A export then
+            // failed on the gap. The first non-empty segment says where the sound is, on the movie's
+            // clock; an encoder-delay edit (priming trimmed by the container) still starts at 0.
+            var start = range.start.isNumeric ? range.start.seconds : 0
+            let segments = (try? await t.load(.segments)) ?? []
+            if let first = segments.first(where: { !$0.isEmpty }), first.timeMapping.target.start.isNumeric {
+                start = first.timeMapping.target.start.seconds
+            }
             let isDefault = enabled && (playable?.contains(t.trackID) ?? true)
             out.append(AudioTrack(
                 number: i + 1,
