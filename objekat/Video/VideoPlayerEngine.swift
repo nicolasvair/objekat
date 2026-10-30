@@ -16,6 +16,9 @@ import QuartzCore
 // What V0 measured, and the shape that follows from it:
 //   - to start a player at a given machine instant: exact seek, `preroll(atRate:)`, then
 //     `setRate(_:time:atHostTime:)` — the three in this order, the host time taken AFTER the preroll;
+//   - on a player that is RUNNING, `preroll(atRate:)` never calls back: it has to be paused first, or
+//     the slot waits for ever and the picture freezes at the next loop turn. A preroll that stays
+//     silent all the same is given up after `syncTimeout`;
 //   - a time given as a Double on a frame boundary can land on the previous frame: every request is
 //     moved by `frameEpsilon` into the middle of its frame;
 //   - `hasNewPixelBuffer` is false for a frame already copied, so the last buffer is KEPT and shown
@@ -43,6 +46,8 @@ nonisolated final class VideoPlayerSlot: @unchecked Sendable {
     static let fastTolerance = 0.25
     /// Once nothing has moved for this long, a fast seek is refined by an exact one.
     static let refineAfter = 0.12
+    /// A re-synchronisation still unanswered after this long is abandoned and started over.
+    static let syncTimeout = 1.0
 
     private static let counter = NSLock()
     nonisolated(unsafe) private static var nextID: UInt64 = 0
@@ -78,6 +83,7 @@ nonisolated final class VideoPlayerSlot: @unchecked Sendable {
     private var runningRate = 0.0
     private var runningEpoch: UInt64 = 0
     private var syncing = false
+    private var syncStartedAt = 0.0
     private var plan = (s0: 0.0, h0: 0.0, rate: 1.0)
     // Scrub.
     private var seeking = false
@@ -161,7 +167,11 @@ nonisolated final class VideoPlayerSlot: @unchecked Sendable {
         plan = (s, target, rate)
         pendingSeek = nil
         requestedTime = nil
-        if syncing { return }
+        if syncing {
+            guard now - syncStartedAt > Self.syncTimeout else { return }
+            player.cancelPendingPrerolls()
+            syncing = false
+        }
         var needs = !running || runningRate != rate || runningEpoch != epoch
         if !needs {
             if abs(Double(player.rate)) < 0.001 {
@@ -178,7 +188,9 @@ nonisolated final class VideoPlayerSlot: @unchecked Sendable {
         generation &+= 1
         let gen = generation
         syncing = true
+        syncStartedAt = now
         running = false
+        player.pause()
         let ahead = max(0, s + rate * (now - target + 0.10))
         player.seek(to: cm(ahead), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             guard let self else { return }
