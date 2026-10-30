@@ -214,7 +214,16 @@ try:
         check("written: the pairs [0, 1] and the names", ri.get("pairs") == [0, 1] and ri.get("names", {}).get("3") == "Voix"
               and ri.get("names", {}).get("1-2") == "Guitare", ri)
         check("written: the card it was made on is indicated", isinstance(ri.get("deviceName"), str), ri)
-        check("written: monitoring is NOT in the file", "monitor" not in json.dumps(doc).lower().replace("monitordb", ""))
+        def _keys(o):
+            # KEYS only: the format-36 documentation strings inside `inputChains` legitimately say "monitored".
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    yield k
+                    yield from _keys(v)
+            elif isinstance(o, list):
+                for v in o:
+                    yield from _keys(v)
+        check("written: monitoring is NOT in the file", not [k for k in _keys(doc) if "monitor" in k.lower() and k.lower() != "monitordb"])
         c.send("project.new")
         lst = c.send("input.list")
         check("a new project forgets the names and pairs",
