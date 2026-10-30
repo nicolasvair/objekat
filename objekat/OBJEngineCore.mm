@@ -1765,6 +1765,12 @@ struct OBJForcedFader {
     float              pan    = 0.0f;
     bool               muted  = false;
     std::vector<Point> gainCurve;   // temps EDIT, tri croissant ; ignorée si `muted`
+    // Un clip MIDI VIDE (sans instrument propre) n'est pas coupé par son fader mais par le mute
+    // NATIF du te::MidiClip (E3 du plan groupes MIDI) : sur le clone aussi, c'est la valeur du
+    // MODÈLE, jamais le mute vivant que le solo / un mute de stem composent.
+    bool               hasMidiMute = false;
+    bool               midiMuted   = false;
+    te::EditItemID     midiClipID;
 };
 
 // Mode « contenu consolidé » d'un rendu d'objet (@see renderConsolidateContentToFileAsync:). Absent
@@ -4910,6 +4916,9 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                                  }
                                      if (!forced)
                                          NSLog(@"[OBJ] renderConsolidateContent: fader absent du clone");
+                                     if (f.hasMidiMute)
+                                         if (auto* mc = dynamic_cast<te::MidiClip*>(te::findClipForID(t->edit, f.midiClipID)))
+                                             mc->setMuted(f.midiMuted);
                                  }
 
                              // Un ANCÊTRE n'est là que pour porter la cible : sa fenêtre la
@@ -5010,6 +5019,12 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         f.gainDb  = [d[@"gainDb"] floatValue];
         f.pan     = [d[@"pan"] floatValue];
         f.muted   = [d[@"muted"] boolValue];
+        if (NSNumber* mm = d[@"midiMuted"]; [mm isKindOfClass:[NSNumber class]])
+            if (auto mit = _midiClipMap.find(k); mit != _midiClipMap.end()) {
+                f.hasMidiMute = true;
+                f.midiMuted   = [mm boolValue];
+                f.midiClipID  = mit->second->itemID;
+            }
         for (NSDictionary* p in (NSArray*)d[@"gainCurve"])
             if ([p isKindOfClass:[NSDictionary class]])
                 f.gainCurve.push_back({ juce::jmax(0.0, [p[@"t"] doubleValue]),

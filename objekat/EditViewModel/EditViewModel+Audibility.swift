@@ -195,6 +195,10 @@ extension EditViewModel {
     func pushMix(_ id: UUID) {
         guard let engine, let obj = find(id: id) else { return }
         engine.updateVolume(engineVolume(for: obj), pan: obj.pan, forID: id.uuidString)
+        // A group's silence acts through its FADER, which does not stop the MIDI crossing it: the empty
+        // clips below it follow natively (E3 of docs/plan_groupes_midi.md). A clip: its own native mute.
+        if obj.isGroup { pushNativeMidiMutes(inSubtreeOf: obj) }
+        else { pushNativeMidiMute(of: obj) }
         // A group's silence acts downstream of its children's sends: their gates follow (§1.6).
         if obj.isGroup { pushSendGates(inSubtreeOf: obj) }
         else if obj.sends.contains(where: { obj.sendPosition(auxID: $0.auxID) != .postFader }) {
@@ -323,6 +327,8 @@ extension EditViewModel {
             // As in `pushMix`: a volume curve must disappear (or come back) with the silence.
             if !obj.automation.isEmpty { pushAutomation(obj) }
         }
+        // The empty MIDI clips' native mute: a function of the same snapshot, read along the chain of groups.
+        pushNativeMidiMutes(inSubtreeOfItems: items, ancestors: [])
         // Every laid send: its gate is a function of the same snapshot (§1.6).
         if !bridgeLaidSends.isEmpty {
             for key in bridgeLaidSends {
@@ -333,6 +339,52 @@ extension EditViewModel {
         // The dry gates of the solo of an aux, the whole set (the engine diffs it, so this costs nothing
         // when it has not changed). After the faders: @see refreshAudibility for the order.
         engine.setWetOnlyObjectIDs(audibility.wetOnlySenders.map(\.uuidString))
+    }
+
+    // MARK: Native mute of the empty MIDI clips (docs/plan_groupes_midi.md, E3)
+
+    /// The ancestors of `id`, PARENT FIRST (`[parent, grandparent…]`), read from the model.
+    func ancestorChain(of id: UUID) -> [SoundObject] {
+        let parents = parentIDMap()
+        var chain: [SoundObject] = []
+        var cursor = parents[id]
+        while let pid = cursor, let g = find(id: pid) {
+            chain.append(g)
+            cursor = parents[pid]
+        }
+        return chain
+    }
+
+    /// Is the NOTE side of the empty clip `clip` reduced to silence, given its `ancestors` (parent first)?
+    /// The clip's own silence, or the silence of a group between it and its host (@see GroupInstrumentRule.midiSilenced).
+    func midiSilence(of clip: SoundObject, ancestors: [SoundObject]) -> Bool {
+        GroupInstrumentRule.midiSilenced(of: clip, ancestors: ancestors, isSilenced: { audibility.isSilenced($0) })
+    }
+
+    /// Pushes the NATIVE mute of one empty MIDI clip (a `te::MidiClip` property the MIDI node reads in real time,
+    /// no graph rebuild). A clip with an instrument of its own keeps its fader, byte for byte: nothing here.
+    func pushNativeMidiMute(of clip: SoundObject) {
+        guard let engine, GroupInstrumentRule.isEmptyClip(clip) else { return }
+        engine.setMidiClipMuted(midiSilence(of: clip, ancestors: ancestorChain(of: clip.id)),
+                                forID: clip.id.uuidString)
+    }
+
+    /// The same for every empty clip under `group` (a group's silence goes DOWN the tree).
+    func pushNativeMidiMutes(inSubtreeOf group: SoundObject) {
+        guard engine != nil, case .group(let children, _) = group.kind else { return }
+        pushNativeMidiMutes(inSubtreeOfItems: children, ancestors: [group] + ancestorChain(of: group.id))
+    }
+
+    /// One walk, the ancestors carried along (parent first).
+    func pushNativeMidiMutes(inSubtreeOfItems nodes: [SoundObject], ancestors: [SoundObject]) {
+        guard let engine else { return }
+        for o in nodes {
+            if GroupInstrumentRule.isEmptyClip(o) {
+                engine.setMidiClipMuted(midiSilence(of: o, ancestors: ancestors), forID: o.id.uuidString)
+            } else if case .group(let children, _) = o.kind {
+                pushNativeMidiMutes(inSubtreeOfItems: children, ancestors: [o] + ancestors)
+            }
+        }
     }
 
     // MARK: The solo of an aux: hearing what is SENT to it

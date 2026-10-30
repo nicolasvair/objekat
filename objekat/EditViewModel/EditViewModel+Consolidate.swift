@@ -994,15 +994,22 @@ extension EditViewModel {
     /// takes the gain curves off them, and none of that belongs in a wave every instance will share.
     func contentRenderFaders(of root: SoundObject) -> [[String: Any]] {
         var out: [[String: Any]] = []
-        func walk(_ o: SoundObject) {
-            out.append(["id": o.id.uuidString,
-                        "gainDb": o.volume,
-                        "pan": o.pan,
-                        "muted": o.isMuted,
-                        "gainCurve": modelCurvePoints(.volume, on: o)])
-            if case .group(let children, _) = o.kind { for c in children { walk(c) } }
+        func walk(_ o: SoundObject, ancestors: [SoundObject]) {
+            var d: [String: Any] = ["id": o.id.uuidString,
+                                    "gainDb": o.volume,
+                                    "pan": o.pan,
+                                    "muted": o.isMuted,
+                                    "gainCurve": modelCurvePoints(.volume, on: o)]
+            // An EMPTY MIDI clip is silenced natively, not by its fader (E3 of docs/plan_groupes_midi.md): the clone
+            // gets the MODEL's mute too — the clip's own and that of the groups between it and its host, inside the
+            // content — never the live listening state.
+            if GroupInstrumentRule.isEmptyClip(o) {
+                d["midiMuted"] = GroupInstrumentRule.midiSilenced(of: o, ancestors: ancestors, isSilenced: { $0.isMuted })
+            }
+            out.append(d)
+            if case .group(let children, _) = o.kind { for c in children { walk(c, ancestors: [o] + ancestors) } }
         }
-        walk(root)
+        walk(root, ancestors: [])
         return out
     }
 

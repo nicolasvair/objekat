@@ -2201,6 +2201,9 @@ final class EditViewModel {
         data.fadeOut      = object.fadeOut
         data.sourceOffset = 0
         engine.addMidiClip(data, withID: object.id.uuidString)
+        // The native mute of an empty clip follows the listening state from the very first block
+        // (a reload, a paste into a muted group): `refreshAudibility` re-pushes it for everyone later.
+        pushNativeMidiMute(of: object)
         scheduleChainCompile(.instrument(object))
         syncMidiNotes(object)
         // An object freshly created with the loop already active (paste/duplication): `addMidiClip`
