@@ -164,6 +164,43 @@ extension CommandRegistry {
             return Self.inputListPayload(try CommandContext.shared.requireEngine())
         }
 
+        register("input.select",
+                 summary: """
+                 Selects rows of the Inputs tab, as the hand does: `inputs` lists them [{first, count?}]                  (`count` 1 = mono, the default, or 2 = stereo pair), REPLACING the selection; `[]` empties                  it. Only inputs the tab lists right now can be selected (`record_inputs` of `input.list`):                  `invalid_state` while the card's inputs are closed, `bad_params` for an input that is                  not listed. The selection is the session's (outside the undo, not saved); it is what ⌘R                  renames when the Inputs list holds the keyboard. Answers like `input.selection`.
+                 """,
+                 params: [ParamSpec("inputs", "array<object>", "The rows to select, [{first, count?}]; [] = none.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            var refs = Set<InputRef>()
+            for (k, e) in try p.array("inputs").enumerated() {
+                guard let first = e["first"]?.intValue, first >= 0,
+                      [1, 2].contains(e["count"]?.intValue ?? 1) else {
+                    throw CommandError(code: .bad_params,
+                                       message: "inputs[\(k)]: needs 'first' >= 0 and 'count' 1 or 2")
+                }
+                refs.insert(InputRef(first: first, count: e["count"]?.intValue ?? 1))
+            }
+            if !refs.isEmpty {
+                let listed = Set(vm.visibleRecordInputs)
+                guard !listed.isEmpty else {
+                    throw CommandError(code: .invalid_state, message: "the card's inputs are closed")
+                }
+                if let missing = refs.sorted().first(where: { !listed.contains($0) }) {
+                    throw CommandError(code: .bad_params,
+                                       message: "input \(missing.first)/\(missing.count) is not listed")
+                }
+            }
+            vm.selectedRecordInputs = refs
+            return Self.inputSelectionPayload(vm)
+        }
+
+        register("input.selection",
+                 summary: "The Inputs tab's selected rows, in the tab's order: `inputs` [{first, count, stereo, name}] " +
+                          "and `count`. Read-only; `input.select` sets it.",
+                 undo: .none) { _ in
+            Self.inputSelectionPayload(try CommandContext.shared.requireViewModel())
+        }
+
         register("input.monitor",
                  summary: """
                  Hears an input (`on` true) or stops hearing it (`on` false) in the mix, through a hidden \
@@ -567,6 +604,19 @@ extension CommandRegistry {
                                       "enabled": .bool(d.enabled)]
         if let index { o["index"] = .int(index) }
         return .object(o)
+    }
+
+    /// The Inputs tab's selection, in the tab's order (every pair, then every mono).
+    @MainActor
+    static func inputSelectionPayload(_ vm: EditViewModel) -> JSONValue {
+        let chosen = vm.visibleRecordInputs.filter { vm.selectedRecordInputs.contains($0) }
+        return .object([
+            "count": .int(chosen.count),
+            "inputs": .array(chosen.map { ref in
+                .object(["first": .int(ref.first), "count": .int(ref.count), "stereo": .bool(ref.isStereo),
+                         "name": .string(vm.inputName(ref))])
+            }),
+        ])
     }
 
     /// `input.list`'s own answer, reused by every other `input.*` command.

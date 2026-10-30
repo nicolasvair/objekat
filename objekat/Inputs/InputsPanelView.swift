@@ -28,7 +28,12 @@ struct InputsPanelView: View {
     /// Smoothed bar position 0...1 (`VUScale`, -60...+6 dBFS) of each CARD channel.
     @State private var levels: [Float] = []
     @State private var monitored: Set<InputRef> = []
-    @State private var selection: Set<InputRef> = []
+    /// The selected rows live in the model (@see EditViewModel.selectedRecordInputs): ⌘R and the
+    /// `input.selection` command read the same set the hand sees.
+    private var selection: Set<InputRef> {
+        get { viewModel.selectedRecordInputs }
+        nonmutating set { viewModel.selectedRecordInputs = newValue }
+    }
     @State private var failure: String? = nil
     @FocusState private var listFocused: Bool
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()

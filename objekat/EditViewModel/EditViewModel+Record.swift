@@ -72,14 +72,18 @@ extension EditViewModel {
     func pairInputs(first: Int) -> Bool {
         guard !inputPairsLocked else { return false }
         let limit = recordChannelLimit
-        return editRecordInputs { $0.pair(first, channelCount: limit) }
+        let changed = editRecordInputs { $0.pair(first, channelCount: limit) }
+        if changed { purgeRecordInputSelection() }
+        return changed
     }
 
     /// Refused (false) during a recording.
     @discardableResult
     func unpairInputs(first: Int) -> Bool {
         guard !inputPairsLocked else { return false }
-        return editRecordInputs { $0.unpair(first) }
+        let changed = editRecordInputs { $0.unpair(first) }
+        if changed { purgeRecordInputSelection() }
+        return changed
     }
 
     /// Replaces every pair (the machine's door). Refused (false) during a recording.
@@ -87,7 +91,20 @@ extension EditViewModel {
     func setInputPairs(_ firsts: [Int]) -> Bool {
         guard !inputPairsLocked else { return false }
         let limit = recordChannelLimit
-        return editRecordInputs { $0.setPairs(firsts, channelCount: limit) }
+        let changed = editRecordInputs { $0.setPairs(firsts, channelCount: limit) }
+        if changed { purgeRecordInputSelection() }
+        return changed
+    }
+
+    /// Drops from the Inputs selection the inputs that are no longer listed (a pairing swallowed them, a
+    /// pair was taken apart). The panel does the same on its poll; the model does it at the change, so a
+    /// reader that is not on screen (⌘R, `input.selection`) never sees a ghost.
+    func purgeRecordInputSelection() {
+        guard !selectedRecordInputs.isEmpty else { return }
+        let listed = Set(visibleRecordInputs)
+        if !selectedRecordInputs.isSubset(of: listed) {
+            selectedRecordInputs = selectedRecordInputs.intersection(listed)
+        }
     }
 
     /// Opens the card's inputs. nil on success, otherwise why not.

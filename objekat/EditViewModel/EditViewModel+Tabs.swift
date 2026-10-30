@@ -197,6 +197,9 @@ extension EditViewModel {
         selectedCrossfade = nil
         renamingID = nil
         renamingInput = nil
+        selectedRecordInputs = []
+        openStemPopoverID = nil
+        renamingStemID = nil
         pluginParamValues = [:]
         liveAutomationValues = [:]
         KeyboardClaim.shared.revoke()

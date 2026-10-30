@@ -352,6 +352,20 @@ final class EditViewModel {
     /// switch, a click on another row or on the panel's void close it) and the same rule: leaving
     /// commits what was typed (@see MarkerRenameField). Session state, not the project's.
     var renamingInput: InputRef? = nil
+    /// The Inputs tab's selected rows (@see ListClickSelection). Session state, like `renamingInput`: it
+    /// lives HERE and not in the view so that ⌘R (@see RenameShortcutRoute) and the `input.select` /
+    /// `input.selection` commands read the one selection the hand sees. Cleared with the rename at a tab
+    /// switch, and purged of the inputs a pairing change swallowed (@see `purgeRecordInputSelection`).
+    var selectedRecordInputs: Set<InputRef> = []
+    /// The stem whose FX popover is open in the toolbar (nil = none; the Main counts, it is a stem too).
+    /// Held by the model, not by the toolbar's @State, so that ⌘R knows whether a popover is open.
+    var openStemPopoverID: UUID? = nil {
+        // A popover that closes takes the name field it carried with it (what was typed is committed by the
+        // field's own disappearance, @see MarkerRenameField).
+        didSet { if openStemPopoverID != oldValue, renamingStemID != nil { renamingStemID = nil } }
+    }
+    /// The stem whose name is being typed in its popover (⌘R), if any. Vanishes with the popover.
+    var renamingStemID: UUID? = nil
     var activeTool: ActiveTool = .toolSelection
     var isToolPermanent: Bool = true
     var heldToolKeyCode: UInt16? = nil
