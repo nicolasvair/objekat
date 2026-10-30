@@ -588,6 +588,11 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// (`derivedCopy` does, with a NEW plugin id; the copies that start from `var n = o` inherit
     /// the SAME id, which `EditViewModel.copiedARASource(of:)` must then replace).
     var araSource: ARASource? = nil
+    /// Set on the PICTURE object of an imported video (a `.clip` whose `filePath` is the movie): no
+    /// engine clip, no chain, no sound (@see VideoFacet). TOP LEVEL like `araSource`: `derivedCopy`
+    /// carries it (a cut half, a copy, a paste are still pictures). nil for everything else, and not
+    /// written then — session format 37.
+    var video: VideoFacet? = nil
     /// The card input a recording zone listens to — session format 33. Meaningful only for a GROUP:
     /// a group with an input is a "recording zone" the transport's record button fills with takes
     /// (@see docs/plan_enregistrement_audio.md). Keyed by channel number, not by device, so a
@@ -871,6 +876,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var isGroup: Bool { if case .group = kind { return true }; return false }
     var isMIDI: Bool { if case .midiClip = kind { return true }; return false }
     var isClip: Bool { if case .clip = kind { return true }; return false }
+    /// The picture of an imported video: a `.clip` with no sound and no engine clip (@see VideoFacet).
+    /// The ONE question every door that would act on a clip's sound asks first.
+    var isPicture: Bool { video != nil }
+    /// A clip that has a file to PLAY (not a picture): what the engine, the waveform, the plugins, the
+    /// sends and the gain act on.
+    var isSoundClip: Bool { isClip && !isPicture }
 
     /// The roundness of the block's corners in the timeline. Defined here, on the model, because
     /// three places depend on it and have to agree: rendering (`SoundBlockView`, `GroupBlockView`),
@@ -1338,6 +1349,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     channelMode: channelMode,
                     kind: kind)
         derived.araSource = inheritedARA
+        derived.video = video
         derived.recordInput = recordInput
         derived.recordMidiInput = recordMidiInput
         derived.recordTakeMode = recordTakeMode
@@ -1378,7 +1390,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode, recordMidiInput, zoneInstruments
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode, recordMidiInput, zoneInstruments, video
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1431,6 +1443,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // Written only when it says something: LR is the overwhelming case (a key absent = LR).
         if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
         try c.encodeIfPresent(araSource, forKey: .araSource)
+        try c.encodeIfPresent(video, forKey: .video)
         try c.encodeIfPresent(recordInput, forKey: .recordInput)
         try c.encodeIfPresent(recordInput == nil ? recordMidiInput : nil, forKey: .recordMidiInput)
         try c.encodeIfPresent(recordTakeMode?.stored, forKey: .recordTakeMode)
@@ -1486,6 +1499,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // A source this build cannot read (written by a later one) is dropped, not fatal: the object
         // then plays its file, dry. Absent in every session before format 20.
         araSource      = try? c.decodeIfPresent(ARASource.self, forKey: .araSource)
+        // A picture facet this build cannot read reads as absent (the object then is an ordinary clip
+        // of a file it cannot play: a ghost, never a crash).
+        video          = try? c.decodeIfPresent(VideoFacet.self, forKey: .video)
         // An input reference this build cannot read reads as absent (the group is just not armable).
         recordInput    = try? c.decodeIfPresent(InputRef.self, forKey: .recordInput)
         // One source: when a file names both, the card input wins.
