@@ -195,6 +195,7 @@ extension EditViewModel {
                 startTime: startTime, duration: item.duration, lane: lane,
                 fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                 plugins: copiedPlugins(of: item),
+                instruments: copiedInstruments(of: item),   // a group's own instrument travels with it (E6)
                 sends: copiedSends(of: item),
                 araSource: .some(copiedARASource(of: item)),
                 kind: .group(children: copiedChildren, isExpanded: isExpanded)
@@ -524,6 +525,7 @@ extension EditViewModel {
                     fadeInCurve:  fragStart == s ? entry.item.fadeInCurve  : Self.freshCutCurve,
                     fadeOutCurve: fragEnd   == e ? entry.item.fadeOutCurve : Self.freshCutCurve,
                     plugins: copiedPlugins(of: entry.item),
+                    instruments: copiedInstruments(of: entry.item),   // E6
                     sends: copiedSends(of: entry.item),
                     automation: fragAutomation,
                     markers: fragMarkers,

@@ -65,6 +65,11 @@ extension CommandRegistry {
                 throw CommandError(code: .invalid_state, message: "already an instance of a consolidated object")
             }
             if let why = vm.sessionRefusal(.consolidate, ids: [id]) { throw CommandError(code: .invalid_state, message: why) }
+            // An empty clip or a sub-group under an instrument group is not consolidated (E6): refused before the job exists.
+            if vm.refusesConsolidating(id) {
+                throw CommandError(code: .invalid_state, message: "refused by an instrument group",
+                                   details: .object(["reason": .string(vm.takeGroupInstrumentRefusal()?.rawValue ?? "")]))
+            }
             guard vm.consolidateFolder != nil else {
                 throw CommandError(code: .invalid_state,
                                    message: "save the project first (samples/consolidate/ is required)")

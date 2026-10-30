@@ -393,6 +393,7 @@ extension EditViewModel {
                     fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                     fadeInCurve: Self.freshCutCurve,
                     plugins: copiedPlugins(of: child),
+                    instruments: copiedInstruments(of: child),   // E6
                     sends: copiedSends(of: child),
                     automation: autoR,
                     markers: markR,
@@ -426,6 +427,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(child.fadeOut, childEnd - splitTime),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: child),
+                instruments: copiedInstruments(of: child),   // E6
                 sends: copiedSends(of: child),
                 automation: autoR,
                 markers: markR,
@@ -911,6 +913,7 @@ extension EditViewModel {
                 fadeIn: min(original.fadeIn, splitRel), fadeOut: 0,
                 fadeOutCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
+                instruments: copiedInstruments(of: capturedOriginal),   // E6
                 sends: copiedSends(of: capturedOriginal),
                 automation: autoL,
                 markers: markL,
@@ -923,6 +926,7 @@ extension EditViewModel {
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
                 fadeInCurve: Self.freshCutCurve,
                 plugins: copiedPlugins(of: capturedOriginal),
+                instruments: copiedInstruments(of: capturedOriginal),   // E6
                 sends: copiedSends(of: capturedOriginal),
                 automation: autoR,
                 markers: markR,

@@ -12,7 +12,7 @@ exports (24-bit WAV re-read):
   M3  solo of another object: the empty clips are silent
   M4  mute of a sub-group (its clip alone falls silent), then of the host (everything falls silent)
   M5  muted stem: silent ; unmuted: back to the baseline
-  M6  consolidate (content render) with a live solo elsewhere: the wave ignores the solo, honours the MODEL's mute
+  M6  consolidate (content render; the host's instrument is baked in and comes back at the opening) with a live solo elsewhere: the wave ignores the solo, honours the MODEL's mute
   +   no graph rebuild during a mute, an unmute, a solo, a stem mute ([GRAPH] lines of the engine's journal)
 
 The instrument goes on the group through `instrument.set` when the app accepts it (E4 and after), through the engine-only
@@ -462,17 +462,15 @@ def m6():
         app.c.send("solo.set", {"ids": [ids["k"]], "on": True})
         ok, res = wait_job(app, app.c.send("consolidate.edit_commit"))
         w2 = [w for w in waves_of(proj) if w not in w1]
+        check("M6 the commit re-baked and wrote a second wave (%s, %d new wave)" % ("ok" if ok else res, len(w2)),
+              ok and len(w2) == 1)
         if not ok or len(w2) != 1:
-            # Before E4/E6 the group instrument exists only as a debug mount on the live container: the sidecar of the
-            # consolidated object holds no plugin, so the re-bake of the opened content has nothing to play and fails.
-            print("SKIP  M6 content render (re-bake %s, %d new wave): needs the instrument to be part of the model (E4/E6)"
-                  % ("ok" if ok else "failed", len(w2)))
             return
-        check("M6 the commit re-baked and wrote a second wave", True)
         y = wave_signal(w2[0])
         check("M6 content render ignores the live solo: A (unmuted in the model) is in it (RMS %.4f)" % rms(y, *WA),
               rms(y, *WA) > 1e-3)
-        check("M6 content render honours the MODEL's mute of B (RMS %.2e)" % rms(y, *WB), rms(y, *WB) < SILENT)
+        check("M6 content render honours the MODEL's mute of B (RMS %.2e, under the tail floor: the instrument keeps its "
+              "reverb between two renders of one instance; B audible would be ~0.03)" % rms(y, *WB), rms(y, *WB) < TAIL)
     finally:
         app.close()
 
@@ -510,7 +508,51 @@ def m7():
         app.close()
 
 
-for name, fn in (("M1", m1), ("M2", m2), ("M3", m3), ("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7)):
+def m8():
+    """E6: an empty clip or a sub-group under a host is played by the host's instrument also when rendered alone
+    (`object.render_isolated`), and cannot be consolidated (the wave would violate the rule of the group)."""
+    print("\n── M8 ──")
+    app = App("m8")
+    try:
+        ids = scene_sub(app)
+        out = os.path.join(WORK, "m8_sub.wav")
+        r = app.c.send("object.render_isolated", {"id": ids["s"], "path": out, "start": 0.0, "end": 5.0})
+        ok, res = wait_job(app, r)
+        check("M8 the isolated render of the sub-group ran (%s)" % ("ok" if ok else res), ok)
+        if ok:
+            x = read_wav(out)
+            check("M8 the sub-group alone is played by the host's instrument (RMS %.4f)" % rms(x, *WA), rms(x, *WA) > 1e-3)
+            check("M8 ... and holds nothing of its sibling B (RMS %.2e)" % rms(x, *WB), rms(x, *WB) < TAIL)
+        out2 = os.path.join(WORK, "m8_clip.wav")
+        r = app.c.send("object.render_isolated", {"id": ids["a"], "path": out2, "start": 0.0, "end": 5.0})
+        ok, res = wait_job(app, r)
+        check("M8 the isolated render of the empty clip ran (%s)" % ("ok" if ok else res), ok)
+        if ok:
+            y = read_wav(out2)
+            check("M8 the empty clip alone is played by the host's instrument (RMS %.4f)" % rms(y, *WA), rms(y, *WA) > 1e-3)
+        dup = app.c.send("object.duplicate", {"ids": [ids["h"]]})["ids"]
+        check("M8 duplicating the host gives one copy", len(dup) == 1)
+        if len(dup) == 1:
+            expand(app, dup[0])
+            kids = [o for o in app.c.send("object.list")["objects"] if o.get("parent") == dup[0] and o["kind"] == "midi"]
+            hosted = [app.c.send("object.get", {"id": k["id"]}).get("instrument_host") for k in kids]
+            check("M8 the copy of the host carries its own instrument: its clips are hosted by the COPY (%s)" % hosted,
+                  len(kids) == 1 and hosted == [dup[0]])
+        proj = os.path.join(WORK, "m8proj", "m8.objekat")
+        app.c.send("project.save_as", {"path": proj})
+        for what in ("s", "a"):
+            code = reason = None
+            try:
+                app.c.send("consolidate.make", {"id": ids[what]})
+            except ObjekatError as e:
+                code, reason = e.code, (e.details or {}).get("reason") if isinstance(e.details, dict) else None
+            check("M8 consolidating %s under the host is refused (%s, %s)" % (what, code, reason),
+                  code == "invalid_state" and reason == "consolidatedChild")
+    finally:
+        app.close()
+
+
+for name, fn in (("M1", m1), ("M2", m2), ("M3", m3), ("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7), ("M8", m8)):
     if len(sys.argv) > 2 and name not in [a.upper() for a in sys.argv[2:]]:
         continue
     try:

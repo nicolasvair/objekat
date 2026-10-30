@@ -439,6 +439,7 @@ extension EditViewModel {
               !group.isConsolidateInstance else { return }
         guard !isBaking(groupID) else { return }
         if refusedBySession(.consolidate, ids: [groupID]) { return }
+        if refusesConsolidating(groupID) { return }
         guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
@@ -497,6 +498,7 @@ extension EditViewModel {
         guard let engine, let firstRead = find(id: clipID), (firstRead.isClip || firstRead.isMIDI),
               !firstRead.isConsolidateInstance, !isBaking(clipID) else { return }
         if refusedBySession(.consolidate, ids: [clipID]) { return }
+        if refusesConsolidating(clipID) { return }
         guard let folder = consolidateFolder else {
             bakeAlert(L("consolidate.error.saveFirst.title"),
                         L("consolidate.error.saveFirst.info"))
@@ -558,6 +560,7 @@ extension EditViewModel {
         let objs = selectedIDs.compactMap { find(id: $0) }
         let eligible = objs.filter { o in
             (o.isGroup || o.isClip || o.isMIDI) && !o.isConsolidateInstance && !o.isInfiniteBus
+                && !isUnderInstrumentHost(o.id)
         }
         let ids = Set(eligible.map(\.id))
         return eligible

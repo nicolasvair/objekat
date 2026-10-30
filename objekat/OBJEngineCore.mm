@@ -1787,6 +1787,10 @@ struct OBJRenderChain {
     // Les ANCÊTRES seuls. Eux seuls se rendent transparents sur le clone ; le contenu, lui, EST
     // ce qu'on cuit — le toucher revenait à bypasser les FX (et l'instrument) de ce qu'on rend.
     std::vector<te::EditItemID> ancestors;
+    // L'instrument de l'HÔTE de la cible : celui du premier ancêtre qui en porte un. Une cible sans instrument
+    // propre (clip MIDI vide, sous-groupe) n'est jouée que par lui ; l'éteindre avec le reste de l'ancêtre
+    // rendait le silence (docs/plan_groupes_midi.md, E6). Invalide si aucun ancêtre n'en porte.
+    te::EditItemID hostInstrument;
 };
 
 // Ce que le clone d'un EXPORT SUR COPIE doit charger de plugins de clips. @see
@@ -4557,6 +4561,9 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         if (c) {
             chain.allowed.push_back(c->itemID);
             if (!isTarget) chain.ancestors.push_back(c->itemID);
+            if (!isTarget && !chain.hostInstrument.isValid())
+                if (auto iit = _instrumentMap.find(k); iit != _instrumentMap.end() && iit->second)
+                    chain.hostInstrument = iit->second->itemID;
             // Le contenu ne se collecte que sous la CIBLE : sous un ancêtre, on ne veut que la
             // branche qui mène à elle — ses autres enfants sont justement ce qu'on isole.
             if (isTarget)
@@ -4835,7 +4842,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     [self renderTrackToFileAsync:track->itemID
                         filePath:filePath start:startSecs end:endSecs
                   allowedClipIDs:chain.allowed
-                         prepare:[ancestors = chain.ancestors, keepID, startSecs, endSecs, keepOwnTail, content](te::Track* t) {
+                         prepare:[ancestors = chain.ancestors, hostInstrument = chain.hostInstrument, keepID, startSecs, endSecs, keepOwnTail, content](te::Track* t) {
                              auto* ct = dynamic_cast<te::ClipTrack*>(t);
                              if (!ct) return;
                              auto bypassTail = [](te::PluginList* pl) {
@@ -4930,9 +4937,11 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
                                  auto* c = te::findClipForID(t->edit, ancestorID);
                                  if (!c || c->itemID == keepID) continue;
 
+                                 // Sauf l'instrument de l'hôte : c'est lui qui joue la cible (E6).
                                  if (auto* pl = c->getPluginList())
                                      for (auto* p : *pl)
-                                         p->setEnabled(false);
+                                         if (!(hostInstrument.isValid() && p->itemID == hostInstrument))
+                                             p->setEnabled(false);
                                  openContainer(c);
                              }
                          }

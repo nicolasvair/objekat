@@ -102,6 +102,18 @@ extension EditViewModel {
         return false
     }
 
+    /// Is `id` an empty clip or a sub-group living under an instrument group? Consolidating it would bake the host's
+    /// notes into a wave that then sits among the host's children: the wave violates the rule (E6). The menu hides the
+    /// entry, the doors call `refusesConsolidating`.
+    func isUnderInstrumentHost(_ id: UUID) -> Bool {
+        guard let object = find(id: id), object.isGroup || GroupInstrumentRule.isEmptyClip(object) else { return false }
+        return ancestorChain(of: id).contains { $0.isGroup && !$0.instruments.isEmpty }
+    }
+
+    func refusesConsolidating(_ id: UUID) -> Bool {
+        isUnderInstrumentHost(id) && refuseGroupInstrument(.consolidatedChild)
+    }
+
     /// The object a refused gesture left pending, read and cleared by the command bus.
     func takeGroupInstrumentRefusal() -> GroupInstrumentRefusal? {
         defer { groupInstrumentRefusal = nil }
