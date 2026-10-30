@@ -464,16 +464,26 @@ extension CommandRegistry {
                  recording is already under way. A seek, `transport.stop` or `rec.stop` ends it.
                  """,
                  params: [ParamSpec("seconds", "number", required: false,
-                                    "Where to start when stopped; default = the cursor.")],
+                                    "Where to start when stopped; default = the cursor."),
+                          ParamSpec("debug_stall_ms", "int", required: false,
+                                    "TEST: keeps the main thread busy that many ms once the take has started, "
+                                    + "before giving the run loop back (a main thread late for the engine's "
+                                    + "deferred bookkeeping). Default 0. Max 5000.")],
                  undo: .none) { p in
             let session = try CommandContext.shared.requireSession()
             let vm = session.viewModel
+            let stall = try p.optionalInt("debug_stall_ms") ?? 0
+            guard stall >= 0, stall <= 5000 else {
+                throw CommandError(code: .bad_params, message: "debug_stall_ms \(stall) outside 0...5000")
+            }
             guard vm.canRecord else {
                 throw CommandError(code: .invalid_state,
                                    message: vm.projectURL == nil ? "the project has not been saved"
                                                                  : "no zone is armed")
             }
             if !session.isPlaying, let seconds = try p.optionalDouble("seconds") { session.seek(to: seconds) }
+            vm.engine?.debugRecordStallMs = stall
+            defer { vm.engine?.debugRecordStallMs = 0 }
             if let why = session.startRecording() {
                 throw CommandError(code: .invalid_state, message: why)
             }

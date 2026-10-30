@@ -150,6 +150,22 @@ extension CommandRegistry {
             }
             return JSONValue.fromFoundation(engine.virtualAudioStatus())
         }
+
+        register("audio.debug.broadcast_change",
+                 summary: """
+                 TEST: makes the audio device manager broadcast a change that changes nothing (what CoreAudio \
+                 does when a device list or a MIDI list moves, or the same device restarts) — a recording must \
+                 go on through it. Only under `--virtual-audio`; the real card is never touched.
+                 """,
+                 undo: .none) { _ in
+            let engine = try CommandContext.shared.requireEngine()
+            guard OBJEngineCore.isVirtualAudio() else {
+                throw CommandError(code: .invalid_state,
+                                   message: "the virtual card is not active (launch with --virtual-audio)")
+            }
+            engine.debugBroadcastAudioDeviceChange()
+            return JSONValue.fromFoundation(["broadcast": true])
+        }
     }
 
     // MARK: Shared helpers

@@ -31,12 +31,20 @@ Driven on `--virtual-audio` (4 inputs, a known signal on each; real time: the sc
      refused while recording; unsaved project / nothing armed: refused
   E2 the stereo pairs are FIXED while recording: input.pair / unpair / set_pairs -> invalid_state, the
      recording goes on, rec.stop gives the takes and the files; accepted again once stopped
-  F  CALIBRATION: loopback of the virtual card, an impulse played at t = 1.000 s must be recorded at
+  F  CALIBRATION (every take also with the main thread stalled 100 ms after the start, engine patch 0048): loopback of the
+     virtual card, an impulse played at t = 1.000 s must be recorded at
      1.000 s once the file's position on the timeline is applied: to the SAMPLE (error 0, +-1 at most),
      for the buffer sizes 64 / 128 / 256 / 512 / 1024, 4 takes started cold (seek 0, rec.start) and 4
      punched in during playback (play from 0, rec.start at 0.2 s); ONE error value per size. The card
      announces its latencies the way CoreAudio does (buffers included): their sum is the loopback delay
-  F2 same, with a 20 ms latency plugin on the Main (bs 256, 3 cold + 3 punch-in)
+  F2 same, with a 20 ms latency plugin on the Main (bs 256, 3 cold + 3 punch-in, stalled or not)
+  R  ROBUSTNESS of the take against a main thread that is late (engine patch 0048, "the record cuts itself after one
+     block"): `rec.start {debug_stall_ms}` keeps the main thread busy right after the take has started; whatever the
+     stall (0 / 15 / 30 / 60 / 100 / 250 ms), cold or punched in, at bs 512 and 64 (and 128 / 256 / 1024 at 0 and 100 ms),
+     the take must last as long as the recording (not one block), the engine must report ONE start, ONE stop and ONE
+     `recordingFinished` per input (no restart, none before `rec.stop`), the BWAV time reference (`bext`) is the press
+     (exact when cold); 10 quick 2 s record / stop cycles in the "mute" mode: no take under 0.5 s; a device-change
+     broadcast that changes nothing (`audio.debug.broadcast_change`) does not end the recording
   H  the buffer size changes during a recording: clean stop, the take is kept, the file is valid
   G  Settings.xml is byte for byte what it was
 
@@ -179,6 +187,30 @@ def new_project(c, tmp, name):
     path = os.path.join(tmp, name, name + ".objekat")
     c.send("project.save_as", {"path": path})
     return os.path.join(tmp, name)
+
+
+def read_tref(path):
+    """The BWAV time reference (`bext`, samples) of a WAV file, or None."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    pos = 12
+    while pos + 8 <= len(raw):
+        cid, size = raw[pos:pos + 4], struct.unpack("<I", raw[pos + 4:pos + 8])[0]
+        if cid == b"bext":
+            return struct.unpack("<Q", raw[pos + 8 + 338:pos + 8 + 346])[0]
+        pos += 8 + size + (size & 1)
+    return None
+
+
+def rec_log(mark=0):
+    """The `[REC]` lines the engine traced into stderr from byte offset `mark` -> (lines, new offset)."""
+    try:
+        with open(ERR, errors="ignore") as f:
+            f.seek(mark)
+            txt = f.read()
+            return [l for l in txt.splitlines() if "[REC]" in l], mark + len(txt.encode("utf-8", "ignore"))
+    except OSError:
+        return [], mark
 
 
 before = digest()
@@ -696,16 +728,18 @@ try:
         zf = make_zone(c, 0, 0, 4, 0)
         c.send("rec.arm", {"group": zf, "on": True})
 
-        def measure(mode, n):
+        def measure(mode, n, stall=0):
             """n takes of the impulse through the loopback. mode: "cold" (seek 0, rec.start) or "punch"
-            (play from 0, rec.start at 0.2 s). -> [(error in samples, peak, file origin on the timeline)]."""
+            (play from 0, rec.start at 0.2 s). `stall`: the main thread kept busy that many ms right after the
+            take has started (the calibration must not depend on it: engine patch 0048). -> [(error in
+            samples, peak, file origin on the timeline)]."""
             out = []
             for _ in range(n):
                 c.send("transport.seek", {"seconds": 0})
                 if mode == "punch":
                     c.send("transport.play")
                     wait_pos(c, 0.2)
-                c.send("rec.start")
+                c.send("rec.start", {"debug_stall_ms": stall} if stall else None)
                 wait_pos(c, 3.0)
                 t = c.send("rec.stop")["last_takes"][0]
                 tag, ch, sr, bits, arr = read_wav(t["path"])
@@ -738,8 +772,12 @@ try:
                   (bs, vs.get("announced_input_latency"), vs.get("announced_output_latency"), vs.get("loopback_delay")),
                   vs.get("announced_input_latency", -1) + vs.get("announced_output_latency", -1) == vs.get("loopback_delay"), vs)
             check("bs %d: loopback_delay = 2*bs + 64 + 96" % bs, vs.get("loopback_delay") == 2 * bs + 160, vs.get("loopback_delay"))
-            errs = judge("bs %d cold" % bs, measure("cold", 4), "cold") + judge("bs %d punch-in" % bs, measure("punch", 4), "punch")
-            check("bs %d: ONE error value over the 8 takes (%s)" % (bs, sorted(set(errs))), len(set(errs)) == 1, errs)
+            errs = []
+            for stall in (0, 100):         # 100 ms: the main thread late for the engine's deferred update (0048)
+                sfx = "" if stall == 0 else " stall %d" % stall
+                errs += judge("bs %d cold%s" % (bs, sfx), measure("cold", 4, stall), "cold") \
+                      + judge("bs %d punch-in%s" % (bs, sfx), measure("punch", 4, stall), "punch")
+            check("bs %d: ONE error value over the 16 takes, stalled or not (%s)" % (bs, sorted(set(errs))), len(set(errs)) == 1, errs)
         c.send("audio.set_buffer_size", {"frames": 256})
         time.sleep(0.5)
 
@@ -751,9 +789,129 @@ try:
         # The PDC resync (`checkLatencyAndRebuild`) re-reads the plugins' latency on a ~250 ms tick: a rec
         # pressed inside that window would still compensate the OLD latency (known, measured: +20 ms).
         time.sleep(1.0)
-        errs2 = judge("main latency cold", measure("cold", 3), "cold") + judge("main latency punch-in", measure("punch", 3), "punch")
-        check("main latency: ONE error value over the 6 takes (%s)" % sorted(set(errs2)), len(set(errs2)) == 1, errs2)
+        errs2 = []
+        for stall in (0, 100):
+            sfx = "" if stall == 0 else " stall %d" % stall
+            errs2 += judge("main latency cold%s" % sfx, measure("cold", 3, stall), "cold") \
+                   + judge("main latency punch-in%s" % sfx, measure("punch", 3, stall), "punch")
+        check("main latency: ONE error value over the 12 takes (%s)" % sorted(set(errs2)), len(set(errs2)) == 1, errs2)
         c.send("edit.undo")                                           # the test plugin
+
+        # ── R: a main thread that is late must not cut the take ------------------------------------
+        section("R  robustness: debug_stall_ms (main thread late), one take = one recording, tref = the press")
+        P6 = new_project(c, tmp, "p6")
+        c.send("audio.virtual.set_input", {"channel": 0, "signal": "sine", "frequency": 440, "amplitude": 0.5})
+        zr = make_zone(c, 0, 0, 60, 0)
+        c.send("rec.arm", {"group": zr, "on": True})
+
+        def counts(lines):
+            """How many times the engine told it: (aboutToStart, aboutToStop, finished with a clip, finished without)."""
+            return (sum(" aboutToStart " in l for l in lines), sum(" aboutToStop " in l for l in lines),
+                    sum(" finished " in l and "NO CLIP" not in l for l in lines), sum("NO CLIP" in l for l in lines))
+
+        def take_run(mode, stall, dur=2.0, keep=False):
+            """One take of `dur` s after the press, with the main thread stalled `stall` ms right after the start.
+            -> dict(n, secs, wall, tref_err, bs, lines_before_stop, lines_after_stop)."""
+            c.send("transport.seek", {"seconds": 0})
+            if mode == "punch":
+                c.send("transport.play")
+                wait_pos(c, 0.5)
+            _, mark = rec_log(0 if not hasattr(take_run, "mark") else take_run.mark)
+            take_run.mark = mark
+            t0 = time.time()
+            r = c.send("rec.start", {"debug_stall_ms": stall} if stall else None)
+            time.sleep(max(0.0, dur - (time.time() - t0)))                         # `dur` s after the call began
+            during, mark = rec_log(take_run.mark)
+            still = c.send("rec.status")["recording"]
+            wall = time.time() - t0
+            res = c.send("rec.stop")
+            after, mark = rec_log(mark)
+            take_run.mark = mark
+            lt = res["last_takes"]
+            out = dict(n=None, secs=None, wall=wall, tref_err=None, still=still, during=during, after=after, ok=bool(lt))
+            if lt:
+                t = lt[0]
+                tag, ch, sr, bits, arr = read_wav(t["path"])
+                tref = read_tref(t["path"])
+                pressed = [float(re.search(r"pos=([0-9.]+)", l).group(1)) for l in during if " press:" in l]
+                out.update(n=arr.shape[0], secs=arr.shape[0] / sr, sr=sr, tref=tref, press_pos=(pressed[0] if pressed else None),
+                           origin=t["start"] - t["source_offset"])
+                if tref is not None and pressed:
+                    out["tref_err"] = tref - round(pressed[0] * sr)
+            if not keep:
+                c.send("edit.undo")
+                time.sleep(1.05)
+            return out
+
+        def judge_run(label, mode, r, bs):
+            check("%s: a take came out, 1 start / 0 stop before rec.stop" % label,
+                  r["ok"] and counts(r["during"])[:3] == (1, 0, 0) and r["still"] is True, (r["ok"], counts(r["during"]), r["still"]))
+            if not r["ok"]:
+                return
+            check("%s: ONE start, ONE stop, ONE clip for the input (no restart)" % label,
+                  counts(r["during"] + r["after"]) == (1, 1, 1, 0), counts(r["during"] + r["after"]))
+            slack = 0.05 + 3.0 * bs / r["sr"]
+            check("%s: the take lasts as long as the recording (%.3f s vs %.3f s)" % (label, r["secs"], r["wall"]),
+                  abs(r["secs"] - r["wall"]) < slack + 0.12, (r["secs"], r["wall"]))
+            # Cold: the file starts EXACTLY at the press. Punched in: the position read at the press is the
+            # transport's, and the first recorded block comes after the file is opened (aboutToStart is 5-15 ms
+            # after the press in a Debug build), so the reference sits 0..~25 ms after it — never BEFORE it, and
+            # never a restart's worth later (that one is caught by the single aboutToStart above).
+            e = r["tref_err"]
+            lo, hi = (-1, 1) if mode == "cold" else (-bs, int(0.05 * r["sr"]) + bs)
+            check("%s: BWAV time reference = the press (err %s samples, allowed %d..%d)" % (label, e, lo, hi),
+                  e is not None and lo <= e <= hi, e)
+
+        grid = [(512, st) for st in (0, 15, 30, 60, 100, 250)] + [(64, st) for st in (0, 15, 30, 60, 100, 250)] \
+             + [(bs_, st) for bs_ in (128, 256, 1024) for st in (0, 100)]
+        errs_r = {}
+        for bs_ in (512, 64, 128, 256, 1024):
+            b = c.send("audio.set_buffer_size", {"frames": bs_})
+            time.sleep(0.5)
+            for mode in ("cold", "punch"):
+                for st in [st for b2, st in grid if b2 == bs_]:
+                    r = take_run(mode, st)
+                    judge_run("bs %d %s stall %d ms" % (bs_, mode, st), mode, r, bs_)
+                    errs_r[(bs_, mode, st)] = (r["secs"], r["tref_err"])
+        print("       (bs, mode, stall) -> (take seconds, tref - press in samples):")
+        for k_, v_ in errs_r.items():
+            print("         %-22s %s" % (k_, v_))
+
+        # 10 quick 2 s record / stop cycles in the "mute" mode (the takes pile up, the previous ones muted): none short.
+        c.send("audio.set_buffer_size", {"frames": 512})
+        time.sleep(0.5)
+        durs = []
+        for k_ in range(10):
+            r = take_run("cold" if k_ % 2 == 0 else "punch", 0 if k_ % 3 else 60, keep=True)
+            durs.append(r["secs"])
+            time.sleep(0.3)
+        print("       10 quick cycles (mute mode), take seconds: %s" % [None if d is None else round(d, 2) for d in durs])
+        check("10 quick cycles: every take lasts >= 0.5 s (about 2 s)", all(d is not None and d > 1.5 for d in durs), durs)
+        check("... in the mute mode: only the newest take is audible", sum(1 for k in kids(c, zr) if not k["muted"]) == 1,
+              [(k["lane"], k["muted"]) for k in kids(c, zr)])
+
+        # A device-change broadcast that changes nothing must not end the recording (the watcher compares the card).
+        c.send("transport.seek", {"seconds": 0})
+        _, mark = rec_log(0)
+        t0 = time.time()
+        c.send("rec.start")
+        time.sleep(0.8)
+        for _ in range(3):
+            check("audio.debug.broadcast_change is accepted", refused(c, "audio.debug.broadcast_change") is None)
+            time.sleep(0.4)
+        time.sleep(0.6)
+        lines, mark = rec_log(mark)
+        wall = time.time() - t0
+        check("a no-op device broadcast: still recording, transport playing",
+              c.send("rec.status")["recording"] is True and c.send("transport.state")["playing"] is True)
+        check("... the watcher kept the take (3 broadcasts seen, 3 decisions 'keep'), no stop",
+              sum("keep recording" in l for l in lines) >= 3 and counts(lines)[1] == 0 and not any("STOP" in l for l in lines),
+              [l[-90:] for l in lines if "device-change" in l])
+        res = c.send("rec.stop")
+        tk = res["last_takes"]
+        check("... the take is whole (as long as the recording)", len(tk) == 1
+              and abs(read_wav(tk[0]["path"])[4].shape[0] / SR - wall) < 0.3, (tk, wall))
+        c.send("edit.undo")
 
         # ── H: the card changes during a recording -------------------------------------------------
         section("H  buffer size changed during a recording: clean stop, takes kept")

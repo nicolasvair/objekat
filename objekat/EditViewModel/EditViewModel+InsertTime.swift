@@ -278,7 +278,7 @@ extension EditViewModel {
             timeSelection = sel
         }
         cursorPosition = lo
-        if !isTransportPlaying { engine?.seek(to: lo) }
+        if !isTransportPlaying { seekEngineUnlessRecording(to: lo) }
         isDirty = true
         return InsertTimeReport(outcome: outcome, marksFollow: marksFollow, container: container)
     }
