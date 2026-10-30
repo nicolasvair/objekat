@@ -177,6 +177,26 @@ struct Main {
         check("three cannot", InputPairing.pairableFirst([m1, m2, InputRef(first: 3, count: 1)]) == nil)
         check("a stereo input cannot", InputPairing.pairableFirst([pair12, InputRef(first: 2, count: 1)]) == nil)
 
+        // MARK: MidiInputRef (session format 35). The exclusivity with the card input and the zoneInstruments key
+        // live in SoundObject: asserted in test_cross_project_import.swift.
+
+        struct MidiHolder: Codable { var recordMidiInput: MidiInputRef? }
+        let mref = MidiInputRef(id: "vmidiin_1", name: "Keystation 49")
+        let mdata = try enc.encode(MidiHolder(recordMidiInput: mref))
+        check("MidiInputRef round trip", try dec.decode(MidiHolder.self, from: mdata).recordMidiInput == mref)
+        check("... written as {id, name}", String(data: mdata, encoding: .utf8) == "{\"recordMidiInput\":{\"id\":\"vmidiin_1\",\"name\":\"Keystation 49\"}}")
+        check("a project from before format 35 (no key) reads nil",
+              try dec.decode(MidiHolder.self, from: Data("{}".utf8)).recordMidiInput == nil)
+        check("a name that is missing reads as empty (the id still finds the device)",
+              try dec.decode(MidiHolder.self, from: Data("{\"recordMidiInput\":{\"id\":\"x\"}}".utf8)).recordMidiInput == MidiInputRef(id: "x", name: ""))
+        check("an empty id is refused by the reference itself",
+              (try? dec.decode(MidiHolder.self, from: Data("{\"recordMidiInput\":{\"id\":\"\",\"name\":\"n\"}}".utf8))) == nil)
+        check("a reference with no id is refused",
+              (try? dec.decode(MidiHolder.self, from: Data("{\"recordMidiInput\":{\"name\":\"n\"}}".utf8))) == nil)
+        check("RecordSource tells the two apart and hashes them apart",
+              RecordSource.audio(InputRef(first: 0, count: 1)) != RecordSource.midi(mref)
+              && Set([RecordSource.audio(InputRef(first: 0, count: 1)), .midi(mref), .midi(mref)]).count == 2)
+
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)
     }
