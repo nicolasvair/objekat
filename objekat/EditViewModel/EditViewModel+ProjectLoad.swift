@@ -232,6 +232,7 @@ extension EditViewModel {
         comments = doc.comments ?? []
         canvasSettings = doc.canvasSettings ?? [:]
         setRecordInputs(doc.recordInputs ?? RecordInputsConfig())
+        setInputChains(doc.inputChains ?? InputChains())
         consolidateEditStack.removeAll()
         resetTransientSessionState(preservingClipboard: preservingClipboard)
 
@@ -398,6 +399,7 @@ extension EditViewModel {
 
     private func performFinalize() {
         projectLoadToken &+= 1
+        syncInputChains()      // what is heard keeps playing through THIS project's chains (E9)
         rescanMissingFiles()
         armMissingFileWatch()
         // The source files' identities start over with the document (or come back with the tab

@@ -20,32 +20,10 @@ extension CommandRegistry {
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
             vm.refreshMidiInputs()
-            let live = Set(vm.engine?.midiZonesLive() ?? [])
-            var zones: [JSONValue] = []
-            @MainActor func walk(_ items: [SoundObject]) {
-                for item in items {
-                    if let ref = item.recordMidiInput {
-                        zones.append(.object([
-                            "id": .string(item.id.uuidString),
-                            "midi_input": .object(["id": .string(ref.id), "name": .string(vm.midiInputName(ref))]),
-                            "present": .bool(vm.resolvedMidiInput(ref) != nil),
-                            "instrument": .stringOrNull(item.instruments.first?.name),
-                            "live": .bool(live.contains(item.id.uuidString)),
-                        ]))
-                    }
-                    if case .group(let children, _) = item.kind { walk(children) }
-                }
-            }
-            walk(vm.items)
-            return .object([
-                "midi_inputs": .array(vm.midiInputs.map { d in
-                    .object(["id": .string(d.id), "name": .string(d.id == MidiInputResolver.allInputsID
-                                                                    ? L("midi.all_inputs") : d.name),
-                             "virtual": .bool(d.isVirtual), "enabled": .bool(d.enabled)])
-                }),
-                "zones": .array(zones),
-            ])
+            return Self.midiInputsPayload(vm)
         }
+
+        registerInputChainCommands()
 
         register("input.levels.midi_activity",
                  summary: """
@@ -109,6 +87,138 @@ extension CommandRegistry {
                 throw CommandError(code: .bad_params, message: why)
             }
             return JSONValue.fromFoundation(engine.virtualMidiStatus())
+        }
+    }
+}
+
+extension CommandRegistry {
+
+    /// The payload of `input.list.midi_inputs` (and of `input.monitor` with `midi`). The devices carry what E9 added:
+    /// whether they are `heard` through an instrument, the `instrument` they hold (name or null) and the `host_id` of
+    /// their chain; `dormant_chains` lists the chains whose device is not there.
+    @MainActor
+    static func midiInputsPayload(_ vm: EditViewModel) -> JSONValue {
+        let live = Set(vm.engine?.midiZonesLive() ?? [])
+        var zones: [JSONValue] = []
+        @MainActor func walk(_ items: [SoundObject]) {
+            for item in items {
+                if let ref = item.recordMidiInput {
+                    zones.append(.object([
+                        "id": .string(item.id.uuidString),
+                        "midi_input": .object(["id": .string(ref.id), "name": .string(vm.midiInputName(ref))]),
+                        "present": .bool(vm.resolvedMidiInput(ref) != nil),
+                        "instrument": .stringOrNull(item.instruments.first?.name),
+                        "live": .bool(live.contains(item.id.uuidString)),
+                    ]))
+                }
+                if case .group(let children, _) = item.kind { walk(children) }
+            }
+        }
+        walk(vm.items)
+        let heard = vm.heardMidiDeviceIDs
+        let present = Set(vm.midiInputs.map(\.id))
+        let dormant: [JSONValue] = vm.inputChains.midi.values.compactMap { chain in
+            guard !chain.isEmpty, vm.resolvedMidiInput(chain.input) == nil else { return nil }
+            return .object(["host_id": .string(chain.hostID.uuidString),
+                            "midi_input": .object(["id": .string(chain.input.id), "name": .string(chain.input.name)]),
+                            "instrument": .stringOrNull(chain.instrument?.name)])
+        }
+        _ = present
+        return .object([
+            "midi_inputs": .array(vm.midiInputs.map { d in
+                let key = vm.midiChainKey(for: d)
+                let chain = key.flatMap { vm.inputChains.midi[$0] }
+                return .object(["id": .string(d.id), "name": .string(d.id == MidiInputResolver.allInputsID
+                                                                      ? L("midi.all_inputs") : d.name),
+                                "virtual": .bool(d.isVirtual), "enabled": .bool(d.enabled),
+                                "heard": .bool(heard.contains(d.id) && chain?.instrument != nil),
+                                "instrument": .stringOrNull(chain?.instrument?.name),
+                                "host_id": .stringOrNull(chain?.hostID.uuidString)])
+            }),
+            "zones": .array(zones),
+            "dormant_chains": .array(dormant),
+        ])
+    }
+
+    /// The present MIDI input `id` names, else `not_found`.
+    @MainActor
+    static func requireMidiDevice(_ id: String, in vm: EditViewModel) throws -> MidiInputInfo {
+        vm.refreshMidiInputs()
+        guard let d = vm.midiInputs.first(where: { $0.id == id }) else {
+            throw CommandError(code: .not_found, message: "no such MIDI input: \(id)")
+        }
+        return d
+    }
+
+    func registerInputChainCommands() {
+
+        register("input.host",
+                 summary: """
+                 The HOST of an input's chain (docs/plan_groupes_midi.md, E9): an id that `plugin.*` takes as `host` \
+                 for the FX of a card input (`first`, `count` as in `input.set_name`) — a MIDI input (`midi`, an id \
+                 from `input.list.midi_inputs`) holds ONE instrument, set by `input.set_instrument`. The chain is made \
+                 (empty) if the input had none. `open` (default true) keeps the chain MOUNTED on the engine — its \
+                 plugins live — even when nothing is heard through it; `open: false` lets it go (unmounted unless \
+                 heard; its plugin states are kept). A chain is mounted only while its input is heard or it is open. \
+                 Answers `host_id`, `kind`, `mounted`, `live` (the input exists and the chain is compiled), \
+                 `plugins` (leaf count).
+                 """,
+                 params: [ParamSpec("first", "int", required: false, "First channel of a card input, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of `first`."),
+                          ParamSpec("open", "bool", required: false, "Keep it mounted (default true).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let open = try p.bool("open", or: true)
+            let host: UUID
+            let kind: String
+            if let midi = try p.optionalString("midi") {
+                host = vm.ensureMidiInputHost(try Self.requireMidiDevice(midi, in: vm))
+                kind = "midi"
+            } else {
+                host = vm.ensureAudioInputHost(try Self.inputRef(p))
+                kind = "audio"
+            }
+            if open { vm.openInputHost(host) } else { vm.closeInputHost(host) }
+            let leaves = EditViewModel.flattenLeaves(vm.chainPlugins(host) ?? []).count
+            return .object(["host_id": .string(host.uuidString), "kind": .string(kind),
+                            "mounted": .bool(vm.mountedInputHosts.contains(host)),
+                            "live": .bool(vm.compiledInputHosts.contains(host) && engine.inputHostIsLive(host.uuidString)),
+                            "plugins": .int(leaves),
+                            "instrument": .stringOrNull(vm.inputInstrument(host)?.name)])
+        }
+
+        register("input.set_instrument",
+                 summary: """
+                 Puts a virtual instrument on a MIDI input (`midi`, an input id), replacing any: it plays the notes of \
+                 that input while the input is heard (`input.monitor`) — never the recording, which is taken from the \
+                 device. Plugin by `identifier` or `name` (+ `format`), as `instrument.set`. One undo point. Not \
+                 mounted until the input is heard or its host is open. `not_found` for an unknown input.
+                 """,
+                 params: [ParamSpec("midi", "string", "A MIDI input id."),
+                          ParamSpec("identifier", "string", required: false, "Exact identifier."),
+                          ParamSpec("name", "string", required: false, "Name, failing an identifier."),
+                          ParamSpec("format", "string", required: false, "Format to settle ties.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let device = try Self.requireMidiDevice(try p.string("midi"), in: vm)
+            let available = try CommandAdapters.resolvePlugin(p, in: vm)
+            guard available.isInstrument else {
+                throw CommandError(code: .bad_params, message: "'\(available.name)' is not an instrument")
+            }
+            vm.setInputInstrument(device: device, available: available)
+            return Self.midiInputsPayload(vm)
+        }
+
+        register("input.remove_instrument",
+                 summary: "Takes the instrument off a MIDI input (`midi`); it stops being heard. One undo point. A no-op without one.",
+                 params: [ParamSpec("midi", "string", "A MIDI input id.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let device = try Self.requireMidiDevice(try p.string("midi"), in: vm)
+            vm.removeInputInstrument(device: device)
+            return Self.midiInputsPayload(vm)
         }
     }
 }

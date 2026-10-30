@@ -86,6 +86,8 @@ final class AudioDeviceStatus {
     /// Called right after every WRITE (never after a no-op refresh) — the title bar's own hook,
     /// so it re-lays itself exactly when there is something new to show.
     @ObservationIgnored var onChange: (() -> Void)?
+    /// A second reader of the same moment: the project's input chains, which re-register when the card changes.
+    @ObservationIgnored var onSnapshotChange: (() -> Void)?
 
     @ObservationIgnored private weak var engine: OBJEngineCore?
     @ObservationIgnored private var pendingConfirmations = 0
@@ -116,6 +118,7 @@ final class AudioDeviceStatus {
         snapshot = next
         generation &+= 1
         onChange?()
+        onSnapshotChange?()
 
         // The restart gap: an external rate/buffer change stops the device then starts it again
         // some ~100 ms apart — coalesced most of the time, but not guaranteed to be. Landing on

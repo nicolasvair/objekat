@@ -116,7 +116,11 @@ extension EditViewModel {
     /// Hears (or stops hearing) an input in the mix. nil on success, otherwise why not.
     func setInputMonitor(_ ref: InputRef, on: Bool) -> String? {
         guard let engine else { return "no engine" }
-        return engine.setAudioInputMonitor(on, first: ref.first, count: ref.count)
+        // The chain first when the input is about to be heard (no dry instant), after when it stops (E9).
+        if on, let host = audioInputHostID(ref), inputChains.audio[ref.key]?.isEmpty == false { mountInputHost(host) }
+        let why = engine.setAudioInputMonitor(on, first: ref.first, count: ref.count)
+        syncInputChains()
+        return why
     }
 
     /// Sets the LISTENING level of an input in dB, held to the synoptic's gain range (-24...+24). Hearing

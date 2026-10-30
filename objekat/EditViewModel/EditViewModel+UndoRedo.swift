@@ -111,7 +111,8 @@ extension EditViewModel {
                                     timeSigDenominator: timeSigDenominator,
                                     markerLanes: markerLanes,
                                     comments: comments,
-                                    fxLinks: fxLinks)
+                                    fxLinks: fxLinks,
+                                    inputChains: inputChainsWithCapturedPluginStates())
         let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         if ms >= 1 {
             NSLog("[PERF] snapshot: %d plugin state(s) re-read in %.0f ms",
@@ -255,6 +256,7 @@ extension EditViewModel {
         pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
         syncAllPluginTrims()      // a patched chain keeps its instances: only its trims move
         syncMidiZones()           // a zone's instrument / input may have moved with the undo
+        if let snapChains = snapshot.inputChains { restoreInputChains(snapChains) }   // the inputs' chains (E9)
         refreshPassiveChains()    // a host may have come or gone with the undo: the FX below it follow (plan 2.5)
 
         let rebuilt = items.count - kept.count

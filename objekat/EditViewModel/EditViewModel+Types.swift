@@ -47,6 +47,10 @@ struct ProjectDocument: Codable {
     /// The card's recording inputs as this project knows them: the stereo pairs declared and the names
     /// given (format 33). nil/absent ⇒ none (every session written before). See `RecordInputsConfig`.
     var recordInputs: RecordInputsConfig?
+    /// The FX on the card's inputs and the instruments on the MIDI inputs (docs/plan_groupes_midi.md, E9): what is HEARD of
+    /// an input, never what is recorded. Added within format 36 (an older build ignores the key). nil/absent ⇒ none.
+    /// See `InputChains`.
+    var inputChains: InputChains?
     /// TRANSIENT, never encoded: what `LegacyGainMigration` did to this document when it was decoded
     /// (nil = not decoded from a file). Read by the load to report it (`project.load_status`).
     var legacyGainMigration: LegacyGainMigration.Report? = nil
@@ -54,7 +58,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs
+        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs, inputChains
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -73,7 +77,8 @@ struct ProjectDocument: Codable {
          comments: [TimelineComment]? = nil,
          fxLinks: [FXLink]? = nil,
          canvasSettings: [String: CanvasProjectSettings]? = nil,
-         recordInputs: RecordInputsConfig? = nil) {
+         recordInputs: RecordInputsConfig? = nil,
+         inputChains: InputChains? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -89,6 +94,7 @@ struct ProjectDocument: Codable {
         self.fxLinks = fxLinks
         self.canvasSettings = canvasSettings
         self.recordInputs = recordInputs
+        self.inputChains = inputChains
     }
 }
 
@@ -172,6 +178,8 @@ struct EditSnapshot {
     // is compiled, so an undo that restored the chains without it would leave the blocks playing
     // the bin as it was AFTER the gesture. Optional = the snapshots from before this field.
     var fxLinks: [FXLink]? = nil
+    // The chains of the inputs (plan_groupes_midi.md, E9). Optional = the snapshots that do not carry them leave the live ones.
+    var inputChains: InputChains? = nil
 }
 
 // MARK: - Common types

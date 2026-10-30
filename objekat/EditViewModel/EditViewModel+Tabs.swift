@@ -116,6 +116,8 @@ extension EditViewModel {
                 if isPluginEditorOpen(plug: plug) { closePluginEditor(plug: plug) }
             }
         }
+        // The inputs' chains (E9): an FX on a card input, an instrument on a MIDI input.
+        for plug in inputChains.allPlugins where isPluginEditorOpen(plug: plug) { closePluginEditor(plug: plug) }
     }
 
     // MARK: - Park / restore

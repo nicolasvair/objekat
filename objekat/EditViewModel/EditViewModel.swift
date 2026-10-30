@@ -1304,6 +1304,17 @@ final class EditViewModel {
     /// Written through `setRecordInputs` / `editRecordInputs` (@see EditViewModel+Record), which also
     /// tell the engine which pairs to describe.
     var recordInputs = RecordInputsConfig()
+    /// The FX on the card's inputs and the instruments on the MIDI inputs, kept IN THE PROJECT and in the undo
+    /// (docs/plan_groupes_midi.md, E9). Read and written through `EditViewModel+InputChains`.
+    var inputChains = InputChains()
+    /// Input hosts registered with the engine (their plugins live there) — SESSION state, see `syncInputChains`.
+    @ObservationIgnored var mountedInputHosts: Set<UUID> = []
+    /// Of those, the ones whose chain has been compiled while the input was live.
+    @ObservationIgnored var compiledInputHosts: Set<UUID> = []
+    /// The MIDI device each mounted MIDI host was registered on (it may resolve to another id after a hot-plug).
+    @ObservationIgnored var inputHostDevice: [UUID: String] = [:]
+    /// Hosts held mounted although nothing is heard through them: an editor or a popover is open, or a script asked.
+    var openInputHosts: Set<UUID> = []
     /// The recording zones (groups with an input) armed to record. SESSION state: not in the project
     /// file, not in the undo (like the playback loop), forgotten by a new project / an opening.
     /// Read through `armedRecordZones`, which keeps only the ones still able to record

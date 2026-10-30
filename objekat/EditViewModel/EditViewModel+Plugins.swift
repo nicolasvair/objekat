@@ -85,6 +85,7 @@ extension EditViewModel {
     func chainPlugins(_ hostID: UUID) -> [ObjectPlugin]? {
         if let i = stemIndex(hostID) { return stems[i].plugins }
         if let o = find(id: hostID) { return o.plugins }
+        if let chain = inputChainPlugins(hostID) { return chain }       // an input's chain (E9)
         if let k = sendChainKey(hostID) { return sendEntry(from: k.sender, to: k.aux)?.plugins }
         return nil
     }
@@ -99,6 +100,7 @@ extension EditViewModel {
             isDirty = true
             return true
         }
+        if find(id: hostID) == nil, isInputHost(hostID) { return updateInputChainPlugins(hostID, f) }
         if find(id: hostID) == nil, let k = sendChainKey(hostID) {
             var written = false
             update(id: k.sender) { o in
@@ -273,6 +275,13 @@ extension EditViewModel {
     /// over the object's.
     func compileRack(objectID: UUID, plugins: [ObjectPlugin], sends: [AuxSend]? = nil) -> [UUID] {
         guard let engine else { return [] }
+        // An input's chain edited while nothing holds it mounted (a script, an editor): the host is registered first
+        // (E9). `mountInputHost` compiles through here once the host is in `mountedInputHosts`, so this runs once.
+        if isInputHost(objectID), !mountedInputHosts.contains(objectID) {
+            openInputHosts.insert(objectID)
+            mountInputHost(objectID)
+            return []
+        }
         let owner = find(id: objectID)
         let sendChains = sendChainSpec(sender: objectID, sends: sends ?? owner?.sends ?? [],
                                        isAux: owner?.isAux ?? false) { rackSpec(for: $0) }
@@ -284,6 +293,7 @@ extension EditViewModel {
         let failedKeys = engine.compileUserRack(forObjectID: objectID.uuidString,
                                                 tree: rackSpec(for: plugins, topLevel: true, passive: passive),
                                                 sendChains: sendChains) as? [String] ?? []
+        if isInputHost(objectID) { compiledInputHosts.insert(objectID) }
         let failed = Set(failedKeys.compactMap { UUID(uuidString: $0) })
         if !failed.isEmpty {
             // During a load, remembers the name of the plugins that cannot be found (before removing them from the
@@ -1019,6 +1029,7 @@ extension EditViewModel {
     /// the two apart: on the engine side they are in the same `_pluginMap` (@see setInstrument:).
     func hostedPlugin(_ pluginID: UUID, of hostID: UUID) -> ObjectPlugin? {
         if let p = leafPlugins(objectID: hostID).first(where: { $0.id == pluginID }) { return p }
+        if let inst = inputInstrument(hostID), inst.id == pluginID { return inst }       // a MIDI input's instrument (E9)
         guard let o = find(id: hostID) else { return nil }
         if let p = o.instruments.first(where: { $0.id == pluginID }) { return p }
         return SendChain.sendPlugins(of: o).first { $0.id == pluginID }     // on one of its sends (INC 3)

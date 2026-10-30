@@ -51,7 +51,11 @@ extension EditViewModel {
                 self.refreshMidiInputs()
                 self.armedGroupIDs = self.armedGroupIDs.filter { self.armRefusal(of: $0) == nil }
                 self.syncMidiZones()
+                self.syncInputChains()      // a device that comes back finds its instrument again (E9)
             }
+        }
+        AudioDeviceStatus.shared.onSnapshotChange = { [weak self] in
+            MainActor.assumeIsolated { self?.syncInputChains() }
         }
         refreshMidiInputs()
     }

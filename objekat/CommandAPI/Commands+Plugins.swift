@@ -76,6 +76,11 @@ extension CommandRegistry {
             }
             if let object = vm.find(id: host) {
                 payload["instruments"] = .array(object.instruments.map { CommandAdapters.pluginPayload($0, bridgeStatus: status) })
+            } else if vm.isInputHost(host) {
+                // An input's chain (E9): FX for a card input, one instrument for a MIDI input.
+                payload["is_input_host"] = .bool(true)
+                payload["instruments"] = .array((vm.inputInstrument(host).map { [$0] } ?? [])
+                    .map { CommandAdapters.pluginPayload($0, bridgeStatus: status) })
             }
             return .object(payload)
         }

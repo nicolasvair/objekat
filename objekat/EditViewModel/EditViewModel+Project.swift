@@ -267,7 +267,8 @@ extension EditViewModel {
                         comments: comments.isEmpty ? nil : comments,
                         fxLinks: fxLinksDoc(for: items, stems: capturedStems),
                         canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings,
-                        recordInputs: recordInputs.isEmpty ? nil : recordInputs)
+                        recordInputs: recordInputs.isEmpty ? nil : recordInputs,
+                        inputChains: inputChainsForDocument())
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
@@ -384,6 +385,7 @@ extension EditViewModel {
         comments = []
         canvasSettings = [:]        // another project starts the editors at their defaults
         setRecordInputs(RecordInputsConfig())   // ... and the card's inputs unpaired, unnamed
+        setInputChains(InputChains())           // ... and their FX and instruments forgotten
         consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil
@@ -664,7 +666,7 @@ extension EditViewModel {
     /// Refreshes `stateXML` from the engine for every plugin leaf, descending
     /// recursively into the voices of a parallel block (`rack`). A rack block has no
     /// state of its own — only its leaves have.
-    private func capturingPluginStates(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+    func capturingPluginStates(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.map { plug in
             var p = plug
             if plug.isContainer {

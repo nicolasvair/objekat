@@ -208,13 +208,23 @@ extension CommandRegistry {
                  as in `input.set_name`. `invalid_state` when the inputs are closed or the input does \
                  not exist. Not saved, and not the project's: monitoring survives a project change or a tab \
                  switch, and stops when the inputs close, when the card changes or when the pair \
-                 heard is taken apart. Answers like `input.list` (`monitored`).
+                 heard is taken apart. Answers like `input.list` (`monitored`). With `midi` (a MIDI input \
+                 id) instead of `first`: hears the MIDI input through its instrument (`invalid_state` when it \
+                 has none or is not listed); answers like `input.list.midi_inputs`.
                  """,
-                 params: [ParamSpec("first", "int", "First channel, 0-based."),
+                 params: [ParamSpec("first", "int", required: false, "First channel, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of `first`."),
                           ParamSpec("on", "bool", "Hear it or not.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            if let midi = try p.optionalString("midi") {
+                let device = try Self.requireMidiDevice(midi, in: vm)
+                if let why = vm.setMidiInputMonitor(device, on: try p.bool("on")) {
+                    throw CommandError(code: .invalid_state, message: why)
+                }
+                return Self.midiInputsPayload(vm)
+            }
             let ref = try Self.inputRef(p)
             if let why = vm.setInputMonitor(ref, on: try p.bool("on")) {
                 throw CommandError(code: .invalid_state, message: why)
@@ -631,7 +641,7 @@ extension CommandRegistry {
         return d.ref
     }
 
-    private static func inputRef(_ p: CommandParams) throws -> InputRef {
+    static func inputRef(_ p: CommandParams) throws -> InputRef {
         let first = try p.int("first")
         let count = try p.int("count", or: 1)
         guard first >= 0, count == 1 || count == 2 else {
@@ -710,7 +720,10 @@ extension CommandRegistry {
                      "name": .string(vm.inputName(ref)),
                      "custom": .bool(vm.recordInputs.customName(for: ref) != nil),
                      "monitored": .bool(heard.contains(ref)),
-                     "monitor_gain_db": .number(vm.inputMonitorGain(ref))])
+                     "monitor_gain_db": .number(vm.inputMonitorGain(ref)),
+                     // The FX chain on the input (E9): its host id (null until one was made) and how many plugins it holds.
+                     "host_id": .stringOrNull(vm.audioInputHostID(ref)?.uuidString),
+                     "fx_count": .int(EditViewModel.flattenLeaves(vm.inputChains.audio[ref.key]?.plugins ?? []).count)])
         })
     }
 }
