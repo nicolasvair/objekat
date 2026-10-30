@@ -68,6 +68,16 @@ final class ObjekatSession {
     private static let playheadInterval: TimeInterval = 0.05
     private var playheadTimer: Timer?
 
+    /// The picture preview (plan-video V1). Built on first use; under `--headless` only the commands
+    /// reach it, nothing starts it.
+    @ObservationIgnored private var videoPreviewStorage: VideoPreviewController?
+    var videoPreview: VideoPreviewController {
+        if let p = videoPreviewStorage { return p }
+        let p = VideoPreviewController(session: self)
+        videoPreviewStorage = p
+        return p
+    }
+
     // MARK: - Lifecycle
 
     /// The default values are `nil` and not `OBJEngineCore()` / `EditViewModel()`: a default value
@@ -140,6 +150,7 @@ final class ObjekatSession {
         // Runs for the windowed AND the headless launch; `attach` is idempotent.
         AudioDeviceStatus.shared.onChange = { [weak viewModel] in viewModel?.updateWindowSubtitle() }
         AudioDeviceStatus.shared.attach(engine)
+        if viewModel.hasInterface { videoPreview.startWatching() }
         guard playheadTimer == nil else { return }
         // `.common` mode — and not the default one: without it, the playhead freezes while tracking
         // a menu or scrolling. It was already the mode of the view's `Timer.publish`, and keeping it

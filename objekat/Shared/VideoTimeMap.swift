@@ -109,6 +109,9 @@ nonisolated struct VideoLayer: Equatable, Sendable {
     var nominalFPS: Double
     /// 1 in V1 (@see the header).
     var opacity: Double
+    /// The file is read backwards (the object is reversed): the player cannot run it, so the display
+    /// seeks to every instant instead of following a rate.
+    var isReversed: Bool = false
 }
 
 nonisolated enum VideoResolver {
@@ -174,7 +177,8 @@ nonisolated enum VideoResolver {
         // frame frozen.
         guard s >= 0, p.fileDuration <= 0 || s < p.fileDuration else { return nil }
         return VideoLayer(objectID: p.id, filePath: p.filePath, sourceTime: s,
-                          rate: p.speedRatio, nominalFPS: p.nominalFPS, opacity: opacity)
+                          rate: p.speedRatio, nominalFPS: p.nominalFPS, opacity: opacity,
+                          isReversed: p.isReversed)
     }
 
     // MARK: The answer
