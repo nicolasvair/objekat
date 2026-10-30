@@ -191,15 +191,21 @@ extension EditViewModel {
     /// this, and so does re-opening a file already open (`Workspace.reopen`): the ids there are
     /// the SAME, but the objects behind them are the last save's, which may not have that plugin,
     /// that crossfade, that object at all.
+    /// The Inputs tab's selection and rename, and the stem popover with its name field: session states of
+    /// the document on screen. Also taken down when a new project replaces it (@see newProjectDiscardingChanges).
+    func clearInputsAndStemTransientState() {
+        renamingInput = nil
+        selectedRecordInputs = []
+        openStemPopoverID = nil
+        renamingStemID = nil
+    }
+
     func clearObjectBoundTransientState() {
         selectedPluginIDs = []
         selectedPluginHostID = nil
         selectedCrossfade = nil
         renamingID = nil
-        renamingInput = nil
-        selectedRecordInputs = []
-        openStemPopoverID = nil
-        renamingStemID = nil
+        clearInputsAndStemTransientState()
         pluginParamValues = [:]
         liveAutomationValues = [:]
         KeyboardClaim.shared.revoke()

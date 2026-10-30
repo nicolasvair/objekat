@@ -224,6 +224,7 @@ extension CommandRegistry {
             SynopticUIState.shared.renamingFXLinkID = nil
             vm.renamingStemID = nil
             vm.renamingInput = nil
+            vm.renamingID = nil
             vm.openStemPopoverID = popover
             KeyboardClaim.shared.revoke()
             if claim == "inputs" { KeyboardClaim.shared.claim(.inputs) }
