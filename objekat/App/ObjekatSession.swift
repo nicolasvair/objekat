@@ -150,7 +150,10 @@ final class ObjekatSession {
         // Runs for the windowed AND the headless launch; `attach` is idempotent.
         AudioDeviceStatus.shared.onChange = { [weak viewModel] in viewModel?.updateWindowSubtitle() }
         AudioDeviceStatus.shared.attach(engine)
-        if viewModel.hasInterface { videoPreview.startWatching() }
+        if viewModel.hasInterface {
+            VideoPreviewWindow.shared.install(for: videoPreview)
+            videoPreview.startWatching()
+        }
         guard playheadTimer == nil else { return }
         // `.common` mode — and not the default one: without it, the playhead freezes while tracking
         // a menu or scrolling. It was already the mode of the view's `Timer.publish`, and keeping it

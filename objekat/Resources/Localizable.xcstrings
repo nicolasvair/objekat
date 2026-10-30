@@ -12376,6 +12376,29 @@
         }
       }
     },
+    "menu.window.videoPreview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video Preview"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vista previa de vídeo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu vidéo"
+          }
+        }
+      }
+    },
     "midi.all_inputs": {
       "extractionState": "manual",
       "localizations": {
@@ -22538,6 +22561,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "« %@ » ne peut pas être lu (%@)."
+          }
+        }
+      }
+    },
+    "videopreview.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video preview"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vista previa de vídeo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu vidéo"
           }
         }
       }

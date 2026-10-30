@@ -82,6 +82,8 @@ extension TimelineView {
             // A script canvas's window has its own wheel (@see ScriptCanvasPlotNSView): this monitor is
             // app-wide and would pan / zoom the TIMELINE from a stale hover position.
             if event.window is ScriptCanvasPanel { return event }
+            // The picture preview has no wheel either: the stale hover would zoom the timeline.
+            if event.window is VideoPreviewPanel { return event }
             InputProbe.shared.observe(event)   // what `input.*` sees (@see InputProbe) — a no-op at rest
             // The anti-reentrance guard (step 4): no zoom/value-scroll while a project load owns
             // the model.
@@ -470,6 +472,7 @@ extension TimelineView {
 
         magnifyMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { event in
             if event.window is ScriptCanvasPanel { return event }   // the canvas has its own pinch
+            if event.window is VideoPreviewPanel { return event }   // nothing to pinch in a picture
             // The anti-reentrance guard (step 4): no pinch-zoom while a project load owns the model.
             if vm.isLoadingProject { return event }
             // Like the wheel: only a pinch over the timeline zooms it.

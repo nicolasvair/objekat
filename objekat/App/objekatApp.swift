@@ -386,6 +386,9 @@ struct objekatApp: App {
             // (Minimise/Zoom/Bring All to Front), which is where a list of open "things" belongs.
             CommandGroup(after: .windowArrangement) {
                 Divider()
+                Button(L("menu.window.videoPreview")) {
+                    VideoPreviewWindow.shared.toggle(workspace.session.videoPreview)
+                }
                 Button(L("menu.window.nextTab")) { selectRelativeTab(by: 1) }
                     .keyboardShortcut(.tab, modifiers: [.control])
                     .disabled(workspace.tabs.count < 2)
