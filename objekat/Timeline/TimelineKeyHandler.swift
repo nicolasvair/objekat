@@ -982,8 +982,10 @@ extension TimelineView {
                         return nil
                     }
                     if flags.contains(.command) {
-                        // Contextual (plan_synoptic_rework B.9): the signal view holding the keyboard
-                        // on ONE FX link bin renames the bin; otherwise the object / marker as before.
+                        // Contextual (plan_synoptic_rework B.9; @see RenameShortcutRoute): the signal view
+                        // holding the keyboard on ONE FX link bin renames the bin; a stem's popover open
+                        // renames the stem; the Inputs list holding the keyboard renames its one selected
+                        // row (or nothing); otherwise the object / marker as before.
                         DispatchQueue.main.async { vm.performRenameShortcut() }
                         return nil
                     }

@@ -180,21 +180,11 @@ struct InputsPanelView: View {
                         if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
                     }
                 } else {
+                    // No gesture of its own: the row's click selects (⌘ / ⇧ included); ⌘R renames the one
+                    // selected row while this list holds the keyboard (@see RenameShortcutRoute).
                     Text(viewModel.inputName(ref))
                         .font(.system(.caption, weight: .semibold))
                         .lineLimit(1)
-                        .onTapGesture {
-                            // ⌘ / ⇧ on the name select (a range is aimed at the rows, and the name is
-                            // most of the row); a bare click renames.
-                            let flags = NSEvent.modifierFlags
-                            if flags.contains(.command) || flags.contains(.shift) {
-                                listFocused = true
-                                viewModel.renamingInput = nil
-                                select(ref)
-                            } else {
-                                viewModel.renamingInput = ref
-                            }
-                        }
                         .help(L("inputs.rename.help"))
                 }
                 Spacer(minLength: 4)

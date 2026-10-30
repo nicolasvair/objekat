@@ -932,6 +932,8 @@ extension EditViewModel {
     /// What ⌘R renamed.
     enum RenameShortcutTarget: Equatable {
         case fxLink(UUID)       // the signal view's selection designates ONE bin: its inline field opens
+        case stem(UUID)         // a stem's popover is open: the name in its header becomes a field
+        case input(InputRef)    // the Inputs list holds the keyboard on ONE selected row
         case object(UUID)       // the timeline's one selected object
         case annotation(UUID)   // the one selected marker / region / comment
         case none
@@ -962,28 +964,45 @@ extension EditViewModel {
         SynopticUIState.shared.renamingFXLinkID = linkID
     }
 
-    /// ⌘R. CONTEXTUAL: while the signal view holds the keyboard and its selection designates one bin,
-    /// the bin's inline rename field opens (`SynopticUIState.renamingFXLinkID`); otherwise what ⌘R has
-    /// always done in the timeline — rename the one selected object, or the one selected marker /
-    /// region / comment. Returns what it did (the headless scenario reads it).
+    /// ⌘R. CONTEXTUAL (@see RenameShortcutRoute for the table): the bin the signal view designates, else the
+    /// stem whose popover is open, else the one selected row of the Inputs list while it holds the keyboard,
+    /// else — what ⌘R has always done in the timeline — the one selected object, or the one selected marker /
+    /// region / comment. A context that holds the keyboard but has nothing to rename (the Main's popover, an
+    /// Inputs list with no row or several selected) renames NOTHING: it does not fall through to the object.
+    /// Returns what it did (the headless scenario reads it).
     @discardableResult
     func performRenameShortcut() -> RenameShortcutTarget {
-        if pluginSurfaceHasKeyboard, let link = fxLinkDesignatedBySelection() {
+        let situation = RenameShortcutRoute.Situation<InputRef>(
+            fxLink: pluginSurfaceHasKeyboard ? fxLinkDesignatedBySelection() : nil,
+            fxLinkHost: selectedPluginHostID,
+            openStem: openStemPopoverID,
+            mainStem: mainStemID,
+            inputsHoldKeyboard: KeyboardClaim.shared.owner == .inputs,
+            selectedInputs: Array(selectedRecordInputs),
+            selectedObject: selectedIDs.count == 1 ? selectedIDs.first : nil,
+            // The same shortcut for a marker's name, a region's and a comment's text: one gesture to name
+            // a thing, whatever kind of thing it is. `selectedAnnotation` is nil for SEVERAL marks: there
+            // is no one name to type over all of them, so ⌘R then does nothing.
+            annotation: selectedAnnotation?.markerID)
+        switch RenameShortcutRoute.route(situation) {
+        case .fxLink(let link):
             beginRenamingFXLink(link)
             return .fxLink(link)
-        }
-        if selectedIDs.count == 1, let id = selectedIDs.first {
+        case .stem(let id):
+            renamingStemID = id
+            return .stem(id)
+        case .input(let ref):
+            renamingInput = ref
+            return .input(ref)
+        case .object(let id):
             renamingID = id
             return .object(id)
+        case .annotation(let id):
+            renamingID = id
+            return .annotation(id)
+        case .none:
+            return .none
         }
-        // The same shortcut for a marker's name, a region's and a comment's text: one gesture to name
-        // a thing, whatever kind of thing it is. `selectedAnnotation` is nil for SEVERAL marks: there
-        // is no one name to type over all of them, so ⌘R then does nothing.
-        if let a = selectedAnnotation {
-            renamingID = a.markerID
-            return .annotation(a.markerID)
-        }
-        return .none
     }
 
     // MARK: Redirecting the gestures aimed at a member's instance

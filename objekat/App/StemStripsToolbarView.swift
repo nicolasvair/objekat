@@ -9,8 +9,8 @@ import UniformTypeIdentifiers
 // general output/master, then each stem): a coloured dot, a short name and a live VU meter.
 // Clicking a strip → a popover of the bus's FX chain, which reuses the signal view
 // (SynopticBoundView) AS IT IS by pointing it at the stem's UUID (host-aware). A '+' area at
-// the end of the bar creates a new stem. The popover also allows renaming the stem (click the
-// title) and detaching it from the Main (the 'route to main' checkbox).
+// the end of the bar creates a new stem. The popover also allows renaming the stem (⌘R while it
+// is open — a click on the title no longer does) and detaching it from the Main (the 'route to main' checkbox).
 
 struct StemStripsToolbarView: View {
     @Bindable var viewModel: EditViewModel
@@ -22,7 +22,7 @@ struct StemStripsToolbarView: View {
     var compact: Bool = false
 
     @State private var levels: [UUID: Float] = [:]
-    @State private var openStemID: UUID? = nil
+    // The open popover's stem lives in the model (`openStemPopoverID`): ⌘R needs to know that a popover is open.
     // Reordering the bar by drag. `liveFrames` tracks every strip's X-range continuously
     // (`onGeometryChange`, in the bar's own "stemBar" coordinate space); `frozenOrder` /
     // `frozenFrames` are a SNAPSHOT of that, taken the instant a drag starts and held for its
@@ -127,7 +127,7 @@ struct StemStripsToolbarView: View {
                     number: idx < 9 ? idx + 1 : nil,
                     displayIndex: idx + 1,
                     level: levels[stem.id] ?? 0,
-                    isOpen: openStemID == stem.id,
+                    isOpen: viewModel.openStemPopoverID == stem.id,
                     isClipping: clippedStems.contains(stem.id),
                     blinkOn: blinkOn,
                     isDropTarget: dropTargetStemID == stem.id,
@@ -135,7 +135,7 @@ struct StemStripsToolbarView: View {
                     compact: compact,
                     onClearClip: { clippedStems.remove(stem.id) }
                 ) {
-                    openStemID = (openStemID == stem.id) ? nil : stem.id
+                    viewModel.openStemPopoverID = (viewModel.openStemPopoverID == stem.id) ? nil : stem.id
                 }
                 .onGeometryChange(for: CGRect.self,
                                    of: { $0.frame(in: .named("stemBar")) }) { frame in
@@ -170,8 +170,8 @@ struct StemStripsToolbarView: View {
                         }
                     }))
                 .popover(isPresented: Binding(
-                    get: { openStemID == stem.id },
-                    set: { if !$0 && openStemID == stem.id { openStemID = nil } }
+                    get: { viewModel.openStemPopoverID == stem.id },
+                    set: { if !$0 && viewModel.openStemPopoverID == stem.id { viewModel.openStemPopoverID = nil } }
                 ), arrowEdge: .bottom) {
                     StemFXPopover(viewModel: viewModel, stem: stem,
                                   isMain: stem.id == viewModel.mainStemID,
@@ -296,7 +296,7 @@ struct StemStripsToolbarView: View {
     private func handleStemDragChanged(_ stem: Stem, pointerX: CGFloat) {
         if dragStemID != stem.id {
             dragStemID = stem.id
-            openStemID = nil
+            viewModel.openStemPopoverID = nil
             frozenOrder = viewModel.stems
             frozenFrames = frozenOrder.map { liveFrames[$0.id] ?? .zero }
         }
@@ -564,8 +564,6 @@ private struct StemFXPopover: View {
     /// The keyboard shortcut's number (a reminder of the key → stem link). nil beyond 9.
     var number: Int? = nil
 
-    @State private var isEditingName = false
-    @State private var editText = ""
     @State private var confirmDelete = false
 
     // A width fitted to the VERTICAL signal view (the old 540 was sized for the horizontal one).
@@ -583,17 +581,18 @@ private struct StemFXPopover: View {
                 if isMain {
                     Text(L("stem.main.subtitle"))
                         .font(.system(.caption, weight: .semibold))
-                } else if isEditingName {
-                    // Clicking the title → rename the stem.
-                    TextField(noLabel, text: $editText)
-                        .font(.system(.caption, weight: .semibold))
-                        .textFieldStyle(.plain)
-                        .onSubmit { viewModel.renameStem(id: stem.id, name: editText); isEditingName = false }
-                        .onExitCommand { isEditingName = false }
+                } else if viewModel.renamingStemID == stem.id {
+                    // ⌘R while the popover is open (@see RenameShortcutRoute): leaving the field commits what was
+                    // typed, Esc cancels. A click on the name does nothing any more.
+                    MarkerRenameField(initial: stem.name,
+                                      font: .system(.caption, weight: .semibold),
+                                      commitsOnFocusLoss: true) { value in
+                        if let value { viewModel.renameStem(id: stem.id, name: value) }
+                        if viewModel.renamingStemID == stem.id { viewModel.renamingStemID = nil }
+                    }
                 } else {
                     Text(stem.name)
                         .font(.system(.caption, weight: .semibold))
-                        .onTapGesture { editText = stem.name; isEditingName = true }
                         .help(L("stem.rename.help"))
                 }
 

@@ -294,6 +294,98 @@ try:
         r = peaks(c, 0.6)
         check("enable again: the sine reads -6 dB (%.2f)" % db(r, 0), abs(db(r, 0) - (-6.02)) <= 0.5, db(r, 0))
         time.sleep(0.5)
+
+        # -- the Inputs tab's selection, and ⌘R (rec3-ui) ------------------------------------------
+        print("\n  -- Inputs selection and ⌘R --")
+
+        def sel_shape(r):
+            return [(i["first"], i["count"]) for i in r["inputs"]]
+
+        def rename(**kw):
+            return c.send("debug.rename_shortcut", kw or None)
+
+        c.send("input.set_pairs", {"pairs": [0]})
+        lst = c.send("input.list")
+        check("select: the tab lists the pair first, then the monos",
+              [(d["first"], d["count"]) for d in lst["record_inputs"]] == [(0, 2), (0, 1), (1, 1), (2, 1), (3, 1)],
+              lst["record_inputs"])
+        check("selection: empty to begin with", c.send("input.selection")["count"] == 0)
+        r = c.send("input.select", {"inputs": [{"first": 2}, {"first": 0, "count": 2}]})
+        check("select: two rows, answered in the tab's order (pair above mono)",
+              r["count"] == 2 and sel_shape(r) == [(0, 2), (2, 1)], r)
+        check("selection: reads the same", sel_shape(c.send("input.selection")) == [(0, 2), (2, 1)])
+        check("select: an input the tab does not list is bad_params",
+              refused(c, "input.select", inputs=[{"first": 3, "count": 2}]) == "bad_params")
+        check("select: ...and the selection did not move", sel_shape(c.send("input.selection")) == [(0, 2), (2, 1)])
+        check("select: a bad count is bad_params", refused(c, "input.select", inputs=[{"first": 1, "count": 3}]) == "bad_params")
+        r = c.send("input.select", {"inputs": [{"first": 0, "count": 2}, {"first": 1}]})
+        check("select: replaces (it does not add)", sel_shape(r) == [(0, 2), (1, 1)], r)
+        c.send("input.unpair", {"first": 0})
+        check("unpair purges the selection of the pair it took apart (the mono stays)",
+              sel_shape(c.send("input.selection")) == [(1, 1)], c.send("input.selection"))
+        c.send("input.set_pairs", {"pairs": [0]})
+        c.send("input.select", {"inputs": [{"first": 0, "count": 2}, {"first": 3}]})
+        c.send("input.set_pairs", {"pairs": []})
+        check("set_pairs purges as well", sel_shape(c.send("input.selection")) == [(3, 1)], c.send("input.selection"))
+        c.send("input.pair", {"first": 0})
+        c.send("input.select", {"inputs": [{"first": 0, "count": 2}]})
+        c.send("input.unpair", {"first": 0})
+        check("unpair of the only selected row leaves an empty selection",
+              c.send("input.selection")["count"] == 0)
+        check("select [] is fine", c.send("input.select", {"inputs": []})["count"] == 0)
+
+        # ⌘R: the Inputs list holds the keyboard (claim), a stem popover is open, or neither
+        objs = c.send("object.list")["objects"]
+        obj_id = objs[0]["id"]
+        c.send("selection.set", {"ids": [obj_id]})
+        c.send("input.pair", {"first": 0})
+        c.send("input.select", {"inputs": [{"first": 0, "count": 2}]})
+        r = rename(claim="inputs")
+        check("⌘R, the list holds the keyboard, ONE row: renames that input",
+              r["target"] == "input" and (r["first"], r["count"]) == (0, 2)
+              and r["renaming_input"] == {"first": 0, "count": 2} and r["renaming_id"] is None, r)
+        c.send("input.select", {"inputs": [{"first": 1}, {"first": 2}]})
+        r = rename(claim="inputs")
+        check("⌘R, the list holds the keyboard, TWO rows + an object: nothing, the object is NOT renamed",
+              r["target"] == "none" and r["renaming_input"] is None and r["renaming_id"] is None, r)
+        c.send("input.select", {"inputs": []})
+        r = rename(claim="inputs")
+        check("⌘R, the list holds the keyboard, no row + an object: nothing, the object is NOT renamed",
+              r["target"] == "none" and r["renaming_id"] is None, r)
+        c.send("input.select", {"inputs": [{"first": 1}]})
+        r = rename()
+        check("⌘R without the claim, one row selected + one object: the object (as before)",
+              r["target"] == "object" and r["id"] == obj_id and r["renaming_id"] == obj_id
+              and r["renaming_input"] is None, r)
+        c.send("selection.set", {"ids": []})
+        r = rename()
+        check("⌘R without the claim and nothing selected: nothing (a selected input alone is not renamed)",
+              r["target"] == "none", r)
+
+        stems = c.send("stem.list")
+        main_id = stems["main"]
+        s2 = c.send("stem.add", {"name": "Bus"})["id"]
+        c.send("selection.set", {"ids": [obj_id]})
+        r = rename(stem_popover=s2)
+        check("⌘R with a stem's popover open: the stem is put in rename (the object is left alone)",
+              r["target"] == "stem" and r["id"] == s2 and r["renaming_stem"] == s2 and r["renaming_id"] is None, r)
+        r = rename(stem_popover=main_id)
+        check("⌘R with the Main's popover open: nothing (no fall-back on the object)",
+              r["target"] == "none" and r["renaming_stem"] is None and r["renaming_id"] is None, r)
+        r = rename(stem_popover=s2, claim="inputs")
+        check("a stem's popover beats the Inputs list", r["target"] == "stem", r)
+        check("stem_popover: an unknown stem is not_found",
+              refused(c, "debug.rename_shortcut", stem_popover="00000000-0000-0000-0000-000000000000") == "not_found")
+        r = rename()
+        check("the simulation leaves no popover behind: the object again",
+              r["target"] == "object" and r["renaming_stem"] is None, r)
+
+        # the selection is the session's: a new tab starts empty
+        c.send("input.select", {"inputs": [{"first": 1}]})
+        c.send("tab.new")
+        check("tab.new: the Inputs selection is empty", c.send("input.selection")["count"] == 0,
+              c.send("input.selection"))
+        time.sleep(0.3)
     stop(proc, SOCK)
     proc = None
     after = settings_bytes()
