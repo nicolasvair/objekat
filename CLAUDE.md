@@ -2780,7 +2780,7 @@ What has landed since mid-August, in order:
   while recording; under it the take-mode menu, applied to the whole selection when the displayed object is in
   it. (B) **Inputs tab**: sections « Entrées mono » then « Entrées stéréo » (empty one hidden); selection =
   pure `Shared/ListClickSelection` (bare click, ⌘ toggle, ⇧ range from the selection's ENDS, ⌘A, ↑/↓, ⇧↑/⇧↓
-  grow only, click in the void clears; ⌘/⇧ on a NAME selects instead of renaming), keys via `KeyboardClaim`
+  grow only, click in the void clears; since batch 3 the name has no gesture, ⌘R renames), keys via `KeyboardClaim`
   claimant `.inputs` (↑/↓ only; ⌘A through `KeyboardClaim.shared.performSelectAll()` at the head of
   `performSelectAllShortcut`); the level dot is replaced by `Shared/VULevelBar` (extracted from
   `SynopticCardVULine`, unchanged there), one bar for a mono, two thin L/R bars (per-channel
@@ -2797,6 +2797,19 @@ What has landed since mid-August, in order:
   Verified with no screen: Debug build of the merge; planner 52, list selection 43, zone name 8, file usage
   111, cross-project 76, object frame 550; `scenario_record` 276 (lot A), `scenario_record_zones` 85,
   `scenario_disk_cleanup` (section F), `scenario_inputs` 52 (lot B). Not seen on screen.
+  **Batch 3 / rec3-ui (30 October 2026)**. (1) Stereo above mono everywhere: the Inputs tab lists « Entrées
+  stéréo » BEFORE « Entrées mono » (`orderedRows = stereoRows + monoRows`), the synoptic Entrée menu too (« Aucune »
+  last); `input.list` already returned pairs first; a multi-row drag keeps CHANNEL order. (2) ⌘R renames, a click no
+  longer does (Inputs names, stem names in the stem popover), routed by the pure `Shared/RenameShortcutRoute`
+  (`tools/test_rename_shortcut_route.swift`): FX link bin (with a stem popover open, only if the selection's host is
+  that stem) → the stem whose popover is open (`EditViewModel.openStemPopoverID`, `renamingStemID`, Main = nothing) →
+  `KeyboardClaim.owner == .inputs` with exactly ONE selected row (none/several = nothing, no fallback on the timeline
+  object) → the one selected object → the one selected annotation. The Inputs selection lives in the model
+  (`selectedRecordInputs`, purged after pair/unpair/set_pairs, emptied at tab switch / `tab.new` / `project.new`);
+  `input.select {inputs}` / `input.selection`; `debug.rename_shortcut {claim:"inputs", stem_popover}`. (3) Rows like
+  the object list (`Inputs/InputRowStyle`): divider under each row, padding 8×6, min height 34, name 11 pt, selection
+  accent 12 %; the meter on a second line under the name, 40 % of the panel's width. Verified with no screen:
+  `test_rename_shortcut_route` 25, `test_list_click_selection` 43, `scenario_inputs` new section, `scenario_fxlink` 187.
   **The calibration is to the SAMPLE (engine patch `0047`, 2026-10-29)**: an impulse played at 1.000 s
   through a loopback is recorded at 1.000 s, error 0 (the scenarios accept +-1), at every buffer size
   (64 / 128 / 256 / 512 / 1024), started cold (seek 0 + `rec.start`) or punched in during playback,

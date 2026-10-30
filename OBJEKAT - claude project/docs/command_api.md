@@ -1179,7 +1179,10 @@ knowing before driving one:
   DEBUG builds add `debug.rename_shortcut {}`: presses ⌘R as the timeline would. While the signal view
   holds the keyboard and its plugin selection designates ONE bin (its header clicked, or every selected
   card inside one bin), the bin's inline rename opens; otherwise the one selected object / marker is put
-  in rename. Answers `{target: "fxlink"|"object"|"annotation"|"none", id, renaming_fxlink}`.
+  in rename. Optional `claim: "inputs"` (the Inputs list holds the keyboard: exactly one selected input is
+  renamed, otherwise nothing) and `stem_popover: <uuid>` (that stem's FX popover is open: the stem is renamed,
+  the Main never). Answers `{target: "fxlink"|"stem"|"input"|"object"|"annotation"|"none", id, first?, count?,
+  renaming_fxlink, renaming_stem, renaming_input, renaming_id}`.
 - **Automatic creation.** A cut / split, a duplicate, ⌥-copy, a paste or an overlap's fragment of an
   object whose plugins are plain no longer writes a `link_group` on them: the copy joins a NEW bin and
   the original joins it too. (The single-instance manual link no longer exists: a file of format 31 or older is cleared of it at load, session format 32.)
@@ -2368,6 +2371,9 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
   refuses the lot (nothing created, no undo point); a lane holding a group takes the input as an assignment.
   The answer is `applied`, `refused` and `drops`: one object per lane (`outcome`, `reason`, `start`, `end`,
   `parent`, `target`, `lane`, `group`). One undo point for the lot; the new zones end up selected.
+* `input.select {inputs: [{first, count?}]}` — REPLACES the Inputs tab's selection (`[]` empties it);
+  `invalid_state` while the inputs are closed, `bad_params` for an input the tab does not list. No undo.
+* `input.selection` — the selected inputs, in the tab's order (stereo first). Read-only.
 * `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
   absent (which disarms it). `invalid_state` for a group that cannot record, and while a recording is
   under way. One undo point.
