@@ -30,7 +30,9 @@ final class KeyboardClaim {
     enum Claimant: Equatable {
         case explorer
         case soundList
-        /// The Inputs tab's list: ↑ / ↓ (⇧ extends) and ⌘A, nothing else.
+        /// The Inputs tab's list: ↑ / ↓ (⇧ extends) and ⌘A, nothing else. It is also the answer to « does the
+        /// list hold the keyboard? » that ⌘R asks (@see RenameShortcutRoute): ⌘R is not a key the monitor lets
+        /// through, the monitor runs it itself and READS this owner.
         case inputs
         case valueField(UUID)
     }

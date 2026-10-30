@@ -4,8 +4,8 @@ import Combine
 /// The "Inputs" tab of the left panel: the sound card's recording inputs, as the project names them.
 ///
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
-/// switches AirPods to the call profile, so nothing here does it on its own). Then two sections, « Mono
-/// inputs » then « Stereo inputs » (a pair does not take its monos away; an empty section is not shown),
+/// switches AirPods to the call profile, so nothing here does it on its own). Then two sections, « Stereo
+/// inputs » ABOVE « Mono inputs » (a pair does not take its monos away; an empty section is not shown),
 /// one row per input: its number, an editable name, the monitor button and the listening level, and under
 /// them the level meter (one bar for a mono, two thin ones, L and R, for a pair).
 ///
@@ -28,7 +28,12 @@ struct InputsPanelView: View {
     /// Smoothed bar position 0...1 (`VUScale`, -60...+6 dBFS) of each CARD channel.
     @State private var levels: [Float] = []
     @State private var monitored: Set<InputRef> = []
-    @State private var selection: Set<InputRef> = []
+    /// The selected rows live in the model (@see EditViewModel.selectedRecordInputs): ⌘R and the
+    /// `input.selection` command read the same set the hand sees.
+    private var selection: Set<InputRef> {
+        get { viewModel.selectedRecordInputs }
+        nonmutating set { viewModel.selectedRecordInputs = newValue }
+    }
     @State private var failure: String? = nil
     @FocusState private var listFocused: Bool
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
@@ -81,8 +86,8 @@ struct InputsPanelView: View {
 
     // MARK: Open
 
-    /// The rows as shown, top to bottom: every mono, then every pair. What ⇧ ranges and the arrows walk.
-    private var orderedRows: [InputRef] { monoRows + stereoRows }
+    /// The rows as shown, top to bottom: every pair, then every mono. What ⇧ ranges and the arrows walk.
+    private var orderedRows: [InputRef] { stereoRows + monoRows }
     private var monoRows: [InputRef] { viewModel.visibleRecordInputs.filter { !$0.isStereo } }
     private var stereoRows: [InputRef] { viewModel.visibleRecordInputs.filter(\.isStereo) }
 
@@ -91,13 +96,13 @@ struct InputsPanelView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if !monos.isEmpty {
-                        sectionHeader(L("inputs.section.mono"))
-                        ForEach(monos, id: \.self) { ref in row(ref) }
-                    }
                     if !pairs.isEmpty {
                         sectionHeader(L("inputs.section.stereo"))
                         ForEach(pairs, id: \.self) { ref in row(ref) }
+                    }
+                    if !monos.isEmpty {
+                        sectionHeader(L("inputs.section.mono"))
+                        ForEach(monos, id: \.self) { ref in row(ref) }
                     }
                     // The void under the rows: a click there empties the selection and ends a rename
                     // (committing it), like a click on the canvas. Not an ancestor gesture, which would
@@ -125,11 +130,18 @@ struct InputsPanelView: View {
 
     /// A section's title: the zones' (the synoptic's) small grey semibold.
     private func sectionHeader(_ title: String) -> some View {
+        VStack(spacing: 0) {
+            sectionTitle(title)
+            Divider()
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+            .padding(.horizontal, InputRowStyle.horizontalPadding + 2).padding(.top, 8).padding(.bottom, 4)
     }
 
     // MARK: Selecting
@@ -160,36 +172,26 @@ struct InputsPanelView: View {
     private func row(_ ref: InputRef) -> some View {
         let isSelected = selection.contains(ref)
         let heard = monitored.contains(ref)
-        return VStack(spacing: 2) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
+            HStack(spacing: InputRowStyle.controlSpacing) {
                 Text(verbatim: ref.key)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 30, alignment: .trailing)
+                    .font(InputRowStyle.numberFont)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
                 if viewModel.renamingInput == ref {
                     // Leaving commits what was typed, Esc cancels (@see MarkerRenameField).
                     MarkerRenameField(initial: viewModel.inputName(ref),
-                                      font: .system(.caption, weight: .semibold),
+                                      font: InputRowStyle.nameFont,
                                       commitsOnFocusLoss: true) { value in
                         if let value { viewModel.renameInput(ref, to: value) }
                         if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
                     }
                 } else {
+                    // No gesture of its own: the row's click selects (⌘ / ⇧ included); ⌘R renames the one
+                    // selected row while this list holds the keyboard (@see RenameShortcutRoute).
                     Text(viewModel.inputName(ref))
-                        .font(.system(.caption, weight: .semibold))
+                        .font(InputRowStyle.nameFont)
                         .lineLimit(1)
-                        .onTapGesture {
-                            // ⌘ / ⇧ on the name select (a range is aimed at the rows, and the name is
-                            // most of the row); a bare click renames.
-                            let flags = NSEvent.modifierFlags
-                            if flags.contains(.command) || flags.contains(.shift) {
-                                listFocused = true
-                                viewModel.renamingInput = nil
-                                select(ref)
-                            } else {
-                                viewModel.renamingInput = ref
-                            }
-                        }
                         .help(L("inputs.rename.help"))
                 }
                 Spacer(minLength: 4)
@@ -207,9 +209,9 @@ struct InputsPanelView: View {
                 monitorGainBox(ref, heard: heard)
             }
             vuBars(ref)
+                .padding(.leading, InputRowStyle.meterLeading)
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(isSelected ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.25) : Color.clear)
+        .inputRowChrome(isSelected: isSelected)
         .contentShape(Rectangle())
         // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
         // this input (@see RecordZonePlanner, InputDragSession).
@@ -223,8 +225,9 @@ struct InputsPanelView: View {
         .id(ref)
     }
 
-    /// The input's level, across the whole row, under the controls: one bar for a mono, two thin ones (left
-    /// over right) for a pair — the plugin cards' bar, on the same scale (red past 0 dBFS).
+    /// The input's level, on the row's second line, starting under the name and 40 % of the PANEL wide
+    /// (@see InputRowStyle): one bar for a mono, two thin ones (left over right) for a pair — the plugin
+    /// cards' bar, on the same scale (red past 0 dBFS).
     @ViewBuilder
     private func vuBars(_ ref: InputRef) -> some View {
         Group {
@@ -238,6 +241,10 @@ struct InputsPanelView: View {
             }
         }
         .frame(height: 5)
+        // The panel is the scroll view's container: 40 % of ITS width, whatever the row's padding.
+        .containerRelativeFrame(.horizontal, alignment: .leading) { length, _ in
+            length * InputRowStyle.meterWidthFraction
+        }
     }
 
     /// The most a DRAG may raise the listening level above where it started (a typed value is only held

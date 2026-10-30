@@ -369,7 +369,7 @@ struct SynopticRecordInput: Equatable {
     let takeMode: RecordTakeMode
     /// A recording is running: neither menu can be used (the zone's input is frozen at the press).
     let locked: Bool
-    /// What the menu lists, in two sections.
+    /// What the menu lists, in two sections: the stereo pairs FIRST, then the monos ("None" last).
     let monoChoices: [SynopticRecordInputChoice]
     let stereoChoices: [SynopticRecordInputChoice]
 }

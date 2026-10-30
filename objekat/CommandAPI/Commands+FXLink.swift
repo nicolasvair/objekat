@@ -198,22 +198,54 @@ extension CommandRegistry {
         register("debug.rename_shortcut",
                  summary: "Presses ⌘R as the timeline would (B.9): while the signal view holds the "
                         + "keyboard and its selection designates ONE FX link bin, the bin's inline rename "
-                        + "opens (`SynopticUIState.renamingFXLinkID`); otherwise the one selected object / "
-                        + "marker is put in rename. Answers what it did: `target` = fxlink · object · "
-                        + "annotation · none, with the `id`.",
-                 params: [],
-                 undo: .none) { _ in
+                        + "opens (`SynopticUIState.renamingFXLinkID`); with a stem's popover open the stem is "
+                        + "put in rename (the Main: nothing); while the Inputs list holds the keyboard the ONE "
+                        + "selected row is put in rename (none or several: nothing, the object is left alone); "
+                        + "otherwise the one selected object / marker is put in rename. The headless run has no "
+                        + "focus, so the situation is given: `claim: \"inputs\"` makes the Inputs list hold the "
+                        + "keyboard, `stem_popover` opens that stem's popover (the model's state; absent = no "
+                        + "claim, no popover). Answers what it did: `target` = fxlink · stem · input · object · "
+                        + "annotation · none, with the `id` (input: `first`, `count`), and `renaming_fxlink` / "
+                        + "`renaming_stem` / `renaming_input` / `renaming_id` after the press.",
+                 params: [ParamSpec("claim", "string", required: false,
+                                    "\"inputs\" = the Inputs list holds the keyboard. Absent = nobody does."),
+                          ParamSpec("stem_popover", "uuid", required: false,
+                                    "A stem (or the Main) whose popover is open. Absent = none.")],
+                 undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            let claim = try p.optionalString("claim")
+            guard claim == nil || claim == "inputs" else {
+                throw CommandError(code: .bad_params, message: "'claim' can only be \"inputs\"")
+            }
+            let popover = try p.optionalUUID("stem_popover")
+            if let popover, !vm.stems.contains(where: { $0.id == popover }) {
+                throw CommandError(code: .not_found, message: "no stem \(popover)")
+            }
             SynopticUIState.shared.renamingFXLinkID = nil
+            vm.renamingStemID = nil
+            vm.renamingInput = nil
+            vm.renamingID = nil
+            vm.openStemPopoverID = popover
+            KeyboardClaim.shared.revoke()
+            if claim == "inputs" { KeyboardClaim.shared.claim(.inputs) }
+            // The situation was a simulation: nothing on screen would carry it on (the popover's field, the
+            // list's focus), so it is taken down again once answered. The row in rename stays, as an object's does.
+            defer { KeyboardClaim.shared.revoke(); vm.openStemPopoverID = nil; vm.renamingStemID = nil }
             let target = vm.performRenameShortcut()
             var o: [String: JSONValue] = [:]
             switch target {
             case .fxLink(let id):     o["target"] = .string("fxlink");     o["id"] = .string(id.uuidString)
+            case .stem(let id):       o["target"] = .string("stem");       o["id"] = .string(id.uuidString)
+            case .input(let ref):     o["target"] = .string("input");      o["id"] = .null
+                                      o["first"] = .int(ref.first);        o["count"] = .int(ref.count)
             case .object(let id):     o["target"] = .string("object");     o["id"] = .string(id.uuidString)
             case .annotation(let id): o["target"] = .string("annotation"); o["id"] = .string(id.uuidString)
             case .none:               o["target"] = .string("none");       o["id"] = .null
             }
             o["renaming_fxlink"] = SynopticUIState.shared.renamingFXLinkID.map { .string($0.uuidString) } ?? .null
+            o["renaming_stem"] = vm.renamingStemID.map { .string($0.uuidString) } ?? .null
+            o["renaming_input"] = vm.renamingInput.map { .object(["first": .int($0.first), "count": .int($0.count)]) } ?? .null
+            o["renaming_id"] = vm.renamingID.map { .string($0.uuidString) } ?? .null
             return .object(o)
         }
 

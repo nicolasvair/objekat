@@ -9760,19 +9760,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click to rename"
+            "value": "⌘R: rename"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Clic para renombrar"
+            "value": "⌘R: renombrar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Cliquer pour renommer"
+            "value": "⌘R : renommer"
           }
         }
       }
@@ -18155,19 +18155,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Click: rename the stem"
+            "value": "⌘R: rename"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Clic: renombrar el stem"
+            "value": "⌘R: renombrar"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Clic : renommer le stem"
+            "value": "⌘R : renommer"
           }
         }
       }
