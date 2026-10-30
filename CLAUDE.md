@@ -2828,7 +2828,7 @@ What has landed since mid-August, in order:
   (`deviceLatency + safetyOffset + framesInBuffer + streamLatency`): it now announces `inlat + bs` /
   `outlat + bs` (`audio.virtual.status.announced_*_latency`, sum = `loopback_delay`). The patch is in
   `engine-patches/3.5/0047-*.patch`, branch `objekat-record-0047` on the local engine, NOT published on the
-  fork; the next free number is `0048`. Not touched: MIDI, retrospective recording, resync, export.
+  fork (`0048` followed it, see below). Not touched: MIDI, retrospective recording, resync, export.
   Residual (not a defect): on a card whose latency is ~0, the block skipped by the D2 guard is real audio
   replaced by silence at the very start of a take — no real card has that latency.
   A trap found measuring: a record pressed within ~250 ms of a change of DECLARED latency (an FX with latency
@@ -2842,6 +2842,38 @@ What has landed since mid-August, in order:
   **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⇧R shortcut (no key event
   can be sent headless), the takes on screen (handles, grey zone, muted ones), the file really heard back, a
   real card (latency of a real interface, a device unplugged mid-recording), a disk really full.
+  **A take no longer cuts itself when the main thread is late (engine patch `0048`, 2026-10-30, branch `feat/rec3-bugfix`)**.
+  Symptom: "sometimes the record stops after one block" — a file of exactly 512 samples (11.6 ms at 44.1 kHz) while
+  the transport went on; 10 takes of 19 on BlackHole 16ch, Debug build from Xcode. Cause (H1, confirmed by the BWAV
+  time references of the real files: the short takes had tref = the press, the "good" ones press + 1..4 blocks): pressing
+  record does `setRecordingEnabled(target, true)` and `transport.record()` in the SAME main-thread turn; the arm
+  schedules `InputDeviceInstance::updateRecordingStatus` on an async update, which runs one turn later, finds the
+  destination ALREADY recording, stops it (`prepareToStopRecording` + `stopRecording`) and relaunches it only if that
+  stop produced no clip. A main thread late by more than ~10 ms of written audio (Debug build, SwiftUI redrawing at the
+  press) meant a clip existed, nothing restarted, and the input stopped recording under a running transport; a main
+  thread prompt enough gave a RESTARTED take, with 1-4 blocks lost at its head. Headless the main thread is free, so
+  the calibration had only ever measured the restarted take. `0048` (`objekat-record-0048`, NOT published on the fork,
+  on top of `0047`) makes `updateRecordingStatus` skip a destination that is armed AND already recording
+  (`isRecordingEnabled(id) && isRecording(id)`); disarming is unchanged. Companion fixes: (H2) `OBJDeviceChangeWatcher`
+  used to end the take at EVERY `juce::AudioDeviceManager` broadcast (CoreAudio device list, MIDI list, a start/stop of
+  the same device); it now compares the card with the one at the press (type, name, rate, buffer, active input AND output
+  channels, `objRecordCardSignature`) and ends the take only when it differs; (H3) `EditViewModel.seekEngineUnlessRecording`
+  — no timeline / sound-list click moves the ENGINE's playhead during a take (Tracktion ends a take on any position
+  change; the caret alone moves), the deliberate gestures (`transport.seek`, ⌥-click in the ruler, return to zero) still
+  end it; (H4) the workgroup rebind (which destroys the `InputDeviceInstance`s) now runs BEFORE they are collected in
+  `startRecordingInputs`. Permanent trace, quiet: `[REC] +ms` lines (ms since the press) for the press, `aboutToStart`,
+  `aboutToStop`, `finished` (clip length, `transport.isRecording`), `stopped`, a `seekTo` during a take and the watcher's
+  decision (old / new card signature, "keep recording" / "STOP"). Test hooks: `rec.start {debug_stall_ms}` (usleep on the
+  main thread right after the take started) and `audio.debug.broadcast_change` (a device-change broadcast that changes
+  nothing; `--virtual-audio` only). Measured on the virtual card, 44.1 kHz bs 512, 2 s takes: before, a stall of 60 ms
+  cold / 30 ms punched in cut the take to 31 / 20 ms (66-89 ms at 100, 217-240 ms at 250); after, every take lasts the
+  recording (2.0 s + the stall) with ONE start, ONE stop and ONE `recordingFinished` per input. `tools/scenario_record.py`
+  section R covers it (stall 0/15/30/60/100/250 x cold/punch-in x bs 512/64, bs 128/256/1024 at 0 and 100 ms, 10 quick
+  2 s cycles in "mute" mode, a no-op broadcast during a take), and F / F2 are replayed with a 100 ms stall: error 0 samples
+  at every buffer size. Note: the BWAV time reference equals the press exactly when cold; punched in it sits 0..~25 ms
+  after it (the file is opened 5-15 ms after the press in a Debug build, often exactly one block), which is not a lost
+  head — the single `aboutToStart` is the proof. The next free number is `0049`. Not seen: the real BlackHole loop (`tools/calib_record_device.py`), H3 on screen.
+  ```
   **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
   one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
   input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both
