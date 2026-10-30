@@ -637,28 +637,14 @@ struct SynopticBoundView: View {
         }
     }
 
-    /// A plugin selection sheet reused by '+' (insert), '//' (branch) and the instruments zone.
-    /// `instrumentsOnly` restricts it to instruments (the MIDI zone); otherwise we ALWAYS exclude
-    /// instruments from the FX zone — an instrument needs MIDI at its input (which only a MIDI clip
-    /// provides, and through its dedicated MIDI zone), so it belongs in NO FX chain.
+    /// A plugin selection sheet reused by '+' (insert), '//' (branch) and the instruments zone (@see PluginPickerSheet).
     @ViewBuilder
     private func pickerSheet(instrumentsOnly: Bool = false, title: String? = nil, showsARASource: Bool = true,
                              insertion: PluginBrowserInsertion? = nil, category: Int? = nil,
                              onSelect: @escaping (AvailablePlugin) -> Void) -> some View {
-        let size = PluginBrowserLayout.sheetSize()
-        PluginBrowserView(
-            viewModel: viewModel,
-            objectID: objectID,
-            title: title ?? (instrumentsOnly ? L("synoptic.sheet.chooseInstrument") : L("synoptic.sheet.addPlugin")),
-            searchText: $pickerSearch,
-            dismiss: { activeSheet = nil },
-            onSelect: { available in onSelect(available); activeSheet = nil },
-            kind: instrumentsOnly ? .instrumentsOnly : .effectsOnly,
-            showsARASource: showsARASource && !instrumentsOnly,
-            insertion: insertion,
-            initialPage: category.map { .plugins(.category($0)) } ?? .plugins(.all)
-        )
-        .frame(width: size.width)   // the height is the browser's own: it depends on the page shown
+        PluginPickerSheet(viewModel: viewModel, objectID: objectID, instrumentsOnly: instrumentsOnly, title: title,
+                          showsARASource: showsARASource, insertion: insertion, category: category,
+                          searchText: $pickerSearch, dismiss: { activeSheet = nil }, onSelect: onSelect)
     }
 
     // MARK: Gain stages (docs/plan_synoptic_rework.md §B.4)

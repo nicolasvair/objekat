@@ -107,7 +107,30 @@ extension EditViewModel {
         for chain in inputChains.midi.values where chain.instrument != nil {
             if let d = resolvedMidiInput(chain.input), heard.contains(d.id) { wanted.insert(chain.hostID) }
         }
+        // An editor open on one of its plugins holds a chain mounted: closing a popover must not take the window away.
+        for host in mountedInputHosts where isInputHost(host) && hasOpenEditor(host) { wanted.insert(host) }
+        wanted.formUnion(editorHeldInputHosts.values.filter { isInputHost($0) })
         return wanted
+    }
+
+    private func hasOpenEditor(_ host: UUID) -> Bool {
+        (Self.flattenLeaves(inputChainPlugins(host) ?? []) + (inputInstrument(host).map { [$0] } ?? []))
+            .contains { isPluginEditorOpen(plug: $0) }
+    }
+
+    /// An editor is about to open on a plugin of `host`: the chain is mounted now and stays so until that editor closes.
+    /// Nothing for a host that is not an input's (and nothing without an interface: no editor will come).
+    func holdInputHost(_ host: UUID, forEditorOf plugin: UUID) {
+        guard hasInterface, isInputHost(host) else { return }
+        editorHeldInputHosts[plugin] = host
+        syncInputChains()
+    }
+
+    /// An editor closed (✕, double click, ...): a chain kept mounted only for it can go. Deferred, since the close can
+    /// come from inside an unmount.
+    func editorDidClose(plugin: UUID) {
+        guard editorHeldInputHosts.removeValue(forKey: plugin) != nil || !mountedInputHosts.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in self?.syncInputChains() }
     }
 
     /// Holds a chain mounted although nothing is heard through it (an editor or a popover is open; a script asked).
@@ -196,6 +219,7 @@ extension EditViewModel {
         for plug in Self.flattenLeaves(inputChainPlugins(host) ?? []) + (inputInstrument(host).map { [$0] } ?? [])
         where isPluginEditorOpen(plug: plug) { closePluginEditor(plug: plug) }
         engine.unregisterInputHost(host.uuidString)
+        editorHeldInputHosts = editorHeldInputHosts.filter { $0.value != host }
         mountedInputHosts.remove(host)
         compiledInputHosts.remove(host)
         inputHostDevice.removeValue(forKey: host)
@@ -324,13 +348,31 @@ extension EditViewModel {
 
     /// Takes the instrument off a MIDI input; it stops being heard. One undo point.
     func removeInputInstrument(device: MidiInputInfo) {
-        guard let key = midiChainKey(for: device), var chain = inputChains.midi[key], chain.instrument != nil else { return }
+        guard let key = midiChainKey(for: device) else { return }
+        removeInputInstrument(chainKey: key)
+    }
+
+    /// The same by the chain's key: a chain whose device is absent (dormant) is reached this way too.
+    func removeInputInstrument(chainKey key: String) {
+        guard var chain = inputChains.midi[key], chain.instrument != nil else { return }
         pushUndo()
         let host = chain.hostID
-        engine?.setMidiInputMonitor(false, device: device.id)
+        engine?.setMidiInputMonitor(false, device: resolvedMidiInput(chain.input)?.id ?? chain.input.id)
         if mountedInputHosts.contains(host) { unmountInputHost(host, capture: false) }
         chain.instrument = nil
         inputChains.midi[key] = chain
+        isDirty = true
+        syncInputChains()
+    }
+
+    /// Empties the FX chain of a card input (the Inputs tab, on a chain whose input is absent). One undo point.
+    func clearAudioInputChain(key: String) {
+        guard var chain = inputChains.audio[key], !chain.plugins.isEmpty else { return }
+        pushUndo()
+        let host = chain.hostID
+        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: false) }
+        chain.plugins = []
+        inputChains.audio[key] = chain
         isDirty = true
         syncInputChains()
     }

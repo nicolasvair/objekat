@@ -653,8 +653,10 @@ extension EditViewModel {
         if isPluginEditorOpen(plug: plug) {
             closePluginEditor(plug: plug)
         } else if plug.isBuiltIn {
+            holdInputHost(objectID, forEditorOf: plug.id)
             openBuiltInPluginEditor(plug: plug)
         } else {
+            holdInputHost(objectID, forEditorOf: plug.id)
             openPluginEditor(objectID: objectID, pluginID: plug.id)
         }
     }
@@ -713,6 +715,7 @@ extension EditViewModel {
             self.builtInEditorWindows[plug.id] = nil
             if self.openEditorPluginID == plug.id { self.openEditorPluginID = nil }
             self.endPluginParamTouchWatch(plug.id)
+            self.editorDidClose(plugin: plug.id)
         }
         controller.window?.level = .floating
         // Every built-in window is born at the same place: one that would land exactly on top
@@ -746,6 +749,7 @@ extension EditViewModel {
             editorTiling = EditorTiling(area: area, order: plugs.map(\.id))
         }
         for p in plugs {
+            holdInputHost(objectID, forEditorOf: p.id)
             if p.isBuiltIn {
                 openBuiltInPluginEditor(plug: p)
             } else {

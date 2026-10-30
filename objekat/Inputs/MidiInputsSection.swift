@@ -11,8 +11,12 @@ import Combine
 /// (the same drop as a card input, @see InputDragSession). Dragging a selection that holds both kinds takes
 /// them all: one lane per input, the MIDI ones first. The selection is the model's (`selectedMidiInputs`, the
 /// device ids): a click selects the row alone and lets go of the card's selection, ⌘ adds or removes, ⇧
-/// extends a range. No rename in v1 (the device's own name is the name), no listening button: an armed zone is
-/// heard through its instrument, the section only SHOWS the activity.
+/// extends a range. No rename in v1 (the device's own name is the name).
+///
+/// A MIDI input can carry ONE instrument (docs/plan_groupes_midi.md, E10): its button, on the row, names it (« Instrument »
+/// while there is none) and opens the picker or the instrument's editor; the speaker hears the input through it (greyed
+/// while there is no instrument). A recording zone armed on the input is heard through the zone's own instrument, not this
+/// one. A chain whose device is absent stays as a greyed row, instrument kept.
 struct MidiInputsSection: View {
     @Bindable var viewModel: EditViewModel
     /// The list this section lives in takes the keyboard when a row is clicked.
@@ -20,6 +24,8 @@ struct MidiInputsSection: View {
 
     /// Smoothed bar position 0...1 of each device.
     @State private var levels: [String: Float] = [:]
+    /// The devices heard through their instrument (the engine owns it; read on the poll).
+    @State private var heard: Set<String> = []
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
     private var rows: [MidiInputInfo] { viewModel.midiInputs }
@@ -28,9 +34,17 @@ struct MidiInputsSection: View {
         nonmutating set { viewModel.selectedMidiInputs = newValue }
     }
 
+    /// The chains whose device is not there: (chain key, chain), in key order.
+    private var dormant: [(key: String, chain: MidiInputChain)] {
+        viewModel.inputChains.midi
+            .filter { $0.value.instrument != nil && viewModel.resolvedMidiInput($0.value.input) == nil }
+            .sorted { $0.key < $1.key }
+            .map { (key: $0.key, chain: $0.value) }
+    }
+
     var body: some View {
         Group {
-            if !rows.isEmpty {
+            if !rows.isEmpty || !dormant.isEmpty {
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
                         Text(L("inputs.section.midi"))
@@ -42,6 +56,7 @@ struct MidiInputsSection: View {
                         Divider()
                     }
                     ForEach(rows, id: \.id) { row($0) }
+                    ForEach(dormant, id: \.key) { dormantRow(key: $0.key, chain: $0.chain) }
                 }
             }
         }
@@ -51,6 +66,7 @@ struct MidiInputsSection: View {
 
     private func row(_ d: MidiInputInfo) -> some View {
         let isSelected = selection.contains(d.id)
+        let hasInstrument = viewModel.midiChainKey(for: d).flatMap { viewModel.inputChains.midi[$0]?.instrument } != nil
         return VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
             HStack(spacing: InputRowStyle.controlSpacing) {
                 Image(systemName: ObjectKindIcon.recordMidiInput)
@@ -61,6 +77,8 @@ struct MidiInputsSection: View {
                     .font(InputRowStyle.nameFont)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                MidiInstrumentButton(viewModel: viewModel, device: d)
+                monitorButton(d, hasInstrument: hasInstrument)
             }
             VULevelBar(level: Double(levels[d.id] ?? 0), height: 3)
                 .frame(height: 5)
@@ -84,7 +102,51 @@ struct MidiInputsSection: View {
         }
     }
 
+    /// The speaker: hears the input through its instrument. Greyed and inert while there is none.
+    private func monitorButton(_ d: MidiInputInfo, hasInstrument: Bool) -> some View {
+        let on = heard.contains(d.id)
+        return Button {
+            _ = viewModel.setMidiInputMonitor(d, on: !on)
+            tick()
+        } label: {
+            Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash")
+                .font(.system(size: 11))
+                .frame(width: 18)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(on ? Color.accentColor : Color.secondary)
+        .opacity(hasInstrument ? 1 : 0.4)
+        .disabled(!hasInstrument)
+        .help(hasInstrument ? L("inputs.midiMonitor.help") : L("inputs.midiMonitor.none.help"))
+    }
+
+    /// A chain whose device is not here: greyed, the instrument kept, nothing to drag or hear.
+    private func dormantRow(key: String, chain: MidiInputChain) -> some View {
+        HStack(spacing: InputRowStyle.controlSpacing) {
+            Image(systemName: ObjectKindIcon.recordMidiInput)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
+            Text(verbatim: chain.input.name.isEmpty ? L("midi.input.unnamed") : chain.input.name)
+                .font(InputRowStyle.nameFont)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(verbatim: chain.instrument?.name ?? "")
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+        }
+        .inputRowChrome(isSelected: false)
+        .opacity(0.45)
+        .help(L("inputs.dormant.help"))
+        .contextMenu {
+            Button(L("inputs.instrument.remove")) { viewModel.removeInputInstrument(chainKey: key) }
+        }
+    }
+
     private func tick() {
+        let nowHeard = viewModel.heardMidiDeviceIDs
+        if nowHeard != heard { heard = nowHeard }
         let seen = viewModel.midiActivity()
         var next = levels
         for d in rows {

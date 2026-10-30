@@ -467,7 +467,7 @@ final class EditViewModel {
                     // An editor window that closes by itself (the ✕ button) goes back through
                     // no Swift call: it is here, and nowhere else, that the parameter-touch
                     // listening is given back (@see EditViewModel+AutomationTargets).
-                    if let id, !isOpen { self.endPluginParamTouchWatch(id) }
+                    if let id, !isOpen { self.endPluginParamTouchWatch(id); self.editorDidClose(plugin: id) }
                 }
             }
             // A setting the host cannot see, made in one member of an FX link and now laid on the
@@ -1315,6 +1315,8 @@ final class EditViewModel {
     @ObservationIgnored var inputHostDevice: [UUID: String] = [:]
     /// Hosts held mounted although nothing is heard through them: an editor or a popover is open, or a script asked.
     var openInputHosts: Set<UUID> = []
+    /// The editors asked for on a plugin of an input host (plugin → host): the host stays mounted until that editor closes.
+    @ObservationIgnored var editorHeldInputHosts: [UUID: UUID] = [:]
     /// The recording zones (groups with an input) armed to record. SESSION state: not in the project
     /// file, not in the undo (like the playback loop), forgotten by a new project / an opening.
     /// Read through `armedRecordZones`, which keeps only the ones still able to record

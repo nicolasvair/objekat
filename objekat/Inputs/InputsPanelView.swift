@@ -109,6 +109,12 @@ struct InputsPanelView: View {
                         sectionHeader(L("inputs.section.mono"))
                         ForEach(monos, id: \.self) { ref in row(ref) }
                     }
+                    // Chains whose input is not on the card now (a smaller card, a pair taken apart): kept, greyed.
+                    let absent = absentAudioChains
+                    if !absent.isEmpty {
+                        sectionHeader(L("inputs.section.absent"))
+                        ForEach(absent, id: \.key) { absentRow(key: $0.key, count: $0.count) }
+                    }
                     // The void under the rows: a click there empties the selection and ends a rename
                     // (committing it), like a click on the canvas. Not an ancestor gesture, which would
                     // also fire over the field.
@@ -130,6 +136,38 @@ struct InputsPanelView: View {
                 step(press.key == .upArrow ? -1 : 1, extend: press.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
+        }
+    }
+
+    /// The FX chains of inputs that are not listed now: (key, number of cards), in key order.
+    private var absentAudioChains: [(key: String, count: Int)] {
+        let listed = Set(viewModel.visibleRecordInputs.map(\.key))
+        return viewModel.inputChains.audio
+            .filter { !$0.value.isEmpty && !listed.contains($0.key) }
+            .sorted { $0.key < $1.key }
+            .map { (key: $0.key, count: EditViewModel.flattenLeaves($0.value.plugins).count) }
+    }
+
+    private func absentRow(key: String, count: Int) -> some View {
+        let name = InputChains.inputRef(forKey: key).map { viewModel.inputName($0) } ?? key
+        return HStack(spacing: InputRowStyle.controlSpacing) {
+            Text(verbatim: key)
+                .font(InputRowStyle.numberFont)
+                .foregroundStyle(.tertiary)
+                .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
+            Text(verbatim: name)
+                .font(InputRowStyle.nameFont)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text(verbatim: "FX \(count)")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .inputRowChrome(isSelected: false)
+        .opacity(0.45)
+        .help(L("inputs.dormant.help"))
+        .contextMenu {
+            Button(L("inputs.fx.removeAll")) { viewModel.clearAudioInputChain(key: key) }
         }
     }
 
@@ -200,6 +238,7 @@ struct InputsPanelView: View {
                         .help(L("inputs.rename.help"))
                 }
                 Spacer(minLength: 4)
+                InputFXButton(viewModel: viewModel, ref: ref)
                 Button {
                     _ = viewModel.setInputMonitor(ref, on: !heard)
                     tick()
