@@ -508,8 +508,8 @@ extension EditViewModel {
                 // Except for a LOOPING group: it no longer has an edge, its window is a porthole
                 // onto a repeating pattern. The selection there almost always falls in a repeat,
                 // hence AFTER the content — trimming it would have left it empty. The fragment is then
-                // ANOTHER porthole onto the same pattern: the content copied, shifted by a whole number of
-                // periods, the IN/OUT bounds rebased on the fragment's start. Exactly what
+                // ANOTHER porthole onto the same pattern: the content copied, shifted onto the repeat
+                // under way, the IN/OUT bounds rebased on the fragment's start. Exactly what
                 // cutting a looping group does (@see loopedGroupRightHalf).
                 var idMap: [UUID: UUID] = [:]
                 let looped = loopedGroupRightHalf(entry.item, children: capturedChildren,
@@ -653,6 +653,7 @@ extension EditViewModel {
             } else if s >= lo && e > hi {
                 let delta = hi - s
                 update(id: id) { obj in
+                    let rebased = porthole ? portholeRebased(obj, at: hi) : nil
                     // The START goes, and the object keeps its fade-in: the curve's END stays where
                     // it is and the fade begins later, shortened by exactly what was taken (@see
                     // fadeInAnchoredAtEnd). Clearing it, which is what this did, made the passage
@@ -669,13 +670,15 @@ extension EditViewModel {
                     // (the same rule as `updateTrim`).
                     obj.automation    = obj.automation.shiftedInTime(by: -delta)
                     obj.markers       = obj.markers.shiftedInTime(by: -delta)
-                    // A porthole: the IN/OUT bounds are LOCAL to the block, yet the block has just
-                    // advanced without the pattern moving — rebasing them by the same delta leaves the
-                    // IN point at its ABSOLUTE place, hence the loop in phase. They become
-                    // negative, like the right half of a cut (@see loopedGroupRightHalf).
-                    if porthole {
-                        obj.loopRangeStart = (obj.loopRangeStart ?? 0) - delta
-                        obj.loopRangeEnd   = (obj.loopRangeEnd   ?? 0) - delta
+                    // A porthole: the block has just advanced without the pattern moving, so its
+                    // bounds and its content are laid on the repeat under way at the new edge, which
+                    // leaves the loop in phase. The bounds become negative, like the right half of a
+                    // cut (@see loopedGroupRightHalf).
+                    if let rebased, case .group(var children, let isExpanded) = obj.kind {
+                        EditViewModel.shiftStartTimes(&children, by: rebased.shift)
+                        obj.kind = .group(children: children, isExpanded: isExpanded)
+                        obj.loopRangeStart = rebased.loopStart
+                        obj.loopRangeEnd   = rebased.loopEnd
                     }
                 }
                 if let obj = find(id: id) {

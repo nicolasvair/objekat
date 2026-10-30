@@ -480,10 +480,16 @@ extension EditViewModel {
     /// distribute the children either side — the cut most often falls after the
     /// content, and the right half ended up empty — but lay TWO portholes onto the same
     /// pattern. The left keeps the content as it is (it sounds exactly as before); the
-    /// right gets a copy of it, shifted by a WHOLE number of periods so that the IN point
-    /// falls back as close as possible TO THE LEFT of the cut. The engine then derives an offset equal to the
-    /// current phase (@see refreshContainerSpanForKey:): the repeat under way carries on
-    /// identically across the cut.
+    /// right gets a copy of it, shifted so that the IN point lands on the REPEAT of the grid
+    /// that falls as close as possible TO THE LEFT of the cut. The engine then derives an offset
+    /// equal to the current phase (@see refreshContainerSpanForKey:): the repeat under way carries
+    /// on identically across the cut.
+    ///
+    /// That grid starts at `min(start, IN)`, not at IN: a group whose IN lies inside it plays IN
+    /// on its LEFT EDGE (`GroupWaveformView.expand` draws the same origin). So the shift is a whole
+    /// number of periods only for an IN at or before the edge; for an IN past it, it also takes
+    /// back the `a` that separates the two. Counting the periods from IN made the right half late
+    /// by `a mod P` (by `(cut − start) mod P` for a cut before IN).
     ///
     /// The corollary: the bounds returned are NEGATIVE or zero — the IN point of the right
     /// half precedes its own start. It is the same freedom as the "sampler-style" loop points
@@ -497,19 +503,28 @@ extension EditViewModel {
                               idMap: inout [UUID: UUID])
         -> (children: [SoundObject], loopStart: Double, loopEnd: Double)? {
 
+        guard let rebased = portholeRebased(group, at: splitTime) else { return nil }
+        let copies = children.map { makeCopy($0, startTime: $0.startTime + rebased.shift,
+                                             lane: $0.lane, idMap: &idMap) }
+        return (copies, rebased.loopStart, rebased.loopEnd)
+    }
+
+    /// What keeps the phase of a looping group whose left edge comes to lie at `time`: how far its
+    /// content must move, and its IN/OUT bounds local to that new edge (@see loopedGroupRightHalf
+    /// for the reasoning). `nil` if the group does not loop.
+    func portholeRebased(_ group: SoundObject, at time: Double)
+        -> (shift: Double, loopStart: Double, loopEnd: Double)? {
+
         guard group.loopEnabled, group.canLoop,
               let a = group.loopRangeStart, let b = group.loopRangeEnd else { return nil }
         let period = b - a
         guard period > 0.001 else { return nil }
 
-        let inAbs = group.startTime + a                       // the IN point, in timeline time
-        let k     = max(0, ((splitTime - inAbs) / period).rounded(.down))
-        let shift = k * period
-
-        let copies = children.map { makeCopy($0, startTime: $0.startTime + shift,
-                                             lane: $0.lane, idMap: &idMap) }
-        let newInAbs = inAbs + shift
-        return (copies, newInAbs - splitTime, newInAbs - splitTime + period)
+        let inAbs  = group.startTime + a                      // the IN point, in timeline time
+        let origin = min(group.startTime, inAbs)              // where the engine's repeats start
+        let k      = max(0, ((time - origin) / period).rounded(.down))
+        let newInAbs = origin + k * period
+        return (newInAbs - inAbs, newInAbs - time, newInAbs - time + period)
     }
 
     /// `windowOnly` only concerns a GROUP (case 3): the window is cut in two and the children are
