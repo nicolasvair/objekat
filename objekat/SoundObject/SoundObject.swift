@@ -598,12 +598,35 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// duplicate, a paste in the project all keep listening to the same input), and
     /// `CrossProjectImport` clears it (another project's card is not this one's).
     var recordInput: InputRef? = nil
+    /// The MIDI input a recording zone listens to — session format 35 (rec3-midi). SEPARATE from and exclusive
+    /// of `recordInput` (a zone has one source; `recordSource`). A MIDI zone's INSTRUMENT is `instruments`
+    /// (written under the key `zoneInstruments` for a group): played while the zone is armed, and COPIED into
+    /// every take. TOP LEVEL like `recordInput`: `derivedCopy` carries it, `CrossProjectImport` clears it.
+    var recordMidiInput: MidiInputRef? = nil
     /// What a new take does to the takes already in this recording zone — session format 34. nil = the
     /// default, `.mute` (the previous takes crossing the window are muted at the press); `.add` = they
     /// stay audible. Meaningful only for a group with a `recordInput`. Stored as ABSENT for the default
     /// (`RecordTakeMode.stored`). TOP LEVEL and carried like `recordInput`: `derivedCopy` keeps it
     /// (a duplicate of a zone keeps its way of taking), `CrossProjectImport` clears the INPUT, not this.
     var recordTakeMode: RecordTakeMode? = nil
+
+    /// What this group listens to when it records: its card input, or its MIDI input (nil = not a zone).
+    var recordSource: RecordSource? {
+        get {
+            if let r = recordInput { return .audio(r) }
+            if let m = recordMidiInput { return .midi(m) }
+            return nil
+        }
+        set {
+            recordInput = nil
+            recordMidiInput = nil
+            switch newValue {
+            case .audio(let r)?: recordInput = r
+            case .midi(let m)?: recordMidiInput = m
+            case nil: break
+            }
+        }
+    }
     /// Non-nil ⇒ this placement is an INSTANCE of a consolidated object: its `kind` reads the current wave
     /// of the definition `EditViewModel.consolidateDefinitions[consolidateID]`. Everything else (position,
     /// fades, gain/pan, the plugins belonging to THIS placement) stays independent — only the deep
@@ -1316,6 +1339,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
                     kind: kind)
         derived.araSource = inheritedARA
         derived.recordInput = recordInput
+        derived.recordMidiInput = recordMidiInput
         derived.recordTakeMode = recordTakeMode
         return derived
     }
@@ -1354,7 +1378,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode, recordMidiInput, zoneInstruments
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1379,7 +1403,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encode(isMuted,   forKey: .isMuted)
         try c.encodeIfPresent(stemID,     forKey: .stemID)
         try c.encode(plugins,   forKey: .plugins)
-        if !instruments.isEmpty { try c.encode(instruments, forKey: .instruments) }
+        // A GROUP's instruments are its recording zone's (the MIDI input's sound): another key, so that no
+        // reader of the old key — "a MIDI clip's instrument" — ever mistakes a zone for a clip.
+        if !instruments.isEmpty { try c.encode(instruments, forKey: isGroup ? .zoneInstruments : .instruments) }
         try c.encodeIfPresent(label,      forKey: .label)
         try c.encodeIfPresent(colorIndex, forKey: .colorIndex)
         // A readable "#RRGGBB" rather than a decimal integer: the file is meant to be read.
@@ -1406,6 +1432,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         if channelMode.isActive { try c.encode(channelMode, forKey: .channelMode) }
         try c.encodeIfPresent(araSource, forKey: .araSource)
         try c.encodeIfPresent(recordInput, forKey: .recordInput)
+        try c.encodeIfPresent(recordInput == nil ? recordMidiInput : nil, forKey: .recordMidiInput)
         try c.encodeIfPresent(recordTakeMode?.stored, forKey: .recordTakeMode)
         try c.encode(kind, forKey: .kind)
     }
@@ -1425,7 +1452,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         isMuted    = try c.decodeIfPresent(Bool.self,   forKey: .isMuted) ?? false
         stemID     = try c.decodeIfPresent(UUID.self,   forKey: .stemID)
         plugins    = try c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins) ?? []
-        instruments = try c.decodeIfPresent([ObjectPlugin].self, forKey: .instruments) ?? []
+        instruments = try c.decodeIfPresent([ObjectPlugin].self, forKey: .instruments)
+            ?? c.decodeIfPresent([ObjectPlugin].self, forKey: .zoneInstruments) ?? []
         label      = try c.decodeIfPresent(String.self, forKey: .label)
         colorIndex = try c.decodeIfPresent(Int.self,    forKey: .colorIndex)
         // "#RRGGBB" (what is written); a plain integer is tolerated, as is a text that does not parse
@@ -1460,6 +1488,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
         araSource      = try? c.decodeIfPresent(ARASource.self, forKey: .araSource)
         // An input reference this build cannot read reads as absent (the group is just not armable).
         recordInput    = try? c.decodeIfPresent(InputRef.self, forKey: .recordInput)
+        // One source: when a file names both, the card input wins.
+        recordMidiInput = recordInput == nil ? (try? c.decodeIfPresent(MidiInputRef.self, forKey: .recordMidiInput)) : nil
         // Absent (or a value this build does not know) = the default, `.mute`; stored as nil.
         recordTakeMode = (try? c.decodeIfPresent(RecordTakeMode.self, forKey: .recordTakeMode))?.stored
         kind       = try c.decode(Kind.self, forKey: .kind)

@@ -22,6 +22,9 @@ OBJEngineCore.setAudioDisabled(launchArguments.noAudio)
 // Same moment, same reason. `--no-audio` outranks it (the engine drops the virtual card then).
 OBJEngineCore.setVirtualAudio(launchArguments.virtualAudio, spec: launchArguments.virtualAudioSpec)
 
+// `--virtual-midi`: the in-process MIDI input of the tests (before the engine, like the card).
+OBJEngineCore.setVirtualMidi(launchArguments.virtualMidi)
+
 if launchArguments.headless {
     MainActor.assumeIsolated { HeadlessRunner.run(launchArguments) }
 } else {

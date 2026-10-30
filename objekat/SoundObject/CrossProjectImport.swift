@@ -281,6 +281,7 @@ enum CrossProjectImport {
             // A recording zone's input is the ORIGIN card's channel number: the target project has its
             // own inputs (and its own names), so the pasted group arrives unassigned.
             no.recordInput = nil
+            no.recordMidiInput = nil      // the same for a MIDI zone: its input is the origin machine's device
             no.recordTakeMode = nil
 
             // The instrument slot (index 0 of a MIDI clip) is never linked and never a rack —

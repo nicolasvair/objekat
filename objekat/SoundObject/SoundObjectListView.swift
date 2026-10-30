@@ -215,7 +215,7 @@ struct SoundObjectListView: View {
         SoundListRowView(
             row: row,
             // A recording zone nobody named is called after its input (the view model knows it).
-            nameText: row.object.recordInput != nil ? viewModel.displayName(of: row.object)
+            nameText: row.object.recordSource != nil ? viewModel.displayName(of: row.object)
                                                 : row.object.displayName,
             isSelected: viewModel.isSelected(row.id),
             isDimmed: !viewModel.selectedIDs.isEmpty && !viewModel.isSelected(row.id),

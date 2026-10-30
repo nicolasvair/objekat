@@ -6,6 +6,8 @@
 #import "OBJEngineCore.h"
 #import <AppKit/AppKit.h>   // notifications d'activation de l'app (éditeurs suivant le focus)
 #import <AudioUnit/AudioUnit.h>
+#include <chrono>
+#include <thread>
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
 #include "OBJGainPlugin.h"
@@ -142,7 +144,33 @@ struct OBJPropertyStorage : public te::PropertyStorage {
             || s == te::SettingID::audioDeviceLayoutPresets;
     }
     static bool blocked(te::SettingID s) {
-        return s == te::SettingID::wavein || (objvirtual::state().active && isDeviceSetting(s));
+        return s == te::SettingID::wavein || isMidiDeviceItemSetting(s)
+            || (objvirtual::state().active && isDeviceSetting(s));
+    }
+
+    /// MIDI inputs, like the wave ones, are a matter of the moment and not of the machine: whether a device
+    /// is enabled, its monitor mode, its manual adjustment are decided by the app every time (rec3-midi), so
+    /// Tracktion neither reads nor writes them. The scan interval is blocked for the same reason: a recording
+    /// suspends the rescan (@see -startRecordingInputs:) and must not leave a 0 behind in the file.
+    static bool isMidiDeviceItemSetting(te::SettingID s) {
+        return s == te::SettingID::midiin || s == te::SettingID::virtualmidiin;
+    }
+    static bool isMidiScanSetting(te::SettingID s) { return s == te::SettingID::midiScanIntervalSeconds; }
+
+    /// `--virtual-midi`: the list of Tracktion's virtual MIDI devices lives in memory only.
+    static std::atomic<bool>& virtualMidiOn() { static std::atomic<bool> on { false }; return on; }
+    juce::String virtualMidiList;
+
+    juce::var getProperty(te::SettingID setting, const juce::var& defaultValue = {}) override {
+        if (isMidiScanSetting(setting)) return defaultValue;
+        if (virtualMidiOn() && setting == te::SettingID::virtualmididevices) return virtualMidiList;
+        return te::PropertyStorage::getProperty(setting, defaultValue);
+    }
+
+    void setProperty(te::SettingID setting, const juce::var& value) override {
+        if (isMidiScanSetting(setting)) return;
+        if (virtualMidiOn() && setting == te::SettingID::virtualmididevices) { virtualMidiList = value.toString(); return; }
+        te::PropertyStorage::setProperty(setting, value);
     }
 
     /// The setup without its INPUT side (@see the rules above).
@@ -1297,6 +1325,8 @@ struct OBJLatencyWatcher : public juce::Timer {
 - (BOOL)isLiveInputFirst:(NSInteger)first count:(NSInteger)count;     // @see "Input monitoring"
 - (void)stopRecordingIfActive;   // @see "Recording"
 - (void)stopRecordingIfCardChanged;   // @see "Recording"
+- (void)midiDevicesChanged;      // @see "MIDI inputs"
+- (void)syncMidiZoneMonitors;    // @see "MIDI inputs"
 @end
 
 // Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
@@ -1388,6 +1418,11 @@ struct OBJRecordListener : public te::TransportControl::Listener {
                            const juce::ReferenceCountedArray<te::Clip>& clips) override {
         int n = 0;
         for (auto* c : clips) {
+            // A MIDI take: the clip holds the notes, -finishRecording reads them before it goes.
+            if (auto* mc = dynamic_cast<te::MidiClip*>(c)) {
+                captures.push_back({ target, te::Clip::Ptr(c), juce::File(), mc->getPosition().getStart().inSeconds() });
+                continue;
+            }
             auto* wc = dynamic_cast<te::WaveAudioClip*>(c);
             if (wc == nullptr) continue;
             const auto pos = wc->getPosition();
@@ -1408,6 +1443,39 @@ struct OBJRecordListener : public te::TransportControl::Listener {
               objRecMs(), (int) discard, (int) transportRecording(), transportPosition());
         if (onStopped) onStopped();
     }
+};
+
+// A MIDI zone's hidden track while it is armed: the track the device is targeted at and the instrument that
+// sounds on it (@see -setMidiZones:).
+struct OBJMidiZoneTrack {
+    te::EditItemID    track;
+    std::string       deviceID;
+    std::string       instrumentKey;     // the model's id of the instrument (also its _pluginMap key)
+    te::Plugin::Ptr   instrument;
+};
+
+// The loudest note-on velocity on a MIDI input since the last read. The device is held so that the keyboard
+// state this listens to outlives the listener.
+struct OBJMidiActivity : public juce::MidiKeyboardState::Listener {
+    std::shared_ptr<te::MidiInputDevice> device;
+    std::atomic<int> peak { 0 };
+    explicit OBJMidiActivity(std::shared_ptr<te::MidiInputDevice> d) : device(std::move(d)) {
+        device->keyboardState.addListener(this);
+    }
+    ~OBJMidiActivity() override { device->keyboardState.removeListener(this); }
+    void handleNoteOn(juce::MidiKeyboardState*, int, int, float velocity) override {
+        const int v = std::max(1, (int) std::lround(velocity * 127.0f));
+        int cur = peak.load();
+        while (v > cur && !peak.compare_exchange_weak(cur, v)) {}
+    }
+    void handleNoteOff(juce::MidiKeyboardState*, int, int, float) override {}
+};
+
+// Tells the engine the list of MIDI devices changed (plugged, unplugged, enabled): the device manager
+// broadcasts it from the message thread (@see -midiDevicesChanged).
+struct OBJMidiDevicesWatcher : public juce::ChangeListener {
+    __unsafe_unretained OBJEngineCore* owner = nil;
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { [owner midiDevicesChanged]; }
 };
 
 struct OBJDeviceChangeWatcher : public juce::ChangeListener {
@@ -1909,6 +1977,16 @@ struct OBJExportLoadScope {
     std::unique_ptr<OBJRecordListener>                        _recordListener;
     bool                                                      _recordingActive;
     juce::String                                              _recordCardSignature;   // the card as it was at the press (@see -stopRecordingIfCardChanged)
+    // MIDI inputs (rec3-midi): the armed zones wanted and their hidden tracks, the activity listeners, the
+    // watcher of the device list, and what a recording changes on the devices (undone at its end).
+    NSArray<NSDictionary*>*                                   _midiZonesWanted;
+    std::map<std::string, OBJMidiZoneTrack>                   _midiZoneTracks;
+    std::map<std::string, std::unique_ptr<OBJMidiActivity>>   _midiActivity;
+    std::unique_ptr<OBJMidiDevicesWatcher>                    _midiWatcher;
+    std::map<std::string, double>                             _midiAdjustBeforeRecord;
+    int                                                       _midiScanBeforeRecord;
+    std::atomic<int>                                          _virtualMidiSent;
+    std::atomic<int>                                          _virtualMidiPending;
     // objectID d'un ENFANT de groupe → groupID du container qui l'héberge. Sa présence
     // signifie « cet objet ne vit pas sur une piste du pool mais dans un ContainerClip ».
     std::unordered_map<std::string, std::string>              _childOwnerMap;
@@ -2204,6 +2282,9 @@ static BOOL gOBJAudioDisabled = NO;
 
 + (BOOL)isVirtualAudio { return objvirtual::state().active; }
 
++ (void)setVirtualMidi:(BOOL)on { OBJPropertyStorage::virtualMidiOn() = on; }
++ (BOOL)isVirtualMidi { return OBJPropertyStorage::virtualMidiOn(); }
+
 - (instancetype)init {
     if (self = [super init]) {
         juce::initialiseJuce_GUI();
@@ -2294,6 +2375,18 @@ static BOOL gOBJAudioDisabled = NO;
         _deviceWatcher = std::make_unique<OBJDeviceChangeWatcher>();
         _deviceWatcher->owner = self;
         _engine->getDeviceManager().deviceManager.addChangeListener(_deviceWatcher.get());
+        // The MIDI device list (rec3-midi): watched from here, so the first scan's result is seen too.
+        _virtualMidiSent = 0;
+        _virtualMidiPending = 0;
+        _midiWatcher = std::make_unique<OBJMidiDevicesWatcher>();
+        _midiWatcher->owner = self;
+        _engine->getDeviceManager().addChangeListener(_midiWatcher.get());
+        if (OBJPropertyStorage::virtualMidiOn()) {
+            // Tracktion's own virtual MIDI input, fed by -sendVirtualMidiEvents:. The list that names it is
+            // kept in memory (OBJPropertyStorage), so it never reaches Settings.xml.
+            _engine->getDeviceManager().createVirtualMidiDevice("OBJ Virtual MIDI");
+            NSLog(@"[OBJ] --virtual-midi : entrée MIDI « OBJ Virtual MIDI »");
+        }
         [self logDefaultWaveOutput];
         // Après l'ouverture, AVANT createEdit : si la carte tourne à une fréquence inutilisable on
         // la ramène ici, une fois, sans qu'aucun graphe de lecture n'existe encore à réallouer.
@@ -2355,6 +2448,9 @@ static BOOL gOBJAudioDisabled = NO;
 
 - (void)dealloc {
     te::ARAHostTransportHook::handler = nullptr;   // il capture `self`
+    if (_midiWatcher)
+        _engine->getDeviceManager().removeChangeListener(_midiWatcher.get());
+    _midiActivity.clear();
     if (_deviceWatcher)
         _engine->getDeviceManager().deviceManager.removeChangeListener(_deviceWatcher.get());
     if (_latencyWatcher)      _latencyWatcher->stopTimer();      // coupe les timers avant
@@ -11357,51 +11453,103 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (!_edit) return @"no edit";
     if (_recordingActive) return @"already recording";
     if (inputs.count == 0) return @"no input to record";
-    if (![self audioInputsOpen]) return @"the inputs are closed";
     objRecMarkPress();
     const NSInteger stallMs = _debugRecordStallMs;     // test hook (rec.start debug_stall_ms), one shot
     _debugRecordStallMs = 0;
 
+    // Audio inputs `{first, count, path}` and MIDI zones `{midi: deviceID, zone: uuid}` may come together.
     std::map<std::pair<int, int>, juce::File> files;
+    std::vector<std::pair<std::string, std::string>> midiZones;      // (zone, device)
     for (NSDictionary* d in inputs) {
+        if (NSString* dev = d[@"midi"]) {
+            NSString* zone = d[@"zone"];
+            if (zone.length == 0) return @"a MIDI input has no zone";
+            midiZones.push_back({ std::string([zone UTF8String]), std::string([dev UTF8String]) });
+            continue;
+        }
         const std::pair<int, int> key { (int) [d[@"first"] integerValue], (int) [d[@"count"] integerValue] };
         NSString* path = d[@"path"];
         if (path.length == 0) return @"an input has no file";
         files[key] = juce::File(juce::String::fromUTF8([path UTF8String]));
     }
+    if (!files.empty() && ![self audioInputsOpen]) return @"the inputs are closed";
 
     // A card change seen since the last play re-creates the playback context. It must happen BEFORE the
     // input instances are collected below: freePlaybackContext destroys every InputDeviceInstance.
     if (!_edit->getTransport().isPlaying()) [self rebindAudioWorkgroupIfDeviceChanged];
 
     // Prepare the tracks and targets (a no-op for the ones the arming already prepared).
-    _armedInputs.clear();
-    for (auto& kv : files) _armedInputs.insert(kv.first);
-    [self syncInputMonitors];
+    if (!files.empty()) {
+        _armedInputs.clear();
+        for (auto& kv : files) _armedInputs.insert(kv.first);
+        [self syncInputMonitors];
+    }
+    if (!midiZones.empty()) {
+        for (auto& mz : midiZones)
+            if (!_midiZoneTracks.count(mz.first) || _midiZoneTracks[mz.first].deviceID != mz.second)
+                return @"a MIDI zone is not armed on its input";
+    }
+    _edit->getTransport().ensureContextAllocated();
     auto* epc = _edit->getCurrentPlaybackContext();
     if (epc == nullptr) return @"no playback context";
 
     auto& behaviour = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour());
     std::vector<std::pair<te::InputDeviceInstance*, te::EditItemID>> armed;
-    for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
-        const auto& ch = wi->getChannels();
-        if (ch.isEmpty() || !wi->isEnabled()) continue;
-        const std::pair<int, int> key { ch[0].indexInDevice, ch.getNumChannels() };
-        if (!files.count(key)) continue;
-        auto* inst = epc->getInputFor(wi);
-        auto it = _inputTrackIDs.find(key);
-        if (inst == nullptr || it == _inputTrackIDs.end() || !inst->getTargets().contains(it->second))
-            return @"an input has no track";
-        // WAV, 32 bits: JUCE writes float at that depth (the header says so: format 3).
-        wi->setOutputFormat("WAV");
-        wi->setBitDepth(32);
-        armed.push_back({ inst, it->second });
-        behaviour.recordFiles[it->second.getRawID()] = files[key];
+    if (!files.empty()) {
+        for (auto* wi : _engine->getDeviceManager().getWaveInputDevices()) {
+            const auto& ch = wi->getChannels();
+            if (ch.isEmpty() || !wi->isEnabled()) continue;
+            const std::pair<int, int> key { ch[0].indexInDevice, ch.getNumChannels() };
+            if (!files.count(key)) continue;
+            auto* inst = epc->getInputFor(wi);
+            auto it = _inputTrackIDs.find(key);
+            if (inst == nullptr || it == _inputTrackIDs.end() || !inst->getTargets().contains(it->second))
+                return @"an input has no track";
+            // WAV, 32 bits: JUCE writes float at that depth (the header says so: format 3).
+            wi->setOutputFormat("WAV");
+            wi->setBitDepth(32);
+            armed.push_back({ inst, it->second });
+            behaviour.recordFiles[it->second.getRawID()] = files[key];
+        }
+        if (armed.size() != files.size()) {
+            behaviour.recordFiles.clear();
+            return @"an input is not on the card";
+        }
     }
-    if (armed.size() != files.size()) {
-        behaviour.recordFiles.clear();
-        return @"an input is not on the card";
+    std::vector<std::pair<te::InputDeviceInstance*, te::EditItemID>> midiArmed;
+    for (auto& mz : midiZones) {
+        auto device = [self midiDeviceForID:mz.second];
+        auto* inst = device ? epc->getInputFor(device.get()) : nullptr;
+        auto& z = _midiZoneTracks[mz.first];
+        if (inst == nullptr || !inst->getTargets().contains(z.track)) {
+            behaviour.recordFiles.clear();
+            return @"a MIDI zone has no track";
+        }
+        midiArmed.push_back({ inst, z.track });
     }
+
+    // A note played when its sound is HEARD at T is recorded at T: Tracktion stamps a message with the time
+    // the engine is rendering when it arrives, and the sound of that time leaves the card one output
+    // latency later (it already takes the graph's own latency off). The MIDI devices carry that correction
+    // for the length of the recording; the setting is not persisted (OBJPropertyStorage).
+    _midiAdjustBeforeRecord.clear();
+    if (!midiZones.empty()) {
+        auto& jdm = _engine->getDeviceManager().deviceManager;
+        auto* dev = jdm.getCurrentAudioDevice();
+        const double sr = dev != nullptr ? dev->getCurrentSampleRate() : 0.0;
+        const double outMs = (dev != nullptr && sr > 0.0) ? 1000.0 * dev->getOutputLatencyInSamples() / sr : 0.0;
+        for (auto& mz : midiZones)
+            if (auto device = [self midiDeviceForID:mz.second]) {
+                const std::string id(device->getDeviceID().toRawUTF8());
+                if (_midiAdjustBeforeRecord.count(id)) continue;
+                _midiAdjustBeforeRecord[id] = device->getManualAdjustmentMs();
+                device->setManualAdjustmentMs(_midiAdjustBeforeRecord[id] - outMs);
+            }
+    }
+    // The device list is not rescanned while a take runs: a rescan that finds a change rebuilds every input
+    // instance, the audio ones too, and the take would be lost. Taken up again at the end.
+    _midiScanBeforeRecord = _engine->getDeviceManager().getMidiDeviceScanIntervalSeconds();
+    _engine->getDeviceManager().setMidiDeviceScanIntervalSeconds(0);
 
     _recordFiles = files;
     _recordListener = std::make_unique<OBJRecordListener>();
@@ -11418,6 +11566,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     NSLog(@"[REC] +%.1f ms press: %d input(s), playing=%d pos=%.6f card=%s", objRecMs(), (int) armed.size(),
           (int) transport.isPlaying(), transport.getPosition().inSeconds(), _recordCardSignature.toRawUTF8());
     for (auto& a : armed) a.first->setRecordingEnabled(a.second, true);
+    for (auto& a : midiArmed) a.first->setRecordingEnabled(a.second, true);
     transport.record(false);
     if (!transport.isRecording()) {
         [self finishRecording];
@@ -11462,6 +11611,38 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     NSMutableArray* takes = [NSMutableArray array];
     if (listener)
         for (auto& cap : listener->captures) {
+            // A MIDI zone's take: its notes, in seconds on the timeline, read off the clip before it goes.
+            if (auto* mc = dynamic_cast<te::MidiClip*>(cap.clip.get())) {
+                std::string zone, device;
+                for (auto& kv : _midiZoneTracks) if (kv.second.track == cap.target) { zone = kv.first; device = kv.second.deviceID; }
+                if (zone.empty()) continue;
+                auto& tempo = _edit->tempoSequence;
+                const auto clipStartBeat = mc->getStartBeat();
+                NSMutableArray* notes = [NSMutableArray array];
+                for (auto* n : mc->getSequence().getNotes()) {
+                    const auto b0 = clipStartBeat + te::BeatDuration::fromBeats(n->getStartBeat().inBeats());
+                    const auto b1 = b0 + n->getLengthBeats();
+                    [notes addObject:@{ @"pitch": @(n->getNoteNumber()),
+                                        @"start": @(tempo.toTime(b0).inSeconds()),
+                                        @"end": @(tempo.toTime(b1).inSeconds()),
+                                        @"velocity": @(n->getVelocity()) }];
+                }
+                if (notes.count == 0) continue;
+                // The sustain pedal (CC64): folded into the note durations by the model (MidiTakePlanner).
+                NSMutableArray* sustain = [NSMutableArray array];
+                for (auto* ev : mc->getSequence().getControllerEvents())
+                    if (ev->getType() == 64) {
+                        const auto b = clipStartBeat + te::BeatDuration::fromBeats(ev->getBeatPosition().inBeats());
+                        [sustain addObject:@{ @"time": @(tempo.toTime(b).inSeconds()),
+                                              @"down": @(ev->getControllerValue() >= 64) }];
+                    }
+                [takes addObject:@{ @"zone": [NSString stringWithUTF8String:zone.c_str()],
+                                    @"device": [NSString stringWithUTF8String:device.c_str()],
+                                    @"origin": @(mc->getPosition().getStart().inSeconds()),
+                                    @"length": @(mc->getPosition().getLength().inSeconds()),
+                                    @"notes": notes, @"sustain": sustain }];
+                continue;
+            }
             std::pair<int, int> key { -1, 0 };
             for (auto& kv : _inputTrackIDs) if (kv.second == cap.target) key = kv.first;
             if (key.first < 0 || !cap.file.existsAsFile()) continue;
@@ -11480,15 +11661,281 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (listener)
         for (auto& cap : listener->captures) if (cap.clip != nullptr) cap.clip->removeFromParent();
     if (_edit)
-        if (auto* epc = _edit->getCurrentPlaybackContext())
+        if (auto* epc = _edit->getCurrentPlaybackContext()) {
             for (auto* wi : _engine->getDeviceManager().getWaveInputDevices())
                 if (auto* inst = epc->getInputFor(wi))
                     for (auto& kv : _inputTrackIDs) inst->setRecordingEnabled(kv.second, false);
+            for (auto& kv : _midiZoneTracks)
+                if (auto device = [self midiDeviceForID:kv.second.deviceID])
+                    if (auto* inst = epc->getInputFor(device.get())) inst->setRecordingEnabled(kv.second.track, false);
+        }
+    // What the recording changed on the MIDI side goes back: the output-latency correction, the rescan.
+    for (auto& kv : _midiAdjustBeforeRecord)
+        if (auto device = [self midiDeviceForID:kv.first]) device->setManualAdjustmentMs(kv.second);
+    _midiAdjustBeforeRecord.clear();
+    _engine->getDeviceManager().setMidiDeviceScanIntervalSeconds(_midiScanBeforeRecord);
     _recordFiles.clear();
     static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).recordFiles.clear();
     [self syncInputMonitors];
+    [self syncMidiZoneMonitors];
 
     if (self.onRecordingFinished) self.onRecordingFinished(takes);
+}
+
+// MARK: MIDI inputs (rec3-midi)
+//
+// The MIDI inputs are Tracktion's own devices (physical ones, "All MIDI Ins", and under --virtual-midi
+// "OBJ Virtual MIDI"). They do not depend on the audio inputs being open. What the app adds:
+//  - every device is ENABLED here (a virtual one is born disabled, and the per-device settings are not
+//    persisted: OBJPropertyStorage), once, whenever the list changes and no recording runs;
+//  - an ARMED MIDI zone owns a hidden track — instrument on it, the device targeted at it with monitor mode
+//    `on` — so the zone is played live while armed; a device may feed several zones (setTarget without
+//    `move`), and the track is outside `_poolTracks`, the census, the stems and the solo, like the audio
+//    inputs' (@see "Input monitoring");
+//  - a recording (@see -startRecordingInputs:) arms those same destinations and reads the notes of the MIDI
+//    clip Tracktion makes, then removes it.
+// The hot-plug danger: Tracktion rescans the MIDI list on a timer and, when it changed, destroys and
+// rebuilds EVERY input instance — the audio ones too. A recording therefore suspends the rescan.
+
+- (std::shared_ptr<te::MidiInputDevice>)midiDeviceForID:(const std::string&)deviceID {
+    for (auto& d : _engine->getDeviceManager().getMidiInDevices())
+        if (d && !d->isTrackDevice() && std::string(d->getDeviceID().toRawUTF8()) == deviceID) return d;
+    return nullptr;
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)midiInputDevices {
+    NSMutableArray* result = [NSMutableArray array];
+    for (auto& d : _engine->getDeviceManager().getMidiInDevices()) {
+        if (!d || d->isTrackDevice()) continue;
+        juce::String id = d->getDeviceID(), name = d->getName();
+        [result addObject:@{ @"id": [NSString stringWithUTF8String:id.toRawUTF8()],
+                             @"identifier": [NSString stringWithUTF8String:id.toRawUTF8()],
+                             @"name": [NSString stringWithUTF8String:name.toRawUTF8()],
+                             @"virtual": @(d->getDeviceType() == te::InputDevice::virtualMidiDevice),
+                             @"enabled": @(d->isEnabled()) }];
+    }
+    return result;
+}
+
+- (NSDictionary<NSString*, NSNumber*>*)midiInputActivity {
+    NSMutableDictionary* result = [NSMutableDictionary dictionary];
+    for (auto& kv : _midiActivity) {
+        const int v = kv.second->peak.exchange(0);
+        if (v > 0) result[[NSString stringWithUTF8String:kv.first.c_str()]] = @(v);
+    }
+    return result;
+}
+
+// The list changed (or was first read): enable what is disabled, listen to the new devices, put the
+// attachments that the rebuild of the input instances dropped back, tell Swift.
+- (void)midiDevicesChanged {
+    if (!_engine) return;
+    auto devices = _engine->getDeviceManager().getMidiInDevices();
+    // Enabling one asks Tracktion for another rescan (a forced one: it harvests the objects, so the second
+    // pass finds them enabled and stops). Never during a recording, whose instances it would destroy.
+    if (!_recordingActive) {
+        for (auto& d : devices)
+            if (d && !d->isTrackDevice() && !d->isEnabled()) d->setEnabled(true);
+    }
+    std::set<std::string> present;
+    for (auto& d : devices) {
+        if (!d || d->isTrackDevice()) continue;
+        const std::string id(d->getDeviceID().toRawUTF8());
+        present.insert(id);
+        auto it = _midiActivity.find(id);
+        if (it == _midiActivity.end() || it->second->device != d)
+            _midiActivity[id] = std::make_unique<OBJMidiActivity>(d);
+    }
+    for (auto it = _midiActivity.begin(); it != _midiActivity.end(); )
+        it = present.count(it->first) ? std::next(it) : _midiActivity.erase(it);
+
+    if (!_recordingActive) {
+        [self syncInputMonitors];
+        [self syncMidiZoneMonitors];
+    }
+    if (self.onMidiDevicesChanged) self.onMidiDevicesChanged();
+}
+
+- (te::AudioTrack*)hiddenMidiTrackForZone:(const std::string&)zone {
+    if (auto it = _midiZoneTracks.find(zone); it != _midiZoneTracks.end())
+        if (auto* t = dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, it->second.track)))
+            return t;
+    auto track = _edit->insertNewAudioTrack(te::TrackInsertPoint(nullptr, nullptr), nullptr);
+    if (!track) return nullptr;
+    track->setName(juce::String("MIDI ") + juce::String::fromUTF8(zone.c_str()).substring(0, 8));
+    _midiZoneTracks[zone].track = track->itemID;
+    return track.get();
+}
+
+// Drops the instrument of a zone's track (its editor window, its _pluginMap entry), keeping the track.
+- (void)dropMidiZoneInstrument:(OBJMidiZoneTrack&)z {
+    if (!z.instrument) return;
+    for (auto pit = _pluginMap.begin(); pit != _pluginMap.end(); ) {
+        if (pit->second.get() == z.instrument.get()) {
+            [self teardownPluginLink:pit->first];
+            _editorWindows.erase(pit->first);
+            _pluginOwnerHost.erase(pit->first);
+            pit = _pluginMap.erase(pit);
+        } else {
+            ++pit;
+        }
+    }
+    z.instrument->deleteFromParent();
+    z.instrument = nullptr;
+    z.instrumentKey.clear();
+    [self syncPluginMeters];
+}
+
+- (void)setMidiZones:(NSArray<NSDictionary<NSString*, id>*>*)zones {
+    if (_recordingActive) return;      // never reshuffled under a recording
+    _midiZonesWanted = [zones copy];
+    [self syncMidiZoneMonitors];
+}
+
+- (NSArray<NSString*>*)midiZonesLive {
+    NSMutableArray* r = [NSMutableArray array];
+    for (auto& kv : _midiZoneTracks)
+        if (_edit && te::findTrackForID(*_edit, kv.second.track))
+            [r addObject:[NSString stringWithUTF8String:kv.first.c_str()]];
+    return r;
+}
+
+// Idempotent, like -syncInputMonitors: forgets what is gone, builds what is wanted, drops what is not.
+- (void)syncMidiZoneMonitors {
+    if (!_edit || _recordingActive) return;
+    std::map<std::string, NSDictionary*> wanted;
+    for (NSDictionary* d in _midiZonesWanted) {
+        NSString* zone = d[@"zone"]; NSString* dev = d[@"device"];
+        if (zone.length == 0) continue;
+        // "editor": the zone's instrument alone, for its editor to open on while the zone is not armed (no device).
+        const bool editorOnly = [d[@"editor"] boolValue];
+        if (dev.length == 0 && !editorOnly) continue;
+        if (dev.length > 0) {
+            const std::string deviceID([dev UTF8String]);
+            auto device = [self midiDeviceForID:deviceID];
+            if (!device || !device->isEnabled()) continue;    // an absent device: nothing to play
+        }
+        wanted[std::string([zone UTF8String])] = d;
+    }
+    if (!wanted.empty()) _edit->getTransport().ensureContextAllocated();
+    auto* epc = _edit->getCurrentPlaybackContext();
+
+    // Release what is not wanted any more.
+    for (auto it = _midiZoneTracks.begin(); it != _midiZoneTracks.end(); ) {
+        if (wanted.count(it->first)) { ++it; continue; }
+        auto& z = it->second;
+        if (auto device = [self midiDeviceForID:z.deviceID])
+            if (auto* inst = epc ? epc->getInputFor(device.get()) : nullptr)
+                [[maybe_unused]] auto res = inst->removeTarget(z.track, nullptr);
+        [self dropMidiZoneInstrument:z];
+        if (auto* t = te::findTrackForID(*_edit, z.track)) _edit->deleteTrack(t);
+        it = _midiZoneTracks.erase(it);
+    }
+
+    // Build or update what is wanted.
+    for (auto& kv : wanted) {
+        NSDictionary* d = kv.second;
+        const std::string deviceID([d[@"device"] UTF8String]);
+        auto device = deviceID.empty() ? nullptr : [self midiDeviceForID:deviceID];
+        auto* track = [self hiddenMidiTrackForZone:kv.first];
+        if (!track || (!device && !deviceID.empty())) continue;
+        auto& z = _midiZoneTracks[kv.first];
+        // A zone that stopped playing a device (armed → editor only) lets go of its target first.
+        if (z.deviceID != deviceID && !z.deviceID.empty()) {
+            if (auto old = [self midiDeviceForID:z.deviceID])
+                if (auto* oldIn = epc ? epc->getInputFor(old.get()) : nullptr)
+                    [[maybe_unused]] auto res = oldIn->removeTarget(z.track, nullptr);
+        }
+        z.deviceID = deviceID;
+        // The instrument: the zone's, by the model's id. Another id = another instrument.
+        NSDictionary* inst = d[@"instrument"];
+        NSString* key = inst[@"pluginKey"];
+        const std::string wantKey = key ? std::string([key UTF8String]) : std::string();
+        if (wantKey != z.instrumentKey) {
+            [self dropMidiZoneInstrument:z];
+            if (!wantKey.empty()) {
+                NSString* state = inst[@"stateXML"];
+                if (auto ptr = [self insertResolvedPlugin:inst stateXML:state into:track->pluginList atIndex:0]) {
+                    z.instrument = ptr;
+                    z.instrumentKey = wantKey;
+                    _pluginMap[wantKey] = ptr;
+                    [self attachProbeIfWanted:wantKey plugin:ptr];
+                } else {
+                    NSLog(@"[OBJ] MIDI zone %@: instrument '%@' could not be created", d[@"zone"], inst[@"name"]);
+                }
+            }
+        }
+        if (!device) continue;                                // editor only: the instrument is all there is
+        device->setMonitorMode(te::InputDevice::MonitorMode::on);
+        if (auto* in = epc ? epc->getInputFor(device.get()) : nullptr) {
+            if (!in->getTargets().contains(track->itemID)) {
+                // No `move`: another zone (or the audio side) may use the same input.
+                auto res = in->setTarget(track->itemID, false, nullptr);
+                if (!res) NSLog(@"[OBJ] MIDI zone monitoring: %s", res.error().toRawUTF8());
+            }
+        }
+    }
+    // (A device nobody plays any more keeps its monitor mode: with no target it plays nothing.)
+    if (wanted.empty() && _midiZoneTracks.empty()) return;
+    [self syncPluginMeters];
+}
+
+// --virtual-midi ---------------------------------------------------------------------------------
+
+- (NSDictionary<NSString*, id>*)virtualMidiStatus {
+    if (!OBJPropertyStorage::virtualMidiOn()) return @{ @"active": @NO };
+    NSString* id = @"";
+    for (auto& d : _engine->getDeviceManager().getMidiInDevices())
+        if (d && d->getName() == "OBJ Virtual MIDI") id = [NSString stringWithUTF8String:d->getDeviceID().toRawUTF8()];
+    return @{ @"active": @YES, @"device_id": id, @"name": @"OBJ Virtual MIDI",
+              @"sent": @(_virtualMidiSent.load()), @"pending": @(_virtualMidiPending.load()) };
+}
+
+- (NSString*)sendVirtualMidiEvents:(NSArray<NSDictionary<NSString*, id>*>*)events device:(NSString*)deviceID {
+    if (!OBJPropertyStorage::virtualMidiOn()) return @"the virtual MIDI input is not active (launch with --virtual-midi)";
+    std::shared_ptr<te::MidiInputDevice> target, all;
+    for (auto& d : _engine->getDeviceManager().getMidiInDevices()) {
+        if (!d || d->isTrackDevice()) continue;
+        if (deviceID.length > 0 ? d->getDeviceID() == juce::String::fromUTF8([deviceID UTF8String])
+                                : d->getName() == "OBJ Virtual MIDI")
+            target = d;
+        if (d->getDeviceID() == "all_midi_in") all = d;
+    }
+    if (!target) return @"no such MIDI input";
+    const bool viaAll = target->getName() == "OBJ Virtual MIDI" && all != nullptr;
+    // The events are played by ONE thread sleeping to each deadline: `dispatch_after` has a leeway of ~10 % of the
+    // delay (a note asked 2 s ahead came 0.2 s late), which a timing test cannot live with.
+    struct Ev { double ms; juce::MidiMessage m; };
+    std::vector<Ev> plan;
+    for (NSDictionary* e in events) {
+        const bool on = [e[@"kind"] isEqual:@"on"];
+        const bool cc = [e[@"kind"] isEqual:@"cc"];   // a controller (the sustain pedal is 64): note = controller, velocity = value
+        if (!on && !cc && ![e[@"kind"] isEqual:@"off"]) return @"an event is neither 'on', 'off' nor 'cc'";
+        const int note = [e[@"note"] intValue], vel = e[@"velocity"] ? [e[@"velocity"] intValue] : 100;
+        const int ch = e[@"channel"] ? [e[@"channel"] intValue] : 1;
+        if (note < 0 || note > 127 || vel < 0 || vel > 127 || ch < 1 || ch > 16) return @"note, velocity or channel out of range";
+        const double delayMs = e[@"delay_ms"] ? [e[@"delay_ms"] doubleValue] : 0.0;
+        plan.push_back({ std::max(0.0, delayMs),
+                         cc ? juce::MidiMessage::controllerEvent(ch, note, vel)
+                            : on ? juce::MidiMessage::noteOn(ch, note, (juce::uint8) vel)
+                                 : juce::MidiMessage::noteOff(ch, note, (juce::uint8) vel) });
+    }
+    std::stable_sort(plan.begin(), plan.end(), [](const Ev& a, const Ev& b) { return a.ms < b.ms; });
+    _virtualMidiPending += (int) plan.size();
+    __unsafe_unretained OBJEngineCore* me = self;
+    std::thread([me, target, all, viaAll, plan = std::move(plan)] {
+        const auto t0 = std::chrono::steady_clock::now();
+        for (auto& ev : plan) {
+            std::this_thread::sleep_until(t0 + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                   std::chrono::duration<double, std::milli>(ev.ms)));
+            // Timestamp 0 = "now" for Tracktion (MidiInputDevice::handleIncomingMessage).
+            target->handleIncomingMidiMessage(nullptr, ev.m);
+            if (viaAll) all->handleIncomingMidiMessage(nullptr, ev.m);
+            me->_virtualMidiSent++;
+            me->_virtualMidiPending--;
+        }
+    }).detach();
+    return nil;
 }
 
 // MARK: Virtual card (--virtual-audio)

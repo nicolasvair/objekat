@@ -144,13 +144,22 @@ struct SynopticBoundView: View {
         if let o = obj, EditViewModel.isRecordableZone(o), !viewModel.sessionContentRootIDs.contains(o.id) {
             let visible = viewModel.visibleRecordInputs
             let named: [SynopticRecordInputChoice] = visible.map { .init(ref: $0, name: viewModel.inputName($0)) }
+            let midiChoices: [SynopticMidiChoice] = viewModel.midiInputs.map {
+                .init(ref: $0.ref, name: $0.id == MidiInputResolver.allInputsID ? L("midi.all_inputs") : $0.name)
+            }
+            let midiSide: SynopticMidiInput? = o.recordMidiInput.map { r in
+                SynopticMidiInput(ref: r, name: viewModel.midiInputName(r),
+                                  present: viewModel.resolvedMidiInput(r) != nil,
+                                  instrumentName: o.instruments.first?.name)
+            }
             recordInput = SynopticRecordInput(
                 ref: o.recordInput,
                 name: o.recordInput.map { viewModel.inputName($0) } ?? "",
                 present: o.recordInput.map { viewModel.isRecordInputPresent($0) } ?? true,
                 takeMode: o.recordTakeMode ?? .mute,
                 locked: viewModel.isRecording,
-                monoChoices: named.filter { !$0.ref.isStereo }, stereoChoices: named.filter { $0.ref.isStereo })
+                monoChoices: named.filter { !$0.ref.isStereo }, stereoChoices: named.filter { $0.ref.isStereo },
+                midiChoices: midiChoices, midi: midiSide)
         }
         widthFlow.recordInputWidth = recordInput?.ref?.count
 
@@ -341,7 +350,12 @@ struct SynopticBoundView: View {
                 viewModel.removeInstrument(objectID: objectID)
                 if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
             },
-            onOpenInstrumentEditor: { if let id = obj?.instruments.first?.id { openEditor(id) } },
+            onOpenInstrumentEditor: {
+                // A MIDI recording zone's instrument lives on a hidden track that exists while the zone is armed:
+                // for a disarmed zone the view-model brings up a temporary instance for the editor.
+                if viewModel.canHaveZoneInstrument(objectID) { viewModel.openZoneInstrumentEditor(groupID: objectID) }
+                else if let id = obj?.instruments.first?.id { openEditor(id) }
+            },
             onToggleInstrumentBypass: {
                 if let id = obj?.instruments.first?.id {
                     viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
@@ -387,6 +401,7 @@ struct SynopticBoundView: View {
             // refusal while a recording runs). The take mode follows the usual rule: the object that is part of
             // the selection speaks for every recording zone selected, in ONE undo point.
             onAssignRecordInput: { ref in viewModel.assignRecordInput(ref, toGroup: objectID) },
+            onAssignMidiInput: { ref in viewModel.assignRecordSource(.midi(ref), toGroup: objectID) },
             onSetRecordTakeMode: { mode in
                 let selected = viewModel.selectedIDs
                 let targets: [UUID] = selected.contains(objectID)

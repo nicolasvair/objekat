@@ -9,6 +9,8 @@ struct GroupBlockView: View {
     /// A recording zone with a name of its own: the input's name, written in front of it ("[mic] Input
     /// → [folder] Name") — hidden while the name is being edited. nil = the name alone.
     var inputPrefix: String? = nil
+    /// The glyph in front of that prefix: the mic of a card input, the keys of a MIDI one.
+    var inputGlyph: String = ObjectKindIcon.recordInput
     let pixelsPerSecond: Double
     let rulerHeight: Double
     let blockHeight: Double
@@ -277,7 +279,7 @@ struct GroupBlockView: View {
                         // A recording zone with a name of its own: "[mic] Input → " in front of the
                         // glyph and the name (the Canvas writes the same run). Not while renaming.
                         if !isRenaming, let inputPrefix {
-                            Image(systemName: ObjectKindIcon.recordInput)
+                            Image(systemName: inputGlyph)
                                 .font(.system(size: TimelineLabelMetrics.groupIconSize, weight: .medium))
                                 .foregroundStyle(BlockInk.metaColor(light: lightInk))
                             Text(verbatim: " " + inputPrefix + " \u{2192} ")

@@ -184,3 +184,73 @@ enum InputPairing {
         visibleInputs(channelCount: channelCount, pairs: pairs).contains(ref)
     }
 }
+
+
+// MARK: - The MIDI inputs, as the PROJECT knows them (rec3-midi)
+
+/// One MIDI input a recording zone listens to. Keyed by Tracktion's device ID and carrying the device's name
+/// as it was: a project opened where the id is different (another machine, a device plugged on another
+/// port) finds the input again by its NAME when exactly one present device bears it, else the input is
+/// "absent" — and the assignment is kept (the same rule as an audio input the card no longer has).
+struct MidiInputRef: Codable, Hashable, Sendable {
+    var id: String
+    var name: String
+
+    init(id: String, name: String) {
+        self.id = id
+        self.name = name
+    }
+
+    // A reference with no id (a hand-edited file) is refused here, so that the optional field holding it reads
+    // as absent rather than failing the whole project.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try c.decode(String.self, forKey: .id)
+        guard !id.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .id, in: c, debugDescription: "empty MIDI input id")
+        }
+        self.id = id
+        self.name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? ""
+    }
+
+    enum CodingKeys: String, CodingKey { case id, name }
+}
+
+/// A MIDI input the engine offers right now (`OBJEngineCore.midiInputDevices`).
+struct MidiInputInfo: Equatable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var isVirtual: Bool
+    var enabled: Bool
+
+    /// The reference that names it.
+    var ref: MidiInputRef { MidiInputRef(id: id, name: name) }
+}
+
+enum MidiInputResolver {
+    /// The present device `ref` stands for: the one with its id, else the only one with its name, else nil.
+    static func resolve(_ ref: MidiInputRef, in devices: [MidiInputInfo]) -> MidiInputInfo? {
+        if let byID = devices.first(where: { $0.id == ref.id }) { return byID }
+        guard !ref.name.isEmpty else { return nil }
+        let byName = devices.filter { $0.name == ref.name }
+        return byName.count == 1 ? byName[0] : nil
+    }
+
+    /// What the panel lists, in order: "All MIDI Ins" first, then the others by name.
+    static func ordered(_ devices: [MidiInputInfo]) -> [MidiInputInfo] {
+        devices.sorted { a, b in
+            let aAll = a.id == allInputsID, bAll = b.id == allInputsID
+            if aAll != bAll { return aAll }
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+    }
+
+    /// Tracktion's id for its "All MIDI Ins" virtual device.
+    static let allInputsID = "all_midi_in"
+}
+
+/// What a recording zone listens to: a card input or a MIDI input — never both (a zone has ONE source).
+enum RecordSource: Hashable, Sendable {
+    case audio(InputRef)
+    case midi(MidiInputRef)
+}

@@ -357,6 +357,8 @@ final class EditViewModel {
     /// `input.selection` commands read the one selection the hand sees. Cleared with the rename at a tab
     /// switch, and purged of the inputs a pairing change swallowed (@see `purgeRecordInputSelection`).
     var selectedRecordInputs: Set<InputRef> = []
+    /// The MIDI rows selected in the same tab (Tracktion's device ids; @see MidiInputsSection).
+    var selectedMidiInputs: Set<String> = []
     /// The stem whose FX popover is open in the toolbar (nil = none; the Main counts, it is a stem too).
     /// Held by the model, not by the toolbar's @State, so that ⌘R knows whether a popover is open.
     var openStemPopoverID: UUID? = nil {
@@ -462,6 +464,7 @@ final class EditViewModel {
                     guard let self else { return }
                     if isOpen { self.openEditorPluginID = id; if let id { self.placeTiledEditor(id) } }
                     else if self.openEditorPluginID == id { self.openEditorPluginID = nil }
+                    if let id, !isOpen { self.releaseZoneInstrumentEditor(pluginKey: id) }
                     // An editor window that closes by itself (the ✕ button) goes back through
                     // no Swift call: it is here, and nowhere else, that the parameter-touch
                     // listening is given back (@see EditViewModel+AutomationTargets).
@@ -1201,6 +1204,7 @@ final class EditViewModel {
         // A recording zone nobody named is called after its input (and follows its renaming): not
         // memoised, `recordInputs` is not `items` and nothing here would empty the cache for it.
         if item.label == nil, item.isGroup, let ref = item.recordInput { return inputName(ref) }
+        if item.label == nil, item.isGroup, let ref = item.recordMidiInput { return midiInputName(ref) }
         guard item.label == nil, item.isGroup else { return item.displayName }
         if let cached = composedNameCache[item.id] { return cached }
         let name = item.displayName
@@ -1306,7 +1310,7 @@ final class EditViewModel {
     /// Read through `armedRecordZones`, which keeps only the ones still able to record
     /// (@see EditViewModel+RecordZones).
     var armedGroupIDs: Set<UUID> = [] {
-        didSet { if armedGroupIDs != oldValue { syncArmedInputs() } }   // the engine readies their tracks
+        didSet { if armedGroupIDs != oldValue { syncArmedInputs(); syncMidiZones() } }   // the engine readies their tracks
     }
     /// A recording is under way (session state, like the arming). It pins the document: no tab switch,
     /// no New / Open until it ends (@see `tabSwitchBlocker`, `exportPinsActiveDocument`).
@@ -1314,6 +1318,13 @@ final class EditViewModel {
     /// The zones the recording in flight was started for, and what the last one gave them
     /// (@see EditViewModel+Recording).
     var recordingZones: [RecordingZone] = []
+    /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
+    /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
+    var midiInputs: [MidiInputInfo] = []
+    /// The MIDI zones whose instrument the engine plays right now (armed and able to record).
+    @ObservationIgnored var activeMidiZoneIDs: Set<UUID> = []
+    /// Disarmed MIDI zones whose instrument editor is open on a temporary instance (@see openZoneInstrumentEditor).
+    @ObservationIgnored var editingMidiZoneIDs: Set<UUID> = []
     /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
     /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
     var recordingStartTime: Double? = nil

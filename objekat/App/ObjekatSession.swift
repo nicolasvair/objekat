@@ -83,6 +83,7 @@ final class ObjekatSession {
     func start() {
         viewModel.engine = engine
         viewModel.installARAHooks()
+        viewModel.installMidiHooks()
         // An ARA plugin (Melodyne's own play button, a click in its ruler) asks the HOST to move the
         // transport: the session stays master. Loop requests are ignored in v1.
         engine.onARATransportRequest = { [weak self] kind, a, _ in
@@ -110,7 +111,22 @@ final class ObjekatSession {
                     return RecordedFile(ref: InputRef(first: first, count: count), path: path, origin: origin,
                                         length: length, sampleRate: d["sampleRate"] as? Double ?? 0)
                 }
-                self.viewModel.completeRecording(files: files)
+                let midi = takes.compactMap { d -> RecordedMidi? in
+                    guard let zoneString = d["zone"] as? String, let zone = UUID(uuidString: zoneString),
+                          let origin = d["origin"] as? Double, let length = d["length"] as? Double,
+                          let raw = d["notes"] as? [[String: Any]] else { return nil }
+                    let notes = raw.compactMap { n -> MidiTakePlanner.RawNote? in
+                        guard let p = (n["pitch"] as? NSNumber)?.intValue, let s = (n["start"] as? NSNumber)?.doubleValue,
+                              let e = (n["end"] as? NSNumber)?.doubleValue else { return nil }
+                        return .init(pitch: p, start: s, end: e, velocity: (n["velocity"] as? NSNumber)?.intValue ?? 100)
+                    }
+                    let pedal = (d["sustain"] as? [[String: Any]] ?? []).compactMap { e -> MidiTakePlanner.Pedal? in
+                        guard let t = (e["time"] as? NSNumber)?.doubleValue else { return nil }
+                        return .init(time: t, down: (e["down"] as? NSNumber)?.boolValue ?? false)
+                    }
+                    return RecordedMidi(zone: zone, origin: origin, length: length, notes: notes, pedal: pedal)
+                }
+                self.viewModel.completeRecording(files: files, midi: midi)
                 if self.isPlaying { self.stop() }
             }
         }

@@ -51,6 +51,10 @@ nonisolated struct LaunchArguments: Sendable {
         return v.isEmpty ? nil : v
     }
 
+    /// Adds ONE in-process MIDI input, "OBJ Virtual MIDI", that `midi.virtual.send` feeds — MIDI tests with no
+    /// hardware. Nothing about MIDI devices is ever written to Settings.xml (@see `OBJPropertyStorage`).
+    var virtualMidi: Bool { flag("virtual-midi") }
+
     /// Writes NOTHING into "Recent Projects" during this launch. A test opens and saves throwaway
     /// projects: without this, the user's list fills up with temporary folders and pushes their
     /// real projects out (it only keeps 10). Applies with or without a window — trying something
