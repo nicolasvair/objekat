@@ -512,6 +512,57 @@ extension EditViewModel {
         return (copies, newInAbs - splitTime, newInAbs - splitTime + period)
     }
 
+    /// Cuts a PICTURE object in two, in the model alone (it has no engine clip, no plugin, no send).
+    /// Same arithmetic as a sound clip's cut: the source offset advances by the cut's travel × speed,
+    /// the curves and the marks are split, the left half's right edge is bare, the right half's left
+    /// edge too; `video` travels with both halves (`derivedCopy`). Top-level or child of a group.
+    /// Returns the right half's id, nil if the instant is not strictly inside the object.
+    private func splitPicture(_ original: SoundObject, atTime splitTime: Double) -> UUID? {
+        guard case .clip(let filePath, _, let fileDuration, let speedRatio, let isReversed) = original.kind
+        else { return nil }
+        let parent = parentGroup(for: original.id)
+        // The margins are those of the sound clip's two cases (a child keeps 10 ms on each side).
+        let margin = parent == nil ? 0.0 : 0.01
+        let splitRel = splitTime - original.startTime
+        guard splitRel > margin, splitRel < original.duration - margin else { return nil }
+        let offsets = splitSourceOffsets(of: original, at: splitTime)
+        let (autoL, autoR) = original.automation.splitInTime(at: splitRel)
+        let (markL, markR) = original.markers.splitInTime(at: splitRel)
+        let rightID = UUID()
+        let right = original.derivedCopy(
+            id: rightID, startTime: splitTime, duration: original.duration - splitRel, lane: original.lane,
+            fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
+            fadeInCurve: Self.freshCutCurve,
+            plugins: [], sends: [], automation: autoR, markers: markR, araSource: .some(nil),
+            kind: .clip(filePath: filePath, sourceOffset: offsets.right, fileDuration: fileDuration,
+                        speedRatio: speedRatio, isReversed: isReversed))
+        func cutLeft(_ o: inout SoundObject) {
+            o.duration = splitRel
+            o.automation = autoL
+            o.markers = markL
+            o.sourceOffset = offsets.left
+            o.fadeIn = min(o.fadeIn, splitRel)
+            o.fadeOut = 0
+            o.fadeOutCurve = Self.freshCutCurve   // @see freshCutCurve
+        }
+        if let parent {
+            update(id: parent.id) { obj in
+                guard case .group(var children, let isExpanded) = obj.kind,
+                      let ci = children.firstIndex(where: { $0.id == original.id }) else { return }
+                cutLeft(&children[ci])
+                children.insert(right, at: ci + 1)
+                obj.kind = .group(children: children, isExpanded: isExpanded)
+            }
+            isDirty = true
+        } else if let i = items.firstIndex(where: { $0.id == original.id }) {
+            cutLeft(&items[i])
+            items.append(right)
+        } else {
+            return nil
+        }
+        return rightID
+    }
+
     /// `windowOnly` only concerns a GROUP (case 3): the window is cut in two and the children are
     /// not — each half keeps ALL of them whole (the left the originals, the right independent
     /// copies with fresh ids, as the looped path already does), a child overflowing the window
@@ -525,6 +576,10 @@ extension EditViewModel {
 
         // The stage and the content root of an open consolidated object are never split (E7).
         if isSessionScaffold(id) { return nil }
+
+        // A PICTURE (an imported video's image) has no engine clip: `splitSoundObject` would answer NO
+        // and the cut would silently do nothing. It is cut in the model alone.
+        if let picture = find(id: id), picture.isPicture { return splitPicture(picture, atTime: splitTime) }
 
         // Case 1: a top-level clip
         if let i = items.firstIndex(where: { $0.id == id }),
