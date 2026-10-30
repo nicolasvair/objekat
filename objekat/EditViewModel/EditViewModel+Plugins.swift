@@ -377,16 +377,15 @@ extension EditViewModel {
 
     // MARK: - Instruments (MIDI clips)
 
-    /// (Re)pushes the MIDI clip's instrument to the engine (slot index 0, outside the FX rack). Step A: a
-    /// single instrument — the first of `instruments` is taken. Empty ⇒ removes the engine instrument.
+    /// (Re)pushes the instrument of a MIDI clip OR of a group to the engine (slot index 0 of its container's
+    /// chain, outside the FX rack). A single instrument — the first of `instruments` is taken. Empty ⇒ removes
+    /// the engine instrument. A group's instrument plays the notes of the empty MIDI clips below it
+    /// (@see GroupInstrumentRule.host).
     /// - Parameter rewireLinks: false only while `ProjectLoader` drains `deferredChainCompiles`
     ///   itself (it calls `rewireLinkGroups()` once, after the whole queue). Every other caller
     ///   keeps the original, immediate behaviour (default true).
     func syncInstruments(_ object: SoundObject, rewireLinks: Bool = true) {
         guard let engine else { return }
-        // A GROUP's instrument is its recording zone's: played on a hidden track while armed, never put on the
-        // container (an instrument writes its buffer and would overwrite the sum of the audio children).
-        if object.isGroup { syncMidiZones(); return }
         if let inst = object.instruments.first {
             var info: [String: Any] = [
                 "pluginKey":  inst.id.uuidString,
@@ -412,11 +411,10 @@ extension EditViewModel {
         }
     }
 
-    /// Assigns a virtual instrument to a MIDI clip (replacing any current one), then pushes it
-    /// to the engine. No effect on an object that is not a MIDI clip.
+    /// Assigns a virtual instrument to a MIDI clip or to a group (replacing any current one), then pushes it
+    /// to the engine. No effect on any other object.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
-        if canHaveZoneInstrument(objectID) { setZoneInstrument(groupID: objectID, available: available); return }
-        guard let obj = find(id: objectID), obj.isMIDI, engine != nil else { return }
+        guard let obj = find(id: objectID), obj.isMIDI || obj.isGroup, engine != nil else { return }
         let inst = freshPlugin(available)      // its type's default preset, if one is set
         pushUndo()
         update(id: objectID) { $0.instruments = [inst] }
@@ -424,9 +422,8 @@ extension EditViewModel {
         isDirty = true
     }
 
-    /// Removes a MIDI clip's instrument (model + engine).
+    /// Removes the instrument of a MIDI clip or of a group (model + engine).
     func removeInstrument(objectID: UUID) {
-        if canHaveZoneInstrument(objectID) { removeZoneInstrument(groupID: objectID); return }
         guard find(id: objectID) != nil, engine != nil else { return }
         pushUndo()
         update(id: objectID) { $0.instruments = [] }

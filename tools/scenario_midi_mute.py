@@ -477,7 +477,40 @@ def m6():
         app.close()
 
 
-for name, fn in (("M1", m1), ("M2", m2), ("M3", m3), ("M4", m4), ("M5", m5), ("M6", m6)):
+def m7():
+    """E4: the group's instrument lives on the container: it survives a save + reopen, and an undo of its removal."""
+    print("\n── M7 ──")
+    app = App("m7")
+    try:
+        ids = scene(app)
+        proj = os.path.join(WORK, "m7proj", "m7.objekat")
+        app.c.send("project.save_as", {"path": proj})
+        x = export(app, "m7_before", 0.0, 5.0)
+        check("M7 the hosted clips sound (RMS A %.4f, C %.4f)" % (rms(x, *WA), rms(x, *WC)),
+              rms(x, *WA) > 1e-3 and rms(x, *WC) > 1e-3)
+        info = app.c.send("object.get", {"id": ids["a"]})
+        check("M7 object.get: A is hosted by H (state=%s)" % info.get("instrument_state"),
+              info.get("instrument_state") == "hosted" and info.get("instrument_host") == ids["h"])
+        app.c.send("instrument.remove", {"id": ids["h"]})
+        y = export(app, "m7_removed", 0.0, 5.0)
+        check("M7 instrument removed: A is silent again (RMS %.2e, under the tail floor of the other group's previous export), C still sounds (%.4f)" % (rms(y, *WA), rms(y, *WC)),
+              rms(y, *WA) < TAIL and rms(y, *WC) > 1e-3)
+        info = app.c.send("object.get", {"id": ids["a"]})
+        check("M7 object.get: A has no instrument above it any more (state=%s)" % info.get("instrument_state"),
+              info.get("instrument_state") == "none")
+        app.c.send("edit.undo")
+        z = export(app, "m7_undone", 0.0, 5.0)
+        check("M7 undo of the removal: the instrument is back (RMS A %.4f)" % rms(z, *WA), rms(z, *WA) > 1e-3)
+        app.c.send("project.save")
+        app.c.send("project.open", {"path": proj})
+        w = export(app, "m7_reopened", 0.0, 5.0)
+        check("M7 save + reopen: both groups still sound (RMS A %.4f, C %.4f)" % (rms(w, *WA), rms(w, *WC)),
+              rms(w, *WA) > 1e-3 and rms(w, *WC) > 1e-3)
+    finally:
+        app.close()
+
+
+for name, fn in (("M1", m1), ("M2", m2), ("M3", m3), ("M4", m4), ("M5", m5), ("M6", m6), ("M7", m7)):
     if len(sys.argv) > 2 and name not in [a.upper() for a in sys.argv[2:]]:
         continue
     try:

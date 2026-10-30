@@ -594,7 +594,7 @@ try:
         ptfile = [f for f in os.listdir(Pt) if f.endswith(".objekat")][0]
         doc = json.load(open(os.path.join(Pt, ptfile)))
         items = {i["id"]: i for i in doc["items"]}
-        check("saved: format 35", doc.get("version") == 35, doc.get("version"))
+        check("saved: format 36", doc.get("version") == 36, doc.get("version"))
         check("saved: the \"add\" zone carries recordTakeMode add", items[zad].get("recordTakeMode") == "add", items.get(zad, {}).keys())
         check("saved: the \"mute\" zone carries NO key", "recordTakeMode" not in items[zmu], items[zmu].keys())
         check("saved: the _readme describes the key", any("recordTakeMode" in line for line in doc.get("_readme", [])))

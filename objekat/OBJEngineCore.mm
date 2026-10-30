@@ -1445,13 +1445,12 @@ struct OBJRecordListener : public te::TransportControl::Listener {
     }
 };
 
-// A MIDI zone's hidden track while it is armed: the track the device is targeted at and the instrument that
-// sounds on it (@see -setMidiZones:).
+// A MIDI zone's hidden track while it is armed: the track the device is targeted at, to capture the take
+// (@see -setMidiZones:). Nothing sounds on it: the zone's instrument lives on the group's own container
+// (@see -setInstrument:forObjectID:stateXML:), so arming is not hearing.
 struct OBJMidiZoneTrack {
     te::EditItemID    track;
     std::string       deviceID;
-    std::string       instrumentKey;     // the model's id of the instrument (also its _pluginMap key)
-    te::Plugin::Ptr   instrument;
 };
 
 // The loudest note-on velocity on a MIDI input since the last read. The device is held so that the keyboard
@@ -9596,6 +9595,23 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     if (_edit && !_edit->getTransport().isPlayContextActive())
         _edit->getTransport().ensureContextAllocated();
 
+    // Un instrument de GROUPE dont le container n'a aucun enfant (zone neuve, vide) n'a pas de nœud
+    // dans le graphe : rien ne le prépare, même avec le contexte alloué, et son GUI retombe sur le
+    // piège ci-dessus. On le prépare donc ici, à la main (idempotent : `initialise` ne refait le
+    // `prepareToPlay` que si la fréquence ou la taille de bloc changent).
+    if (!isARA && _edit) {
+        for (auto& kv : _instrumentMap) {
+            if (kv.second.get() != ext) continue;
+            auto cit = _containerClipMap.find(kv.first);
+            if (cit != _containerClipMap.end() && cit->second->getClips().isEmpty() && ext->getAudioPluginInstance()) {
+                auto& dm = _engine->getDeviceManager();
+                ext->initialise({ te::TimePosition(), dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0,
+                                 dm.getBlockSize() > 0 ? dm.getBlockSize() : 512 });
+            }
+            break;
+        }
+    }
+
     // Le plugin se charge de façon asynchrone : attendre que l'instance soit prête
     if (!ext->getAudioPluginInstance()) {
         if (attempt >= 20) {
@@ -11800,25 +11816,6 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     return track.get();
 }
 
-// Drops the instrument of a zone's track (its editor window, its _pluginMap entry), keeping the track.
-- (void)dropMidiZoneInstrument:(OBJMidiZoneTrack&)z {
-    if (!z.instrument) return;
-    for (auto pit = _pluginMap.begin(); pit != _pluginMap.end(); ) {
-        if (pit->second.get() == z.instrument.get()) {
-            [self teardownPluginLink:pit->first];
-            _editorWindows.erase(pit->first);
-            _pluginOwnerHost.erase(pit->first);
-            pit = _pluginMap.erase(pit);
-        } else {
-            ++pit;
-        }
-    }
-    z.instrument->deleteFromParent();
-    z.instrument = nullptr;
-    z.instrumentKey.clear();
-    [self syncPluginMeters];
-}
-
 - (void)setMidiZones:(NSArray<NSDictionary<NSString*, id>*>*)zones {
     if (_recordingActive) return;      // never reshuffled under a recording
     _midiZonesWanted = [zones copy];
@@ -11839,15 +11836,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     std::map<std::string, NSDictionary*> wanted;
     for (NSDictionary* d in _midiZonesWanted) {
         NSString* zone = d[@"zone"]; NSString* dev = d[@"device"];
-        if (zone.length == 0) continue;
-        // "editor": the zone's instrument alone, for its editor to open on while the zone is not armed (no device).
-        const bool editorOnly = [d[@"editor"] boolValue];
-        if (dev.length == 0 && !editorOnly) continue;
-        if (dev.length > 0) {
-            const std::string deviceID([dev UTF8String]);
-            auto device = [self midiDeviceForID:deviceID];
-            if (!device || !device->isEnabled()) continue;    // an absent device: nothing to play
-        }
+        if (zone.length == 0 || dev.length == 0) continue;
+        const std::string deviceID([dev UTF8String]);
+        auto device = [self midiDeviceForID:deviceID];
+        if (!device || !device->isEnabled()) continue;        // an absent device: nothing to capture
         wanted[std::string([zone UTF8String])] = d;
     }
     if (!wanted.empty()) _edit->getTransport().ensureContextAllocated();
@@ -11860,7 +11852,6 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         if (auto device = [self midiDeviceForID:z.deviceID])
             if (auto* inst = epc ? epc->getInputFor(device.get()) : nullptr)
                 [[maybe_unused]] auto res = inst->removeTarget(z.track, nullptr);
-        [self dropMidiZoneInstrument:z];
         if (auto* t = te::findTrackForID(*_edit, z.track)) _edit->deleteTrack(t);
         it = _midiZoneTracks.erase(it);
     }
@@ -11873,32 +11864,14 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         auto* track = [self hiddenMidiTrackForZone:kv.first];
         if (!track || (!device && !deviceID.empty())) continue;
         auto& z = _midiZoneTracks[kv.first];
-        // A zone that stopped playing a device (armed → editor only) lets go of its target first.
+        // A zone that changed device lets go of its former target first.
         if (z.deviceID != deviceID && !z.deviceID.empty()) {
             if (auto old = [self midiDeviceForID:z.deviceID])
                 if (auto* oldIn = epc ? epc->getInputFor(old.get()) : nullptr)
                     [[maybe_unused]] auto res = oldIn->removeTarget(z.track, nullptr);
         }
         z.deviceID = deviceID;
-        // The instrument: the zone's, by the model's id. Another id = another instrument.
-        NSDictionary* inst = d[@"instrument"];
-        NSString* key = inst[@"pluginKey"];
-        const std::string wantKey = key ? std::string([key UTF8String]) : std::string();
-        if (wantKey != z.instrumentKey) {
-            [self dropMidiZoneInstrument:z];
-            if (!wantKey.empty()) {
-                NSString* state = inst[@"stateXML"];
-                if (auto ptr = [self insertResolvedPlugin:inst stateXML:state into:track->pluginList atIndex:0]) {
-                    z.instrument = ptr;
-                    z.instrumentKey = wantKey;
-                    _pluginMap[wantKey] = ptr;
-                    [self attachProbeIfWanted:wantKey plugin:ptr];
-                } else {
-                    NSLog(@"[OBJ] MIDI zone %@: instrument '%@' could not be created", d[@"zone"], inst[@"name"]);
-                }
-            }
-        }
-        if (!device) continue;                                // editor only: the instrument is all there is
+        if (!device) continue;
         device->setMonitorMode(te::InputDevice::MonitorMode::on);
         if (auto* in = epc ? epc->getInputFor(device.get()) : nullptr) {
             if (!in->getTargets().contains(track->itemID)) {

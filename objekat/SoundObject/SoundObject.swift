@@ -600,8 +600,8 @@ struct SoundObject: Identifiable, Codable, Equatable {
     var recordInput: InputRef? = nil
     /// The MIDI input a recording zone listens to — session format 35 (rec3-midi). SEPARATE from and exclusive
     /// of `recordInput` (a zone has one source; `recordSource`). A MIDI zone's INSTRUMENT is `instruments`
-    /// (written under the key `zoneInstruments` for a group): played while the zone is armed, and COPIED into
-    /// every take. TOP LEVEL like `recordInput`: `derivedCopy` carries it, `CrossProjectImport` clears it.
+    /// (written under the key `zoneInstruments` for a group): since format 36 a group's instrument sits on its
+    /// container and plays the empty MIDI clips below it, takes included. TOP LEVEL like `recordInput`: `derivedCopy` carries it, `CrossProjectImport` clears it.
     var recordMidiInput: MidiInputRef? = nil
     /// What a new take does to the takes already in this recording zone — session format 34. nil = the
     /// default, `.mute` (the previous takes crossing the window are muted at the press); `.add` = they

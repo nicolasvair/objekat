@@ -351,10 +351,7 @@ struct SynopticBoundView: View {
                 if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
             },
             onOpenInstrumentEditor: {
-                // A MIDI recording zone's instrument lives on a hidden track that exists while the zone is armed:
-                // for a disarmed zone the view-model brings up a temporary instance for the editor.
-                if viewModel.canHaveZoneInstrument(objectID) { viewModel.openZoneInstrumentEditor(groupID: objectID) }
-                else if let id = obj?.instruments.first?.id { openEditor(id) }
+                if let id = obj?.instruments.first?.id { openEditor(id) }
             },
             onToggleInstrumentBypass: {
                 if let id = obj?.instruments.first?.id {

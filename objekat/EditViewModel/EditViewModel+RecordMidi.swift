@@ -7,10 +7,10 @@ import Foundation
 // previous takes muted or not by the zone's take mode, ONE undo. Where it differs:
 //
 //  - the source is a MIDI input the ENGINE lists (`midiInputs`), found again by id then by name;
-//  - the zone has an INSTRUMENT (`SoundObject.instruments`, saved as `zoneInstruments`), played live while the
-//    zone is armed on a hidden track the engine owns, one per zone (`OBJEngineCore.setMidiZones:`), and COPIED
-//    into every take at the stop (`copiedInstruments`: new id, the live state). Never put on the group's own
-//    container: an instrument writes its buffer and would overwrite the sum of the audio children;
+//  - the zone may carry an INSTRUMENT (`SoundObject.instruments`, saved as `zoneInstruments`), put on the
+//    group's own container like any group's: it plays the notes of the EMPTY clips below it, takes included.
+//    A take is therefore always an empty clip (no instrument of its own). The armed zone owns a hidden track
+//    the device is targeted at (`OBJEngineCore.setMidiZones:`) to capture, and that track plays nothing;
 //  - a take is a `.midiClip` whose notes the engine read off Tracktion's clip (`MidiTakePlanner` puts them in
 //    beats relative to the take; a note before the take's start is a handle);
 //  - no file: nothing to write in `samples/rec/`, so a MIDI-only recording does not need a saved project.
@@ -102,102 +102,20 @@ extension EditViewModel {
         return midi + selectedRecordInputs.sorted().map { RecordSource.audio($0) }
     }
 
-    // MARK: Playing the armed zones
+    // MARK: Capturing with the armed zones
 
-    /// Tells the engine which MIDI zones are armed (device + instrument), so that each plays live. Before a
-    /// zone's hidden track goes away, its instrument's state is taken back into the model: whatever was
-    /// turned in the editor while armed is what the next arming (and the next take) finds.
+    /// Tells the engine which MIDI zones are armed (zone + device), so that each one has the hidden track its
+    /// device is targeted at, to capture the take. The track plays nothing: a zone's instrument lives on the
+    /// group's own container and is heard through the take, never live (arming is not hearing).
     func syncMidiZones() {
         guard !isRecording, let engine else { return }
         var wanted: [[String: Any]] = []
-        var active: Set<UUID> = []
-        // The armed zones (their device plays the instrument) and the disarmed ones whose editor is open
-        // (the instrument alone, no device: "editor").
-        let armed = Set(armedRecordZones)
-        for id in armed.union(editingMidiZoneIDs) {
-            guard let zone = find(id: id), let ref = zone.recordMidiInput else { continue }
-            let device = resolvedMidiInput(ref)
-            if device == nil && !editingMidiZoneIDs.contains(id) { continue }
-            let playing = armed.contains(id) && device != nil
-            var entry: [String: Any] = ["zone": id.uuidString, "device": playing ? device!.id : ""]
-            if !playing { entry["editor"] = true }
-            if let inst = zone.instruments.first {
-                var info: [String: Any] = ["pluginKey": inst.id.uuidString, "identifier": inst.identifier,
-                                           "format": inst.formatName, "name": inst.name]
-                if let state = inst.stateXML, !state.isEmpty { info["stateXML"] = state }
-                entry["instrument"] = info
-            }
-            wanted.append(entry)
-            active.insert(id)
+        for id in Set(armedRecordZones) {
+            guard let zone = find(id: id), let ref = zone.recordMidiInput,
+                  let device = resolvedMidiInput(ref) else { continue }
+            wanted.append(["zone": id.uuidString, "device": device.id])
         }
-        for gone in activeMidiZoneIDs.subtracting(active) { keepZoneInstrumentState(of: gone) }
-        activeMidiZoneIDs = active
         engine.setMidiZones(wanted)
-    }
-
-    /// Writes the live state of a zone's instrument back into the model (no undo point, not an edit).
-    private func keepZoneInstrumentState(of id: UUID) {
-        guard let inst = find(id: id)?.instruments.first,
-              let live = engine?.getPluginStateXML(inst.id.uuidString), !live.isEmpty,
-              live != inst.stateXML else { return }
-        update(id: id) { o in
-            o.instruments = o.instruments.map { p in
-                guard p.id == inst.id else { return p }
-                var q = p
-                q.stateXML = live
-                return q
-            }
-        }
-        isDirty = true
-    }
-
-    // MARK: The zone's instrument
-
-    /// Opens (or closes, when open) the editor of a MIDI zone's instrument. A zone that is not armed has no
-    /// instrument in the engine: a temporary instance is brought up for the editor and let go of when it
-    /// closes (the state turned in it is taken back into the model).
-    func openZoneInstrumentEditor(groupID: UUID) {
-        guard canHaveZoneInstrument(groupID), let inst = find(id: groupID)?.instruments.first else { return }
-        if isPluginEditorOpen(plug: inst) { closePluginEditor(plug: inst); return }
-        if !armedRecordZones.contains(groupID) {
-            editingMidiZoneIDs.insert(groupID)
-            syncMidiZones()
-        }
-        togglePluginEditor(objectID: groupID, plug: inst)
-    }
-
-    /// An editor closed: when it was a temporary one, the instance goes (and its state comes back to the model).
-    func releaseZoneInstrumentEditor(pluginKey: UUID) {
-        guard let zone = editingMidiZoneIDs.first(where: { find(id: $0)?.instruments.first?.id == pluginKey })
-        else { return }
-        editingMidiZoneIDs.remove(zone)
-        syncMidiZones()
-    }
-
-    /// Whether a group can take an instrument: a MIDI recording zone.
-    func canHaveZoneInstrument(_ id: UUID) -> Bool {
-        guard let g = find(id: id) else { return false }
-        return g.isGroup && g.recordMidiInput != nil
-    }
-
-    /// Gives a MIDI zone its instrument (replacing the previous one). One undo point.
-    func setZoneInstrument(groupID: UUID, available: AvailablePlugin) {
-        guard canHaveZoneInstrument(groupID), engine != nil else { return }
-        let inst = freshPlugin(available)
-        pushUndo()
-        update(id: groupID) { $0.instruments = [inst] }
-        isDirty = true
-        syncMidiZones()
-    }
-
-    /// Removes a MIDI zone's instrument. One undo point.
-    func removeZoneInstrument(groupID: UUID) {
-        guard canHaveZoneInstrument(groupID), find(id: groupID)?.instruments.isEmpty == false else { return }
-        pushUndo()
-        if let key = find(id: groupID)?.instruments.first?.id { _ = key }
-        update(id: groupID) { $0.instruments = [] }
-        isDirty = true
-        syncMidiZones()
     }
 
     // MARK: Finishing
@@ -206,8 +124,8 @@ extension EditViewModel {
     private var recordingBPM: Double { engine?.getTempo() ?? 120 }
 
     /// The take a MIDI zone receives, as a model object: the notes in beats relative to the take's start
-    /// (handles negative), a COPY of the zone's instrument under a new id with its live state. nil when there is
-    /// no note (no take).
+    /// (handles negative). An EMPTY clip: the instrument stays on the zone and plays the take. nil when there
+    /// is no note (no take).
     func midiTakeObject(from midi: RecordedMidi, zone: SoundObject, plan: RecordTakePlanner.Plan) -> SoundObject? {
         let bpm = recordingBPM
         guard let notes = MidiTakePlanner.notes(midi.notes, pedal: midi.pedal, takeStart: plan.take.start,
@@ -215,7 +133,6 @@ extension EditViewModel {
         let lengthBeats = max(1.0, plan.take.duration * bpm / 60.0)
         var take = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
                                lane: plan.take.lane, kind: .midiClip(notes: notes, lengthBeats: lengthBeats))
-        take.instruments = copiedInstruments(of: zone)
         return take
     }
 }

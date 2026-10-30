@@ -274,11 +274,16 @@ extension EditViewModel {
         // it to the live instance. Only the state — the chain's composition, its order, its ids,
         // its racks and its links are compared as before, and any difference there rebuilds
         // (@see adoptingPluginStates, which refuses as soon as the shape moves).
-        guard let plugins = adoptingPluginStates(old.plugins, new.plugins),
-              let instruments = adoptingPluginStates(old.instruments, new.instruments)
-        else { return false }
-        probe.plugins     = plugins
-        probe.instruments = instruments
+        guard let plugins = adoptingPluginStates(old.plugins, new.plugins) else { return false }
+        probe.plugins = plugins
+        // A GROUP's instrument is not the group's structure: the container keeps its children while the instrument
+        // comes, goes or changes, so it never forces a rebuild. `pushPatch` puts it right (state, or a new instance).
+        if old.isGroup {
+            probe.instruments = new.instruments
+        } else {
+            guard let instruments = adoptingPluginStates(old.instruments, new.instruments) else { return false }
+            probe.instruments = instruments
+        }
         // A send's POSITION (docs/plan_sends_rework.md, INC 2) is recoverable: its marker is a place
         // on the trunk (ignored by `adoptingPluginStates`, `pushPatch` recompiles the chain for it)
         // and its `tap` reaches the engine with the bridge sync that closes every restore. Only the
@@ -329,7 +334,6 @@ extension EditViewModel {
         // (the transport's record button reads it): undoing an assignment rebuilds nothing.
         probe.recordInput = new.recordInput
         probe.recordMidiInput = new.recordMidiInput
-        if old.isGroup { probe.instruments = new.instruments }   // a zone's instrument is played by `syncMidiZones`, not by the group
         probe.recordTakeMode = new.recordTakeMode   // same class: a setting of the zone the engine never reads
 
         switch (old.kind, new.kind) {
@@ -500,6 +504,12 @@ extension EditViewModel {
                 engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
                                             forObjectID: object.id.uuidString)
             }
+        }
+        // A group's instrument that came, went or was replaced: one instance put right on the container, the
+        // children untouched (its STATE alone travels through `changedPluginStates` above).
+        if let live, object.isGroup, live.instruments.map(\.id) != object.instruments.map(\.id) {
+            if object.instruments.isEmpty { engine?.removeInstrument(forObjectID: object.id.uuidString) }
+            else { syncInstruments(object) }
         }
         // A stereo → mono fold that moved is compiled again the same way (the compile lays or removes
         // its halves, every plugin instance kept; it also covers moved markers).

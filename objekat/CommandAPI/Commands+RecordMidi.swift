@@ -14,8 +14,8 @@ extension CommandRegistry {
                  The MIDI inputs the engine offers, "All MIDI Ins" (`all_midi_in`) first: `id` (Tracktion's, what \
                  `rec.drop` / `rec.assign` take as `midi`), `name`, `virtual` (a software device, like \
                  "All MIDI Ins" or the harness'), `enabled`. `zones` lists the MIDI recording zones: their `id`, \
-                 `midi_input`, `present`, `instrument` (name or null) and whether the engine `live`ly plays it \
-                 (armed and able to record). Never an error: an empty list on a machine with no MIDI.
+                 `midi_input`, `present`, `instrument` (name or null) and whether the engine `live`ly holds its \
+                 capture track (armed and able to record; the track plays nothing: arming is not hearing). Never an error: an empty list on a machine with no MIDI.
                  """,
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()

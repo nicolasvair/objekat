@@ -464,7 +464,6 @@ final class EditViewModel {
                     guard let self else { return }
                     if isOpen { self.openEditorPluginID = id; if let id { self.placeTiledEditor(id) } }
                     else if self.openEditorPluginID == id { self.openEditorPluginID = nil }
-                    if let id, !isOpen { self.releaseZoneInstrumentEditor(pluginKey: id) }
                     // An editor window that closes by itself (the ✕ button) goes back through
                     // no Swift call: it is here, and nowhere else, that the parameter-touch
                     // listening is given back (@see EditViewModel+AutomationTargets).
@@ -1321,10 +1320,6 @@ final class EditViewModel {
     /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
     /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
     var midiInputs: [MidiInputInfo] = []
-    /// The MIDI zones whose instrument the engine plays right now (armed and able to record).
-    @ObservationIgnored var activeMidiZoneIDs: Set<UUID> = []
-    /// Disarmed MIDI zones whose instrument editor is open on a temporary instance (@see openZoneInstrumentEditor).
-    @ObservationIgnored var editingMidiZoneIDs: Set<UUID> = []
     /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
     /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
     var recordingStartTime: Double? = nil

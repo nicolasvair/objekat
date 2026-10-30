@@ -1457,16 +1457,16 @@ extension CommandRegistry {
         // MARK: instruments (MIDI clips)
 
         register("instrument.set",
-                 summary: "Sets the virtual instrument of a MIDI clip, or of a MIDI recording zone (a group with a MIDI input: played while armed, copied into every take). Replaces the previous one.",
-                 params: [ParamSpec("id", "uuid", "Target MIDI clip or MIDI recording zone."),
+                 summary: "Sets the virtual instrument of a MIDI clip or of a GROUP (it plays the notes of the empty MIDI clips below it, a recorded take included). Replaces the previous one.",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip or group."),
                           ParamSpec("identifier", "string", required: false, "Exact identifier."),
                           ParamSpec("name", "string", required: false, "Name, failing an identifier."),
                           ParamSpec("format", "string", required: false, "Format to settle ties.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard let object = vm.find(id: id), object.isMIDI || vm.canHaveZoneInstrument(id) else {
-                throw CommandError(code: .not_found, message: "unknown MIDI clip or MIDI zone: \(id.uuidString)")
+            guard let object = vm.find(id: id), object.isMIDI || object.isGroup else {
+                throw CommandError(code: .not_found, message: "unknown MIDI clip or group: \(id.uuidString)")
             }
             let available = try CommandAdapters.resolvePlugin(p, in: vm)
             vm.setInstrument(objectID: id, available: available)
@@ -1479,13 +1479,13 @@ extension CommandRegistry {
         }
 
         register("instrument.remove",
-                 summary: "Removes the virtual instrument from a MIDI clip or a MIDI recording zone.",
-                 params: [ParamSpec("id", "uuid", "Target MIDI clip or MIDI recording zone.")],
+                 summary: "Removes the virtual instrument from a MIDI clip or a group.",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip or group.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard let object = vm.find(id: id), object.isMIDI || vm.canHaveZoneInstrument(id) else {
-                throw CommandError(code: .not_found, message: "unknown MIDI clip or MIDI zone: \(id.uuidString)")
+            guard let object = vm.find(id: id), object.isMIDI || object.isGroup else {
+                throw CommandError(code: .not_found, message: "unknown MIDI clip or group: \(id.uuidString)")
             }
             guard !object.instruments.isEmpty else {
                 throw CommandError(code: .invalid_state, message: "no instrument to remove")

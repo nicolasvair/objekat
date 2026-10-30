@@ -101,6 +101,9 @@ extension EditViewModel {
             engine.assignObjects([group.id.uuidString], toStemID: sid.uuidString)
         }
 
+        // The group's INSTRUMENT first (slot 0 of the container's chain), then the FX behind it. A group
+        // with no child has no graph node: the instrument is still instantiated, ready for its editor.
+        if !group.instruments.isEmpty { scheduleChainCompile(.instrument(group)) }
         if group.needsChainCompile { scheduleChainCompile(.plugins(group)) }
         // The sends of the group ITSELF (a group can send towards an aux). Idempotent; if
         // the target aux does not exist yet (a full rebuild), the bridge sync skips it and

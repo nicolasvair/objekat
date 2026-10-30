@@ -2,17 +2,17 @@
 # -*- coding: utf-8 -*-
 """MIDI recording zones (`--virtual-midi`, `--virtual-audio`), headless.
 
-A MIDI zone is a GROUP with a MIDI input (`recordMidiInput`, session format 35), recorded with the same
+A MIDI zone is a GROUP with a MIDI input (`recordMidiInput`, session format 36), recorded with the same
 `rec.start` / `rec.stop` as an audio zone: each take is a `.midiClip` child with handles, newest on top, the
 previous takes muted (or not, "add" mode), ONE undo point. While a zone is armed the engine plays its input
-through the zone's INSTRUMENT on a hidden track; the instrument is COPIED into every take.
+by a hidden capture track; the zone's INSTRUMENT sits on the group and plays the (empty) takes.
 The virtual device "OBJ Virtual MIDI" is fed by `midi.virtual.send`. The instrument is Apple's DLSMusicDevice
 (no third-party plugin, no licence).
 
   A  enumeration (All MIDI Ins first) and the activity meter (velocity, cleared by the read)
   B  drag -> zone (rec.drop midi), refusals, mixed MIDI + audio drag (MIDI first), assign, instrument on a zone
-  C  listening: armed = heard (master level), disarmed = silent; the hidden track is live only while armed
-  D  a 4-note take: pitches / velocities / timing, ONE undo point, the instrument copied (new id), no file
+  C  listening: arming is not hearing (master level stays silent); the capture track is live only while armed
+  D  a 4-note take: pitches / velocities / timing, ONE undo point, an empty clip hosted by the zone, no file
   E  second take: newest on top, the previous muted; "add" mode; the same input on two zones; the same take
      played twice does not touch the first one
   F  no note = no take (the mutes are given back); punch-in; a note held at the stop is closed; sustain pedal
@@ -255,7 +255,7 @@ try:
         c.send("edit.undo"); c.send("edit.undo"); c.send("edit.undo"); c.send("edit.undo")
 
         # ── C ----------------------------------------------------------------------------------------
-        section("C  listening: armed = heard, disarmed = silent")
+        section("C  listening: arming is not hearing (armed = silent too)")
         z1s = zone_status(c, z1)
         check("instrument survived the undos of the others", z1s is not None and z1s["instrument"] is not None, z1s)
         live = lambda: c.send("input.list.midi_inputs")["zones"]
@@ -272,7 +272,8 @@ try:
         play(c, [(60, 0.1, 1.5, 110)])
         time.sleep(0.9)
         heard = master_level(c)
-        check("armed: the instrument is HEARD on the master (%.3f)" % heard, heard > 0.05, heard)
+        check("armed: still SILENT on the master, the instrument is the group's and plays the takes (%.3f)" % heard,
+              heard < 0.02, heard)
         settle_sent(c)
         time.sleep(1.0)
         c.send("rec.arm", {"group": z1, "on": False})
@@ -321,8 +322,9 @@ try:
         o = get_child(c, z1, t["object"])
         ti = o.get("instruments") or []
         zs = zone_status(c, z1)
-        check("the instrument is COPIED into the take (same plugin, NEW id)",
-              len(ti) == 1 and ti[0]["name"] == "DLSMusicDevice" and ti[0]["id"] != zs["instrument"]["id"], (ti, zs["instrument"]))
+        check("the take is an EMPTY clip: no instrument of its own, played by the zone's (instrument_host)",
+              ti == [] and o.get("instrument_state") == "hosted" and o.get("instrument_host") == z1
+              and zs["instrument"] is not None, (ti, o.get("instrument_state"), o.get("instrument_host")))
         check("the take is on lane 0 of the zone, nothing muted", t["lane"] == 0 and t["muted"] == [])
         check("the take is the capture (0 -> ~3.5 s) cropped to the zone's window (0 -> 8)",
               near(t["start"], 0, 1e-3) and 3.2 < t["duration"] < 3.9, t)
@@ -463,49 +465,18 @@ try:
 
 
         # ── J ----------------------------------------------------------------------------------------
-        section("J  latency: the sound heard (loopback) vs the instant recorded")
-        c.send("audio.virtual.set_input", {"channel": 0, "signal": "loopback"})
-        r = c.send("rec.drop", {"inputs": [{"midi": VID}, {"first": 0}], "lane": 12, "time": 62.0, "visible_secs": 100})
-        jm, ja = r["drops"][0]["group"], r["drops"][1]["group"]
-        c.send("instrument.set", {"id": jm, **INST})
-        c.send("rec.arm", {"groups": [jm, ja], "on": True})
-        deltas = []
-        for k in range(5):
-            c.send("transport.seek", {"seconds": 58})
-            c.send("rec.start")
-            time.sleep(0.4)
-            pos0 = play(c, [(72, 1.0, 0.4, 127)])
-            wait_pos(c, 60.8); settle_sent(c)
-            r = c.send("rec.stop")
-            by = {x["group"]: x for x in r["last_takes"]}
-            if jm not in by or ja not in by or not by[jm]["notes"]:
-                continue
-            ta, tm = by[ja], by[jm]
-            x, sr = read_wav_float(ta["path"])
-            idx = np.nonzero(np.abs(x[:, 0]) > 0.005)[0]
-            if len(idx) == 0:
-                continue
-            heard = (ta["start"] - ta["source_offset"]) + idx[0] / sr
-            played = tm["start"] + tm["notes"][0]["start_beat"] * SPB
-            deltas.append(played - heard)
-            time.sleep(0.2)
-        c.send("rec.arm", {"groups": [jm, ja], "on": False})
-        c.send("audio.virtual.set_input", {"channel": 0, "signal": "sine", "frequency": 440, "amplitude": 0.5})
-        check("5 takes measured", len(deltas) == 5, deltas)
-        if deltas:
-            m = sum(deltas) / len(deltas)
-            print("  note (recorded) minus sound (heard on the loopback): mean %+.1f ms, min %+.1f, max %+.1f (n=%d)"
-                  % (1000 * m, 1000 * min(deltas), 1000 * max(deltas), len(deltas)))
-            print("  (the instrument's own attack counts in 'heard': a few ms)")
-            check("the note is recorded within 40 ms of the instant it is heard", abs(m) < 0.04, deltas)
+        # The former section J measured the latency between the sound HEARD live (loopback) and the instant recorded,
+        # through the zone's instrument on its hidden track. Since format 36 arming is not hearing: the live path is the
+        # INPUT's own instrument (docs/plan_groupes_midi.md, E8-E10), whose scenario takes this measure over.
 
         # ── H ----------------------------------------------------------------------------------------
         section("H  refusals, the file, reading it back")
         plain = c.send("rec.drop", {"first": 1, "lane": 9, "time": 5.0})["group"]
         c.send("rec.assign", {"group": plain})
         check("rec.arm on a group with no input is refused", refused(c, "rec.arm", group=plain, on=True) == "invalid_state")
-        check("instrument.set on a group that is not a MIDI zone is refused",
-              refused(c, "instrument.set", id=plain, **INST) == "not_found")
+        check("instrument.set on a group that is not a MIDI zone is ACCEPTED (any group may host an instrument)",
+              c.send("instrument.set", {"id": plain, **INST})["instrument"]["name"] == "DLSMusicDevice")
+        c.send("instrument.remove", {"id": plain})
         check("rec.assign midi with an unknown id is not_found", refused(c, "rec.assign", group=gm, midi="nope") == "not_found")
         check("midi.virtual.send with no event is refused", refused(c, "midi.virtual.send", events=[]) == "bad_params")
         check("midi.virtual.send with a bad kind is refused",
@@ -520,7 +491,7 @@ try:
                         raw += open(os.path.join(dp, f), errors="ignore").read()
                     except OSError:
                         pass
-        check("the file is session format 35", "OBJEKAT session — format 35." in raw)
+        check("the file is session format 36", "OBJEKAT session — format 36." in raw)
         check("... with recordMidiInput on the zone", '"recordMidiInput"' in raw)
         check("... and the zone's instrument under zoneInstruments", '"zoneInstruments"' in raw)
         c.send("project.open", {"path": path})

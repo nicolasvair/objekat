@@ -76,6 +76,14 @@ extension CommandRegistry {
             if item.isMIDI {
                 payload["midi_notes"] = .int(item.midiNotes.count)
                 payload["midi_length_beats"] = .number(item.midiLengthBeats)
+                // Who plays the notes: "own" (a clip with its instrument), "hosted" (an EMPTY clip below a group that
+                // carries one: `instrument_host`), "none" (an empty clip with no instrument group above it: muted).
+                let host = GroupInstrumentRule.host(of: item, ancestors: vm.ancestorChain(of: item.id))
+                payload["instrument_state"] = .string(!item.instruments.isEmpty ? "own" : host != nil ? "hosted" : "none")
+                payload["instrument_host"] = .stringOrNull(host?.uuidString)
+                if let engine = vm.engine, engine.hasMidiClip(forID: item.id.uuidString) {
+                    payload["engine_midi_muted"] = .bool(engine.isMidiClipMuted(forID: item.id.uuidString))
+                }
             }
             return .object(payload)
         }

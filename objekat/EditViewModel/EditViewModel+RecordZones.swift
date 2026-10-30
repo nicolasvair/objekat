@@ -166,11 +166,7 @@ extension EditViewModel {
 
     /// The change itself, for a caller that owns the undo point (a drop of several inputs makes ONE).
     private func applyRecordSource(_ source: RecordSource?, toGroup id: UUID) {
-        update(id: id) { o in
-            let wasMidi = o.recordMidiInput != nil
-            o.recordSource = source
-            if wasMidi, o.recordMidiInput == nil { o.instruments = [] }
-        }
+        update(id: id) { o in o.recordSource = source }
         if source == nil { armedGroupIDs.remove(id) }
         syncArmedInputs()   // an armed zone changed input: the hidden tracks follow
         syncMidiZones()
