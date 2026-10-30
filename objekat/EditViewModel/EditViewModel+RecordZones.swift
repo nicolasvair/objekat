@@ -301,6 +301,7 @@ extension EditViewModel {
         let plans = planRecordDrops(count: refs.count, displayLane: displayLane, time: time,
                                     visibleSpanSecs: visibleSpanSecs, pixelsPerSecond: pps)
         var groups = [UUID?](repeating: nil, count: plans.count)
+        lastDropInheritance = [:]
         guard !plans.isEmpty, !RecordZonePlanner.isRefused(plans) else { return (plans, groups) }
 
         // An instrument group takes no audio source (E5): the whole drop is refused, whole, before any undo point.
@@ -345,7 +346,22 @@ extension EditViewModel {
                 var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
                                        label: nil, kind: .group(children: [], isExpanded: false))
                 zone.recordSource = ref
+                // A NEW zone starts with a copy of what its input carries (E11): the FX of a card input, the instrument
+                // of a MIDI input. A zone that already exists (`.assign`) is never touched.
+                let inherited = inheritedChain(for: ref)
+                zone.plugins = inherited.plugins
                 let placed = placeClip(zone, snapshot: laneEntries)
+                var instrumentName: String? = nil
+                if let inst = inherited.instrument, !refusesInstrument(on: placed.id) {
+                    update(id: placed.id) { $0.instruments = [inst] }
+                    if let updated = find(id: placed.id) { syncInstruments(updated) }
+                    refreshPassiveChains()
+                    instrumentName = inst.name
+                }
+                if !inherited.plugins.isEmpty || instrumentName != nil {
+                    lastDropInheritance[placed.id] = InheritedInput(fx: Self.flattenLeaves(inherited.plugins).count,
+                                                                    instrument: instrumentName)
+                }
                 // A zone of the selection starts at its in and ends at its out, or earlier (an object behind).
                 if let s = timeSelection, start == max(0, s.timeRange.lowerBound),
                    end <= s.timeRange.upperBound { spent = true }
@@ -357,4 +373,12 @@ extension EditViewModel {
         if changes { isDirty = true }
         return (plans, groups)
     }
+}
+
+/// What a recording zone took from its input when it was born (docs/plan_groupes_midi.md, E11).
+struct InheritedInput: Equatable {
+    /// Cards copied from a card input's chain.
+    var fx: Int
+    /// The instrument copied from a MIDI input's, by name.
+    var instrument: String?
 }

@@ -392,4 +392,40 @@ extension EditViewModel {
         syncInputChains()
         return nil
     }
+
+    // MARK: Inheritance (a recording zone born from an input — E11)
+
+    /// What a NEW zone takes from the input it is dropped from: a copy of the input's FX (audio) or of its instrument (MIDI).
+    /// Independent: fresh ids, no parameter link and no FX link (a bin becomes its plugins), the live state when the chain is
+    /// mounted and the model's otherwise. The input itself is untouched.
+    func inheritedChain(for source: RecordSource) -> (plugins: [ObjectPlugin], instrument: ObjectPlugin?) {
+        switch source {
+        case .audio(let ref):
+            guard let chain = inputChains.audio[ref.key], !chain.isEmpty else { return ([], nil) }
+            return (independentCopies(capturingPluginStates(chain.plugins)), nil)
+        case .midi(let ref):
+            let key = inputChains.midi[ref.id] != nil ? ref.id
+                : resolvedMidiInput(ref).flatMap { midiChainKey(for: $0) }
+            guard let key, let inst = inputChains.midi[key]?.instrument else { return ([], nil) }
+            guard let live = capturingPluginStates([inst]).first else { return ([], nil) }
+            return ([], independentCopies([live]).first)
+        }
+    }
+
+    private func independentCopies(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+        plugins.flatMap { p -> [ObjectPlugin] in
+            if p.isChannelPick { return [p.copiedChannelPick()] }
+            if let block = p.fxBlock { return independentCopies(block.plugins) }
+            if p.isContainer {
+                var q = p.mappingChildSeries { independentCopies($0) }
+                q.id = UUID()
+                return [q]
+            }
+            var q = p
+            q.id = UUID()
+            q.linkGroupID = nil
+            q.detachedLinkGroupID = nil
+            return [q]
+        }
+    }
 }

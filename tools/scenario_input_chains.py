@@ -21,6 +21,15 @@ E9 (the model, through the public API: `input.host`, `plugin.*`, `input.set_inst
   M5  undo of the FX added; a new project forgets the chains
   M6  MIDI: instrument on an input (one undo point), refused without one, heard only when monitored, removed, undo
 
+E11 (a zone CREATED from an input takes a copy of what it carries; `rec.drop`, then `plugin.list` / `plugin.get_params`):
+
+  H1  MIDI input with an instrument -> the new zone has its own copy (new id), `inherited.instrument`
+  H2  changing one side (the zone's copy or the input's chain) leaves the other alone, for the FX and the instrument
+  H3  a drop on an EXISTING zone (assign) changes nothing in its chain
+  H4  card input with FX -> the new zone has copies (new ids, same setting), `inherited.fx`; one undo removes the zone only
+  H5  several inputs dropped at once: every lane inherits its own
+  H6  an input NOT mounted (closed, not heard): the copy is made from the model's state
+
     ./scenario_input_chains.py /path/to/objekat.app
 
 Exit: 0 if every assertion passes, 1 otherwise, 2 on bad usage.
@@ -238,6 +247,116 @@ def e9(c, level, fxp, instp, dev):
     check("M6 undo of the setting: gone again", row["instrument"] is None, row)
 
 
+def e11(c, instp, dev):
+    LPF = {"identifier": "aufx,lpas,appl"}
+
+    def loaded(pid):
+        for _ in range(60):
+            try:
+                c.send("debug.plugin_buses", {"plugin": pid})
+                return True
+            except ObjekatError:
+                time.sleep(0.25)
+        return False
+
+    def absent(pid):
+        try:
+            c.send("debug.plugin_buses", {"plugin": pid})
+            return False
+        except ObjekatError as e:
+            return e.code == "not_found"
+
+    def cutoff(pid):
+        for prm in c.send("plugin.get_params", {"plugin": pid}).get("params", []):
+            if "cutoff" in prm["name"].lower():
+                return prm["index"], prm["value"]
+        return None, None
+
+    def lst(host):
+        return c.send("plugin.list", {"host": host})
+
+    c.send("project.new")
+    c.send("audio.virtual.set_input", {"channel": 0, "signal": "sine", "frequency": 440, "amplitude": 0.5})
+    c.send("input.enable")
+    host = c.send("input.host", {"first": 0})["host_id"]
+    pid = c.send("plugin.add", {"host": host, **LPF})["plugin"]["id"]
+    loaded(pid)
+    k, _ = cutoff(pid)
+    c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.003})
+    time.sleep(0.3)
+    _, set_value = cutoff(pid)
+
+    # H4: a card input with FX
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("rec.drop", {"first": 0, "count": 1, "lane": 0, "time": 1})
+    g1 = r["group"]
+    check("H4 the zone is created and says what it took (fx 1)", r["outcome"] == "create" and (r.get("inherited") or {}).get("fx") == 1, r)
+    check("H4 ... one undo point for the whole gesture", c.send("perf.census")["undo_depth"] == depth + 1)
+    copy = lst(g1)["plugins"]
+    check("H4 the zone holds ONE copy, with an id of its own", len(copy) == 1 and copy[0]["id"] != pid, copy)
+    cid = copy[0]["id"]
+    check("H4 ... mounted on the zone", loaded(cid))
+    ck, cv = cutoff(cid)
+    check("H4 ... with the input's setting (%.4f ~ %.4f)" % (cv or -1, set_value or -1), cv is not None and abs(cv - set_value) < 0.002, (cv, set_value))
+    check("H4 ... and the input's chain is unchanged", [p["id"] for p in lst(host)["plugins"]] == [pid])
+
+    # H2: each side on its own
+    c.send("plugin.set_param", {"plugin": cid, "index": ck, "value": 0.9})
+    time.sleep(0.3)
+    check("H2 the zone's copy moved, the input's FX did not", abs(cutoff(cid)[1] - 0.9) < 0.01 and abs(cutoff(pid)[1] - set_value) < 0.002, (cutoff(cid), cutoff(pid)))
+    c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.2})
+    time.sleep(0.3)
+    check("H2 the input's FX moved, the zone's copy did not", abs(cutoff(pid)[1] - 0.2) < 0.01 and abs(cutoff(cid)[1] - 0.9) < 0.01, (cutoff(cid), cutoff(pid)))
+
+    # H3: an existing zone is never touched
+    r0 = c.send("rec.drop", {"first": 1, "count": 1, "lane": 2, "time": 1})
+    g3 = r0["group"]
+    check("H3 a zone from a bare input inherits nothing", r0["outcome"] == "create" and "inherited" not in r0 and lst(g3)["plugins"] == [], r0)
+    r1 = c.send("rec.drop", {"first": 0, "count": 1, "lane": 2, "time": 2})
+    check("H3 dropping an input WITH FX on it assigns", r1["outcome"] == "assign" and r1["target"] == g3, r1)
+    check("H3 ... and its chain stays empty", lst(g3)["plugins"] == [] and "inherited" not in r1)
+
+    # H1: a MIDI input with an instrument
+    c.send("input.set_instrument", {"midi": dev, **instp})
+    ihost = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)["host_id"]
+    inst_id = lst(ihost)["instruments"][0]["id"]
+    r2 = c.send("rec.drop", {"midi": dev, "lane": 4, "time": 1})
+    g2 = r2["group"]
+    check("H1 the MIDI zone says it took the instrument", r2["outcome"] == "create" and (r2.get("inherited") or {}).get("instrument") == "DLSMusicDevice", r2)
+    zi = lst(g2)["instruments"]
+    check("H1 ... a copy of its own (new id)", len(zi) == 1 and zi[0]["id"] != inst_id and zi[0]["name"] == "DLSMusicDevice", zi)
+    check("H1 ... and the input still has its instrument", [i["id"] for i in lst(ihost)["instruments"]] == [inst_id])
+    r3 = c.send("rec.drop", {"midi": dev, "lane": 4, "time": 2})
+    check("H3 a second drop of the same MIDI input assigns and leaves the zone's instrument alone",
+          r3["outcome"] == "assign" and [i["id"] for i in lst(g2)["instruments"]] == [zi[0]["id"]], r3)
+
+    # H2 for the instrument: the input loses its own, the zone keeps its copy
+    c.send("input.remove_instrument", {"midi": dev})
+    check("H2 the input's instrument is removed, the zone's copy stays", lst(ihost)["instruments"] == [] and len(lst(g2)["instruments"]) == 1)
+
+    # H5: several inputs at once
+    c.send("input.set_instrument", {"midi": dev, **instp})
+    r5 = c.send("rec.drop", {"inputs": [{"first": 0, "count": 1}, {"midi": dev}], "lane": 6, "time": 1})
+    d5 = r5["drops"]
+    check("H5 both lanes are created and each inherits its own",
+          len(d5) == 2 and d5[0].get("inherited", {}).get("fx") == 1 and d5[1].get("inherited", {}).get("instrument") == "DLSMusicDevice", r5)
+    check("H5 ... the FX on the audio zone, the instrument on the MIDI one",
+          len(lst(d5[0]["group"])["plugins"]) == 1 and len(lst(d5[1]["group"])["instruments"]) == 1)
+
+    # H6: an input that is not mounted
+    c.send("input.host", {"first": 0, "open": False})
+    check("H6 the input chain is not mounted (closed, not heard)", absent(pid))
+    r6 = c.send("rec.drop", {"first": 0, "count": 1, "lane": 8, "time": 1})
+    c6 = lst(r6["group"])["plugins"]
+    check("H6 the zone still gets its copy", r6["outcome"] == "create" and len(c6) == 1 and c6[0]["id"] != pid, r6)
+    check("H6 ... mounted on the zone, with the state the model kept (%.3f)" % 0.2,
+          loaded(c6[0]["id"]) and abs(cutoff(c6[0]["id"])[1] - 0.2) < 0.01, cutoff(c6[0]["id"]))
+
+    # H4: one undo removes the zone and nothing of the input
+    c.send("edit.undo", {})
+    check("H4 undo removes the last zone; the input's chain is intact", [p["id"] for p in lst(host)["plugins"]] == [pid])
+
+
 def refused_cmd(c, cmd, **params):
     try:
         c.send(cmd, params)
@@ -387,6 +506,7 @@ def main():
         r = door("midi_monitor", device=dev, on=True)
         check("I5 ... the monitoring is refused again (no instrument)", bool(r["error"]), r)
         e9(c, level, fxp, instp, dev)
+        e11(c, instp, dev)
         c.close()
     except Exception:
         traceback.print_exc()

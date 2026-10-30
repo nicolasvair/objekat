@@ -290,7 +290,7 @@ extension CommandRegistry {
                  than the floor: refused. In an open group's sub-lane the zone is a sub-group. `time` is \
                  NOT snapped (the hand's gesture snaps; the machine's door is exact). `dry_run` plans \
                  without changing anything. One undo point for a change, none for a refusal. \
-                 `outcome`: create | assign | refuse (`reason` says why).
+                 `outcome`: create | assign | refuse (`reason` says why). A zone CREATED from an input that carries FX (card input) or an instrument (MIDI input) starts with an independent copy of it (new ids, live state, no link) and says so in `inherited` {fx, instrument}; a zone that already exists is never changed.
                  """,
                  params: [ParamSpec("first", "int", required: false, "First channel of the input, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
@@ -560,6 +560,11 @@ extension CommandRegistry {
             o["reason"] = .string(why.rawValue)
         }
         o["group"] = .stringOrNull(group?.uuidString)
+        // A zone born from an input that carried FX / an instrument took a copy of it.
+        if let g = group, case .create = plan, let vm = try? CommandContext.shared.requireViewModel(),
+           let got = vm.lastDropInheritance[g] {
+            o["inherited"] = .object(["fx": .int(got.fx), "instrument": .stringOrNull(got.instrument)])
+        }
         return .object(o)
     }
 
