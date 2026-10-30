@@ -247,6 +247,7 @@ extension EditViewModel {
         resyncAllSends()   // every aux now exists → rewire the sends
         pushAllFXBlockOutputs()   // kept chains: the bins' outputs come back from the restored registry
         syncAllPluginTrims()      // a patched chain keeps its instances: only its trims move
+        syncMidiZones()           // a zone's instrument / input may have moved with the undo
 
         let rebuilt = items.count - kept.count
         NSLog("[UNDO] restored in %.0f ms — top-level: %d rebuilt, %d patched, %d untouched",
@@ -324,6 +325,12 @@ extension EditViewModel {
         // parameter touched between two ⌘Z was rebuilding its object, for the memory of having
         // touched it.
         probe.automationTouchOrder = new.automationTouchOrder
+        // The recording input of a zone is a fact of the model that the engine knows nothing about
+        // (the transport's record button reads it): undoing an assignment rebuilds nothing.
+        probe.recordInput = new.recordInput
+        probe.recordMidiInput = new.recordMidiInput
+        if old.isGroup { probe.instruments = new.instruments }   // a zone's instrument is played by `syncMidiZones`, not by the group
+        probe.recordTakeMode = new.recordTakeMode   // same class: a setting of the zone the engine never reads
 
         switch (old.kind, new.kind) {
         case let (.clip(f0, _, fd0, sr0, rev0), .clip(f1, _, fd1, sr1, rev1)):

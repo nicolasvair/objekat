@@ -21,6 +21,12 @@ nonisolated enum ConsolidateFolders {
     /// The sub-folder name old projects wrote to. Read for ever, never written again.
     static let legacyFolderName = "objects"
 
+    /// The sub-folder the audio captured from the card goes to, under `samples/` (format 33). Not a
+    /// consolidation folder — it sits here because it is the same question, "which project audio
+    /// folders travel with the project": a clip pointing into it is recorded as a RELATIVE path
+    /// (`ProjectPaths`), so a moved or duplicated project finds its own takes.
+    static let recordingsFolderName = "rec"
+
     /// The extension of the wave a NEW render writes: WAV, 32-bit floating point, so a render never
     /// clips (the FLAC renders of 18 October 2026 were taken back: an integer file clips what goes
     /// past 0 dBFS). Only NEW writes: a definition records its wave by file NAME
@@ -33,6 +39,12 @@ nonisolated enum ConsolidateFolders {
     static func consolidateFolder(projectFolder: URL) -> URL {
         projectFolder.appendingPathComponent("samples", isDirectory: true)
             .appendingPathComponent(folderName, isDirectory: true)
+    }
+
+    /// `<projectFolder>/samples/rec` — where the recordings of the card are written.
+    static func recordingsFolder(projectFolder: URL) -> URL {
+        projectFolder.appendingPathComponent("samples", isDirectory: true)
+            .appendingPathComponent(recordingsFolderName, isDirectory: true)
     }
 
     /// `<projectFolder>/samples/objects` — the legacy folder, read-only from here on.
@@ -69,8 +81,10 @@ nonisolated enum ConsolidateFolders {
     //
     // The project folder's audio sub-folders, in resolution order: `consolidate` wins a
     // collision (cas E18), `objects` stays readable, `sources` is a capsule's embedded sources
-    // (@see `EditViewModel+SaveCopy.swift`) and has nothing to do with consolidation.
-    static let audioSubfolders = ["samples/\(folderName)", "samples/\(legacyFolderName)", "samples/sources"]
+    // (@see `EditViewModel+SaveCopy.swift`) and has nothing to do with consolidation, `rec` holds
+    // the recordings (format 33).
+    static let audioSubfolders = ["samples/\(folderName)", "samples/\(legacyFolderName)", "samples/sources",
+                                  "samples/\(recordingsFolderName)"]
 
     /// "samples/objects/x.wav" → "samples/consolidate/x.wav". `nil` for anything else: only a
     /// relative path that explicitly names the LEGACY folder is worth trying under the new one

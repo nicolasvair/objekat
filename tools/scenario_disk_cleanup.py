@@ -3,7 +3,7 @@
 """The disk-usage gauge and the clean-up of unused files — a scenario that asserts, through the API.
 
     # 1. launch the build with the API, on a SHORT socket (a system limit: 103 bytes).
-    objekat.app/Contents/MacOS/objekat --headless --api --no-recent --socket=/tmp/odc.sock
+    objekat.app/Contents/MacOS/objekat --headless --api --no-recent --virtual-audio --socket=/tmp/odc.sock
 
     # 2. replay (add --keep to leave the work folder behind for a look)
     ./scenario_disk_cleanup.py /tmp/odc.sock
@@ -22,6 +22,9 @@ Sections:
   D  what else protects: the clipboard, a project parked in another tab, a consolidated object
      being edited (the clean-up is refused), an unreadable version (folder scope refuses).
   E  files outside the universe are never listed; a project never saved has no figures.
+  F  the takes of samples/rec/ (needs the build launched with `--virtual-audio`): a take the project
+     reads is used (muted too), one nothing reads is offered, cleaned and fetched back by a ⌘Z; the
+     clean-up is refused while recording.
 
 Everything sent to the Trash is moved back out of it at the end (never deleted).
 Exit: 0 if every assertion passes, 1 otherwise.
@@ -389,6 +392,79 @@ def main(cmd):
     check("E2 and goes to the Trash like the rest", r["count"] == 1 and not exists(orphan_wfc), r)
     check("E3 the alien files are untouched", all(exists(os.path.join(Q, x)) for x in
           ("samples/other/alien.wav", "samples/root.wav", "notes.txt")))
+
+    # ═════════════════════════════════════════════════════════════════════════════════════════
+    section("F — the takes of samples/rec")
+    PF = os.path.join(ROOT, "pf")
+    os.makedirs(PF)
+    cmd("project.new")
+    cmd("input.enable")
+    cmd("audio.virtual.set_input", channel=0, signal="sine", frequency=440, amplitude=0.5)
+    cmd("project.save_as", path=os.path.join(PF, "pf.objekat"))
+    zone = cmd("rec.drop", first=0, lane=0, time=0.0, visible_secs=10)["group"]
+    cmd("rec.arm", group=zone, on=True)
+
+    def take_once():
+        cmd("transport.seek", seconds=0)
+        cmd("rec.start")
+        end = time.time() + 20
+        while time.time() < end and cmd("transport.state")["position"] < 1.2:
+            time.sleep(0.05)
+        r = cmd("rec.stop")
+        idle()
+        return r["last_takes"][0]
+
+    def rec_rel(t):
+        return "samples/rec/" + os.path.basename(t["path"])
+
+    t1 = take_once()
+    rel1 = rec_rel(t1)
+    check("F1 the take is a file of samples/rec", exists(os.path.join(PF, rel1)), t1)
+    r = du()
+    listed = paths(r["cleanable"]) + paths(r["used_elsewhere"]) + paths(r["protected"])
+    check("F1 a take the project reads is not offered", rel1 not in listed, listed)
+    h1 = open(os.path.join(PF, rel1), "rb").read()
+
+    # The next take mutes this one at the START (the object stays in the project, muted).
+    time.sleep(1.1)       # the file names carry the second: two takes, two names
+    t2 = take_once()
+    rel2 = rec_rel(t2)
+    check("F2 a second take, another file", rel2 != rel1 and exists(os.path.join(PF, rel2)), (rel1, rel2))
+    check("F2 the first take is muted by the second", t1["object"] in t2["muted"], t2["muted"])
+    r = du()
+    listed = paths(r["cleanable"]) + paths(r["used_elsewhere"]) + paths(r["protected"])
+    check("F2 a MUTED take is used: never offered, nor is the one that mutes it",
+          rel1 not in listed and rel2 not in listed, listed)
+
+    # Delete the first take: nothing reads it any more.
+    cmd("object.remove", ids=[t1["object"]])
+    cmd("project.save")
+    r = du()
+    unit = next((u for u in r["cleanable"] if u["path"] == rel1), None)
+    check("F3 a deleted take is offered, kind recording", unit is not None and unit.get("kind") == "recording", r["cleanable"])
+    check("F3 the take still read (the second) is not", rel2 not in paths(r["cleanable"]))
+    dry = cmd("project.clean_unused")
+    check("F3 dry run: would move it, moves nothing", dry["dry_run"] is True and exists(os.path.join(PF, rel1)), dry)
+    r = clean(dry_run=False)
+    check("F4 cleaned: the file went to the Trash", not exists(os.path.join(PF, rel1))
+          and exists(os.path.join(PF, rel2)) and r["count"] >= 1, r)
+    check("F4 the project is whole (nothing missing)", cmd("project.rescan_missing")["path_count"] == 0)
+
+    cmd("edit.undo"); idle()
+    check("F5 undo: the take is fetched back from the Trash, byte for byte",
+          exists(os.path.join(PF, rel1)) and open(os.path.join(PF, rel1), "rb").read() == h1)
+    check("F5 ... and nothing is missing", cmd("project.rescan_missing")["path_count"] == 0)
+    cmd("group.expand", id=zone, expanded=True)
+    back = [o for o in cmd("object.list")["objects"] if o["id"] == t1["object"]]
+    check("F5 ... the object is back (still muted)", len(back) == 1 and back[0].get("muted") is True, back)
+
+    # Refused while recording.
+    cmd("transport.seek", seconds=0)
+    cmd("rec.start")
+    refused(lambda: cmd("project.clean_unused", dry_run=False), "F6 clean-up refused during a recording", needle="busy")
+    refused(lambda: cmd("project.clean_unused"), "F6 even as a dry run", needle="busy")
+    cmd("rec.stop"); idle()
+    check("F6 once stopped, the clean-up answers again", cmd("project.clean_unused")["dry_run"] is True)
 
 
 with ObjekatClient(SOCK) as client:

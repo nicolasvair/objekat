@@ -725,6 +725,7 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--project=<path>` | opens a project on startup |
 | `--exec=<script.jsonl>` | replays a JSON-lines scenario (`#` for a comment, `{DIR}` = the script's folder) |
 | `--no-audio` | opens no output device |
+| `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout), which `input.enable` then refuses. Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
 
@@ -1178,7 +1179,10 @@ knowing before driving one:
   DEBUG builds add `debug.rename_shortcut {}`: presses ⌘R as the timeline would. While the signal view
   holds the keyboard and its plugin selection designates ONE bin (its header clicked, or every selected
   card inside one bin), the bin's inline rename opens; otherwise the one selected object / marker is put
-  in rename. Answers `{target: "fxlink"|"object"|"annotation"|"none", id, renaming_fxlink}`.
+  in rename. Optional `claim: "inputs"` (the Inputs list holds the keyboard: exactly one selected input is
+  renamed, otherwise nothing) and `stem_popover: <uuid>` (that stem's FX popover is open: the stem is renamed,
+  the Main never). Answers `{target: "fxlink"|"stem"|"input"|"object"|"annotation"|"none", id, first?, count?,
+  renaming_fxlink, renaming_stem, renaming_input, renaming_id}`.
 - **Automatic creation.** A cut / split, a duplicate, ⌥-copy, a paste or an overlap's fragment of an
   object whose plugins are plain no longer writes a `link_group` on them: the copy joins a NEW bin and
   the original joins it too. (The single-instance manual link no longer exists: a file of format 31 or older is cleared of it at load, session format 32.)
@@ -2243,6 +2247,208 @@ fields still answer the truth of whatever the engine actually opened; it is `--n
 guarantee that is short here. `tools/scenario_audio_device.py`'s phase A detects this and adapts
 its assertions rather than failing on a machine where it is present.
 
+#### The virtual card (`--virtual-audio`, `audio.virtual.*`)
+
+Audio tests with no hardware. `--virtual-audio` registers ONE device type, "OBJ Virtual"
+(`objekat/OBJVirtualAudioDevice.h`), BEFORE the device manager initialises — so no system type is
+ever created and the run cannot reach a real card, whatever Settings.xml says. Its device calls the
+audio callback from a thread paced on the wall clock (one block every `bs / sr` seconds, absolute
+deadlines: no drift), so `transport.play` advances at real time. Defaults: 4 inputs, 2 outputs,
+48 kHz, 256 frames, announced latencies 64 (in) and 96 (out) frames.
+
+`splitin:1` (default `0`) makes the card say that its inputs live on ANOTHER device that has the same name — the
+AirPods layout, a speaker and a microphone being two CoreAudio devices with one name. Nothing else about the
+card changes; it is only the answer to "does the output device own its inputs?", so that the refusal of
+`input.enable` (below) can be exercised with no hardware (`tools/scenario_inputs_split_device.py`).
+`audio.virtual.status` reports it as `split_inputs`.
+
+The virtual card **never reaches `~/Library/objekat/Settings.xml`**: while it is on, the engine's
+property storage neither reads nor writes any device setting (`audio_device_setup`, the default
+wave in/out, the wave in/out items, the layout presets). A normal launch afterwards finds the
+file as it was — `tools/scenario_virtual_audio.py` asserts it by hash.
+
+* `audio.virtual.status` — the configuration, what each input carries right now, `loopback_delay`
+  and the latencies the device ANNOUNCES to the host (`announced_input_latency`,
+  `announced_output_latency` = `input_latency` / `output_latency` plus one buffer each, the way
+  CoreAudio reports them; their sum equals `loopback_delay`). `{"active": false}` on a normal
+  launch (and under `--no-audio`).
+* `audio.virtual.set_input {channel, signal, frequency?, amplitude?, period?}` — what input
+  `channel` carries: `silence` (default), `sine` (`frequency` Hz at `amplitude`, phase-continuous
+  across a change of frequency), `impulse` (one sample of `amplitude` every `period` seconds, the
+  first at once) or `loopback` (the output's first channel, delayed by `loopback_delay`). Refused
+  with `invalid_state` when the card is not active, `bad_params` for a channel outside the card or an
+  impossible value.
+
+The loopback models a cable from the output back to an input: the real round trip is one buffer
+out, the latencies `inlat` and `outlat`, one buffer in — `loopback_delay = 2 * bs + inlat + outlat`
+frames (672 with the defaults). The device announces `inlat + bs` and `outlat + bs` to the host
+(`announced_input_latency`, `announced_output_latency`), the way JUCE's CoreAudio device does —
+the buffer INCLUDED — so a host that adds the two lands exactly on `loopback_delay`. Never less than
+a block: a block-based callback cannot hand back samples it has not produced yet.
+
+#### The card's inputs (`input.enable` / `disable` / `list` / `levels` / `set_pairs` / `pair` / `unpair` / `set_name` / `monitor`)
+
+Recording starts from the card's INPUTS, and they are **closed at launch**: opening them on a real
+card makes macOS ask for the microphone (and wakes a Bluetooth headset into its call profile), so
+nothing opens them until a command — the "Inputs" tab's *Enable inputs* button — asks. They are the
+inputs of the SAME device as the output; there is no separate input card. A card whose inputs are another device
+with the same name (AirPods) is therefore **not supported**: opening them made JUCE aggregate the two devices, and the
+switch to the call profile made CoreAudio restart the aggregate from its own thread in the middle of the opening (a
+crash). The engine asks the system first (`objekat/Shared/OBJCoreAudioProbe.h`: the output device must carry input
+channels ITSELF; with several same-name devices, every output-capable one must) and refuses before touching anything. These nine `input.*` names sit beside the
+synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only the prefix.
+
+* `input.enable` — opens the inputs of the current output device, waits for the device to settle
+  (`audio.status.generation` moves), answers like `input.list`. A no-op when already open.
+  `invalid_state` with no device open (`--no-audio`, or the open failed), `invalid_state` too with
+  `details.reason = "inputs_on_separate_device"` when the inputs are a separate device (AirPods; the output is not
+  touched, not even restarted: `generation` does not move), `engine_error` when the
+  card refuses (the output keeps playing: the previous setup is restored).
+* `input.disable` — closes them again; the output is untouched.
+* `input.list` — `{open, device, channels, channel_names, pairs, inputs, engine_devices, record_inputs}`.
+  `inputs` is what can be recorded from RIGHT NOW: the enabled devices, each
+  `{index, name, first, count, stereo, enabled}` (`first` 0-based, `count` 1 or 2).
+  `engine_devices` is everything the engine describes: **2N - 1 devices for N channels** (N monos,
+  then N - 1 neighbouring pairs), enabled or not. `record_inputs` is what the Inputs tab lists —
+  every declared pair, then the monos no pair holds — each `{first, count, stereo, name, custom,
+  monitored}`: `name` is the project's (`custom` when one was typed, else "In 3" / "In 1-2"),
+  `monitored` whether it is being heard, `monitor_gain_db` its LISTENING level in dB (0 until
+  `input.set_monitor_gain` set one). All are empty while closed, `--no-audio` included — never
+  an error.
+* `input.levels` — `{open, channels: [{channel, peak_db}], inputs: [{index, name, first, count,
+  peak_db}]}`: the peak of each channel since the PREVIOUS call, in dB (floor -120), then cleared,
+  so poll at the rate you want to see. A stereo input reports the louder of its two channels.
+* `input.set_pairs {pairs: [int]}` — which neighbouring channels form ONE stereo input (the FIRST
+  channel of each pair, 0-based). A paired channel's mono is no longer offered, but pairs may
+  OVERLAP (`[0, 1]` = channels 1+2 and 2+3: both stereo inputs exist, and channel 2 is read by each
+  independently); a pair outside the card is ignored; `[]` goes back to all-mono. The pairs belong
+  to the PROJECT (`recordInputs.pairs`, format 33): outside the undo, but the project is marked
+  modified. While the inputs are closed they are kept as given (a pair the card cannot hold is
+  just not offered). The pure rule is `objekat/Shared/OBJInputLayout.h`, asserted by
+  `tools/test_input_layout.cpp`.
+* `input.pair {first}` / `input.unpair {first}` — adds / removes ONE pair, the Inputs tab's
+  *Link as stereo* / *Unlink*. A no-op when there is nothing to change; unpairing keeps the names.
+  **`input.set_pairs`, `input.pair` and `input.unpair` answer `invalid_state` while a recording is
+  running** (changing the pairs re-describes the engine's input devices, which would stop the take and
+  lose it): nothing moves, the recording goes on; they are accepted again once it has stopped. In the
+  Inputs tab the two entries of the context menu are greyed meanwhile.
+* `input.set_name {first, count?, name}` — names an input (`count` 1 = mono, the default, or 2 =
+  stereo pair; `first` 0-based). Blank = back to the default name. Kept in the project
+  (`recordInputs.names`, keyed "3" or "1-2", 1-based), outside the undo, project marked modified.
+  Works whether or not the inputs are open.
+* `input.monitor {first, count?, on}` — hears an input in the mix (or stops). The engine plays it
+  through a hidden track the project does not know, so the app's solo does not silence it, it works
+  with the transport stopped, and it goes through the Main's FX. `invalid_state` when the inputs are
+  closed or the input does not exist. NOT saved and NOT the project's: it survives a new or opened
+  project and a tab switch, and stops when the inputs close, when the card changes, or when a pairing
+  swallows the input.
+* `input.set_monitor_gain {first, count?, db}` — sets the LISTENING level of an input in dB (`db` is held
+  to −24…+24, the synoptic's gain range; `first`, `count` as in `input.set_name`): a true gain on the
+  input's hidden track, heard whether or not the input is monitored (it only matters while it is).
+  Hearing only: a recording is taken BEFORE it, so the file is the same whatever the level. `invalid_state`
+  when the inputs are closed or the input does not exist. NOT saved: forgotten when the inputs close or
+  the input stops existing. Answers like `input.list` (`monitor_gain_db` in `record_inputs`).
+
+**Recording zones (`rec.*`).** A zone is a GROUP with a `recordInput` (saved with the object, in the
+undo). These are the doors of the drop, the assignment, the arming and the recording itself.
+
+* `rec.drop {first, count?, lane, time, visible_secs?, dry_run?}` or `rec.drop {inputs: [{first, count?}],
+  lane, time, ...}` — what releasing a row (or several selected rows) of the Inputs tab on the timeline
+  does (same planner, `RecordZonePlanner`). On empty room: a new empty group named
+  after the input, from `time` for 40 % of the view (`visible_secs`, default 100) or up to the next
+  object of the lane, at least max(1 s, 24 px). Over the time selection: its in/out (stopping at an object of the lane that starts inside it; `overlap` if an object covers its start). Over a group that
+  can record: the input is assigned to it. Over a clip, a group that cannot record (infinite, looping,
+  consolidated) or with less room than the floor: refused. In an open group's sub-lane the zone is a
+  sub-group (`parent`). `time` is NOT snapped. Answers `outcome` (`create` | `assign` | `refuse`),
+  `reason` (`onObject`, `notRecordable`, `parentNotRecordable`, `tooShort`, `overlap`), `start`, `end`,
+  `parent`, `target`, `group`, `applied`. One undo point for a change, none for a refusal.
+  SEVERAL inputs (`inputs`, an empty list or a `count` other than 1 / 2 is `bad_params`): one lane per
+  input, DOWNWARDS from `lane` in the order given, EACH with its own end (the rule above applies lane by
+  lane: the next object of THAT lane) — except when the point lies on a time selection: ALL the lanes, those
+  outside the selection's lanes included, take its in/out (same length), and only a lane with an object that
+  starts before the selection's end stops at that object (an object covering the selection's start: `overlap`,
+  and the lot is refused); ONE refused lane
+  refuses the lot (nothing created, no undo point); a lane holding a group takes the input as an assignment.
+  The answer is `applied`, `refused` and `drops`: one object per lane (`outcome`, `reason`, `start`, `end`,
+  `parent`, `target`, `lane`, `group`). One undo point for the lot; the new zones end up selected.
+* `input.select {inputs: [{first, count?}]}` — REPLACES the Inputs tab's selection (`[]` empties it);
+  `invalid_state` while the inputs are closed, `bad_params` for an input the tab does not list. No undo.
+* `input.selection` — the selected inputs, in the tab's order (stereo first). Read-only.
+* `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
+  absent (which disarms it). `invalid_state` for a group that cannot record, and while a recording is
+  under way. One undo point.
+* `rec.set_take_mode {group | groups: [uuid], mode: "mute" | "add"}` — the take mode of the zones (saved,
+  format 34; absent = `mute`). `mute`: the audible previous takes are muted at the press; `add`: nothing is
+  muted. In both modes the new take lands on the TOP lane and the previous ones move down one lane.
+  `bad_params` (mode/group missing), `not_found`, `invalid_state` (not a recordable zone) — nothing changed
+  then. One undo point, none when nothing changes. Accepted while recording: counts from the next take.
+* `rec.arm {group | groups: [uuid], on}` — arms or disarms. With `groups`, the ids that cannot change
+  state are skipped and listed in `ignored`; `invalid_state` only when none could be armed. SESSION state: not saved, not in the undo, forgotten by a
+  new project or an opening. `invalid_state` when the group has no input, when its input is not on the
+  card (or the inputs are closed) and for a group that cannot record. Several zones can be armed, on
+  the same input too.
+* `rec.status` — `zones` (`id`, `name` — the input's name while the zone has no typed name —, `input`, `input_present`,
+  `recordable`, `armed`, `input_prefix` — the input's name when the zone has a typed name, else null —,
+  `take_mode`), `armed` (ids
+  armed AND still able to record), `can_record` (the transport's record button is live: something
+  armed and a saved project), `project_saved`, `recording` (a recording is under way),
+  `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
+  recording, the red block the timeline draws for each zone: `{group, lane, start, end}` — `lane` the
+  display lane the take will land on, the zone's own row when it is closed; `start`..`end` the part of the
+  zone's window between the press and the playhead; a zone the head has not reached is absent) and
+  `last_takes` (the takes of the last recording, below).
+* `rec.start {seconds?}` — the transport's record button. Stopped: plays AND records from the cursor (or
+  from `seconds`); playing: punches in at the current position (the graph is not rebuilt). It records the
+  inputs of the ARMED zones on hidden per-input tracks, through Tracktion's transport, which compensates
+  the latency of the card and of the graph. ONE 32-bit float WAV per input and per take, at the card's
+  rate, in `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for an input of the same
+  name), shared by every zone armed on that input. `invalid_state` when nothing is armed, the project is
+  unsaved, the inputs are closed or a recording is already under way. The previous takes the new one will
+  replace (the unmuted children crossing a zone's window) are MUTED AT THE PRESS, before the engine
+  starts, in the undo point of the take — except when the press is already past the window's end; a
+  recording the engine refuses, or that gives no take, gives them back. While it lasts a tab switch,
+  `tab.new`/`tab.open`/`project.new`/`project.open` are refused, so are `input.pair`/`input.unpair`/`input.set_pairs`
+  (`invalid_state`), `wait_idle` is not idle, and a seek or
+  `transport.play` ends it first.
+* `rec.stop` — ends the recording and playback; answers like `rec.status`. Each armed zone receives its
+  TAKE: a child of the group holding the whole capture, cropped to the group's window with HANDLES
+  (`source_offset` points into the file), on the TOP lane, the previous takes moved down one lane, whose unmuted ones that
+  cross the window are MUTED whole (already at the press, see `rec.start`; `muted` lists them). A take that
+  does not cross the window is created anyway over the whole capture and mutes nothing (`outside_window`;
+  the mutes of the press are given back). ONE undo point for the press and the stop together. `last_takes`:
+  `{group, object, path, start, duration, source_offset, lane, outside_window, muted}`.
+  `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
+  the application quitting, end it the same way: the files are kept and the takes land in the project.
+  Calibration (virtual card, loopback): the impulse comes back to the SAMPLE (error 0, +-1 accepted in the
+  scenarios; engine patch `0047`), at every buffer size, cold or punched in, also with a latency plugin on the Main; a recording pressed within
+  ~250 ms of a change of declared latency still compensates the previous one (the PDC resync tick).
+
+`tools/test_record_zone_planner.swift` asserts the planner alone; `tools/scenario_record_zones.py`
+asserts the zones against the virtual card; `tools/test_record_take_planner.swift` and
+`tools/test_record_file_naming.swift` assert the take planning and the file names;
+`tools/scenario_record.py` records for real on the virtual card (file, header, content, handles, mute at the
+press, red block, lane order, one undo, punch-in, calibration, card change during recording);
+`tools/test_record_progress.swift` asserts the red block's span and lane; `tools/scenario_record_multi_drop.py`
+asserts the drop of several inputs.
+The keyboard shortcut ⌘⌥R (provisional) is the record button; ⌘R stays "rename".
+
+`audio.status` gains `input_channels` (the number of input channels OPEN; 0 while closed) and `inputs_separate` (the
+inputs listed under the output device's name belong to ANOTHER device — AirPods; the Inputs tab then shows a message
+in place of its *Enable inputs* button; also in `live`, and in `input.list`).
+Changing the output device closes the inputs; a rate or buffer change keeps them.
+
+**Settings.xml.** The inputs are on demand, so the engine's property storage never reads or writes
+the `wavein` items, and strips the input attributes (`audioInputDeviceName`, `audioDeviceInChans`)
+from the saved device setup: a launch always starts with the inputs closed, whatever a previous
+run left. An `audioDeviceName` from an older file is read as the OUTPUT name.
+
+Built app: the entitlement `com.apple.security.device.audio-input` and `NSMicrophoneUsageDescription`
+(localised: en/fr/es, `Resources/InfoPlist.xcstrings`) are what let the hardened runtime ask.
+`tools/scenario_inputs.py` asserts the family against the virtual card (a sine at 0.5 reads about
+-6 dB, silence below -90 dB, a loopback of the bip reads its peak); `tools/scenario_input_monitor.py`
+asserts the names, the pairs, their round trip through the project file and the monitoring (the
+Main's level through `stem.level`).
+
 ### Export
 
 `export.run` returns a `job_id`: the render runs on its own thread, and `job.wait` closes the
@@ -2420,6 +2626,14 @@ on the card. If OBJEKAT's card changes while one listens, the pass stops, is rec
 new card and resumes at the same position. `tools/scenario_export_preview.py` compares
 `output_device` with `audio.status.device` whenever a device is open, and skips that block when
 none is (`--no-audio`).
+
+**Under `--virtual-audio`, the export audition still sounds on the REAL card.** The listening runs on its
+own `AVAudioEngine`, outside the engine's `AudioDeviceManager` where the virtual card lives; it cannot
+resolve the name "OBJ Virtual", falls back on the system's default output (said in the log,
+`[EXPORT-AUDITION]`), and `output_device` then names that real device, not the virtual one. So a scenario
+run on the virtual card must not call `export.preview {listen: true}` (it would play out loud), and
+`output_device` can differ from `audio.status.device` there. Nothing else of the virtual card leaks: this
+is the only audio path that bypasses it.
 
 `audible_seconds` is deliberately **not** the progress: the render runs ahead of the writer, which
 flushes its header every six seconds of audio (`numSamplesPerFlush`). That flush is what makes the

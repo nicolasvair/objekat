@@ -37,6 +37,7 @@
 //         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/App/LaunchArguments.swift \
 //         ../objekat/SoundObject/CrossProjectImport.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/SoundObject/PluginIDUniqueness.swift \
 //         ../objekat/SoundObject/PluginIDReport.swift \
 //         ../objekat/Shared/BridgeScope.swift \
@@ -430,6 +431,129 @@ enum CrossProjectImportTest {
                   kids[0].araSource != nil && kids[0].araSource?.plugin.id != araChild.araSource?.plugin.id
                   && kids[0].araSource?.plugin.id != pasted?.plugin.id)
             check("... and keeps its archive", kids[0].araSource?.archive == archive)
+        }
+
+        // MARK: - A recording input belongs to the SOURCE project's card: it does not cross
+
+        do {
+            var rec = group(startTime: 0, lane: 0, children: [])
+            rec.recordInput = InputRef(first: 0, count: 2)
+            rec.recordTakeMode = .add
+            var recChild = clip(startTime: 1, lane: 0)
+            recChild.recordInput = InputRef(first: 2, count: 1)
+            let g = group(startTime: 0, lane: 1, children: [recChild])
+            let cb = CrossProjectImport.Clipboard(clips: [rec, g], comments: [], consolidateDefinitions: [:],
+                                                  originFolder: originFolder, originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 5, pasteLane: 0))
+            check("a pasted object loses its recording input", plan.clips[0].recordInput == nil)
+            check("... and its take mode (a zone without input has none to speak of)", plan.clips[0].recordTakeMode == nil)
+            guard case .group(let kids, _) = plan.clips[1].kind else { check("pasted group", false); return }
+            check("... and so does a child inside a pasted group", kids[0].recordInput == nil)
+            check("... while the source is untouched", rec.recordInput == InputRef(first: 0, count: 2) && rec.recordTakeMode == .add)
+
+            // ... but a copy WITHIN the project (cut half, duplicate, paste) keeps listening to the same input.
+            let half = rec.derivedCopy(startTime: 1, duration: 2, lane: 0, fadeIn: 0, fadeOut: 0, plugins: [], kind: rec.kind)
+            check("a derived copy inside the project keeps its recording input", half.recordInput == InputRef(first: 0, count: 2))
+            check("... and its take mode", half.recordTakeMode == .add)
+            let codec = JSONDecoder()
+            let again = try? codec.decode(SoundObject.self, from: JSONEncoder().encode(half))
+            check("... and the input survives a save/load of the object", again?.recordInput == InputRef(first: 0, count: 2))
+            check("... and the take mode too (\"add\")", again?.recordTakeMode == .add)
+            let jsonText = (try? JSONEncoder().encode(half)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            check("... written as recordTakeMode: add", jsonText.contains("\"recordTakeMode\":\"add\""))
+            var plainZone = rec
+            plainZone.recordTakeMode = nil
+            check("the default mode writes NO key",
+                  !((try? JSONEncoder().encode(plainZone)).flatMap { String(data: $0, encoding: .utf8) } ?? "").contains("recordTakeMode"))
+            check("an \"add\" zone explicitly set back to mute reads nil",
+                  (try? codec.decode(SoundObject.self, from: JSONEncoder().encode(plainZone)))?.recordTakeMode == nil)
+        }
+
+        // MARK: - A MIDI zone: its input is the origin machine's, its instrument (the zone's sound) travels
+
+        do {
+            var zone = group(startTime: 0, lane: 0, children: [])
+            zone.recordMidiInput = MidiInputRef(id: "vmidiin_42", name: "Keystation")
+            let inst = plugin(stateXML: "<synth/>")
+            zone.instruments = [inst]
+            zone.recordTakeMode = .add
+            let cb = CrossProjectImport.Clipboard(clips: [zone], comments: [], consolidateDefinitions: [:],
+                                                  originFolder: originFolder, originTime: 0, originLane: 0)
+            let plan = CrossProjectImport.plan(cb, target: .init(pasteTime: 5, pasteLane: 0))
+            let pasted = plan.clips[0]
+            check("a pasted MIDI zone loses its MIDI input (another machine's device)", pasted.recordMidiInput == nil)
+            check("... and its take mode", pasted.recordTakeMode == nil)
+            check("... but keeps its instrument, under a NEW id", pasted.instruments.count == 1
+                  && pasted.instruments[0].id != inst.id && pasted.instruments[0].stateXML == "<synth/>")
+            check("... never linked", pasted.instruments[0].linkGroupID == nil)
+            check("the source is untouched", zone.recordMidiInput != nil && zone.instruments[0].id == inst.id)
+
+            let half = zone.derivedCopy(startTime: 1, duration: 2, lane: 0, fadeIn: 0, fadeOut: 0, plugins: [], kind: zone.kind)
+            check("a derived copy inside the project keeps its MIDI input", half.recordMidiInput == zone.recordMidiInput)
+
+            // The file: format 35
+            let enc = JSONEncoder(), dec = JSONDecoder()
+            let text = (try? enc.encode(zone)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            check("written as recordMidiInput {id, name}", text.contains("\"recordMidiInput\"") && text.contains("vmidiin_42")
+                  && text.contains("Keystation"))
+            check("a GROUP's instruments are written under zoneInstruments, not instruments",
+                  text.contains("\"zoneInstruments\"") && !text.contains("\"instruments\""))
+            let back = try? dec.decode(SoundObject.self, from: enc.encode(zone))
+            check("round trip: the MIDI input", back?.recordMidiInput == MidiInputRef(id: "vmidiin_42", name: "Keystation"))
+            check("round trip: the instrument, same id and state", back?.instruments.first?.id == inst.id
+                  && back?.instruments.first?.stateXML == "<synth/>")
+            check("round trip: the source reads as .midi", back?.recordSource == .midi(MidiInputRef(id: "vmidiin_42", name: "Keystation")))
+            var midiClip = SoundObject(id: UUID(), startTime: 0, duration: 4, lane: 0,
+                                       kind: .midiClip(notes: [], lengthBeats: 8))
+            midiClip.instruments = [inst]
+            let clipText = (try? enc.encode(midiClip)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            check("a MIDI clip's instrument stays under instruments (old readers keep reading it)",
+                  clipText.contains("\"instruments\"") && !clipText.contains("zoneInstruments"))
+
+            // Files from before: format 34 has neither key
+            let plain = group(startTime: 0, lane: 0, children: [])
+            let plainBack = try? dec.decode(SoundObject.self, from: enc.encode(plain))
+            check("a file with no recordMidiInput (format <= 34) reads nil", plainBack?.recordMidiInput == nil
+                  && plainBack?.recordSource == nil)
+            // Hand-edited: an empty id reads as absent (the group is not armable, the project still opens)
+            let hacked = text.replacingOccurrences(of: "\"id\":\"vmidiin_42\"", with: "\"id\":\"\"")
+            let hackedBack = try? dec.decode(SoundObject.self, from: Data(hacked.utf8))
+            check("an empty MIDI input id reads as absent, the object still loads", hackedBack != nil && hackedBack?.recordMidiInput == nil)
+
+            // One source per zone
+            var both = zone
+            both.recordInput = InputRef(first: 0, count: 1)
+            let bothText = (try? enc.encode(both)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            check("exclusive: a zone holding both writes the card input only", bothText.contains("\"recordInput\"")
+                  && !bothText.contains("recordMidiInput"))
+            var viaSetter = zone
+            viaSetter.recordSource = .audio(InputRef(first: 1, count: 2))
+            check("recordSource = .audio clears the MIDI input", viaSetter.recordMidiInput == nil
+                  && viaSetter.recordInput == InputRef(first: 1, count: 2))
+            viaSetter.recordSource = .midi(MidiInputRef(id: "a", name: "A"))
+            check("recordSource = .midi clears the card input", viaSetter.recordInput == nil && viaSetter.recordMidiInput?.id == "a")
+            viaSetter.recordSource = nil
+            check("recordSource = nil clears both", viaSetter.recordInput == nil && viaSetter.recordMidiInput == nil)
+        }
+
+        // MARK: - The MIDI inputs as the project finds them again
+
+        do {
+            let list = [MidiInputInfo(id: "all_midi_in", name: "All MIDI Ins", isVirtual: true, enabled: true),
+                        MidiInputInfo(id: "z", name: "Zeta", isVirtual: false, enabled: true),
+                        MidiInputInfo(id: "a", name: "alpha", isVirtual: false, enabled: true)]
+            check("the panel's order: All MIDI Ins first, then by name (case-insensitive)",
+                  MidiInputResolver.ordered(list.reversed()).map(\.id) == ["all_midi_in", "a", "z"])
+            check("resolved by id", MidiInputResolver.resolve(MidiInputRef(id: "z", name: "whatever"), in: list)?.id == "z")
+            check("... else by name when ONE device bears it",
+                  MidiInputResolver.resolve(MidiInputRef(id: "old", name: "Zeta"), in: list)?.id == "z")
+            let twins = list + [MidiInputInfo(id: "z2", name: "Zeta", isVirtual: false, enabled: true)]
+            check("... not when two bear it (ambiguous: absent)",
+                  MidiInputResolver.resolve(MidiInputRef(id: "old", name: "Zeta"), in: twins) == nil)
+            check("an unknown device is absent, the assignment kept by the caller",
+                  MidiInputResolver.resolve(MidiInputRef(id: "gone", name: "Gone"), in: list) == nil)
+            check("a reference with no name and an unknown id is absent",
+                  MidiInputResolver.resolve(MidiInputRef(id: "gone", name: ""), in: list) == nil)
         }
 
         // MARK: - plan() performs no mutation of anything resembling "the target"

@@ -91,6 +91,9 @@ struct DragValueBox: View {
     var allowsFine: Bool = true
     /// true = the box follows the length of what it shows (`width` becomes a minimum).
     var fitsContent: Bool = false
+    /// A DRAG cannot raise the value by more than this above where the drag started (nil = no limit);
+    /// the keyboard (arrows, typing) is bounded by `range` only. @see DragRiseLimit.
+    var dragRiseLimit: Double? = nil
     /// Reads a direct keyboard entry (nil = refuse). By default: a plain number.
     var parse: (String) -> Double? = { Double($0.replacingOccurrences(of: ",", with: ".")) }
     var help: String = ""
@@ -242,7 +245,7 @@ struct DragValueBox: View {
                     let travel = -Double(v.translation.height) / Double(pointsPerStep)
                     let raw = s + fineAdjust.effective(travel, fine: fine)
                     let val = snap ? FineAdjust.snapped(raw, to: 1, fine: fine) : raw
-                    onChange(clamp(val))
+                    onChange(clamp(DragRiseLimit.clamp(start: s, proposed: val, limit: dragRiseLimit)))
                 }
                 .onEnded { _ in start = nil }
         )
@@ -843,6 +846,203 @@ struct StemsZoneView: View {
             .frame(width: rect.width, height: rect.height, alignment: .leading)
             .position(x: rect.midX, y: rect.midY)
         }
+    }
+}
+
+// MARK: - The 'input' zone of a recording zone: the card input and the take mode
+//
+// The stems zone's counterpart at the TOP, outside the object's frame. Two rows: the title with the menu of
+// the card's inputs (the stereo pairs above the monos — the wire below follows: one wire or two — and "None" last),
+// then the menu of the take mode. Greyed (and unusable) while a recording runs: the zone's input is frozen at
+// the press. An input the zone keeps but the card does not have is shown with its name and "absent".
+
+struct RecordInputZoneView: View {
+    let rect: CGRect
+    let input: SynopticRecordInput
+    let actions: SynopticActions
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.secondary.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1))
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: rect.midY)
+
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text(L("synoptic.zone.input"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    inputMenu
+                }
+                takeModeMenu
+                if input.midi != nil { instrumentMenu }
+            }
+            .padding(.horizontal, 12)
+            .frame(width: rect.width, height: rect.height, alignment: .center)
+            .position(x: rect.midX, y: rect.midY)
+            .disabled(input.locked)
+            // Greyed while a recording runs, and for an input the card no longer has (the name stays, "absent").
+            .opacity(input.locked ? 0.5 : (isAbsent ? 0.6 : 1))
+        }
+    }
+
+    private var isAbsent: Bool {
+        if let m = input.midi { return !m.present }
+        return input.ref != nil && !input.present
+    }
+
+    // MARK: The input
+
+    private var currentLabel: String {
+        if let m = input.midi { return m.present ? m.name : L("synoptic.input.absent", m.name) }
+        guard input.ref != nil else { return L("synoptic.input.none") }
+        return input.present ? input.name : L("synoptic.input.absent", input.name)
+    }
+
+    private var inputMenu: some View {
+        Menu {
+            if input.monoChoices.isEmpty && input.stereoChoices.isEmpty {
+                Text(L("synoptic.input.noCard"))
+            }
+            if !input.stereoChoices.isEmpty {
+                Section(L("synoptic.input.section.stereo")) {
+                    ForEach(input.stereoChoices) { choice in choiceButton(choice) }
+                }
+            }
+            if !input.monoChoices.isEmpty {
+                Section(L("synoptic.input.section.mono")) {
+                    ForEach(input.monoChoices) { choice in choiceButton(choice) }
+                }
+            }
+            if !input.midiChoices.isEmpty {
+                Section(L("synoptic.input.section.midi")) {
+                    ForEach(input.midiChoices) { choice in
+                        Button { actions.onAssignMidiInput?(choice.ref) } label: {
+                            if choice.ref.id == input.midi?.ref.id { Label(choice.name, systemImage: "checkmark") }
+                            else { Text(verbatim: choice.name) }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button { actions.onAssignRecordInput?(nil) } label: {
+                if input.ref == nil && input.midi == nil { Label(L("synoptic.input.none"), systemImage: "checkmark") }
+                else { Text(L("synoptic.input.none")) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: input.midi != nil ? ObjectKindIcon.recordMidiInput
+                                  : (input.ref?.isStereo == true ? "mic.and.signal.meter" : "mic"))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text(verbatim: currentLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isAbsent ? Color.secondary : Color.primary)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .help(L("synoptic.input.help"))
+    }
+
+    private func choiceButton(_ choice: SynopticRecordInputChoice) -> some View {
+        // A `String` and not a literal: see `StemsZoneView`, same trap.
+        Button { actions.onAssignRecordInput?(choice.ref) } label: {
+            if choice.ref == input.ref { Label(choice.name, systemImage: "checkmark") }
+            else { Text(verbatim: choice.name) }
+        }
+    }
+
+    // MARK: The instrument (a MIDI zone)
+
+    /// The zone's instrument: played while the zone is armed, copied into each take. Without one an armed zone
+    /// still records, but its takes are MUTED — the icon says so, discreetly.
+    private var instrumentMenu: some View {
+        let name = input.midi?.instrumentName
+        return Menu {
+            Button { actions.onAddInstrument?() } label: { Text(L("synoptic.input.instrument.choose")) }
+            if name != nil {
+                Button { actions.onOpenInstrumentEditor?() } label: { Text(L("synoptic.input.instrument.edit")) }
+                Divider()
+                Button(role: .destructive) { actions.onRemoveInstrument?() } label: {
+                    Text(L("synoptic.input.instrument.remove"))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: name == nil ? "exclamationmark.triangle" : "pianokeys.inverse")
+                    .font(.system(size: 9))
+                    .foregroundStyle(name == nil ? Color.orange : Color.secondary)
+                Text(verbatim: name ?? L("synoptic.input.instrument.none"))
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(name == nil ? Color.secondary : Color.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .help(name == nil ? L("synoptic.input.instrument.warning") : L("synoptic.input.instrument.help"))
+    }
+
+    // MARK: The take mode
+
+    private func modeTitle(_ mode: RecordTakeMode) -> String {
+        mode == .mute ? L("synoptic.input.take.mute") : L("synoptic.input.take.add")
+    }
+
+    private var takeModeMenu: some View {
+        Menu {
+            ForEach(RecordTakeMode.allCases, id: \.self) { mode in
+                Button { actions.onSetRecordTakeMode?(mode) } label: {
+                    if mode == input.takeMode { Label(modeTitle(mode), systemImage: "checkmark") }
+                    else { Text(modeTitle(mode)) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: input.takeMode == .mute ? "speaker.slash" : "square.stack")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                Text(input.takeMode == .mute ? L("synoptic.input.take.mute.short")
+                                             : L("synoptic.input.take.add.short"))
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 7))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 7).frame(height: 20)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Color.secondary.opacity(0.18)))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.45)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: .infinity)
+        .help(L("synoptic.input.take.help"))
     }
 }
 

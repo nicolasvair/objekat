@@ -19,7 +19,7 @@ extension EditViewModel {
         if timeSelection != nil { timeSelection = nil }   // already nil on the left click's path: no second `didSet`
         select(id, additive: false)
         let t = max(0, start)
-        if !isPlaying { engine?.seek(to: t) }
+        if !isPlaying { seekEngineUnlessRecording(to: t) }
         onMoveCursor(t)
     }
 

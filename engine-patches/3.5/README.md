@@ -513,7 +513,34 @@ Checked as still biting: `develop` still had the linear `std::find`.
   silence otherwise. `createNodeForAudioClip` now falls back on the ORIGINAL file's channel count (the
   render has the same), and builds no node at all if that is 0 too. Branch `objekat-patches-3.5` locally
   (`2790081b5da`, NOT published on the fork), commit on top of `objekat-probe-0045`. File:
-  `tracktion_EditNodeBuilder.cpp`. The next number is `0047`.
+  `tracktion_EditNodeBuilder.cpp`.
+- `0047` — **recorded wave input blocks map to the edit time of the block being rendered (calibration to
+  the sample).** `DeviceManager` hands the audio inputs over after `nextBlockStarted()` and before
+  `fillNextNodeBlock()`, i.e. while the context's reference range is still the previous block's;
+  `WaveInputDeviceInstance::acceptInputBuffer` mapped the device stream time through it, so every block
+  was placed one block too early, and the start-of-play jitter (position applied in `process()`, after the
+  hand-over) made the error vary from take to take. `EditPlaybackContext` gains
+  `getUnloopedEditTimeOfNextBlock()` and `hasPendingImmediatePositionChange()` (audio thread, between the
+  two calls); `acceptInputBuffer` uses the first, skips the block for a context that has not started while
+  the second is true, and, in the negative-adjustment branch, adds the block after the silence (it was
+  lost). Measured: error 0 samples at bs 64..1024, cold and punch-in, on the virtual card and BlackHole.
+  Branch `objekat-record-0047` (`c629811cdc8`, NOT published on the fork), commit on top of
+  `objekat-patches-3.5` (`2790081b5da`, 0046). Files: `tracktion_EditPlaybackContext.{h,cpp}`,
+  `tracktion_WaveInputDevice.cpp`.
+- `0048` — **arming a destination that is already recording does not punch it out ("the record cuts itself
+  after one block").** `InputDeviceInstance::updateRecordingStatus` is an async update, run one message-loop
+  turn after `valueTreePropertyChanged(armed / targetID)`. The host arms the input and starts the transport's
+  record in the SAME turn, so when the update runs the destination is already recording: it was stopped
+  (`prepareToStopRecording` + `stopRecording`) and restarted (`prepareAndPunchRecord`) only if that stop produced
+  no clip. After more than ~10 ms written (`WaveInputDevice::applyRecording`) the clip exists, nothing restarts,
+  and the input stops recording while the transport goes on — a file of exactly one block (512 samples) when the
+  main thread is late (Debug build, SwiftUI redraw at the press); and when it is NOT late enough, the take is
+  the RESTARTED one, with 1 to 4 blocks lost at its head. The update now `continue`s past a destination that is
+  armed AND recording (`isRecordingEnabled(id) && isRecording(id)`), keeping `restartPlayback` /
+  `wasLivePlayActive` bookkeeping; disarming and a destination that is not recording behave as before.
+  Reproduced and measured with `rec.start {debug_stall_ms}` on the virtual card (`tools/scenario_record.py`,
+  section R). Branch `objekat-record-0048` (`3ce916aa05e`, NOT published on the fork), commit on top of
+  `objekat-record-0047` (`c629811cdc8`). File: `tracktion_InputDevice.cpp`. The next number is `0049`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

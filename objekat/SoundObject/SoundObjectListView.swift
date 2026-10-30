@@ -214,6 +214,9 @@ struct SoundObjectListView: View {
     private func listRow(_ row: SoundListRow) -> some View {
         SoundListRowView(
             row: row,
+            // A recording zone nobody named is called after its input (the view model knows it).
+            nameText: row.object.recordSource != nil ? viewModel.displayName(of: row.object)
+                                                : row.object.displayName,
             isSelected: viewModel.isSelected(row.id),
             isDimmed: !viewModel.selectedIDs.isEmpty && !viewModel.isSelected(row.id),
             isMissing: viewModel.isMissing(row.object),
@@ -490,7 +493,7 @@ struct SoundObjectListView: View {
             viewModel.openConsolidate(viaPlacementID: object.id)
         } else {
             // A plain sound: go and listen to it where it is.
-            viewModel.engine?.seek(to: row.absStart)
+            viewModel.seekEngineUnlessRecording(to: row.absStart)
         }
     }
 }
@@ -511,6 +514,8 @@ private struct SoundListRowView: View {
     static let edgeStripWidth: CGFloat = 5
 
     let row: SoundListRow
+    /// The name to write (`displayName`, or the zone's default name — the model cannot know an input's).
+    let nameText: String
     let isSelected: Bool
     /// Something is selected and this row is not: it steps back so the selection reads at a glance.
     let isDimmed: Bool
@@ -622,7 +627,7 @@ private struct SoundListRowView: View {
 
     @ViewBuilder
     private var highlightedName: some View {
-        let text = row.object.displayName
+        let text = nameText
         // The match is picked out in the accent colour — except on a missing file, where RED is
         // the message and a second colour inside the same word would blunt it.
         let hit: Color = isMissing ? MissingFileLabel.color : .accentColor

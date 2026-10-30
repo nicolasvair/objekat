@@ -406,7 +406,8 @@ final class Workspace {
             // Replacing the active document tears its Edit down, and a direct render is reading it.
             if vm.exportPinsActiveDocument {
                 vm.refuseWhileExportPins()   // the menu ignores the failure: this is its only voice
-                return .failure(.blocked(reasonKey: "tabs.switch.refused.export"))
+                return .failure(.blocked(reasonKey: vm.isRecording ? "tabs.switch.refused.recording"
+                                                                  : "tabs.switch.refused.export"))
             }
             guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
             let repair = vm.resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
@@ -440,7 +441,8 @@ final class Workspace {
         let vm = session.viewModel
         if vm.exportPinsActiveDocument {
             vm.refuseWhileExportPins()
-            return .failure(.blocked(reasonKey: "tabs.switch.refused.export"))
+            return .failure(.blocked(reasonKey: vm.isRecording ? "tabs.switch.refused.recording"
+                                                                  : "tabs.switch.refused.export"))
         }
         guard vm.confirmDiscardIfDirty() else { return .failure(.cancelled) }
         let ok = await vm.loadProjectAsync(from: url)

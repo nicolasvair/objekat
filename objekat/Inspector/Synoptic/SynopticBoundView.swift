@@ -88,7 +88,7 @@ struct SynopticBoundView: View {
         // The width the chain is fed with and what becomes of it along the chain (the file's channel choice, each
         // plugin's fold, every pick written on a cable) — ONE computation, shared with the command API
         // (@see EditViewModel.widthFlow), over the polled bus counts so it follows the chain.
-        let widthFlow = viewModel.widthFlow(host: objectID, root: root, channels: channelCounts)
+        var widthFlow = viewModel.widthFlow(host: objectID, root: root, channels: channelCounts)
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
@@ -136,6 +136,32 @@ struct SynopticBoundView: View {
                 return SynopticStem(id: s.id, name: s.name, color: s.color, isCurrent: isCurrent)
             }
         }
+
+        // The 'input' zone: a group that can record (finite, not looping, not an instance of a consolidated
+        // object), with or without an input yet — and not the stage root of an open consolidated object. Nothing
+        // for a clip, a MIDI clip, an aux or a stem / the Main. The wire below it is as wide as the input.
+        var recordInput: SynopticRecordInput? = nil
+        if let o = obj, EditViewModel.isRecordableZone(o), !viewModel.sessionContentRootIDs.contains(o.id) {
+            let visible = viewModel.visibleRecordInputs
+            let named: [SynopticRecordInputChoice] = visible.map { .init(ref: $0, name: viewModel.inputName($0)) }
+            let midiChoices: [SynopticMidiChoice] = viewModel.midiInputs.map {
+                .init(ref: $0.ref, name: $0.id == MidiInputResolver.allInputsID ? L("midi.all_inputs") : $0.name)
+            }
+            let midiSide: SynopticMidiInput? = o.recordMidiInput.map { r in
+                SynopticMidiInput(ref: r, name: viewModel.midiInputName(r),
+                                  present: viewModel.resolvedMidiInput(r) != nil,
+                                  instrumentName: o.instruments.first?.name)
+            }
+            recordInput = SynopticRecordInput(
+                ref: o.recordInput,
+                name: o.recordInput.map { viewModel.inputName($0) } ?? "",
+                present: o.recordInput.map { viewModel.isRecordInputPresent($0) } ?? true,
+                takeMode: o.recordTakeMode ?? .mute,
+                locked: viewModel.isRecording,
+                monoChoices: named.filter { !$0.ref.isStereo }, stereoChoices: named.filter { $0.ref.isStereo },
+                midiChoices: midiChoices, midi: midiSide)
+        }
+        widthFlow.recordInputWidth = recordInput?.ref?.count
 
         // Sends: the departures that EXIST are cards beside the trunk (Q-U7, Q-U13), each at the slot its
         // position names; the reachable auxes without a send are reached through "Send to…". A card whose
@@ -228,6 +254,7 @@ struct SynopticBoundView: View {
                             frameColor: obj.map { $0.customColor ?? viewModel.stemColor(for: $0.id) },
                             isMIDI: obj?.isMIDI ?? false, midiInstrument: instLeaf,
                             audioFile: audioFile, mix: mix, stems: stems,
+                            recordInput: recordInput,
                             groupRouting: groupRouting,
                             sends: sends, canSend: canSend, receivedSends: received, infinite: infinite, loop: loop,
                             // A consolidated instance, closed or open: its own FX are editable (they are the
@@ -323,7 +350,12 @@ struct SynopticBoundView: View {
                 viewModel.removeInstrument(objectID: objectID)
                 if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
             },
-            onOpenInstrumentEditor: { if let id = obj?.instruments.first?.id { openEditor(id) } },
+            onOpenInstrumentEditor: {
+                // A MIDI recording zone's instrument lives on a hidden track that exists while the zone is armed:
+                // for a disarmed zone the view-model brings up a temporary instance for the editor.
+                if viewModel.canHaveZoneInstrument(objectID) { viewModel.openZoneInstrumentEditor(groupID: objectID) }
+                else if let id = obj?.instruments.first?.id { openEditor(id) }
+            },
             onToggleInstrumentBypass: {
                 if let id = obj?.instruments.first?.id {
                     viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
@@ -365,6 +397,18 @@ struct SynopticBoundView: View {
             onToggleSolo: { viewModel.toggleSoloHold(objectID: objectID) },
             onBeginMixEdit: { viewModel.pushUndo() },
             onAssignStem: { stemID in viewModel.edit { viewModel.assignStem(objectID: objectID, stemID: stemID) } },
+            // The zone's input: ONE undo point of `assignRecordInput`'s own (none when nothing changes, and a
+            // refusal while a recording runs). The take mode follows the usual rule: the object that is part of
+            // the selection speaks for every recording zone selected, in ONE undo point.
+            onAssignRecordInput: { ref in viewModel.assignRecordInput(ref, toGroup: objectID) },
+            onAssignMidiInput: { ref in viewModel.assignRecordSource(.midi(ref), toGroup: objectID) },
+            onSetRecordTakeMode: { mode in
+                let selected = viewModel.selectedIDs
+                let targets: [UUID] = selected.contains(objectID)
+                    ? selected.filter { id in viewModel.find(id: id).map(EditViewModel.isRecordableZone) ?? false }.sorted { $0.uuidString < $1.uuidString }
+                    : [objectID]
+                viewModel.setRecordTakeMode(mode, groups: targets)
+            },
             // An aux lists the sends it RECEIVES: the row carries the SENDER's id, and so it is the
             // sender we set (sender → this aux). Otherwise we set this object → the target aux.
             onSetSendLevel: { rowID, db in

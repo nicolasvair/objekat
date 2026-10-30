@@ -30,7 +30,7 @@ struct ContentView: View {
 
     /// The left panel's tabs. The inspector is a tab of its own ("Object") — it used to be docked
     /// under the list with a draggable separator; it now gets the panel's whole height.
-    enum LeftPanelTab { case objet, liste, sons }
+    enum LeftPanelTab { case objet, liste, sons, entrees }
 
     /// The selection the LIST itself just made (a click or an arrow in it), or nil. Selecting an
     /// object brings the "Object" tab forward on its own — except when the selection comes from
@@ -49,7 +49,8 @@ struct ContentView: View {
                 totalDuration: viewModel.items.map { $0.startTime + $0.duration }.max() ?? 0,
                 viewModel: viewModel,
                 onPlay: { session.play() },
-                onStop: { session.stop() }
+                onStop: { session.stop() },
+                onRecord: { session.toggleRecording() }
             )
 
             // An export in progress: a full-width strip, right under the transport. It pushes the rest
@@ -74,6 +75,7 @@ struct ContentView: View {
                         tabButton(L("panel.tab.object"), tab: .objet)
                         tabButton(L("panel.tab.list"), tab: .liste)
                         tabButton(L("panel.tab.sounds"), tab: .sons)
+                        tabButton(L("panel.tab.inputs"), tab: .entrees)
                     }
                     .frame(height: 28)
                     Divider()
@@ -91,6 +93,7 @@ struct ContentView: View {
                                             }
                                         }
                         case .objet: ObjectInspectorView(viewModel: viewModel)
+                        case .entrees: InputsPanelView(viewModel: viewModel)
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -105,6 +108,7 @@ struct ContentView: View {
                     isPaused: session.pausedAt != nil,
                     onTogglePlayback: { if session.isPlaying { session.stop() } else { session.play() } },
                     onTogglePause: { session.togglePause() },
+                    onToggleRecord: { session.toggleRecording() },
                     onMoveCursor: { t in
                         viewModel.cursorPosition = max(0, t)
                     },
@@ -176,7 +180,8 @@ struct ContentView: View {
                 selectedDevice = saved
             } else {
                 selectedDevice = engine.currentOutputDeviceName() ?? outputDevices.first ?? ""
-                AudioOutputDevice.shared.name = selectedDevice
+                // `--virtual-audio` is a test fixture: it must not become the remembered choice.
+                if !OBJEngineCore.isVirtualAudio() { AudioOutputDevice.shared.name = selectedDevice }
             }
             // At launch, AppKit gives first responder to the window's first text field — the BPM
             // one — which ends up selected without anyone asking for it.

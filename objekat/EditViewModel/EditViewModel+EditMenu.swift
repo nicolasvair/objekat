@@ -32,8 +32,11 @@ extension EditViewModel {
         else { undo() }
     }
 
-    /// ⌘A. The piano-roll context: every note of the focused clip.
+    /// ⌘A. The Inputs tab's list when it holds the keyboard (@see KeyboardClaim); the piano-roll context:
+    /// every note of the focused clip; else every object.
     func performSelectAllShortcut() {
+        // A list that holds the keyboard and selects its own rows (the Inputs tab) takes it first.
+        if KeyboardClaim.shared.performSelectAll() { return }
         if let cid = focusedMidiClipID, let clip = find(id: cid), clip.showsPianoRollInline {
             selectedMidiNoteIDs = Set(clip.midiNotes.map(\.id))
         } else {

@@ -20,6 +20,7 @@ extension TimelineView {
         // click sets it again a few lines down. Leaving is not cancelling — what was typed is
         // committed on the way out (@see MarkerRenameField).
         viewModel.renamingID = nil
+        viewModel.renamingInput = nil
 
         // "Choose object" armed (a plugin editor's Sidechain strip): a click on an object sets the
         // key, a click anywhere else leaves the mode. It takes priority over every other reading.
@@ -90,6 +91,34 @@ extension TimelineView {
         let isDoubleTap = now.timeIntervalSince(lastTapInfo.time) < 0.35
             && hypot(point.x - lastTapInfo.location.x, point.y - lastTapInfo.location.y) < 20
         lastTapInfo = (now, point)
+
+        // The [ o ] of a recording zone arms / disarms it (the Selection tool only: the others own the
+        // click). It sits at the CENTRE of the block, where a double click to open the group also
+        // lands: the second click of a double tap that began on the [ o ] gives the first one back
+        // and goes on to open the group, so that opening a zone never leaves it armed by accident.
+        //
+        // On a zone that belongs to the SELECTION the click acts on every selected zone that can take it,
+        // in the state the clicked one goes to (`armTargets`); on a zone outside it, on that zone alone and
+        // the selection does not move. The second click of a double tap gives back to each target the
+        // state it had before the first.
+        if viewModel.activeTool == .toolSelection, let zone = recordIconHit(at: point) {
+            if isDoubleTap, recordIconTapID == zone {
+                for (id, was) in recordIconTapBefore { viewModel.setArmed(id, on: was) }
+                recordIconTapBefore = [:]
+                recordIconTapID = nil
+            } else {
+                let on = !viewModel.armedGroupIDs.contains(zone)
+                let targets = viewModel.armTargets(clicked: zone)
+                recordIconTapBefore = Dictionary(uniqueKeysWithValues: targets.map {
+                    ($0, viewModel.armedGroupIDs.contains($0))
+                })
+                viewModel.setArmed(ids: targets, on: on)
+                recordIconTapID = zone
+                return
+            }
+        } else {
+            recordIconTapID = nil
+        }
 
         // The 'objects / automations' hem of an object that has both to show. Resolved BEFORE the
         // band guards: on an infinite bus the band covers the whole timeline and the hem falls
@@ -485,7 +514,7 @@ extension TimelineView {
         let shift = flags.contains(.shift), cmd = flags.contains(.command)
         let hit = markerBandHit(at: point)
         viewModel.handleMarkBandClick(hit: hit, shift: shift, cmd: cmd, seek: { t in
-            if !isPlaying { viewModel.engine?.seek(to: t) }
+            if !isPlaying { viewModel.seekEngineUnlessRecording(to: t) }
             onMoveCursor(t)
         })
         if isDoubleTap, !shift, !cmd, let hit, viewModel.selectedAnnotations == [hit] {

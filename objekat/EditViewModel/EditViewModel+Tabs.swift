@@ -47,6 +47,8 @@ extension EditViewModel {
     /// switch is refused with a message in the tab bar, not diagnosed like `wait_idle`.
     var tabSwitchBlocker: String? {
         if isLoadingProject { return "tabs.switch.refused.loading" }
+        // A recording lives in the Edit and in the document's armed zones: neither can leave under it.
+        if isRecording { return "tabs.switch.refused.recording" }
         // Not every export: a render on a COPY has its own Edit once it is under way, and the hand
         // can go and work in another tab meanwhile (the whole point of rendering in the background).
         // Only a DIRECT render (it reads the live Edit) and the clone being made (`.preparing`)
@@ -80,7 +82,7 @@ extension EditViewModel {
     /// switch's, but read by the doors that REPLACE the active document in place (New, Open,
     /// Recent): they tear the Edit down exactly as a switch does, and a direct render is reading it.
     var exportPinsActiveDocument: Bool {
-        exportJob?.pinsActiveDocument == true || exportBatch?.isActive == true
+        exportJob?.pinsActiveDocument == true || exportBatch?.isActive == true || isRecording
     }
 
     /// The refusal a hand sees when one of those doors is used while `exportPinsActiveDocument`.
@@ -89,7 +91,8 @@ extension EditViewModel {
     @discardableResult
     func refuseWhileExportPins() -> Bool {
         guard exportPinsActiveDocument else { return false }
-        notify(L("project.refused.export.title"), L("project.refused.export.info"))
+        notify(L("project.refused.export.title"),
+               L(isRecording ? "project.refused.recording.info" : "project.refused.export.info"))
         return true
     }
 
@@ -188,11 +191,22 @@ extension EditViewModel {
     /// this, and so does re-opening a file already open (`Workspace.reopen`): the ids there are
     /// the SAME, but the objects behind them are the last save's, which may not have that plugin,
     /// that crossfade, that object at all.
+    /// The Inputs tab's selection and rename, and the stem popover with its name field: session states of
+    /// the document on screen. Also taken down when a new project replaces it (@see newProjectDiscardingChanges).
+    func clearInputsAndStemTransientState() {
+        renamingInput = nil
+        selectedRecordInputs = []
+        selectedMidiInputs = []
+        openStemPopoverID = nil
+        renamingStemID = nil
+    }
+
     func clearObjectBoundTransientState() {
         selectedPluginIDs = []
         selectedPluginHostID = nil
         selectedCrossfade = nil
         renamingID = nil
+        clearInputsAndStemTransientState()
         pluginParamValues = [:]
         liveAutomationValues = [:]
         KeyboardClaim.shared.revoke()

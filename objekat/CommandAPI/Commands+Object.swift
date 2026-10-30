@@ -92,7 +92,7 @@ extension CommandRegistry {
             }
             vm.renameObject(id: id, label: try p.string("name"))
             return .object(["id": .string(id.uuidString),
-                            "name": .string(vm.find(id: id)?.displayName ?? "")])
+                            "name": .string(vm.find(id: id).map { vm.displayName(of: $0) } ?? "")])
         }
 
         register("object.set_fade",

@@ -48,6 +48,12 @@ enum ObjectKindIcon {
     /// Bumped 9 → 11 on 24 September 2026, along with the rich views' own icon sizes
     /// (@see `TimelineLabelMetrics`) — +2 pt everywhere, a user decision.
     static let canvasSize: CGFloat = 11
+
+    /// The glyph of a recording zone's INPUT, in front of its name in the timeline
+    /// ("[mic] Input → [folder] Group name", @see `RecordZoneName`).
+    static let recordInput = "mic"
+    /// The same for a zone that listens to a MIDI input.
+    static let recordMidiInput = "pianokeys"
 }
 
 extension View {

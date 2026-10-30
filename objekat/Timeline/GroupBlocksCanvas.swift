@@ -32,6 +32,11 @@ struct CanvasGroup {
     /// `ObjectKindIcon.name(for:isOpenConsolidate:)` — an open consolidated object stays a
     /// waveform in a circle, never a folder.
     let icon: String
+    /// A recording zone that has a name of its own: the input's name, written in front of it
+    /// ("[mic] Input → [folder] Name", `EditViewModel.recordZoneInputPrefix(of:)`). nil = the name alone.
+    var inputPrefix: String? = nil
+    /// The glyph in front of that prefix: the mic of a card input, the keys of a MIDI one.
+    var inputGlyph: String = ObjectKindIcon.recordInput
     /// Anything in the group's sub-tree lost its file (`containsMissingDescendant`).
     let missing: Bool
     /// Muted in the mix (its own mute or its stem's): the black veil.
@@ -40,6 +45,9 @@ struct CanvasGroup {
     var badges: [FeatureBadge] = []
     /// `showsChildrenInline`: the chevron points down.
     let expanded: Bool
+    /// The [ o ] of a recording zone (a group with an input), nil when there is none
+    /// (@see RecordZoneIcon). `.armed` is the overlay's: the Canvas draws nothing for it.
+    var recordIcon: RecordZoneIcon.State? = nil
     /// The span shared with a crossfaded neighbour at each end (px): the white base is punched
     /// out there, so the neighbour's content still reads (@see `OpaqueBaseMask`).
     let sharedLeading: Double
@@ -89,19 +97,23 @@ struct CanvasLabelCache {
 
     mutating func resolve(_ ctx: GraphicsContext, _ s: String, icon: String, missing: Bool,
                           meta: String, muteBadge: Bool, lightInk: Bool = false,
-                          badges: [FeatureBadge] = []) -> GraphicsContext.ResolvedText {
+                          badges: [FeatureBadge] = [],
+                          inputPrefix: String? = nil,
+                          inputGlyph: String = ObjectKindIcon.recordInput) -> GraphicsContext.ResolvedText {
         // The key carries the icon AND the name: two blocks can share a name and not a kind. And the
         // ink: the same name over a dark band and over a pale one is two different runs. And the
         // badges: two blocks of one name can carry different ones.
         let key = icon + "\u{0}" + s + "\u{0}" + meta + (muteBadge ? "\u{0}M" : "") + (lightInk ? "\u{0}L" : "")
             + (badges.isEmpty ? "" : "\u{0}B" + FeatureBadge.cacheKey(badges))
+            + (inputPrefix.map { "\u{0}P" + inputGlyph + "\u{0}" + $0 } ?? "")
         func build() -> GraphicsContext.ResolvedText {
             // The values come from `MissingFileLabel` / `ObjectKindIcon`, which the rich views
             // read too: a red — or a glyph — that only one regime knows about is one that appears
             // or disappears with the number of objects on screen.
             let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
             let colour = missing ? MissingFileLabel.color : BlockInk.color(light: lightInk)
-            var run = Self.head(s, icon: icon, missing: missing, badges: badges, lightInk: lightInk)
+            var run = Self.head(s, icon: icon, missing: missing, badges: badges, lightInk: lightInk,
+                                inputPrefix: inputPrefix, inputGlyph: inputGlyph)
             if !meta.isEmpty {
                 run = run + Text(verbatim: " ").font(.system(size: 9))
                           + Text(verbatim: meta).font(.system(size: 9, weight: .regular))
@@ -129,11 +141,21 @@ struct CanvasLabelCache {
     /// font and colour are laid by the caller over the whole (a sub-text's own colour wins, as the
     /// meta's does).
     static func head(_ s: String, icon: String, missing: Bool, badges: [FeatureBadge],
-                     lightInk: Bool) -> Text {
+                     lightInk: Bool, inputPrefix: String? = nil,
+                     inputGlyph: String = ObjectKindIcon.recordInput) -> Text {
         let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
         let glyph = Text(Image(systemName: icon))
             .font(.system(size: ObjectKindIcon.canvasSize, weight: weight))
-        var run = glyph + Text(verbatim: " ") + Text(s)
+        // A recording zone with a name of its own: "[mic] Input → " in the meta's grey, then the
+        // zone's own glyph and name as for any group (the rich view writes the same run).
+        var lead = Text(verbatim: "")
+        if let inputPrefix {
+            let grey = BlockInk.metaColor(light: lightInk)
+            lead = Text(Image(systemName: inputGlyph))
+                       .font(.system(size: ObjectKindIcon.canvasSize, weight: weight)).foregroundColor(grey)
+                 + Text(verbatim: " " + inputPrefix + " \u{2192} ").foregroundColor(grey)
+        }
+        var run = lead + glyph + Text(verbatim: " ") + Text(s)
         guard !badges.isEmpty else { return run }
         // The rich views' look (`FeatureBadgeGlyphs`): the meta's grey, semibold, the badges' size;
         // a space before the first, a thin space between two (the rich views' 2 pt).
@@ -151,14 +173,17 @@ struct CanvasLabelCache {
     /// Whether the head of `s`'s run WITH `badges` fits whole in `room` points — the rule that drops
     /// the badges and never the name. No badge: true, and nothing measured.
     static func badgesFit(_ ctx: GraphicsContext, _ s: String, icon: String, missing: Bool,
-                          badges: [FeatureBadge], room: Double) -> Bool {
+                          badges: [FeatureBadge], room: Double, inputPrefix: String? = nil,
+                          inputGlyph: String = ObjectKindIcon.recordInput) -> Bool {
         guard !badges.isEmpty else { return true }
         guard room > 0 else { return false }
         // The weight changes the width, the colour does not: the key carries `missing`, not the ink.
         let key = icon + "\u{0}" + s + "\u{0}" + FeatureBadge.cacheKey(badges) + (missing ? "\u{0}X" : "")
+            + (inputPrefix.map { "\u{0}P" + inputGlyph + "\u{0}" + $0 } ?? "")
         let width = NameRunWidthCache.shared.width(key) {
             let weight = missing ? MissingFileLabel.weight : MissingFileLabel.normalWeight
-            let text = head(s, icon: icon, missing: missing, badges: badges, lightInk: false)
+            let text = head(s, icon: icon, missing: missing, badges: badges, lightInk: false,
+                            inputPrefix: inputPrefix, inputGlyph: inputGlyph)
                 .font(.system(size: MissingFileLabel.size, weight: weight))
             return Double(ctx.resolve(text)
                 .measure(in: CGSize(width: CGFloat.greatestFiniteMagnitude,
@@ -378,11 +403,13 @@ enum GroupBlocksCanvas {
         // The feature badges, only when the name and they fit whole before the chevron (the name
         // keeps priority: @see CanvasLabelCache.badgesFit).
         let badges = CanvasLabelCache.badgesFit(c, g.name, icon: g.icon, missing: g.missing,
-                                                badges: g.badges, room: x + labelRight - labelX)
+                                                badges: g.badges, room: x + labelRight - labelX,
+                                                inputPrefix: g.inputPrefix, inputGlyph: g.inputGlyph)
             ? g.badges : []
         lc.draw(labels.resolve(c, g.name, icon: g.icon, missing: g.missing,
                                meta: hasMeta ? item.timelineMetaSummary : "", muteBadge: false,
-                               lightInk: g.lightInk, badges: badges),
+                               lightInk: g.lightInk, badges: badges, inputPrefix: g.inputPrefix,
+                               inputGlyph: g.inputGlyph),
                 at: CGPoint(x: labelX,
                             y: y + TimelineLabelMetrics.topInset + TimelineLabelMetrics.canvasCentring),
                 anchor: .topLeading)
@@ -427,7 +454,7 @@ enum GroupBlocksCanvas {
             let fadeOutPx = g.fadeOut * geo.pixelsPerSecond
             let needsLabel = w >= 30
             guard needsLabel || fadeInPx > 0 || fadeOutPx > 0 || g.mutedInMix || g.toolOverlay != nil
-                    || g.loopRange != nil else { continue }
+                    || g.loopRange != nil || g.recordIcon != nil else { continue }
 
             var c = ctx
             if g.dim { c.opacity = 0.25 }
@@ -471,6 +498,11 @@ enum GroupBlocksCanvas {
 
             if g.mutedInMix {
                 c.fill(outline(rect, radius: item.blockCornerRadius), with: .color(.black.opacity(0.38)))
+            }
+
+            // The record button, centred on the block (its hit-test is the canvas's: recordIconHit).
+            if let state = g.recordIcon, let iconRect = RecordZoneIcon.rect(in: rect) {
+                RecordZoneIcon.draw(into: c, rect: iconRect, state: state)
             }
 
             guard needsLabel else { continue }

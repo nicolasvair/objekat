@@ -127,6 +127,12 @@ struct SynopticActions {
     // The 'stems' zone (output): assigning the stem.
     var onAssignStem: ((UUID) -> Void)? = nil
 
+    // The 'input' zone (a recording zone, at the top): choosing the card input (nil = none), and the take mode
+    // (the receiver applies it to the whole selection when the object shown is part of it).
+    var onAssignRecordInput: ((InputRef?) -> Void)? = nil
+    var onAssignMidiInput: ((MidiInputRef) -> Void)? = nil
+    var onSetRecordTakeMode: ((RecordTakeMode) -> Void)? = nil
+
     // The 'sends' zone (the foot): the level / on-off of a departure towards an aux. `id` = the
     // target aux for a departure, the sending object for a received send (an aux's head).
     var onSetSendLevel: ((UUID, Float) -> Void)? = nil
@@ -343,6 +349,52 @@ struct SynopticStem: Identifiable, Equatable {
     let name: String
     let color: Color
     let isCurrent: Bool
+}
+
+/// One input the 'input' zone's menu offers: the reference and the name the project gives it.
+struct SynopticRecordInputChoice: Identifiable, Equatable {
+    let ref: InputRef
+    let name: String
+    var id: InputRef { ref }
+}
+
+/// One MIDI input the 'input' zone's menu offers.
+struct SynopticMidiChoice: Identifiable, Equatable {
+    let ref: MidiInputRef
+    let name: String
+    var id: String { ref.id }
+}
+
+/// The MIDI side of a MIDI recording zone's 'input' zone: the input it listens to, and the instrument that is
+/// played while it is armed (and copied into each take). Non-nil ⇔ the zone's source is a MIDI input.
+struct SynopticMidiInput: Equatable {
+    let ref: MidiInputRef
+    let name: String
+    /// The device is listed right now. False = "absent": the zone keeps its input but cannot be armed.
+    let present: Bool
+    /// The zone's instrument; nil = none (an armed zone then records MUTED takes).
+    let instrumentName: String?
+}
+
+/// A recording zone's 'input' zone, carried over into the signal view (@see RecordInputZoneView).
+struct SynopticRecordInput: Equatable {
+    /// The input the zone records; nil = none ("None").
+    let ref: InputRef?
+    /// Its name (empty without input).
+    let name: String
+    /// The card has it right now. False = "absent": the zone keeps its input but cannot be armed.
+    let present: Bool
+    /// What a new take does to the previous ones.
+    let takeMode: RecordTakeMode
+    /// A recording is running: neither menu can be used (the zone's input is frozen at the press).
+    let locked: Bool
+    /// What the menu lists, in two sections: the stereo pairs FIRST, then the monos ("None" last).
+    let monoChoices: [SynopticRecordInputChoice]
+    let stereoChoices: [SynopticRecordInputChoice]
+    /// The MIDI inputs the menu offers in a third section (the zone's source may be one of them).
+    var midiChoices: [SynopticMidiChoice] = []
+    /// Set when the zone's source is a MIDI input (then `ref` is nil): the zone also shows its instrument row.
+    var midi: SynopticMidiInput? = nil
 }
 
 /// A bus's 'infinite' option (a top-level aux / group), carried by the chain's head.

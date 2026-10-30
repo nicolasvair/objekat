@@ -2725,6 +2725,194 @@ What has landed since mid-August, in order:
   negative half is asserted: Esc does nothing else), the cheat sheet rows, and the three languages of the
   changed texts.
 
+- **Audio recording on armed groups** (29 October 2026, branch `feat/audio-recording`, NOT on `main`;
+  increments 5 and 6 of `docs/plan_enregistrement_audio.md`, after the inputs, the pairs and the zones).
+  The transport's record button (and `rec.start` / `rec.stop`, shortcut **⌘⇧R** since batch 2 (⌘⌥R removed) — tested BEFORE
+  the ⌘-only branch, ⌘R stays "rename") records the inputs of the ARMED groups on hidden per-input tracks
+  through Tracktion's own transport, which compensates the card's and the graph's latency: stopped, play and
+  record from the caret; playing, a punch-in at the position (the graph is pre-warmed at arm time, so the
+  press rebuilds nothing). ONE 32-bit float WAV per input and per take, at the card's rate, in
+  `<project>/samples/rec/` (`Name YYYY-MM-DD HH-MM-SS.wav`, " (2)" for same-name inputs), shared by every
+  group armed on that input (`RecordFileNaming`, pure). At the stop each group gets a TAKE: a child with
+  HANDLES (cropped to the group's window, `sourceOffset` into the file), on the lane ABOVE the previous takes (newest on top since batch 2, the older ones shifted down one lane),
+  the unmuted previous ones that cross the window MUTED whole (since lot T at the START, see below), all in ONE undo (`RecordTakePlanner`, pure). A
+  take that does not cross the window is still created over the whole capture (grey zone) and mutes nothing.
+  Guards: unsaved project (record refused), tab switch / `tab.new` / `project.new` refused while recording
+  (`tabSwitchBlocker`, `Quiescence`), **the stereo pairing refused while recording** (`input.pair|unpair|set_pairs`
+  → `invalid_state`, the Inputs tab's *Link as stereo* / *Remove the pair* greyed; `EditViewModel.inputPairsLocked`,
+  checked in the three doors; changing the pairs re-describes the engine's devices, which stopped the take and lost
+  it), a card change during the recording (`OBJDeviceChangeWatcher`) and the
+  application quitting END it cleanly with the files kept and the takes in the project; a disk full relies
+  on Tracktion's own check (not testable here).
+  **Lot T (29 October 2026, branch `feat/rec-lotT`)**: (1) the **previous takes are muted when the recording
+  STARTS**, not at the stop (`beginRecording(startTime:)` pushes the undo point BEFORE the first change, mutes
+  through `setMuted` = model + `pushMix`, THEN starts the engine, so they are silent from the first instant;
+  `RecordTakePlanner.mutesAtStart`: same takes as the stop's rule, none when the press is already past the
+  window's end). `completeRecording` adds the takes to that same point — ONE ⌘Z — and `plan(mutedAtStart:)`
+  reads the children as they were before the early mute; a capture that does not cross the window comes back
+  with `unmuteIDs` (the early mutes given back); an engine refusal at the start or a recording that gives
+  no take gives the mutes back and drops the point when nothing else was pushed on top. (2) **The take in
+  progress IS drawn**: a translucent red block (`RecordingProgressOverlay`, its own view like `PlayheadLine`,
+  mounted only while recording, reading the playhead through a closure) on the LANE WHERE THE TAKE WILL LAND
+  (the zone's own row when the group is closed), bounded to the group's window, growing from the press to the
+  playhead; pure `RecordProgress` (`span`, `displayLane`), `EditViewModel.recordingStartTime`,
+  `recordProgressBlocks(head:)`; `rec.status` exposes `recording_start` and `progress`. (3) **Dragging several
+  inputs**: select N rows in the Inputs tab and drag one — `InputDragSession` carries `[InputRef]` (the old
+  one-input payload is still read); `RecordZonePlanner.planMany` takes one lane per input DOWNWARDS in channel
+  order, EACH with its own end (40 % of the view or the next object), EXCEPT on a time selection: ALL the lanes take its
+  in/out (those outside the selection's lanes too — same length for all), and only a lane whose object starts before
+  the selection's end stops at that object (an object covering the selection's start refuses the lot), a GLOBAL refusal if one lane is refused (all ghosts red), a lane holding a group = the input
+  assigned to it; `dropRecordInputs` = ONE undo, the zones selected; `rec.drop` accepts `inputs: [{first,count}]`.
+  (4) The hand cursor over a live [ o ] (Selection tool), and all the armed zones' blinks start from a common
+  origin (`blinkEpoch`, synchronised).
+  **Batch 2 (30 October 2026, lots A/B/C merged on `feat/audio-recording`)**. (A) **Take mode per zone**
+  (session format 34): `SoundObject.recordTakeMode: RecordTakeMode?` (nil = `mute`, written only for `add`);
+  `mute` mutes the audible previous takes at the press as before, `add` mutes nothing (the old takes stay
+  heard). In both modes the NEW take lands on the TOP lane of the zone (min of the children's lanes) and every
+  existing child moves down one lane (`RecordTakePlanner.Plan.shiftIDs`), at the stop; the red block is drawn
+  on that top lane (it overlaps the previous take until the stop); ONE ⌘Z undoes mutes, shift and take. Takes
+  saved in the old order are not reordered. `rec.set_take_mode {group|groups, mode}` (accepted while
+  recording, counts from the next take: a zone freezes its mode at the press), `rec.status.zones[].take_mode`.
+  `rec.assign`/`assignRecordInput` → `invalid_state` while recording (`rec.drop` is not guarded). **Synoptic
+  « Entrée » block** above the object, outside its frame, for every recordable zone (counterpart of the Stems
+  block): a menu in two sections (mono / stereo inputs, « Aucune » last), the cable has 1 or 2 wires after the
+  input (`WireSource.recordInput`, no channel-count choice), an absent input = greyed block « absente », locked
+  while recording; under it the take-mode menu, applied to the whole selection when the displayed object is in
+  it. (B) **Inputs tab**: sections « Entrées mono » then « Entrées stéréo » (empty one hidden); selection =
+  pure `Shared/ListClickSelection` (bare click, ⌘ toggle, ⇧ range from the selection's ENDS, ⌘A, ↑/↓, ⇧↑/⇧↓
+  grow only, click in the void clears; since batch 3 the name has no gesture, ⌘R renames), keys via `KeyboardClaim`
+  claimant `.inputs` (↑/↓ only; ⌘A through `KeyboardClaim.shared.performSelectAll()` at the head of
+  `performSelectAllShortcut`); the level dot is replaced by `Shared/VULevelBar` (extracted from
+  `SynopticCardVULine`, unchanged there), one bar for a mono, two thin L/R bars (per-channel
+  `audioInputPeaksDb`) for a pair, on `VUScale`; the listening-gain box sits RIGHT of the speaker. (C) A zone
+  is born WITHOUT a label: its default name is its input's (`EditViewModel.displayName(of:)`, follows the
+  input's rename); only a typed name is a group name, and the TIMELINE then writes « [mic] Input → [folder]
+  Name » (Canvas and rich view, hidden while renaming; pure `RecordZoneName.prefix(label:inputName:)`, a label
+  equal to the input's name = default, for old projects; `rec.status.zones[].input_prefix`). Known gaps: a
+  parent group's composed name and the sound list's text filter still read the raw name. Clicking the [ o ] of
+  a SELECTED zone arms/disarms the whole selection (`armTargets(clicked:)`, the zones without a present input
+  ignored silently; outside the selection = that zone alone); `rec.arm {groups:[…]}` answers `ignored`. The
+  unused-files cleanup includes `samples/rec/` (`ProjectFileUsage.Kind.recording`, label « Enregistrements »;
+  muted takes count as used; cleanup and FLAC conversion `busy` while recording). Shortcut ⌘⇧R.
+  Verified with no screen: Debug build of the merge; planner 52, list selection 43, zone name 8, file usage
+  111, cross-project 76, object frame 550; `scenario_record` 276 (lot A), `scenario_record_zones` 85,
+  `scenario_disk_cleanup` (section F), `scenario_inputs` 52 (lot B). Not seen on screen.
+  **Batch 3 / rec3-ui (30 October 2026)**. (1) Stereo above mono everywhere: the Inputs tab lists « Entrées
+  stéréo » BEFORE « Entrées mono » (`orderedRows = stereoRows + monoRows`), the synoptic Entrée menu too (« Aucune »
+  last); `input.list` already returned pairs first; a multi-row drag keeps CHANNEL order. (2) ⌘R renames, a click no
+  longer does (Inputs names, stem names in the stem popover), routed by the pure `Shared/RenameShortcutRoute`
+  (`tools/test_rename_shortcut_route.swift`): FX link bin (with a stem popover open, only if the selection's host is
+  that stem) → the stem whose popover is open (`EditViewModel.openStemPopoverID`, `renamingStemID`, Main = nothing) →
+  `KeyboardClaim.owner == .inputs` with exactly ONE selected row (none/several = nothing, no fallback on the timeline
+  object) → the one selected object → the one selected annotation. The Inputs selection lives in the model
+  (`selectedRecordInputs`, purged after pair/unpair/set_pairs, emptied at tab switch / `tab.new` / `project.new`);
+  `input.select {inputs}` / `input.selection`; `debug.rename_shortcut {claim:"inputs", stem_popover}`. (3) Rows like
+  the object list (`Inputs/InputRowStyle`): divider under each row, padding 8×6, min height 34, name 11 pt, selection
+  accent 12 %; the meter on a second line under the name, 40 % of the panel's width. Verified with no screen:
+  `test_rename_shortcut_route` 25, `test_list_click_selection` 43, `scenario_inputs` new section, `scenario_fxlink` 187.
+  **The calibration is to the SAMPLE (engine patch `0047`, 2026-10-29)**: an impulse played at 1.000 s
+  through a loopback is recorded at 1.000 s, error 0 (the scenarios accept +-1), at every buffer size
+  (64 / 128 / 256 / 512 / 1024), started cold (seek 0 + `rec.start`) or punched in during playback,
+  on the virtual card (loopback) AND on a real CoreAudio loop (BlackHole 16ch, `tools/calib_record_device.py`).
+  Before it, the error was a whole number of BLOCKS, varying from take to take (0, +-1, +-2 blocks). Three
+  causes, all closed: (D1) the engine converted the input block's stream time through a reference that had
+  not advanced yet (`DeviceManager` hands the inputs over BEFORE `fillNextNodeBlock`), so every block landed
+  one block too early — `0047` asks the context for the edit time of the block about to be rendered
+  (`EditPlaybackContext::getUnloopedEditTimeOfNextBlock`); (D2) a start race: `performRecord` posts the
+  position then the play, the play is consumed before the inputs but the position only in `process()`, so
+  the first block was mapped with a stale play head — the block is now skipped for a context that has not
+  started while `hasPendingImmediatePositionChange()` (seen at bs 512 / 1024 started cold: every take on the virtual card, 2 of 6 and 6 of 6 on BlackHole); (D3)
+  the negative-adjustment branch (first block later than the compensation, frequent at bs 64 where the
+  press lands 3-5 blocks into the stream) wrote the silence and LOST the block — it now adds it. And (D4)
+  the virtual card announced `inlat`/`outlat` WITHOUT the buffers while JUCE CoreAudio includes them
+  (`deviceLatency + safetyOffset + framesInBuffer + streamLatency`): it now announces `inlat + bs` /
+  `outlat + bs` (`audio.virtual.status.announced_*_latency`, sum = `loopback_delay`). The patch is in
+  `engine-patches/3.5/0047-*.patch`, branch `objekat-record-0047` on the local engine, NOT published on the
+  fork (`0048` followed it, see below). Not touched: MIDI, retrospective recording, resync, export.
+  Residual (not a defect): on a card whose latency is ~0, the block skipped by the D2 guard is real audio
+  replaced by silence at the very start of a take — no real card has that latency.
+  A trap found measuring: a record pressed within ~250 ms of a change of DECLARED latency (an FX with latency
+  added) compensates the OLD one for that take, the PDC resync (`checkLatencyAndRebuild`) running on a tick.
+  Verified with no screen: Debug build, 0 new warning; `test_record_take_planner.swift` 28 and
+  `test_record_file_naming.swift` 14; `tools/scenario_record.py` 77 assertions on `--virtual-audio` (file, WAV
+  header, content, handles and the edge pulled, two zones one file, " (2)", mute and lane order, one undo,
+  outside-window take, pairs 1-2 / 2-3 identical on the shared channel, punch-in without rebuild, refusals,
+  calibration, buffer-size change during a recording); non-regression suites green; Settings.xml byte-identical.
+  Commands: `rec.start`, `rec.stop`; `rec.status` gains `recording` and `last_takes`.
+  **Not seen, not heard**: the record button (red, turning into a stop), the ⌘⇧R shortcut (no key event
+  can be sent headless), the takes on screen (handles, grey zone, muted ones), the file really heard back, a
+  real card (latency of a real interface, a device unplugged mid-recording), a disk really full.
+  **A take no longer cuts itself when the main thread is late (engine patch `0048`, 2026-10-30, branch `feat/rec3-bugfix`)**.
+  Symptom: "sometimes the record stops after one block" — a file of exactly 512 samples (11.6 ms at 44.1 kHz) while
+  the transport went on; 10 takes of 19 on BlackHole 16ch, Debug build from Xcode. Cause (H1, confirmed by the BWAV
+  time references of the real files: the short takes had tref = the press, the "good" ones press + 1..4 blocks): pressing
+  record does `setRecordingEnabled(target, true)` and `transport.record()` in the SAME main-thread turn; the arm
+  schedules `InputDeviceInstance::updateRecordingStatus` on an async update, which runs one turn later, finds the
+  destination ALREADY recording, stops it (`prepareToStopRecording` + `stopRecording`) and relaunches it only if that
+  stop produced no clip. A main thread late by more than ~10 ms of written audio (Debug build, SwiftUI redrawing at the
+  press) meant a clip existed, nothing restarted, and the input stopped recording under a running transport; a main
+  thread prompt enough gave a RESTARTED take, with 1-4 blocks lost at its head. Headless the main thread is free, so
+  the calibration had only ever measured the restarted take. `0048` (`objekat-record-0048`, NOT published on the fork,
+  on top of `0047`) makes `updateRecordingStatus` skip a destination that is armed AND already recording
+  (`isRecordingEnabled(id) && isRecording(id)`); disarming is unchanged. Companion fixes: (H2) `OBJDeviceChangeWatcher`
+  used to end the take at EVERY `juce::AudioDeviceManager` broadcast (CoreAudio device list, MIDI list, a start/stop of
+  the same device); it now compares the card with the one at the press (type, name, rate, buffer, active input AND output
+  channels, `objRecordCardSignature`) and ends the take only when it differs; (H3) `EditViewModel.seekEngineUnlessRecording`
+  — no timeline / sound-list click moves the ENGINE's playhead during a take (Tracktion ends a take on any position
+  change; the caret alone moves), the deliberate gestures (`transport.seek`, ⌥-click in the ruler, return to zero) still
+  end it; (H4) the workgroup rebind (which destroys the `InputDeviceInstance`s) now runs BEFORE they are collected in
+  `startRecordingInputs`. Permanent trace, quiet: `[REC] +ms` lines (ms since the press) for the press, `aboutToStart`,
+  `aboutToStop`, `finished` (clip length, `transport.isRecording`), `stopped`, a `seekTo` during a take and the watcher's
+  decision (old / new card signature, "keep recording" / "STOP"). Test hooks: `rec.start {debug_stall_ms}` (usleep on the
+  main thread right after the take started) and `audio.debug.broadcast_change` (a device-change broadcast that changes
+  nothing; `--virtual-audio` only). Measured on the virtual card, 44.1 kHz bs 512, 2 s takes: before, a stall of 60 ms
+  cold / 30 ms punched in cut the take to 31 / 20 ms (66-89 ms at 100, 217-240 ms at 250); after, every take lasts the
+  recording (2.0 s + the stall) with ONE start, ONE stop and ONE `recordingFinished` per input. `tools/scenario_record.py`
+  section R covers it (stall 0/15/30/60/100/250 x cold/punch-in x bs 512/64, bs 128/256/1024 at 0 and 100 ms, 10 quick
+  2 s cycles in "mute" mode, a no-op broadcast during a take), and F / F2 are replayed with a 100 ms stall: error 0 samples
+  at every buffer size. Note: the BWAV time reference equals the press exactly when cold; punched in it sits 0..~25 ms
+  after it (the file is opened 5-15 ms after the press in a Debug build, often exactly one block), which is not a lost
+  head — the single `aboutToStart` is the proof. The next free number is `0049`. Not seen: the real BlackHole loop (`tools/calib_record_device.py`), H3 on screen.
+  ```
+  **MIDI recording (rec3-midi, 2026-10-30, no engine patch).** A MIDI input is a recording source like a card input:
+  the Inputs tab lists the MIDI inputs ABOVE the card's (also while the card inputs are closed), "All MIDI Ins"
+  (`all_midi_in`) first, each row with a keys glyph and a velocity bar (`MidiInputsSection`, selection
+  `selectedMidiInputs`, no rename in v1). A row is dragged like a card input (`InputDragSession.begin(sources:)`,
+  payload key `midi`; a mixed drag takes one lane per source, MIDI first) onto the timeline to make a MIDI recording
+  zone, or onto a group to give it the input. A zone has ONE source (`SoundObject.recordSource`: `.audio(InputRef)` or
+  `.midi(MidiInputRef)`, computed over `recordInput` / `recordMidiInput`, session format 35); a MIDI input is found
+  again by id, else by its unique name (`MidiInputResolver`), else "absent" (kept, cannot be armed). A MIDI zone has
+  its own instrument, chosen in the synoptic Input block (stored in `SoundObject.instruments`, JSON key
+  `zoneInstruments` for groups): while the zone is armed, `syncMidiZones()` (engine `setMidiZones:`) plays it on a
+  hidden track fed by the device, so the keyboard is heard; a zone without instrument still records (muted take,
+  discreet warning). Takes are `.midiClip` children with handles, newest on top, in mute/add mode like audio takes,
+  one undo; the instrument is COPIED into each take with its live state (`copiedInstruments(of:)`). Rules: sustain (CC
+  64) is folded into note durations, other CC and pitch bend are ignored, no quantisation, a capture without note
+  makes no take, a take outside the window is the whole capture (`MidiTakePlanner`, pure). Notes are timed against the
+  sound HEARD (output latency compensated, MIDI rescan suspended during a take). The editor of a disarmed zone's
+  instrument opens on a temporary instance (`openZoneInstrumentEditor`, engine `"editor": true`), released when the
+  window closes. Headless: `--virtual-midi` creates a virtual device; commands `input.list.midi_inputs`,
+  `input.levels.midi_activity`, `midi.virtual.status`, `midi.virtual.send`; `rec.assign`/`rec.drop` accept `midi`,
+  `rec.status` reports `zones[].source`/`midi_input`/`instrument` and `last_takes[].source`/`notes`. Tests:
+  `tools/scenario_midi_record.py` (72 OK, the one failure being the Settings.xml check rewritten by a GUI instance
+  running beside it), `tools/test_midi_take_planner.swift` 23, `tools/test_input_drag_payload.swift` 17. Measured on
+  the virtual card: a recorded note sits -8.6 ms [-10.0; -5.9] from the heard attack. **Not seen, not played**:
+  everything on screen, a real USB keyboard, a third-party AU/VST editor on a disarmed zone.
+  **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
+  one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
+  input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both
+  devices and the combiner restarted itself from the `HALC_ShellPlugIn Connection Queue` thread while the main
+  thread was still inside `setAudioDeviceSetup`: `EXC_BAD_ACCESS`. `objekat/Shared/OBJCoreAudioProbe.h` (pure
+  `classify` + a thin CoreAudio layer, property queries only: no device opened, no microphone prompt) asks the
+  system whether the output device carries input channels ITSELF; with several same-name devices the verdict is
+  cautious (every output-capable one must, else refused). `openAudioInputs` refuses BEFORE any
+  `setAudioDeviceSetup` (`OBJInputsSeparateDeviceReason`), `OBJAudioDeviceSnapshot.inputsSeparate` /
+  `AudioDeviceSnapshot.inputsSeparate` carry it to the Inputs tab (a message in place of the button) and to
+  `audio.status.inputs_separate` / `input.list.inputs_separate`; `input.enable` answers `invalid_state` with
+  `details.reason = "inputs_on_separate_device"`. `--virtual-audio=...,splitin:1` reaches the same refusal with
+  no hardware (`tools/scenario_inputs_split_device.py`, `tools/test_coreaudio_probe.cpp`). Not seen: the message
+  on screen, and a real pair of AirPods (not touched).
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

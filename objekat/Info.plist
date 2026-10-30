@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-	ONLY what the INFOPLIST_KEY_* build settings cannot express: the session type and the claim on it.
+	ONLY what the INFOPLIST_KEY_* build settings cannot express: the session type and the claim on it
+	(and the microphone's usage description, whose English base text lives here so that the localised
+	ones, Resources/InfoPlist.xcstrings, have a key to override).
 	Everything else in the app's Info.plist is still GENERATED (GENERATE_INFOPLIST_FILE = YES), and
 	merged with this file (INFOPLIST_FILE = objekat/Info.plist). The file is kept out of the target's
 	resources by a membership exception in project.pbxproj: it is the BASE of the Info.plist, not a
@@ -14,6 +16,8 @@
 -->
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>OBJEKAT uses the microphone only when you open an audio input to record. Nothing is recorded until you ask for it.</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

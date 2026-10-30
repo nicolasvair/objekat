@@ -134,7 +134,7 @@ extension EditViewModel {
         }
         func moveCursor(to start: Double) {
             let t = max(0, start)
-            if !isPlaying { engine?.seek(to: t) }
+            if !isPlaying { seekEngineUnlessRecording(to: t) }
             onMoveCursor(t)
         }
         selectedCrossfade = nil
@@ -159,7 +159,7 @@ extension EditViewModel {
         guard !selectedEntries.isEmpty else {
             select(id, additive: false)
             let t = max(0, target.absStart)
-            if !isPlaying { engine?.seek(to: t) }
+            if !isPlaying { seekEngineUnlessRecording(to: t) }
             onMoveCursor(t)
             return
         }
@@ -181,7 +181,7 @@ extension EditViewModel {
         )
         if target.absStart < prevMin {
             let t = max(0, target.absStart)
-            if !isPlaying { engine?.seek(to: t) }
+            if !isPlaying { seekEngineUnlessRecording(to: t) }
             onMoveCursor(t)
         }
     }

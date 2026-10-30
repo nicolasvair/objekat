@@ -83,3 +83,17 @@ final class FineAdjustTracker {
 
     func effective(_ travel: Double, fine: Bool) -> Double { adjust.effective(travel, fine: fine) }
 }
+
+// MARK: - The rise limit of a drag
+
+/// The protection of a dragged level box (`DragValueBox.dragRiseLimit`): one DRAG cannot raise the value
+/// by more than `limit` above where THAT drag started — a slip of the hand on the monitor volume must not
+/// send +24 dB into the speakers. Going down is free, and a value TYPED is never concerned (the caller
+/// does not ask). Pure: compiled alone by `tools/test_drag_rise_limit.swift`.
+enum DragRiseLimit {
+    /// `proposed` held at `start + limit`; nil `limit` = no protection. A negative limit reads as zero.
+    static func clamp(start: Double, proposed: Double, limit: Double?) -> Double {
+        guard let limit else { return proposed }
+        return min(proposed, start + max(0, limit))
+    }
+}

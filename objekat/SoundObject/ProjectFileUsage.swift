@@ -18,6 +18,13 @@ import Foundation
 //     old one: those are the orphans this exists for;
 //   • `samples/objects/` — the legacy place of the same files, read for ever, never written;
 //   • `samples/sources/` — the sources a "Save a copy" capsule embeds;
+//   • `samples/rec/` — the recordings of the card (format 33), one file per input and per take. In the
+//     universe like `samples/sources/` (no sidecar, its `.wfc` cache goes with it): a take that nothing
+//     reads any more — deleted from the project, and no other version, clipboard or open tab holds it —
+//     is offered for deletion, ticked by default like the rest. A clip pointing there counts as using the
+//     file (`relativeMarks`), so the same folder seen from a duplicated project resolves; a MUTED take
+//     is still in the project, so it is used. Deleted but still in the undo: offered all the same, and
+//     ⌘Z fetches it back from the Trash (`EditViewModel+DiskCleanup`, option B);
 //   • `waveforms/<basename>.wfc` — the display caches (regenerable, named after the source file).
 // A normal clip points at an ABSOLUTE external path: this unit never lists it, so it can never
 // propose to delete it (the universe below is the whole of what may ever be offered).
@@ -165,6 +172,7 @@ nonisolated enum ProjectFileUsage {
     static let consolidateRel = "samples/consolidate"
     static let legacyRel = "samples/objects"
     static let sourcesRel = "samples/sources"
+    static let recRel = "samples/rec"
     static let waveformsRel = "waveforms"
     static let sidecarSuffix = "_objectstate.json"
 
@@ -245,7 +253,7 @@ nonisolated enum ProjectFileUsage {
             for i in stride(from: comps.count - 3, through: 0, by: -1) where comps[i] == "samples" {
                 guard i + 3 == comps.count else { continue }
                 let leaf = comps[i + 1]
-                guard ["consolidate", "objects", "sources"].contains(leaf) else { continue }
+                guard ["consolidate", "objects", "sources", "rec"].contains(leaf) else { continue }
                 let file = comps[i + 2]
                 marks.insert("samples/\(leaf)/\(file)")
                 if leaf == "consolidate" { marks.insert("samples/objects/\(file)") }
@@ -276,6 +284,8 @@ nonisolated enum ProjectFileUsage {
         case legacyWave
         /// A source a capsule embedded, in `samples/sources/`.
         case embeddedSource
+        /// A take recorded from the card, in `samples/rec/`.
+        case recording
         /// A `waveforms/*.wfc` cache with no file of the universe to follow.
         case waveformCache
         /// A sidecar whose wave is gone.
@@ -304,7 +314,7 @@ nonisolated enum ProjectFileUsage {
 
     /// The candidates in `listing` — and only them. Everything else is OUT of the universe and can
     /// never be offered: files at the root of `samples/`, in deeper sub-folders, anything of the
-    /// project folder that is not `samples/{consolidate,objects,sources}/` or `waveforms/*.wfc`,
+    /// project folder that is not `samples/{consolidate,objects,sources,rec}/` or `waveforms/*.wfc`,
     /// dot files (`.DS_Store`) — with ONE exception: a `.wav` anywhere else in the folder that has a
     /// `.flac` of the same name beside it (`archivedOriginal`, what the FLAC archive leaves behind).
     static func universe(listing: [Listed]) -> [Candidate] {
@@ -314,7 +324,7 @@ nonisolated enum ProjectFileUsage {
             guard let name = comps.last, !name.hasPrefix(".") else { continue }
             let folder = comps.dropLast().joined(separator: "/")
             switch folder {
-            case consolidateRel, legacyRel, sourcesRel: break
+            case consolidateRel, legacyRel, sourcesRel, recRel: break
             case waveformsRel: guard name.hasSuffix(".wfc") else { continue }
             default: continue
             }
@@ -329,7 +339,7 @@ nonisolated enum ProjectFileUsage {
                 guard let name = comps.last, !name.hasPrefix("."),
                       !comps.dropLast().contains(where: { $0.hasPrefix(".") }) else { continue }
                 let folder = comps.dropLast().joined(separator: "/")
-                if [consolidateRel, legacyRel, sourcesRel, waveformsRel].contains(folder) { continue }
+                if [consolidateRel, legacyRel, sourcesRel, recRel, waveformsRel].contains(folder) { continue }
                 byDir[folder, default: [:]][name] = item.size
             }
             for (folder, files) in byDir {
@@ -350,20 +360,22 @@ nonisolated enum ProjectFileUsage {
             return ("\(waveformsRel)/\(name).wfc", size)
         }
 
-        for folder in [consolidateRel, legacyRel, sourcesRel] {
+        for folder in [consolidateRel, legacyRel, sourcesRel, recRel] {
             let files = byFolder[folder] ?? [:]
+            // Sources and takes are plain files: no sidecar beside them.
+            let hasSidecars = folder != sourcesRel && folder != recRel
             var sidecars: [String: String] = [:]      // wave base name → sidecar file name
-            if folder != sourcesRel {
+            if hasSidecars {
                 for name in files.keys where name.hasSuffix(sidecarSuffix) {
                     sidecars[String(name.dropLast(sidecarSuffix.count))] = name
                 }
             }
             var claimed = Set<String>()
             for name in files.keys.sorted() {
-                if folder != sourcesRel, name.hasSuffix(sidecarSuffix) { continue }
+                if hasSidecars, name.hasSuffix(sidecarSuffix) { continue }
                 var rels = ["\(folder)/\(name)"]
                 var size = files[name] ?? 0
-                if folder != sourcesRel,
+                if hasSidecars,
                    let sidecar = sidecars[(name as NSString).deletingPathExtension],
                    !claimed.contains(sidecar) {
                     claimed.insert(sidecar)
@@ -375,7 +387,8 @@ nonisolated enum ProjectFileUsage {
                     size += cache.size
                 }
                 let kind: Kind = folder == consolidateRel ? .consolidatedWave
-                    : folder == legacyRel ? .legacyWave : .embeddedSource
+                    : folder == legacyRel ? .legacyWave
+                    : folder == recRel ? .recording : .embeddedSource
                 out.append(Candidate(id: rels[0], kind: kind, name: name, folder: folder,
                                      files: rels, size: size))
             }
@@ -473,7 +486,7 @@ nonisolated enum ProjectFileUsage {
         switch candidate.kind {
         case .waveformCache:
             return usage.names.contains(String(candidate.name.dropLast(".wfc".count)))
-        case .consolidatedWave, .legacyWave, .embeddedSource, .strayFile, .archivedOriginal:
+        case .consolidatedWave, .legacyWave, .embeddedSource, .recording, .strayFile, .archivedOriginal:
             return candidate.files.contains { usage.rel.contains($0) }
         }
     }

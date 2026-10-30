@@ -266,7 +266,8 @@ extension EditViewModel {
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                         comments: comments.isEmpty ? nil : comments,
                         fxLinks: fxLinksDoc(for: items, stems: capturedStems),
-                        canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings)
+                        canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings,
+                        recordInputs: recordInputs.isEmpty ? nil : recordInputs)
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains
@@ -373,6 +374,7 @@ extension EditViewModel {
         stems = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
         engine?.setMasterStemKey(mainStemID.uuidString)   // purges the old master rack + a new key
         selectedIDs = []
+        clearInputsAndStemTransientState()   // the Inputs selection and the stem popover belong to the document replaced
         undoStack = []
         redoStack = []
         consolidateDefinitions = [:]
@@ -381,6 +383,7 @@ extension EditViewModel {
         markerLanes = []
         comments = []
         canvasSettings = [:]        // another project starts the editors at their defaults
+        setRecordInputs(RecordInputsConfig())   // ... and the card's inputs unpaired, unnamed
         consolidateEditStack.removeAll()
         resetTransientSessionState()
         timeSelection = nil
@@ -584,6 +587,8 @@ extension EditViewModel {
         pianoRollCropOffsetByClip = [:]
         groupsFoldedFromAutomation = []
         exportRegionsDeselected = []   // the export panel's ticks belong to the session, not to the next project
+        armedGroupIDs = []             // an armed zone belongs to the document it was armed in
+        recordDropGhosts = []
     }
 
     /// Returns true if it is safe to carry on straight away (a clean project, or

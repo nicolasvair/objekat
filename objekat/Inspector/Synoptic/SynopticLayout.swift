@@ -658,6 +658,11 @@ enum SynopticLayout {
         /// The 'stems' zone at the foot (replacing the Out pill): choosing the output stem.
         /// nil for a bus.
         var stemsZone: CGRect? = nil
+        /// The 'input' zone at the very TOP, OUTSIDE the object's frame (the mirror of the stems zone at
+        /// the foot): choosing the card input a recording zone listens to, and its take mode. A wire
+        /// (`WireSource.recordInput`) runs from it to the head zone. nil for anything that is not a
+        /// recordable group.
+        var inputZone: CGRect? = nil
         /// One column per outgoing send, stacked BELOW the stems and wired by the LEFT (@see SendCardPlacement).
         var sendCards: [SendCardPlacement] = []
         /// The fixed slots a send card can be dropped on that have no '+' of the trunk: the post-fader one
@@ -860,6 +865,15 @@ enum SynopticLayout {
     static let stemsZoneW: CGFloat = 176
     static let stemsZoneH: CGFloat = 36
 
+    // The 'input' zone (a recording zone, at the top, the stems' counterpart): the same width as the stems
+    // zone; TWO rows — the title plus the input's menu, then the take mode's menu.
+    static let inputZoneW: CGFloat = stemsZoneW
+    static let inputZoneH: CGFloat = 66
+    /// What a MIDI recording zone's input zone adds: the instrument row.
+    static let inputZoneMidiExtra: CGFloat = 26
+    /// The wire between the input zone and the head zone.
+    static let inputGap: CGFloat = 24
+
     // The 'aux' zone (foot) and the sends received (an aux's head): one row per send, under a title.
     // The width is set by a row's content (arrow + name + dB box + switch): any wider and
     // the box stretched for nothing and imposed its width on the whole signal view.
@@ -938,6 +952,8 @@ enum SynopticLayout {
     ///   - araCardWidth: non-nil = the audio object carries an ARA source: its card (this wide) hangs under the
     ///     'audio file' frame, and the chain moves down by its height.
     ///   - sends: the outgoing sends, one column each, each tapped at its `slot` (@see SendCardPlacement).
+    ///   - input: the host is a recording zone: the 'input' zone hangs at the very top, OUTSIDE the frame, and
+    ///     everything else moves down by its height and the wire's.
     ///   - sendsEnabled: this object can send (it gets the post-fader '+' and the "+ Send to…" button even
     ///     with no send yet).
     ///   - receivedRows: the sends an aux receives, listed in its chain head.
@@ -949,6 +965,7 @@ enum SynopticLayout {
                         midi: Bool = false, audioFile: Bool = false, araCardWidth: CGFloat? = nil,
                         mix: Bool = false,
                         stems: Bool = false,
+                        input: Bool = false, inputMidi: Bool = false,
                         sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
                         infiniteOption: Bool = false,
                         objectFrame: Bool = false, clipOptionsExpanded: Bool = true) -> Diagram {
@@ -975,16 +992,24 @@ enum SynopticLayout {
         let boxedLeadW = objectFrame ? frameW : leadW
         let boxedClipW = objectFrame ? frameW : clipW
         let boxedFootW = (objectFrame && !mix) ? frameW : (stems ? stemsZoneW : outW)
+        let inputW: CGFloat = input ? inputZoneW : 0
         let contentW = objectFrame
-            ? max(frameW, stems ? stemsZoneW : outW)
-            : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0)
+            ? max(frameW, stems ? stemsZoneW : outW, inputW)
+            : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0, inputW)
         let sendsArea = sendsEnabled || !sends.isEmpty
         let innerEdge = margin + sendGutterSpace(sends.count)   // the content's left edge (and the send columns')
         let contentLeft = innerEdge
         let centerX = contentLeft + contentW / 2
 
-        // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP.
-        let leadRect = CGRect(x: centerX - boxedLeadW / 2, y: margin, width: boxedLeadW, height: leadH)
+        // The 'input' zone, at the very top and outside the frame; the head (and so the frame) starts under it.
+        let inputZone: CGRect? = input
+            ? CGRect(x: centerX - inputZoneW / 2, y: margin, width: inputZoneW,
+                     height: inputZoneH + (inputMidi ? inputZoneMidiExtra : 0)) : nil
+        let headTop = inputZone.map { $0.maxY + inputGap } ?? margin
+
+        // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP
+        // (of the object: under the input zone when there is one).
+        let leadRect = CGRect(x: centerX - boxedLeadW / 2, y: headTop, width: boxedLeadW, height: leadH)
         var midiZone: CGRect? = nil
         var instrumentSlot: CGRect? = nil
         var audioZone: CGRect? = nil
@@ -1019,6 +1044,13 @@ enum SynopticLayout {
             placement.cables.insert(
                 Cable(from: CGPoint(x: centerX, y: leadRect.maxY),
                       to: CGPoint(x: centerX, y: r.minY), style: .connector, carries: .file), at: 0)
+        }
+
+        // input zone → head: the wire carries the input's width (one wire for a mono input, two for a pair).
+        if let iz = inputZone {
+            placement.cables.append(
+                Cable(from: CGPoint(x: centerX, y: iz.maxY), to: CGPoint(x: centerX, y: leadRect.minY),
+                      style: .connector, carries: .recordInput))
         }
 
         // trunk → [clip zone] → [post-fader '+'] → foot
@@ -1126,7 +1158,7 @@ enum SynopticLayout {
                        sourcePill: leadRect, outPill: outPill, placement: placement,
                        midiZone: midiZone, instrumentSlot: instrumentSlot,
                        audioZone: audioZone, audioZoneFolded: audioFile && !clipOptionsExpanded,
-                       araCard: araCard, clipZone: clipZone, stemsZone: stemsZone,
+                       araCard: araCard, clipZone: clipZone, stemsZone: stemsZone, inputZone: inputZone,
                        sendCards: sendCards, sendSlotDrops: sendSlotDrops, addSendButton: addSendButton,
                        busHeadZone: busHead ? leadRect : nil,
                        objectFrame: frame, postFaderPlus: postFaderPlus)

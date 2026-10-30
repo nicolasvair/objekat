@@ -13,6 +13,7 @@
 //         ../objekat/Shared/ObjectColorChoice.swift \
 //         ../objekat/Shared/UserObjectColors.swift \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \

@@ -31,6 +31,19 @@
 /// À poser avant la première construction : c'est `init` qui ouvre le périphérique.
 + (void)setAudioDisabled:(BOOL)disabled;
 
+/// `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0]`: replaces EVERY sound card with
+/// a virtual one paced on the wall clock, with synthetic inputs (@see OBJVirtualAudioDevice.h).
+/// Same rule as above — set before the first construction. `--no-audio` wins over it. Nothing the
+/// virtual card does is ever written to Settings.xml.
++ (void)setVirtualAudio:(BOOL)on spec:(NSString* _Nullable)spec;
++ (BOOL)isVirtualAudio;
+
+/// `--virtual-midi`: adds ONE in-process MIDI input, "OBJ Virtual MIDI", that `-sendVirtualMidiEvents:` feeds,
+/// so MIDI recording can be tested with no hardware. Same rule as above — set before the first construction.
+/// The MIDI device settings (`virtualmididevices`, `midiin`, `virtualmidiin`) never reach Settings.xml.
++ (void)setVirtualMidi:(BOOL)on;
++ (BOOL)isVirtualMidi;
+
 // Edit live — muté incrémentalement, jamais reconstruit
 - (void)addSoundObject:(OBJSoundObjectData*)data withID:(NSString*)uuid;
 - (void)removeSoundObjectWithID:(NSString*)uuid;
@@ -945,6 +958,117 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // @see OBJAudioDeviceSnapshot. Thread principal.
 - (OBJAudioDeviceSnapshot* _Nonnull)audioDeviceSnapshot;
 
+// The virtual card (`--virtual-audio`): its configuration, the live signal on each input and the
+// loopback delay it applies (`{ "active": false }` when it is off). Main thread.
+- (NSDictionary<NSString*, id>* _Nonnull)virtualAudioStatus;
+/// Chooses what input `channel` of the virtual card carries: `silence`, `sine`, `impulse` or
+/// `loopback` (@see objvirtual::Signal). nil on success, otherwise why not.
+- (NSString* _Nullable)setVirtualInputChannel:(NSInteger)channel signal:(NSString* _Nonnull)signal
+                                    frequency:(double)frequency amplitude:(double)amplitude
+                                       period:(double)period;
+
+// The card's INPUTS, opened on demand (recording work). Closed at launch — opening one is what
+// makes macOS ask for the microphone and switches AirPods to the call profile — they open with
+// -openAudioInputs, on the SAME device as the output, and stay open until the device changes.
+// Main thread throughout. Opening and closing are asynchronous like the other device changes:
+// wait for `onAudioDeviceChanged` (AudioDeviceStatus.generation) before reading back.
+/// nil on success (or already open), otherwise why not (no card, no inputs, refused by the OS).
+/// `OBJInputsSeparateDeviceReason` when the output device has no inputs of its own (the AirPods
+/// layout: speaker and microphone are two CoreAudio devices with one name) — refused BEFORE anything
+/// is touched, the output keeps playing exactly as it was.
+- (NSString* _Nullable)openAudioInputs;
+/// YES when the inputs listed under the output device's name belong to ANOTHER device (AirPods), which
+/// `-openAudioInputs` refuses: JUCE would build an aggregate and the profile switch (call mode) makes
+/// CoreAudio restart it from its own thread while the main thread is still opening it — a crash.
+/// Re-asked of the system each time (@see OBJCoreAudioProbe.h); NO for a card whose inputs are its
+/// own, for one with no inputs at all, and for no device. Main thread.
+- (BOOL)audioInputsAreOnSeparateDevice;
+- (void)closeAudioInputs;
+- (BOOL)audioInputsOpen;
+/// The names of the open card's input channels, in order (empty while closed).
+- (NSArray<NSString*>* _Nonnull)audioInputChannelNames;
+/// Every input the engine describes — one mono per channel plus one stereo per neighbouring pair
+/// (2N - 1) — as `{name, first, count, enabled}`. Empty while the inputs are closed.
+- (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)audioInputDevices;
+/// Peak of each DEVICE input channel since the last call, in dB (floor -120), then cleared.
+/// Empty while the inputs are closed.
+- (NSArray<NSNumber*>* _Nonnull)audioInputPeaksDb;
+/// Declares which neighbouring channels are one stereo input: the FIRST channel of each pair
+/// (0 = channels 1+2). Overlapping pairs (1+2 and 2+3) coexist. Re-describes the inputs at once.
+- (void)setAudioInputStereoPairs:(NSArray<NSNumber*>* _Nonnull)firstChannels;
+/// The pairs actually in force (declared, inside the card, sorted, no duplicate).
+- (NSArray<NSNumber*>* _Nonnull)audioInputStereoPairs;
+/// MONITORING: hears an input (`first`/`count` as `audioInputDevices` gives them) in the mix, through
+/// a hidden track of the Edit that the model knows nothing about — so the app's solo, which works on
+/// the model's gains, does not silence it. nil on success, otherwise why not (inputs closed, no such
+/// input). The state lives with the ENGINE, not with the project: it survives a new project, an
+/// opened one and a tab switch (the Edit is never replaced), and is dropped when the inputs close,
+/// when the card changes and when the input stops existing (a pair taken apart).
+- (NSString* _Nullable)setAudioInputMonitor:(BOOL)on first:(NSInteger)first count:(NSInteger)count;
+/// The inputs being monitored right now, as `{first, count}`, ordered.
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)audioInputMonitors;
+/// The LISTENING level of an input, in dB (a true gain, -24...+24 in the Inputs tab), applied on its hidden
+/// track AFTER the point where the recording is taken: the file is the same whatever it is. It belongs to
+/// the engine, like the monitoring itself (not saved; forgotten when the inputs close or the input stops
+/// existing). nil on success, otherwise why not (inputs closed, no such input).
+- (NSString* _Nullable)setAudioInputMonitorGain:(float)db first:(NSInteger)first count:(NSInteger)count;
+/// The listening level of an input in dB (0 when none was set).
+- (float)audioInputMonitorGainFirst:(NSInteger)first count:(NSInteger)count;
+
+// RECORDING (@see docs/plan_enregistrement_audio.md). One hidden track per input, targeted by the input
+// device (the same track that carries the monitoring); Tracktion's transport records into it and does
+// the latency compensation (device + graph). Main thread throughout.
+/// Prepares the inputs that are about to record (`{first, count}` each): their hidden track exists and is
+/// targeted, so that pressing record needs no graph rebuild. Replaces the previous set. Harmless while the
+/// inputs are closed (nothing is prepared). Not saved.
+- (void)setAudioInputsArmed:(NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)inputs;
+/// Starts recording the given inputs: audio ones `{first, count, path}` — the WAV file each one writes,
+/// 32-bit float at the device's rate; MIDI ones `{midi: deviceID, zone: uuid}` — the zone must be armed
+/// (`-setMidiZones:`), a MIDI take is its notes, in absolute seconds (see `onRecordingFinished`). Stopped: records from the transport position, playing: punches in at the current
+/// position. nil on success, otherwise why not (nothing is left half-started).
+- (NSString* _Nullable)startRecordingInputs:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)inputs;
+- (BOOL)isRecordingNow;
+/// TEST HOOK (`rec.start debug_stall_ms`): the next `startRecordingInputs:` keeps the main thread busy that many
+/// milliseconds once the take has started, before giving the run loop back — a main thread that is late for the
+/// engine's deferred bookkeeping (what a Debug build redrawing at the press does). One shot; 0 = nothing.
+@property (nonatomic) NSInteger debugRecordStallMs;
+/// TEST HOOK (`audio.debug.broadcast_change`): makes juce::AudioDeviceManager broadcast a change that changes nothing.
+- (void)debugBroadcastAudioDeviceChange;
+/// Called on the main thread when a recording is over, however it ended (-stop, a position change, the
+/// card). Each take is `{first, count, path, origin, length, sampleRate}`: the file, the timeline instant
+/// of its first sample and its length in seconds. The clips the engine made are already gone from the
+/// hidden tracks; the files stay. A MIDI zone's take is `{zone, device, origin, length, notes: [{pitch,
+/// start, end, velocity}], sustain: [{time, down}]}` — seconds on the timeline (sustain = CC64 events); a zone that played no note has none.
+@property (nonatomic, copy, nullable) void (^onRecordingFinished)(NSArray<NSDictionary<NSString*, id>*>* _Nonnull takes);
+
+// MIDI INPUTS (rec3-midi). Tracktion's own MIDI devices — physical ones, the "All MIDI Ins" virtual one
+// (`all_midi_in`) and, under `--virtual-midi`, "OBJ Virtual MIDI". Independent of the audio inputs: they
+// exist whether or not the card's inputs are open. Main thread.
+/// Every MIDI input the engine knows (the per-track devices left out): `{id, identifier, name, virtual,
+/// enabled}`. `id` is Tracktion's device id (stable across launches for a given piece of hardware).
+- (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)midiInputDevices;
+/// The loudest note-on velocity (0...127) seen on each device since the last read, by device id, only for
+/// the devices that played something. Reading clears.
+- (NSDictionary<NSString*, NSNumber*>* _Nonnull)midiInputActivity;
+/// Called on the main thread after the list of MIDI devices changed (a device plugged, unplugged, enabled).
+/// Carries nothing: the receiver re-reads `-midiInputDevices`.
+@property (nonatomic, copy, nullable) void (^onMidiDevicesChanged)(void);
+/// The MIDI zones that are ARMED, each `{zone, device, instrument?}`: `zone` the group's uuid, `device` a
+/// MIDI input id, `instrument` the zone's virtual instrument `{pluginKey, identifier, format, name,
+/// stateXML?}`. Each gets a hidden track playing the device through the instrument (one track per ZONE: a
+/// device may feed several), released when the zone leaves the list. Replaces the previous set; kept as is
+/// while a recording runs. Not saved.
+- (void)setMidiZones:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)zones;
+/// The zones that have their hidden track right now (uuids).
+- (NSArray<NSString*>* _Nonnull)midiZonesLive;
+/// `--virtual-midi` only. `{active, device_id, name, sent, pending}`.
+- (NSDictionary<NSString*, id>* _Nonnull)virtualMidiStatus;
+/// `--virtual-midi` only. Plays events into the virtual device at `delay_ms` from now each: `{kind: "on"|"off"|"cc",
+/// note, velocity?, channel?, delay_ms?}` (for "cc": `note` is the controller, `velocity` the value). `device` (a MIDI input id) defaults to the virtual one; what goes
+/// to the virtual device also reaches "All MIDI Ins", as a physical device's would. nil on success.
+- (NSString* _Nullable)sendVirtualMidiEvents:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)events
+                                      device:(NSString* _Nullable)deviceID;
+
 // Appelé sur le thread PRINCIPAL à chaque fois que juce::AudioDeviceManager diffuse un
 // changement (device ouvert / fermé / redémarré, taux ou buffer changés, liste de devices
 // changée). Coalescé par JUCE. Ne porte rien : le récepteur relit -audioDeviceSnapshot
@@ -963,7 +1087,11 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 @property (nonatomic) double    sampleRate;                    // Hz, 0 si deviceName == nil
 @property (nonatomic) NSInteger bufferSize;                    // frames, 0 si deviceName == nil
 @property (nonatomic) NSInteger outputChannels;                // canaux de sortie ACTIFS
+@property (nonatomic) NSInteger inputChannels;                 // canaux d'entrée ACTIFS (0 = entrées fermées)
 @property (nonatomic) BOOL      running;                        // dev->isPlaying()
+// Les entrées de cette carte sont un AUTRE périphérique de même nom (AirPods) : non prises en charge
+// (@see -audioInputsAreOnSeparateDevice). Toujours NO une fois les entrées ouvertes ou sans carte.
+@property (nonatomic) BOOL      inputsSeparate;
 // Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
 // 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la
 // carte a été ramenée à `sampleRate`), 2 = outOfRangeKept (inutilisable mais rien de mieux à
@@ -973,5 +1101,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // La fréquence que la carte avait AVANT la décision (celle qui a été refusée, pour 1 et 2).
 @property (nonatomic) double    deviceRateBeforeDecision;
 @end
+
+// Declared LAST on purpose (@see the note on @class OBJAudioDeviceSnapshot at the top): a nullability
+// annotation wakes -Wnullability-completeness for every line of the file that follows it.
+/// The reason `-openAudioInputs` answers when the inputs are a separate device (compare, do not parse).
+FOUNDATION_EXPORT NSString* _Nonnull const OBJInputsSeparateDeviceReason;
 
 #endif /* OBJEngineCore_h */

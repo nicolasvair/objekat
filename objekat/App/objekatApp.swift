@@ -89,6 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // queue) — refused outright rather than risking a half-loaded project on the next launch.
         // A tab switch under way is the same hazard under a different name.
         guard !vm.isLoadingProject, workspace?.isSwitching != true else { return .terminateCancel }
+        // A recording ends with the application: its files are closed and the takes land in the project,
+        // which the usual question below then offers to save.
+        if vm.isRecording { workspace?.session.stop() }
         guard let workspace else { return vm.confirmSaveBeforeQuit() ? .terminateNow : .terminateCancel }
         return workspace.confirmQuit()
     }

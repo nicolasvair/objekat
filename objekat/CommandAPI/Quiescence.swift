@@ -61,6 +61,9 @@ enum Quiescence {
             if vm.exportJob?.isRunning == true || vm.exportBatch?.isActive == true {
                 reasons.append("export running")
             }
+            if vm.isRecording {
+                reasons.append("recording")
+            }
             if vm.isScanning {
                 reasons.append("plugin scan")
             }

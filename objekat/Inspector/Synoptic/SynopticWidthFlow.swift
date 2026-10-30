@@ -169,6 +169,9 @@ enum WireSource: Equatable, Sendable {
     /// After the mixer: an object always leaves it as a stereo pair (a mono object is duplicated left →
     /// right at the end of its chain).
     case bus
+    /// The wire from a recording zone's 'input' zone to its head: the width of the card input the zone
+    /// records (`SynopticWidthFlow.recordInputWidth`: 1 for a mono input, 2 for a stereo pair).
+    case recordInput
 }
 
 /// How one wire is drawn.
@@ -242,6 +245,9 @@ struct SynopticWidthFlow: Equatable {
     var menuAt: [CablePoint: CableMenu] = [:]
     /// The root series' id (the host's), to name the head of the chain.
     var rootID: UUID? = nil
+    /// A recording zone: the channel count of the card input it records (1 mono, 2 pair); nil = no input
+    /// (the wire from the 'input' zone then keeps the neutral single line). Set by the bound view.
+    var recordInputWidth: Int? = nil
 
     /// The width the chain is FED with: a stereo file played other than LR is one channel.
     var chainInput: Int {
@@ -325,6 +331,9 @@ struct SynopticWidthFlow: Equatable {
             if trunkOut <= 1 && sourceWidth >= 2 { return WireLook(count: 1, shape: .split) }
             return WireLook(count: count(trunkOut))
         case .bus:    return WireLook(count: 2)
+        case .recordInput:
+            guard let n = recordInputWidth else { return nil }
+            return WireLook(count: count(n))
         }
     }
 

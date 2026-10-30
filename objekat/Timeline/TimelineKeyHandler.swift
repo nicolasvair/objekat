@@ -533,6 +533,7 @@ extension TimelineView {
         let isTextInput = isTextInputActive
         let togglePlayback = onTogglePlayback
         let togglePause = onTogglePause
+        let toggleRecord = onToggleRecord
         let returnToZero = onReturnToZero
         // Synchronous tracking of the physically held 's' key: it arms the solo chords
         // (s+Return, s+N, s+⌫). It lives in the monitor's closure (the same thread as the
@@ -973,9 +974,18 @@ extension TimelineView {
                     return nil
                     // Cmd+S (Save) / Cmd+Shift+S (Save As) are handled by the File menu.
                 case "r":
+                    // ⌘⇧R: record / stop (⌘⌥R, the provisional one, is gone). Tested BEFORE the ⌘-only branch
+                    // below, which would take it for a rename: ⌘R stays "rename", ⌥R the vertical zoom.
+                    if flags.contains([.command, .shift]) && !flags.contains(.option) {
+                        guard !event.isARepeat else { return nil }
+                        DispatchQueue.main.async { toggleRecord() }
+                        return nil
+                    }
                     if flags.contains(.command) {
-                        // Contextual (plan_synoptic_rework B.9): the signal view holding the keyboard
-                        // on ONE FX link bin renames the bin; otherwise the object / marker as before.
+                        // Contextual (plan_synoptic_rework B.9; @see RenameShortcutRoute): the signal view
+                        // holding the keyboard on ONE FX link bin renames the bin; a stem's popover open
+                        // renames the stem; the Inputs list holding the keyboard renames its one selected
+                        // row (or nothing); otherwise the object / marker as before.
                         DispatchQueue.main.async { vm.performRenameShortcut() }
                         return nil
                     }

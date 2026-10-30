@@ -5,6 +5,7 @@
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \

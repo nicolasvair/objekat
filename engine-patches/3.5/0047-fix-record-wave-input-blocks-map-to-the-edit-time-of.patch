@@ -1,0 +1,146 @@
+From c629811cdc8b22cff3d2a1890f3948ab58a08b4d Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Thu, 29 Oct 2026 15:55:23 +0100
+Subject: [PATCH] fix(record): wave input blocks map to the edit time of the
+ block being rendered (objekat 0047)
+
+The DeviceManager hands the audio inputs over after nextBlockStarted() and
+BEFORE fillNextNodeBlock(), i.e. while the context's reference range is still
+the previous block's. WaveInputDeviceInstance::acceptInputBuffer mapped the
+device stream time through that stale reference, so every recorded block was
+placed one block too early, and the first-block jitter at the start of a
+recording (the position change posted before the play is only applied by
+process(), after the hand-over) made the error vary from take to take.
+
+- EditPlaybackContext::getUnloopedEditTimeOfNextBlock(): the unlooped edit
+  time of the first sample of the block about to be rendered (audio thread,
+  between nextBlockStarted and fillNextNodeBlock).
+- EditPlaybackContext::hasPendingImmediatePositionChange(): a position change
+  not tied to a jump time is waiting for the next process().
+- acceptInputBuffer: use the former instead of globalStreamTimeToEditTime-
+  Unlooped (streamTime); while a context has not started (firstRecCallback)
+  and a position change is pending, skip the block for that context; in the
+  negative-adjustment branch, add the block after the silence (it was lost).
+
+Measured on a loopback (virtual card and BlackHole 16ch, buffers 64..1024,
+cold start and punch-in): the impulse comes back at 0 samples of error.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../devices/tracktion_WaveInputDevice.cpp     | 17 ++++++++++-
+ .../tracktion_EditPlaybackContext.cpp         | 29 +++++++++++++++++++
+ .../playback/tracktion_EditPlaybackContext.h  | 12 ++++++++
+ 3 files changed, 57 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp b/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
+index 2e10f1b9e0c..807192083c4 100644
+--- a/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
++++ b/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
+@@ -1241,11 +1241,23 @@ public:
+             return;
+ 
+         {
+-            const auto blockStart = context.globalStreamTimeToEditTimeUnlooped (streamTime);
++            // objekat 0047: the DeviceManager hands the inputs over after nextBlockStarted() and BEFORE
++            // fillNextNodeBlock(), i.e. while the context's reference range is still the previous block's.
++            // Mapping the device stream time through it puts this block a whole block too early, so ask
++            // the context for the edit time of the block that is about to be rendered instead (the one
++            // these input samples are paired with).
++            const auto blockStart = context.getUnloopedEditTimeOfNextBlock();
++            const auto positionChangePending = context.hasPendingImmediatePositionChange();
+             const std::shared_lock sl (contextLock);
+ 
+             for (auto& recordingContext : recordingContexts)
+             {
++                // objekat 0047: a start-of-play position change is applied by process(), AFTER this
++                // hand-over. Until it is, the play head does not know where this block will sit, so the
++                // block cannot be mapped: skip it (for a context that has not started yet).
++                if (recordingContext->firstRecCallback && positionChangePending)
++                    continue;
++
+                 const TimeRange blockRange (blockStart, TimeDuration::fromSamples (numSamples, recordingContext->sampleRate));
+ 
+                 recordingContext->muteTargetNow = recordingContext->muteTimes.overlaps (blockRange);
+@@ -1284,6 +1296,9 @@ public:
+ 
+                         recordingContext->addBlockToRecord (silence.buffer, 0, silence.buffer.getNumSamples());
+                         recordingContext->adjustSamples = 0;
++
++                        // objekat 0047: and then the block itself (it used to be lost here)
++                        recordingContext->addBlockToRecord (inputBuffer, 0, numSamples);
+                     }
+                     else if (adjustSamples > 0)
+                     {
+diff --git a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
+index c71f9485381..32cf7c5f2c3 100644
+--- a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
++++ b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
+@@ -255,6 +255,22 @@ struct EditPlaybackContext::NodePlaybackContext
+         return TimePosition::fromSeconds (pendingPosition.load (std::memory_order_relaxed));
+     }
+ 
++    /** Audio thread, between nextBlockStarted() and updateReferenceSampleRange(): the (unlooped)
++        edit time of the first sample of the block that fillNextNodeBlock() is about to render. */
++    TimePosition getUnloopedEditTimeOfNextBlock() const
++    {
++        return TimePosition::fromSamples (playHead.referenceSamplePositionToTimelinePositionUnlooped (static_cast<int64_t> (std::llround (referenceStreamRange.getEnd()))),
++                                          getSampleRate());
++    }
++
++    /** True if a position change that will be applied at the start of the next process() call is
++        pending, i.e. the play head does not yet map the next block where it will really sit. */
++    bool hasPendingImmediatePositionChange() const
++    {
++        return positionUpdatePending.load (std::memory_order_acquire)
++                && ! pendingPositionJumpTimeValid.load (std::memory_order_acquire);
++    }
++
+     void postRollInToLoop (double newPosition)
+     {
+         pendingPosition.store (newPosition, std::memory_order_release);
+@@ -1190,6 +1206,19 @@ TimePosition EditPlaybackContext::globalStreamTimeToEditTime (double globalStrea
+     return TimePosition::fromSamples (timelinePosition, sampleRate);
+ }
+ 
++TimePosition EditPlaybackContext::getUnloopedEditTimeOfNextBlock() const
++{
++    if (! nodePlaybackContext)
++        return TimePosition();
++
++    return nodePlaybackContext->getUnloopedEditTimeOfNextBlock();
++}
++
++bool EditPlaybackContext::hasPendingImmediatePositionChange() const
++{
++    return nodePlaybackContext && nodePlaybackContext->hasPendingImmediatePositionChange();
++}
++
+ TimePosition EditPlaybackContext::globalStreamTimeToEditTimeUnlooped (double globalStreamTime) const
+ {
+     if (! nodePlaybackContext)
+diff --git a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
+index a852ebf76e2..0a805f52543 100644
+--- a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
++++ b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
+@@ -139,6 +139,18 @@ public:
+ 
+     TimePosition globalStreamTimeToEditTime (double) const;
+     TimePosition globalStreamTimeToEditTimeUnlooped (double) const;
++
++    /** Audio thread only, between nextBlockStarted() and fillNextNodeBlock() (which is where the
++        DeviceManager hands the inputs over): the unlooped edit time of the first sample of the
++        block that is about to be rendered. Unlike globalStreamTimeToEditTimeUnlooped (streamTime),
++        which maps the CURRENT device block against a reference that is still the previous one.
++        (objekat 0047) */
++    TimePosition getUnloopedEditTimeOfNextBlock() const;
++
++    /** Audio thread only: true if a position change that is not tied to a jump time is waiting to
++        be applied by the next fillNextNodeBlock(), so the play head does not yet say where the next
++        block will really be. (objekat 0047) */
++    bool hasPendingImmediatePositionChange() const;
+     void resyncToGlobalStreamTime (juce::Range<double>, double sampleRate);
+ 
+     /** @internal. Will be removed in a future release. */
+-- 
+2.50.1 (Apple Git-155)
+
