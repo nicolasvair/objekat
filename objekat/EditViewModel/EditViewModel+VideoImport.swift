@@ -145,22 +145,10 @@ extension EditViewModel {
         guard let projectFolder else { throw VideoImportError.needsSave }
         guard !isLoadingProject else { throw VideoImportError.projectChanged }
 
-        // The cheap refusals first, before any byte is written.
-        let info: VideoProbe.Info
-        switch await VideoProbe.probe(url) {
-        case .refused(let why): throw VideoImportError.refused(why, fileName: fileName)
-        case .audioOnly: throw VideoImportError.audioOnly
-        case .video(let i): info = i
-        }
-        // An instrument group takes no audio (E5): refused before any extraction.
-        let lane = max(0, baseLane)
-        if let gid = placementGroupID(forDisplayLane: lane, snapshot: laneEntries) {
-            let probe = SoundObject(id: UUID(), startTime: start, duration: info.movieDuration, lane: 0,
-                                    kind: .clip(filePath: url.path, sourceOffset: 0, fileDuration: info.movieDuration,
-                                                speedRatio: 1, isReversed: false))
-            if refusesAdding([probe], toGroup: gid) { throw VideoImportError.instrumentGroup }
-        }
-
+        // The job is REGISTERED before the probe, not after: the probe is itself a wait (a movie on a
+        // slow volume, an `await` that returns the main actor), and a `video.import_cancel` or a click
+        // on Cancel that arrives during it must find something to cancel. It is looked at again when
+        // the probe returns.
         let token = projectLoadToken
         let projectURLAtStart = projectURL
         let jobID = UUID()
@@ -174,6 +162,24 @@ extension EditViewModel {
             videoImportsInFlight -= 1
             if videoImportsInFlight == 0 { videoImportName = nil; videoImportFraction = 0 }
         }
+
+        // The cheap refusals first, before any byte is written.
+        let info: VideoProbe.Info
+        switch await VideoProbe.probe(url) {
+        case .refused(let why): throw VideoImportError.refused(why, fileName: fileName)
+        case .audioOnly: throw VideoImportError.audioOnly
+        case .video(let i): info = i
+        }
+        if cancel.isCancelled { throw VideoImportError.cancelled }
+        // An instrument group takes no audio (E5): refused before any extraction.
+        let lane = max(0, baseLane)
+        if let gid = placementGroupID(forDisplayLane: lane, snapshot: laneEntries) {
+            let probe = SoundObject(id: UUID(), startTime: start, duration: info.movieDuration, lane: 0,
+                                    kind: .clip(filePath: url.path, sourceOffset: 0, fileDuration: info.movieDuration,
+                                                speedRatio: 1, isReversed: false))
+            if refusesAdding([probe], toGroup: gid) { throw VideoImportError.instrumentGroup }
+        }
+        if cancel.isCancelled { throw VideoImportError.cancelled }
 
         // 1. Extract every audio track, off the model, into a staging folder of the project.
         let videoFolder = ConsolidateFolders.videoFolder(projectFolder: projectFolder)
