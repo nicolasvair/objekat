@@ -11415,7 +11415,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     transport.addListener(_recordListener.get());
     _recordingActive = true;
     _recordCardSignature = objRecordCardSignature(_engine->getDeviceManager().deviceManager);
-    NSLog(@"[REC] +%.1f ms press: %d input(s), playing=%d pos=%.3f card=%s", objRecMs(), (int) armed.size(),
+    NSLog(@"[REC] +%.1f ms press: %d input(s), playing=%d pos=%.6f card=%s", objRecMs(), (int) armed.size(),
           (int) transport.isPlaying(), transport.getPosition().inSeconds(), _recordCardSignature.toRawUTF8());
     for (auto& a : armed) a.first->setRecordingEnabled(a.second, true);
     transport.record(false);

@@ -493,7 +493,7 @@ struct SoundObjectListView: View {
             viewModel.openConsolidate(viaPlacementID: object.id)
         } else {
             // A plain sound: go and listen to it where it is.
-            viewModel.engine?.seek(to: row.absStart)
+            viewModel.seekEngineUnlessRecording(to: row.absStart)
         }
     }
 }

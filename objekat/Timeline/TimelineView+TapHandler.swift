@@ -514,7 +514,7 @@ extension TimelineView {
         let shift = flags.contains(.shift), cmd = flags.contains(.command)
         let hit = markerBandHit(at: point)
         viewModel.handleMarkBandClick(hit: hit, shift: shift, cmd: cmd, seek: { t in
-            if !isPlaying { viewModel.engine?.seek(to: t) }
+            if !isPlaying { viewModel.seekEngineUnlessRecording(to: t) }
             onMoveCursor(t)
         })
         if isDoubleTap, !shift, !cmd, let hit, viewModel.selectedAnnotations == [hit] {

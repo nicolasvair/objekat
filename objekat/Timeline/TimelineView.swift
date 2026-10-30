@@ -828,7 +828,7 @@ struct TimelineView: View {
                         bandHeight: bandH,
                         onSeekToTime: { t in
                             viewModel.timeSelection = nil
-                            if !isPlaying { viewModel.engine?.seek(to: t) }
+                            if !isPlaying { viewModel.seekEngineUnlessRecording(to: t) }
                             onMoveCursor(t)
                         }
                     )
@@ -872,7 +872,7 @@ struct TimelineView: View {
                                 // the very gesture that asked for it. A RANGE has no caret, and
                                 // the branches that make one drop it on their own.
                                 let st = viewModel.snapTime(max(0, t))
-                                if !isPlaying { viewModel.engine?.seek(to: st) }
+                                if !isPlaying { viewModel.seekEngineUnlessRecording(to: st) }
                                 onMoveCursor(st)
                             }
                         )
@@ -2768,7 +2768,7 @@ struct TimelineView: View {
             onJumpPlayhead(t)
             return
         }
-        if !isPlaying { viewModel.engine?.seek(to: t) }
+        if !isPlaying { viewModel.seekEngineUnlessRecording(to: t) }
         onMoveCursor(t)
     }
 

@@ -117,6 +117,17 @@ extension EditViewModel {
         })
     }
 
+    // MARK: Moving the engine's playhead from the interface
+
+    /// Moves the ENGINE's playhead for a click on the timeline (the sound list, the ruler, a marker, a selection:
+    /// "go and listen there"). While a recording is under way it does nothing at all: Tracktion ends a take on any
+    /// position change, so a click must only move the caret (the caller does that). The deliberate gestures that
+    /// are allowed to end the take go through the session (`seek(to:)`, `jumpPlayhead(to:)`, `returnToZero()`).
+    func seekEngineUnlessRecording(to seconds: Double) {
+        guard !isRecording else { return }
+        engine?.seek(to: seconds)
+    }
+
     // MARK: Starting
 
     /// Starts recording the armed zones' inputs, from `startTime` (the instant of the press on the
