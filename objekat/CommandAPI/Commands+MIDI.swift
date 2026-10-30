@@ -208,6 +208,70 @@ extension CommandRegistry {
                             "engine_muted": .bool(found && engine.isMidiClipMuted(forID: id.uuidString))])
         }
 
+        register("debug.input_host",
+                 summary: """
+                 DEBUG. Drives the ENGINE's input chains (E8 of plan_groupes_midi.md) directly — the model, the \
+                 undo stack and the project file are not touched. `op`: `register_audio` (`host`, `first`, \
+                 `count`), `register_midi` (`host`, `device`), `unregister` (`host`), `live` (`host`), \
+                 `add_plugin` (`host`, plugin by `identifier`/`name` + `format`: compiles ONE plugin as the whole \
+                 FX chain of an audio host; answers `plugin`), `set_instrument` (`host`, plugin as above: mounts \
+                 the instrument of a MIDI host; answers `plugin_key`), `midi_monitor` (`device`, `on`; answers \
+                 `error` when refused), `monitors` (the MIDI devices heard through a chain). Answers `live` and \
+                 `monitors` throughout. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("op", "string", "See the summary."),
+                          ParamSpec("host", "string", required: false, "Host id (any uuid)."),
+                          ParamSpec("first", "int", required: false, "First channel of an audio input."),
+                          ParamSpec("count", "int", required: false, "1 (mono) or 2 (stereo)."),
+                          ParamSpec("device", "string", required: false, "MIDI input id."),
+                          ParamSpec("on", "bool", required: false, "midi_monitor."),
+                          ParamSpec("identifier", "string", required: false, "Plugin identifier."),
+                          ParamSpec("name", "string", required: false, "Plugin name."),
+                          ParamSpec("format", "string", required: false, "Plugin format.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let engine = try CommandContext.shared.requireEngine()
+            let op = try p.string("op")
+            let host = try p.optionalString("host") ?? ""
+            var extra: [String: JSONValue] = [:]
+            switch op {
+            case "register_audio":
+                let ok = engine.registerAudioInputHost(host, first: try p.int("first"), count: try p.int("count", or: 1))
+                extra["registered"] = .bool(ok)
+            case "register_midi":
+                extra["registered"] = .bool(engine.registerMidiInputHost(host, device: try p.string("device")))
+            case "unregister":
+                engine.unregisterInputHost(host)
+            case "add_plugin", "set_instrument":
+                let available = try CommandAdapters.resolvePlugin(p, in: vm)
+                let key = UUID().uuidString
+                if op == "set_instrument" {
+                    let info: [String: Any] = ["pluginKey": key, "identifier": available.identifier,
+                                               "format": available.formatName, "name": available.name]
+                    guard let k = engine.setInstrument(info, forObjectID: host, stateXML: nil) else {
+                        throw CommandError(code: .engine_error, message: "the engine could not mount the instrument on host \(host)")
+                    }
+                    extra["plugin_key"] = .string(k)
+                } else {
+                    let spec: [[String: Any]] = [["id": key, "kind": "plugin", "identifier": available.identifier,
+                                                  "format": available.formatName, "name": available.name, "enabled": true]]
+                    let failed = engine.compileUserRack(forObjectID: host, tree: spec, sendChains: []) as? [String] ?? []
+                    extra["plugin"] = .string(key)
+                    extra["failed"] = .array(failed.map { .string($0) })
+                }
+            case "midi_monitor":
+                let why = engine.setMidiInputMonitor(try p.bool("on"), device: try p.string("device"))
+                extra["error"] = why.map { .string($0) } ?? .null
+            case "live", "monitors":
+                break
+            default:
+                throw CommandError(code: .bad_params, message: "unknown op '\(op)'")
+            }
+            extra["live"] = .bool(!host.isEmpty && engine.inputHostIsLive(host))
+            extra["monitors"] = .array(engine.midiInputMonitors().map { .string($0) })
+            return .object(extra)
+        }
+
         register("debug.transport_loop",
                  summary: """
                  DEBUG. Sets the TRANSPORT's loop region and its mode on the view-model — what ⌘L and the \

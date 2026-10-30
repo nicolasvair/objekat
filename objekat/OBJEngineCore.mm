@@ -1327,6 +1327,8 @@ struct OBJLatencyWatcher : public juce::Timer {
 - (void)stopRecordingIfCardChanged;   // @see "Recording"
 - (void)midiDevicesChanged;      // @see "MIDI inputs"
 - (void)syncMidiZoneMonitors;    // @see "MIDI inputs"
+- (void)syncMidiInputMonitors;   // @see "Input chains"
+- (void)stripHiddenTracksFromRenderCopy:(juce::ValueTree&)state;   // @see "Input chains"
 @end
 
 // Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
@@ -1449,6 +1451,13 @@ struct OBJRecordListener : public te::TransportControl::Listener {
 // (@see -setMidiZones:). Nothing sounds on it: the zone's instrument lives on the group's own container
 // (@see -setInstrument:forObjectID:stateXML:), so arming is not hearing.
 struct OBJMidiZoneTrack {
+    te::EditItemID    track;
+    std::string       deviceID;
+};
+
+// A MIDI INPUT host's hidden track (plan_groupes_midi.md, E8): the track the device is targeted at while the input is
+// heard, with the host's instrument on its plugin list (the instrument itself is in `_instrumentMap[host]`).
+struct OBJMidiInputTrack {
     te::EditItemID    track;
     std::string       deviceID;
 };
@@ -1990,6 +1999,10 @@ struct OBJExportLoadScope {
     // watcher of the device list, and what a recording changes on the devices (undone at its end).
     NSArray<NSDictionary*>*                                   _midiZonesWanted;
     std::map<std::string, OBJMidiZoneTrack>                   _midiZoneTracks;
+    // Input chains (E8): host id -> audio input key / MIDI hidden track, and the MIDI devices heard through one.
+    std::map<std::string, std::pair<int, int>>                _audioInputHosts;
+    std::map<std::string, OBJMidiInputTrack>                  _midiInputTracks;
+    std::set<std::string>                                     _monitoredMidiInputs;
     std::map<std::string, std::unique_ptr<OBJMidiActivity>>   _midiActivity;
     std::unique_ptr<OBJMidiDevicesWatcher>                    _midiWatcher;
     std::map<std::string, double>                             _midiAdjustBeforeRecord;
@@ -2929,6 +2942,9 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _poolTracks.clear();
     _monitoredInputs.clear();       // (the Edit is built once, at launch: nothing is monitored yet)
     _inputTrackIDs.clear();
+    _audioInputHosts.clear();
+    _midiInputTracks.clear();
+    _monitoredMidiInputs.clear();
     _childOwnerMap.clear();
     _containerClipMap.clear();
     _groupBoundsMap.clear();
@@ -3774,6 +3790,17 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         return &it->second->pluginList;          // stem → chaîne de son FolderTrack submix
     if (!_masterStemKey.empty() && key == _masterStemKey && _edit)
         return &_edit->getMasterPluginList();    // Main → chaîne de mastering
+    // Hôte d'ENTRÉE (E8) : la piste cachée de l'entrée. nullptr tant que l'entrée est absente (chaîne dormante).
+    if (auto it = _audioInputHosts.find(key); it != _audioInputHosts.end()) {
+        if (auto* t = [self hiddenInputTrackForKey:it->second create:NO]) return &t->pluginList;
+        return nullptr;
+    }
+    if (auto it = _midiInputTracks.find(key); it != _midiInputTracks.end()) {
+        if (_edit)
+            if (auto* t = dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, it->second.track)))
+                return &t->pluginList;
+        return nullptr;
+    }
     return nullptr;
 }
 
@@ -3794,6 +3821,9 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         if (auto p = inList(it->second)) return p;
     if (_masterAnchorGain && _edit && &pl == &_edit->getMasterPluginList())
         if (auto p = inList(_masterAnchorGain)) return p;
+    // An audio input host: the chain ends in front of the LISTENING gain (an ObjGain laid by syncInputMonitors).
+    if (_audioInputHosts.count(key))
+        if (auto* g = pl.findFirstPluginOfType<te::ObjGainPlugin>()) return inList(te::Plugin::Ptr(g));
     return {};
 }
 
@@ -4612,6 +4642,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
     // Clone l'Edit en rôle forRendering (playDisabled → ne s'attache PAS au device live).
     // On opère le détach/bypass sur cette copie : le graphe live est intact.
     auto stateCopy = _edit->state.createCopy();
+    [self stripHiddenTracksFromRenderCopy:stateCopy];
     {   // Source ARA : les retouches vivent dans l'instance, pas dans l'arbre (@see objStampARAArchives).
         const std::set<te::EditItemID> allowedSet(allowedClipIDs.begin(), allowedClipIDs.end());
         int demoted = 0;
@@ -5265,6 +5296,7 @@ static void collectContainedClipIDs(te::ContainerClip& cc, std::vector<te::EditI
         const double tScope = juce::Time::getMillisecondCounterHiRes();
 
         auto stateCopy = _edit->state.createCopy();
+        [self stripHiddenTracksFromRenderCopy:stateCopy];
         {   // Source ARA : les retouches vivent dans l'instance, pas dans l'arbre (@see objStampARAArchives).
             // Un clip ARA écarté est hors plage (donc muet) : repassé en lecture fichier, sans Melodyne.
             int demoted = 0;
@@ -11400,6 +11432,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     // track whatever happens: the target cannot change while Tracktion records into it).
     std::set<std::pair<int, int>> wanted = _monitoredInputs;
     wanted.insert(_armedInputs.begin(), _armedInputs.end());
+    // An input that carries a MOUNTED chain keeps its hidden track (the chain lives on it), heard or not: when it is
+    // not heard its monitor mode is `off`, like an armed one's.
+    for (auto& kv : _audioInputHosts)
+        if (live.count(kv.second)) wanted.insert(kv.second);
 
     if (!wanted.empty()) _edit->getTransport().ensureContextAllocated();
     auto* epc = _edit->getCurrentPlaybackContext();
@@ -11436,6 +11472,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
                 [[maybe_unused]] auto res = inst->removeTarget(it->second, nullptr);
             dv->second->setMonitorMode(te::InputDevice::MonitorMode::automatic);   // the engine's default
         }
+        // The chains living on this track go with it: their editors closed and their keys forgotten FIRST.
+        for (auto& hk : _audioInputHosts)
+            if (hk.second == key)
+                [self closeEditorsAndPurgePluginsForObjectID:[NSString stringWithUTF8String:hk.first.c_str()]];
         if (auto* t = te::findTrackForID(*_edit, it->second)) _edit->deleteTrack(t);
         it = _inputTrackIDs.erase(it);
     }
@@ -11482,6 +11522,142 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     for (auto& key : _monitoredInputs)
         [result addObject:@{ @"first": @(key.first), @"count": @(key.second) }];
     return result;
+}
+
+// MARK: Input chains
+//
+// FX on an audio input, an instrument on a MIDI input (plan_groupes_midi.md, E8). A host id names the chain; the
+// ordinary plugin calls reach it through -userPluginListForKey:. Audio: the FX sit on the input's hidden track in
+// front of the listening ObjGain, so they colour what is HEARD and never what is recorded (the device is read before
+// the track). MIDI: the device is targeted at a hidden track holding the instrument, ONLY while the input is heard —
+// the target is the switch, the instrument stays loaded. Both tracks live outside the pool, the census, the stems and
+// the solo, and the render clones are stripped of them (-stripHiddenTracksFromRenderCopy:).
+
+- (BOOL)registerAudioInputHost:(NSString*)hostID first:(NSInteger)first count:(NSInteger)count {
+    if (!_edit || hostID.length == 0) return NO;
+    const std::string host([hostID UTF8String]);
+    const std::pair<int, int> key { (int) first, (int) count };
+    if (auto it = _audioInputHosts.find(host); it != _audioInputHosts.end() && it->second != key)
+        [self unregisterInputHost:hostID];                    // moved to another input: the old chain goes
+    _audioInputHosts[host] = key;
+    [self syncInputMonitors];
+    return [self inputHostIsLive:hostID];
+}
+
+- (BOOL)registerMidiInputHost:(NSString*)hostID device:(NSString*)deviceID {
+    if (!_edit || hostID.length == 0 || deviceID.length == 0) return NO;
+    const std::string host([hostID UTF8String]);
+    const std::string device([deviceID UTF8String]);
+    if (auto it = _midiInputTracks.find(host); it != _midiInputTracks.end() && it->second.deviceID != device)
+        [self unregisterInputHost:hostID];
+    auto& entry = _midiInputTracks[host];
+    entry.deviceID = device;
+    if (!dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, entry.track))) {
+        auto track = _edit->insertNewAudioTrack(te::TrackInsertPoint(nullptr, nullptr), nullptr);
+        if (!track) { _midiInputTracks.erase(host); return NO; }
+        track->setName(juce::String("MIDI in ") + juce::String::fromUTF8(device.c_str()).substring(0, 12));
+        entry.track = track->itemID;
+    }
+    [self syncMidiInputMonitors];
+    return YES;
+}
+
+- (void)unregisterInputHost:(NSString*)hostID {
+    if (!_edit || hostID.length == 0) return;
+    const std::string host([hostID UTF8String]);
+    const bool audio = _audioInputHosts.count(host) > 0;
+    const bool midi  = _midiInputTracks.count(host) > 0;
+    if (!audio && !midi) return;
+    // Editors and keys first, while the list still resolves.
+    [self closeEditorsAndPurgePluginsForObjectID:hostID];
+    if (midi) {
+        [self removeInstrumentForObjectID:hostID];
+        auto entry = _midiInputTracks[host];
+        _midiInputTracks.erase(host);
+        _edit->getTransport().ensureContextAllocated();
+        auto* epc = _edit->getCurrentPlaybackContext();
+        if (auto device = [self midiDeviceForID:entry.deviceID])
+            if (auto* in = epc ? epc->getInputFor(device.get()) : nullptr)
+                [[maybe_unused]] auto res = in->removeTarget(entry.track, nullptr);
+        if (auto* t = te::findTrackForID(*_edit, entry.track)) _edit->deleteTrack(t);
+        [self syncMidiInputMonitors];
+    }
+    if (audio) {
+        // Its FX are parked; the ObjGain of the listening level stays with the track for syncInputMonitors to judge.
+        _audioInputHosts.erase(host);
+        _objectChainMap.erase(host);
+        [self syncInputMonitors];
+    }
+    [self syncPluginMeters];
+}
+
+- (BOOL)inputHostIsLive:(NSString*)hostID {
+    if (hostID.length == 0) return NO;
+    return [self userPluginListForKey:std::string([hostID UTF8String])] != nullptr;
+}
+
+- (void)syncMidiInputMonitors {
+    if (!_edit || _recordingActive) return;
+    // Heard = the device is wanted AND the host holds an instrument: the target is added / removed, nothing else.
+    _edit->getTransport().ensureContextAllocated();
+    auto* epc = _edit->getCurrentPlaybackContext();
+    for (auto& kv : _midiInputTracks) {
+        auto& entry = kv.second;
+        auto* track = dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, entry.track));
+        auto device = [self midiDeviceForID:entry.deviceID];
+        if (!track || !device) continue;
+        auto* in = epc ? epc->getInputFor(device.get()) : nullptr;
+        if (!in) continue;
+        const bool heard = _monitoredMidiInputs.count(entry.deviceID) > 0 && _instrumentMap.count(kv.first) > 0
+                           && device->isEnabled();
+        const bool targeted = in->getTargets().contains(track->itemID);
+        if (heard && !targeted) {
+            device->setMonitorMode(te::InputDevice::MonitorMode::on);
+            auto res = in->setTarget(track->itemID, false, nullptr);   // no `move`: a zone may use the same device
+            if (!res) NSLog(@"[OBJ] MIDI input chain: %s", res.error().toRawUTF8());
+        } else if (!heard && targeted) {
+            [[maybe_unused]] auto res = in->removeTarget(track->itemID, nullptr);
+        }
+    }
+    [self syncPluginMeters];
+}
+
+- (NSString* _Nullable)setMidiInputMonitor:(BOOL)on device:(NSString*)deviceID {
+    if (!_edit || deviceID.length == 0) return @"no such MIDI input";
+    const std::string device([deviceID UTF8String]);
+    if (on) {
+        if (![self midiDeviceForID:device]) return @"no such MIDI input";
+        bool has = false;
+        for (auto& kv : _midiInputTracks)
+            if (kv.second.deviceID == device && _instrumentMap.count(kv.first)) has = true;
+        if (!has) return @"this MIDI input has no instrument";
+        _monitoredMidiInputs.insert(device);
+    } else {
+        _monitoredMidiInputs.erase(device);
+    }
+    [self syncMidiInputMonitors];
+    return nil;
+}
+
+- (NSArray<NSString*>*)midiInputMonitors {
+    NSMutableArray* r = [NSMutableArray array];
+    for (auto& d : _monitoredMidiInputs) [r addObject:[NSString stringWithUTF8String:d.c_str()]];
+    return r;
+}
+
+// The render clones are made of the Edit's state (`createCopy`), which carries the hidden tracks too. Whatever is on
+// them (an input's FX, an instrument) must never be instantiated again for a render: the tracks are cut out of the
+// copy before it is loaded.
+- (void)stripHiddenTracksFromRenderCopy:(juce::ValueTree&)state {
+    std::set<te::EditItemID> hidden;
+    for (auto& kv : _inputTrackIDs)    hidden.insert(kv.second);
+    for (auto& kv : _midiZoneTracks)   hidden.insert(kv.second.track);
+    for (auto& kv : _midiInputTracks)  hidden.insert(kv.second.track);
+    if (hidden.empty()) return;
+    for (int i = state.getNumChildren(); --i >= 0; ) {
+        auto child = state.getChild(i);
+        if (hidden.count(te::EditItemID::fromProperty(child, te::IDs::id))) state.removeChild(i, nullptr);
+    }
 }
 
 // MARK: Recording
@@ -11810,6 +11986,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (!_recordingActive) {
         [self syncInputMonitors];
         [self syncMidiZoneMonitors];
+        [self syncMidiInputMonitors];
     }
     if (self.onMidiDevicesChanged) self.onMidiDevicesChanged();
 }

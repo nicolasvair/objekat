@@ -1070,6 +1070,32 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)setMidiZones:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)zones;
 /// The zones that have their hidden track right now (uuids).
 - (NSArray<NSString*>* _Nonnull)midiZonesLive;
+
+// MARK: Input chains (plan_groupes_midi.md, E8)
+//
+// An INPUT HOST is an id (a uuid chosen by the app) that names a chain laid on an input's hidden track, so that the
+// ordinary plugin calls (`addPlugin:toObjectID:`, `compileUserRackForObjectID:`, `setInstrument:forObjectID:`…) work on
+// it like on a stem. An AUDIO host carries FX in front of the listening gain (`[FX…, ObjGain]`); a MIDI host carries
+// ONE instrument. Both are heard through the Main (its FX and volume apply). Nothing here is recorded: a take is
+// taken from the device, before the track. A host is MOUNTED while registered (its plugins live); the app registers
+// lazily — only a chain that is heard or open.
+///
+/// Registers the audio host `hostID` on the input `(first, count)`. YES if the input is live and its hidden track
+/// exists (the chain can be compiled); NO if the input is absent (the host is kept, dormant: re-register it when the
+/// card changes).
+- (BOOL)registerAudioInputHost:(NSString* _Nonnull)hostID first:(NSInteger)first count:(NSInteger)count;
+/// Registers the MIDI host `hostID` on the device `deviceID`. YES when its hidden track exists.
+- (BOOL)registerMidiInputHost:(NSString* _Nonnull)hostID device:(NSString* _Nonnull)deviceID;
+/// Tears a host down: editors closed, plugins purged (parked, so a re-mount is cheap), track dropped unless the
+/// input is still wanted for another reason. A host never registered is ignored.
+- (void)unregisterInputHost:(NSString* _Nonnull)hostID;
+/// Whether `hostID` resolves to a live chain right now.
+- (BOOL)inputHostIsLive:(NSString* _Nonnull)hostID;
+/// Hears (or stops hearing) a MIDI input through the instrument of its host. nil on success, otherwise why not (no
+/// host with an instrument on that device). Not saved.
+- (NSString* _Nullable)setMidiInputMonitor:(BOOL)on device:(NSString* _Nonnull)deviceID;
+/// The MIDI devices heard through an input chain (ids).
+- (NSArray<NSString*>* _Nonnull)midiInputMonitors;
 /// `--virtual-midi` only. `{active, device_id, name, sent, pending}`.
 - (NSDictionary<NSString*, id>* _Nonnull)virtualMidiStatus;
 /// `--virtual-midi` only. Plays events into the virtual device at `delay_ms` from now each: `{kind: "on"|"off"|"cc",
