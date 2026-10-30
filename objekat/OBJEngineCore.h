@@ -1021,6 +1021,12 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// position. nil on success, otherwise why not (nothing is left half-started).
 - (NSString* _Nullable)startRecordingInputs:(NSArray<NSDictionary<NSString*, id>*>* _Nonnull)inputs;
 - (BOOL)isRecordingNow;
+/// TEST HOOK (`rec.start debug_stall_ms`): the next `startRecordingInputs:` keeps the main thread busy that many
+/// milliseconds once the take has started, before giving the run loop back — a main thread that is late for the
+/// engine's deferred bookkeeping (what a Debug build redrawing at the press does). One shot; 0 = nothing.
+@property (nonatomic) NSInteger debugRecordStallMs;
+/// TEST HOOK (`audio.debug.broadcast_change`): makes juce::AudioDeviceManager broadcast a change that changes nothing.
+- (void)debugBroadcastAudioDeviceChange;
 /// Called on the main thread when a recording is over, however it ended (-stop, a position change, the
 /// card). Each take is `{first, count, path, origin, length, sampleRate}`: the file, the timeline instant
 /// of its first sample and its length in seconds. The clips the engine made are already gone from the

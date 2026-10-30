@@ -344,6 +344,16 @@ static juce::String objAudioBindingSignature(juce::AudioDeviceManager& jdm) {
          + "|" + juce::String(dev->getCurrentBufferSizeSamples());
 }
 
+/// What a recording depends on in the open card: the binding signature (type, name, rate, buffer) AND the
+/// active input / output channels. Empty = nothing open. @see -stopRecordingIfCardChanged.
+static juce::String objRecordCardSignature(juce::AudioDeviceManager& jdm) {
+    auto* dev = jdm.getCurrentAudioDevice();
+    if (dev == nullptr || !dev->isOpen()) return {};
+    return objAudioBindingSignature(jdm)
+         + "|in=" + dev->getActiveInputChannels().toString(16)
+         + "|out=" + dev->getActiveOutputChannels().toString(16);
+}
+
 static const char* objThreadPoolStrategyName(int s) {
     static const char* const names[] = { "conditionVariable", "realTime", "hybrid",
                                          "semaphore", "lightweightSemaphore", "lightweightSemHybrid" };
@@ -1286,6 +1296,7 @@ struct OBJLatencyWatcher : public juce::Timer {
 - (void)syncInputMonitors;       // @see "Input monitoring"
 - (BOOL)isLiveInputFirst:(NSInteger)first count:(NSInteger)count;     // @see "Input monitoring"
 - (void)stopRecordingIfActive;   // @see "Recording"
+- (void)stopRecordingIfCardChanged;   // @see "Recording"
 @end
 
 // Peak meter on the card's INPUTS (recording work, increment 1): a second juce::AudioIODeviceCallback
@@ -1338,6 +1349,19 @@ struct OBJInputMeter : public juce::AudioIODeviceCallback {
 // Listens to the transport while inputs record: collects the clip Tracktion makes for each recorded file
 // (on the hidden input track) and says when the recording stopped. The clips are read and removed by
 // -finishRecording, once the stop call has returned (never from inside Tracktion's own callback).
+// [REC] trace (permanent, quiet: a handful of lines per take): milliseconds since the press of the record
+// button (`-startRecordingInputs:`), so that a take cut short by the engine can be read in the log.
+static std::atomic<int64_t> gRecPressNs { 0 };
+static void objRecMarkPress() {
+    gRecPressNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+static double objRecMs() {
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    return (double) (now - gRecPressNs.load()) / 1.0e6;
+}
+
 struct OBJRecordListener : public te::TransportControl::Listener {
     struct Capture {
         te::EditItemID target;
@@ -1347,18 +1371,43 @@ struct OBJRecordListener : public te::TransportControl::Listener {
     };
     std::vector<Capture> captures;
     std::function<void()> onStopped;
+    te::Edit* edit = nullptr;            // for the trace only
 
+    bool transportRecording() const { return edit != nullptr && edit->getTransport().isRecording(); }
+    double transportPosition() const { return edit != nullptr ? edit->getTransport().getPosition().inSeconds() : 0.0; }
+
+    void recordingAboutToStart(te::InputDeviceInstance&, te::EditItemID target) override {
+        NSLog(@"[REC] +%.1f ms aboutToStart target=%llu transport.isRecording=%d pos=%.3f",
+              objRecMs(), (unsigned long long) target.getRawID(), (int) transportRecording(), transportPosition());
+    }
+    void recordingAboutToStop(te::InputDeviceInstance&, te::EditItemID target) override {
+        NSLog(@"[REC] +%.1f ms aboutToStop target=%llu transport.isRecording=%d pos=%.3f",
+              objRecMs(), (unsigned long long) target.getRawID(), (int) transportRecording(), transportPosition());
+    }
     void recordingFinished(te::InputDeviceInstance&, te::EditItemID target,
                            const juce::ReferenceCountedArray<te::Clip>& clips) override {
+        int n = 0;
         for (auto* c : clips) {
             auto* wc = dynamic_cast<te::WaveAudioClip*>(c);
             if (wc == nullptr) continue;
             const auto pos = wc->getPosition();
             captures.push_back({ target, te::Clip::Ptr(c), wc->getOriginalFile(),
                                  (pos.time.getStart() - pos.offset).inSeconds() });
+            ++n;
+            NSLog(@"[REC] +%.1f ms finished target=%llu clip=%.1f ms (%.0f samples) origin=%.4f transport.isRecording=%d pos=%.3f",
+                  objRecMs(), (unsigned long long) target.getRawID(),
+                  pos.getLength().inSeconds() * 1000.0, pos.getLength().inSeconds() * (edit != nullptr ? edit->engine.getDeviceManager().getSampleRate() : 0.0),
+                  (pos.time.getStart() - pos.offset).inSeconds(), (int) transportRecording(), transportPosition());
         }
+        if (n == 0)
+            NSLog(@"[REC] +%.1f ms finished target=%llu NO CLIP transport.isRecording=%d pos=%.3f",
+                  objRecMs(), (unsigned long long) target.getRawID(), (int) transportRecording(), transportPosition());
     }
-    void recordingStopped(te::SyncPoint, bool) override { if (onStopped) onStopped(); }
+    void recordingStopped(te::SyncPoint, bool discard) override {
+        NSLog(@"[REC] +%.1f ms stopped discard=%d transport.isRecording=%d pos=%.3f",
+              objRecMs(), (int) discard, (int) transportRecording(), transportPosition());
+        if (onStopped) onStopped();
+    }
 };
 
 struct OBJDeviceChangeWatcher : public juce::ChangeListener {
@@ -1369,8 +1418,10 @@ struct OBJDeviceChangeWatcher : public juce::ChangeListener {
         // remplacé tant que le transport est à l'arrêt, sans quoi les workers resteraient attachés
         // à l'ancien. @see -rebindAudioWorkgroupIfDeviceChanged.
         [owner rebindAudioWorkgroupIfDeviceChanged];
-        // A recording does not survive its card changing under it: it ends cleanly, the files are kept.
-        [owner stopRecordingIfActive];
+        // A recording does not survive its CARD changing under it (another device, rate, buffer or channels):
+        // it ends cleanly, the files are kept. A broadcast that changes nothing about the card (a device list
+        // or a MIDI list that moved, a start/stop of the same device) leaves it alone.
+        [owner stopRecordingIfCardChanged];
         // An input that closed or vanished with the change stops being monitored; the others are
         // re-attached to their hidden track (the engine rebuilt its devices).
         [owner syncInputMonitors];
@@ -1857,6 +1908,7 @@ struct OBJExportLoadScope {
     std::map<std::pair<int, int>, juce::File>                 _recordFiles;
     std::unique_ptr<OBJRecordListener>                        _recordListener;
     bool                                                      _recordingActive;
+    juce::String                                              _recordCardSignature;   // the card as it was at the press (@see -stopRecordingIfCardChanged)
     // objectID d'un ENFANT de groupe → groupID du container qui l'héberge. Sa présence
     // signifie « cet objet ne vit pas sur une piste du pool mais dans un ContainerClip ».
     std::unordered_map<std::string, std::string>              _childOwnerMap;
@@ -6858,6 +6910,8 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 }
 
 - (void)seekTo:(double)seconds {
+    if (_recordingActive)
+        NSLog(@"[REC] +%.1f ms seekTo %.3f while recording", objRecMs(), seconds);
     if (_edit)
         _edit->getTransport().setPosition(te::TimePosition::fromSeconds(seconds));
 }
@@ -11304,6 +11358,9 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (_recordingActive) return @"already recording";
     if (inputs.count == 0) return @"no input to record";
     if (![self audioInputsOpen]) return @"the inputs are closed";
+    objRecMarkPress();
+    const NSInteger stallMs = _debugRecordStallMs;     // test hook (rec.start debug_stall_ms), one shot
+    _debugRecordStallMs = 0;
 
     std::map<std::pair<int, int>, juce::File> files;
     for (NSDictionary* d in inputs) {
@@ -11312,6 +11369,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         if (path.length == 0) return @"an input has no file";
         files[key] = juce::File(juce::String::fromUTF8([path UTF8String]));
     }
+
+    // A card change seen since the last play re-creates the playback context. It must happen BEFORE the
+    // input instances are collected below: freePlaybackContext destroys every InputDeviceInstance.
+    if (!_edit->getTransport().isPlaying()) [self rebindAudioWorkgroupIfDeviceChanged];
 
     // Prepare the tracks and targets (a no-op for the ones the arming already prepared).
     _armedInputs.clear();
@@ -11344,6 +11405,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 
     _recordFiles = files;
     _recordListener = std::make_unique<OBJRecordListener>();
+    _recordListener->edit = _edit.get();
     _recordListener->onStopped = [self] {
         // A stop Tracktion decided itself (a position change under recording, say): collect the takes
         // as soon as it has returned. `-stop` collects first when it is the one stopping.
@@ -11352,18 +11414,42 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto& transport = _edit->getTransport();
     transport.addListener(_recordListener.get());
     _recordingActive = true;
-    if (!transport.isPlaying()) [self rebindAudioWorkgroupIfDeviceChanged];
+    _recordCardSignature = objRecordCardSignature(_engine->getDeviceManager().deviceManager);
+    NSLog(@"[REC] +%.1f ms press: %d input(s), playing=%d pos=%.3f card=%s", objRecMs(), (int) armed.size(),
+          (int) transport.isPlaying(), transport.getPosition().inSeconds(), _recordCardSignature.toRawUTF8());
     for (auto& a : armed) a.first->setRecordingEnabled(a.second, true);
     transport.record(false);
     if (!transport.isRecording()) {
         [self finishRecording];
         return @"the transport could not start recording";
     }
+    NSLog(@"[REC] +%.1f ms record() returned", objRecMs());
+    if (stallMs > 0) {                                 // test hook: the main thread is late for the next turn
+        NSLog(@"[REC] debug stall of the main thread: %ld ms", (long) stallMs);
+        usleep((useconds_t) stallMs * 1000);
+    }
     return nil;
 }
 
 - (void)stopRecordingIfActive {
     if (_recordingActive) [self stop];
+}
+
+/// The watcher's door: a broadcast from juce::AudioDeviceManager says "something changed", not "the card
+/// changed" (a CoreAudio device list, a MIDI list, a start/stop of the same device all send one). The
+/// recording ends only when the card it started on is no longer the one that is open.
+- (void)stopRecordingIfCardChanged {
+    if (!_recordingActive) return;
+    const juce::String now = objRecordCardSignature(_engine->getDeviceManager().deviceManager);
+    const bool changed = now != _recordCardSignature;
+    NSLog(@"[REC] +%.1f ms device-change broadcast: was [%s] now [%s] -> %s", objRecMs(),
+          _recordCardSignature.toRawUTF8(), now.toRawUTF8(), changed ? "STOP" : "keep recording");
+    if (changed) [self stop];
+}
+
+/// Test hook (audio.debug.broadcast_change): the same broadcast CoreAudio would send, with no change.
+- (void)debugBroadcastAudioDeviceChange {
+    if (_engine) _engine->getDeviceManager().deviceManager.sendChangeMessage();
 }
 
 - (void)finishRecording {
