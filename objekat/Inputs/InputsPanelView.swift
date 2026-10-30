@@ -130,11 +130,18 @@ struct InputsPanelView: View {
 
     /// A section's title: the zones' (the synoptic's) small grey semibold.
     private func sectionHeader(_ title: String) -> some View {
+        VStack(spacing: 0) {
+            sectionTitle(title)
+            Divider()
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 10, weight: .semibold))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 2)
+            .padding(.horizontal, InputRowStyle.horizontalPadding + 2).padding(.top, 8).padding(.bottom, 4)
     }
 
     // MARK: Selecting
@@ -165,16 +172,16 @@ struct InputsPanelView: View {
     private func row(_ ref: InputRef) -> some View {
         let isSelected = selection.contains(ref)
         let heard = monitored.contains(ref)
-        return VStack(spacing: 2) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
+            HStack(spacing: InputRowStyle.controlSpacing) {
                 Text(verbatim: ref.key)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .frame(minWidth: 30, alignment: .trailing)
+                    .font(InputRowStyle.numberFont)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
                 if viewModel.renamingInput == ref {
                     // Leaving commits what was typed, Esc cancels (@see MarkerRenameField).
                     MarkerRenameField(initial: viewModel.inputName(ref),
-                                      font: .system(.caption, weight: .semibold),
+                                      font: InputRowStyle.nameFont,
                                       commitsOnFocusLoss: true) { value in
                         if let value { viewModel.renameInput(ref, to: value) }
                         if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
@@ -183,7 +190,7 @@ struct InputsPanelView: View {
                     // No gesture of its own: the row's click selects (⌘ / ⇧ included); ⌘R renames the one
                     // selected row while this list holds the keyboard (@see RenameShortcutRoute).
                     Text(viewModel.inputName(ref))
-                        .font(.system(.caption, weight: .semibold))
+                        .font(InputRowStyle.nameFont)
                         .lineLimit(1)
                         .help(L("inputs.rename.help"))
                 }
@@ -202,9 +209,9 @@ struct InputsPanelView: View {
                 monitorGainBox(ref, heard: heard)
             }
             vuBars(ref)
+                .padding(.leading, InputRowStyle.meterLeading)
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
-        .background(isSelected ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.25) : Color.clear)
+        .inputRowChrome(isSelected: isSelected)
         .contentShape(Rectangle())
         // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
         // this input (@see RecordZonePlanner, InputDragSession).
@@ -218,8 +225,9 @@ struct InputsPanelView: View {
         .id(ref)
     }
 
-    /// The input's level, across the whole row, under the controls: one bar for a mono, two thin ones (left
-    /// over right) for a pair — the plugin cards' bar, on the same scale (red past 0 dBFS).
+    /// The input's level, on the row's second line, starting under the name and 40 % of the PANEL wide
+    /// (@see InputRowStyle): one bar for a mono, two thin ones (left over right) for a pair — the plugin
+    /// cards' bar, on the same scale (red past 0 dBFS).
     @ViewBuilder
     private func vuBars(_ ref: InputRef) -> some View {
         Group {
@@ -233,6 +241,10 @@ struct InputsPanelView: View {
             }
         }
         .frame(height: 5)
+        // The panel is the scroll view's container: 40 % of ITS width, whatever the row's padding.
+        .containerRelativeFrame(.horizontal, alignment: .leading) { length, _ in
+            length * InputRowStyle.meterWidthFraction
+        }
     }
 
     /// The most a DRAG may raise the listening level above where it started (a typed value is only held
