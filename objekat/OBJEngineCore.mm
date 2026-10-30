@@ -2686,6 +2686,13 @@ static BOOL gOBJAudioDisabled = NO;
 
 // MARK: Sonde multi-cœur (plan multi-cœur, étape 0)
 
+- (NSInteger)audioXRunCount {
+    if (_engine == nullptr || gOBJAudioDisabled) return -1;
+    auto& jdm = _engine->getDeviceManager().deviceManager;
+    if (jdm.getCurrentAudioDevice() == nullptr) return -1;
+    return (NSInteger) jdm.getXRunCount();
+}
+
 - (NSDictionary*)audioProbeStats {
     NSMutableDictionary* out = [NSMutableDictionary dictionary];
     auto& dm = _engine->getDeviceManager();

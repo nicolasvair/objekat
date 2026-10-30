@@ -914,6 +914,13 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // configuration de parallélisme du moteur : clés `threads`/`workgroup` (toujours présentes, même
 // sans sonde), clé `probe` absente sans OBJ_AUDIO_PROBE (`probe_installed` = NO). Plan multi-cœur, étape 0.
 - (NSDictionary * _Nonnull)audioProbeStats;
+// Compteur d'xruns : nombre de rappels audio dont le calcul a dépassé la durée du bloc
+// (juce::AudioDeviceManager::getXRunCount, sans aucune sonde ni variable d'environnement). Cumulé
+// depuis l'ouverture du device : JUCE le remet à zéro quand le device est rouvert (rate, buffer,
+// changement de carte), l'appelant compare donc des écarts sur une même `generation`. ⚠️ Ce n'est
+// PAS un détecteur de coupure matérielle : CoreAudio ne remonte rien dans JUCE, seul le dépassement
+// de budget du rappel est compté. -1 sans moteur ou sans device ouvert (--no-audio).
+- (NSInteger)audioXRunCount;
 // Recensement du parallélisme exploitable (pistes du pool, plugins externes par piste et par
 // container racine, profondeur max des containers). Plan multi-cœur, étape 0.
 - (NSDictionary * _Nonnull)parallelismCensus;

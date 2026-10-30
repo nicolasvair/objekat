@@ -416,6 +416,12 @@ threads, audio thread included, `worker_threads` = what the engine pool really g
 `tools/cpu_threads.py` gives the matching per-thread view of the process (see its header for the `sample` /
 `xctrace` recipes).
 
+`perf.xruns` returns `count`, the audio xrun counter (callbacks whose processing outlasted the block duration,
+cumulative since the output device was last opened; `null` without an open device) and `device_generation`
+(`AudioDeviceStatus.generation`: a reopen zeroes the count and moves it, so only compare two readings with the
+same generation). Needs no probe. A budget-overrun count, not a hardware dropout detector: JUCE's CoreAudio
+backend reports no native count.
+
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.

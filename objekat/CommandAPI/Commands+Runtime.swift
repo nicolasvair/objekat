@@ -156,6 +156,25 @@ extension CommandRegistry {
             }
         }
 
+        register("perf.xruns",
+                 summary: """
+                 Audio xrun counter: `count` = audio callbacks whose processing took longer than \
+                 the block duration since the output device was (re)opened (the engine's \
+                 juce::AudioDeviceManager figure; needs no probe). Read it before and after a \
+                 measurement and compare the two on the same `device_generation` — a device \
+                 reopen (rate, buffer, card) zeroes it and bumps the generation. It is a \
+                 budget-overrun count, NOT a hardware dropout detector. `count: null` = no open \
+                 output device (--no-audio).
+                 """,
+                 undo: .none) { _ in
+            let engine = try CommandContext.shared.requireEngine()
+            let count = engine.audioXRunCount()
+            return .object([
+                "count": count >= 0 ? .int(count) : .null,
+                "device_generation": .int(AudioDeviceStatus.shared.generation),
+            ])
+        }
+
         register("perf.census",
                  summary: """
                  Project census: objects by type, tracks, plugins, sends, notes — plus `regimes`, \
