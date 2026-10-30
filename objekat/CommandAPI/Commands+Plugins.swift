@@ -440,6 +440,9 @@ extension CommandRegistry {
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let host = try p.uuid("host")
+            if vm.find(id: host)?.isPicture == true {
+                throw CommandError(code: .invalid_state, message: "a video's picture makes no sound: it has no plugin chain")
+            }
             guard let before = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }

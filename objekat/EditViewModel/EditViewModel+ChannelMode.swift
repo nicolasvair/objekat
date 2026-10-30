@@ -43,7 +43,7 @@ extension EditViewModel {
     @discardableResult
     func setChannelMode(ids: [UUID], mode: ChannelMode) -> [UUID] {
         let changing = ids.filter { id in
-            guard let o = find(id: id), o.isClip, o.channelMode != mode else { return false }
+            guard let o = find(id: id), o.isSoundClip, o.channelMode != mode else { return false }   // a picture has no channels
             return mode == .lr || channelModeRefusal(for: o) == nil
         }
         guard !changing.isEmpty else { return [] }

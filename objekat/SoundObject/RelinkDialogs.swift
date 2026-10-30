@@ -78,7 +78,7 @@ enum RelinkUI {
             case .none:                 cause = nil
             }
             let items = RelinkMenuRules.items(cause: cause,
-                                              isClip: object.isClip,
+                                              isClip: object.isSoundClip,   // a picture is not replaced by an audio file
                                               isConsolidateInstance: object.consolidateID != nil,
                                               anythingMissingInProject: vm.missingFileCount > 0)
             canReplace = items.canReplace
@@ -467,7 +467,7 @@ struct RelinkContextMenuItems: View {
         let selected = viewModel.selectedIDs
         guard selected.count > 1, selected.contains(object.id) else { return [object.id] }
         return viewModel.allClips.compactMap { clip -> UUID? in
-            guard selected.contains(clip.id), clip.isClip,
+            guard selected.contains(clip.id), clip.isSoundClip,
                   clip.consolidateID == nil else { return nil }
             return clip.id
         }

@@ -69,6 +69,8 @@ extension EditViewModel {
         // moved into the container; a sub-group = a nested container (recursion).
         for child in children {
             switch child.kind {
+            case .clip where child.isPicture:
+                continue   // a picture has no engine object (@see engineAddClip)
             case .clip:
                 // the GROUP's lane: the clip is born on a track that already exists, before being
                 // moved into the container (its model lane is relative to the group).
@@ -189,6 +191,8 @@ extension EditViewModel {
             obj.kind = .group(children: children + [child], isExpanded: isExpanded)
         }
         switch child.kind {
+        case .clip where child.isPicture:
+            break   // a picture has no engine object (@see engineAddClip)
         case .clip:
             engineAddClip(child)   // the clip is absolute on its track
             engine?.assignObject(child.id.uuidString, toGroupFolder: toGroupID.uuidString)

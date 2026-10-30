@@ -103,6 +103,8 @@ enum GroupWaveformDrawing {
             guard hi > lo, hi > visible.lo, lo < visible.hi else { continue }
 
             switch o.kind {
+            case .clip where o.isPicture:
+                continue   // an imported video's picture: its path is a movie, there is no sound to draw
             case .clip:
                 out.append(ClipInstance(clip: o, mods: mods + [modifier(for: o, offBins: offBins)],
                                         shift: shift, winLo: lo, winHi: hi))

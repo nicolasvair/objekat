@@ -1152,7 +1152,8 @@ final class EditViewModel {
     private var referencedAudioPathsCache: Set<String>?
     var referencedAudioPaths: Set<String> {
         if let cached = referencedAudioPathsCache { return cached }
-        let paths = Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
+        // A picture's path is a MOVIE, not audio: left out (the cache would decode it as sound).
+        let paths = Set(allClips.compactMap { $0.filePath.isEmpty || $0.isPicture ? nil : $0.filePath })
         referencedAudioPathsCache = paths
         return paths
     }
@@ -2151,6 +2152,10 @@ final class EditViewModel {
         guard let engine,
               case .clip(let filePath, let sourceOffset, _, let speedRatio, let isReversed) = object.kind
         else { return }
+        // A PICTURE (an imported video's image) never reaches the engine: it makes no sound, and the
+        // engine would read the movie's audio or refuse the format. It lives in the model alone — the
+        // engine-side twin of a missing file's ghost, which every site already tolerates.
+        guard !object.isPicture else { return }
         let data = OBJSoundObjectData()
         data.lane         = lane ?? object.lane
         data.filePath     = filePath
@@ -2293,6 +2298,8 @@ final class EditViewModel {
     func syncAdd(_ object: SoundObject) {
         guard let engine else { return }
         switch object.kind {
+        case .clip where object.isPicture:
+            break   // a picture has no engine object (@see engineAddClip)
         case .clip:
             engineAddClip(object)
             if let sid = object.stemID {

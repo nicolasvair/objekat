@@ -2846,7 +2846,8 @@ struct TimelineView: View {
         // view being rebuilt (a clip→consolidated object transformation, a definition's re-bake) — `onAppear`
         // would not fire again and the waveform would stay frozen on the old wave. `load` is
         // idempotent (a no-op if it is already cached / in flight).
-        .task(id: object.filePath) { waveformCache.load(filePath: object.filePath) }
+        // A PICTURE (an imported video's image) has no waveform: its path is the movie, never decoded as audio.
+        .task(id: object.filePath) { if !object.isPicture { waveformCache.load(filePath: object.filePath) } }
         .opacity(blockOpacity(for: object))
     }
 
@@ -3212,11 +3213,12 @@ struct TimelineView: View {
     private func ensureWaveformsLoaded(_ entries: [LaneEntry], groups: [CanvasGroup] = []) {
         guard !entries.isEmpty || !groups.isEmpty else { return }
         // Only the clips have a file: a MIDI clip's path is empty, and loading "" would spawn a task per pass.
-        var paths = entries.compactMap { $0.item.isClip ? $0.item.filePath : nil }
+        // (A picture has a path — the movie — and no waveform: never loaded.)
+        var paths = entries.compactMap { $0.item.isSoundClip ? $0.item.filePath : nil }
         for g in groups {
             if case .group(let children, _) = g.item.kind {
                 for child in children {
-                    if case .clip(let fp, _, _, _, _) = child.kind { paths.append(fp) }
+                    if case .clip(let fp, _, _, _, _) = child.kind, !child.isPicture { paths.append(fp) }
                 }
             }
         }
@@ -3934,7 +3936,7 @@ struct TimelineView: View {
         .onAppear {
             if case .group(let children, _) = group.kind {
                 for child in children {
-                    if case .clip(let fp, _, _, _, _) = child.kind {
+                    if case .clip(let fp, _, _, _, _) = child.kind, !child.isPicture {
                         waveformCache.load(filePath: fp)
                     }
                 }
