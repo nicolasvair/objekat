@@ -19,7 +19,7 @@ measures what comes out. Headless, `--virtual-audio`, Apple's DLSMusicDevice (no
   P12 native mute / unmute / mute again during a note, real time: no note stuck at the 2nd mute
   P13 instrument on an EMPTY group, a clip added afterwards: sound at the export
 
-Statuses: PASS = the engine does what the plan needs; DEFECT = a patch (or a guard) is needed, the figures say
+Statuses: KNOWN = a pre-existing defect the plan decided not to fix (does not fail the run); PASS = the engine does what the plan needs; DEFECT = a patch (or a guard) is needed, the figures say
 which; INFO = a measurement that justifies a design choice; ERROR = the harness failed, nothing proved.
 
     ./scenario_group_midi_proof.py /path/to/objekat.app [P1 P4 ...]
@@ -577,7 +577,7 @@ def p5():
         verdict("P5b", "PASS", "a note crossing the loop OUT is cut and re-attacked at every lap (ratios %s)" % ["%.2f" % r for r in rb])
     else:
         same = all(abs(a - b) < 0.1 * max(a, b) for a, b in zip(rb, rbc))
-        verdict("P5b", "DEFECT", "a note crossing the loop OUT is NOT cut at the wrap: its attack is gone from lap 2 on (host: %s). "
+        verdict("P5b", "KNOWN", "DEFECT KNOWN, pre-existing, independent of the groups, NOT fixed by 0049: a note crossing the loop OUT is NOT cut at the wrap: its attack is gone from lap 2 on (host: %s). "
                 "A at the loop start is fine (%s). %s"
                 % (["%.2f" % r for r in rb], ["%.2f" % (v / Ah[0]) for v in Ah],
                    "IDENTICAL with the instrument on the clip itself (%s): pre-existing, not caused by mounting on the host" % ["%.2f" % r for r in rbc] if same

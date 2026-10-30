@@ -1,0 +1,207 @@
+From f0648743dc25037e2529240b07db2b8bd9339410 Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 15:34:29 +0100
+Subject: [PATCH] fix(midi): a group's instrument keeps its notes - stuck mute,
+ held note at the window end, sub-block timestamps (objekat 0049)
+
+Three defects found by tools/scenario_group_midi_proof.py (P4, P9, P12) once an instrument is
+mounted on a group's container and the MIDI clips inside are empty (docs/plan_groupes_midi.md).
+
+(a) MidiNode / LoopingMidiNode: wasMute was only ever set. The first mute sent its note-offs, from
+    the second one on none: the held note stayed stuck. Reset when the clip is not muted.
+(b) ContainerClipNode: the chain around the node (the instrument) is only processed while the node
+    is inside its activation window. A note held at the window's end never got its note-off, stayed
+    frozen in the instrument and sounded again on the next entry. The node follows the notes it
+    hands out (fixed array, no allocation) and ends the ones still held in the last block it is
+    called for. A jump of the playhead forgets them (the plugins flush on it).
+(c) PluginNode: with automation the plugin is run in sub-blocks of 128 samples and sees its MIDI
+    relative to the sub-block; the output was merged WITHOUT putting the offset back, so every
+    message of a sub-block > 0 moved earlier by up to 127 samples (-2.67 ms measured on notes at
+    2.2113 s and 3.4871 s with a flat volume curve). mergeFromWithOffset.
+
+Files: tracktion_MidiNode.cpp, tracktion_LoopingMidiNode.cpp, tracktion_ContainerClipNode.{h,cpp},
+tracktion_PluginNode.cpp.
+---
+ .../graph/tracktion_ContainerClipNode.cpp     | 77 +++++++++++++++++++
+ .../graph/tracktion_ContainerClipNode.h       | 12 +++
+ .../graph/tracktion_LoopingMidiNode.cpp       |  3 +
+ .../playback/graph/tracktion_MidiNode.cpp     |  4 +
+ .../playback/graph/tracktion_PluginNode.cpp   |  7 +-
+ 5 files changed, 102 insertions(+), 1 deletion(-)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+index d29e937c2b6..0dcffbbdf94 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.cpp
+@@ -255,11 +255,32 @@ void ContainerClipNode::process (ProcessContext& pc)
+ 
+     assert (! localPlayHead.isLooping() || localPlayHead.getLoopRange().contains (localPlayHead.getPosition()));
+ 
++    // Objekat 0049 (b) - a jump of the playhead makes the plugins around us flush their notes
++    // (PluginNode: isAllNotesOff on didPlayheadJump): forget ours, they are already gone.
++    if (editPlayHeadState.didPlayheadJump() && numHeldNotes > 0)
++    {
++        heldNotes.fill (0);
++        numHeldNotes = 0;
++    }
++
+     // Process
+     ProcessContext localPC { pc.numSamples, pc.referenceSampleRange,
+                              { pc.buffers.audio, pc.buffers.midi } };
+     player.process (localPC);
+ 
++    // Objekat 0049 (b) - follow what the content played, and in the LAST block we are called for,
++    // end what is still held: after it the chain around us is not processed any more.
++    trackHeldNotes (pc.buffers.midi);
++
++    if (numHeldNotes > 0 && sectionEditSampleRange.getEnd() >= activeSampleRange.getEnd())
++    {
++        const auto blockSeconds = (double) pc.numSamples / sampleRate;
++        const auto lastSample = std::max (0.0, blockSeconds - 1.0 / sampleRate);
++        const auto atEnd = (double) (activeSampleRange.getEnd() - sectionEditSampleRange.getStart()) / sampleRate;
++
++        releaseAllHeldNotes (pc.buffers.midi, juce::jlimit (0.0, lastSample, atEnd));
++    }
++
+     // Silence any samples before or after our edit time range.
+     // N.B. les bornes sont celles décalées de -L : c'est le CONTENU du container qu'on borne
+     // ici, pas la queue de sa chaîne de plugins — celle-ci vit en aval et doit continuer à
+@@ -277,6 +298,62 @@ void ContainerClipNode::process (ProcessContext& pc)
+     }
+ }
+ 
++void ContainerClipNode::trackHeldNotes (const MidiMessageArray& midi)
++{
++    for (const auto& m : midi)
++    {
++        if (m.isNoteOn())
++        {
++            const auto slot = (m.getChannel() - 1) * 128 + m.getNoteNumber();
++
++            if (slot >= 0 && slot < numHeldNoteSlots)
++            {
++                if (heldNotes[(size_t) slot] == 0)
++                    ++numHeldNotes;
++
++                heldNotes[(size_t) slot] = m.mpeSourceID + 1u;
++            }
++        }
++        else if (m.isNoteOff())
++        {
++            const auto slot = (m.getChannel() - 1) * 128 + m.getNoteNumber();
++
++            if (slot >= 0 && slot < numHeldNoteSlots && heldNotes[(size_t) slot] != 0)
++            {
++                heldNotes[(size_t) slot] = 0;
++                --numHeldNotes;
++            }
++        }
++        else if (m.isAllNotesOff() || m.isAllSoundOff())
++        {
++            const auto base = (m.getChannel() - 1) * 128;
++
++            for (int n = 0; n < 128; ++n)
++            {
++                if (base + n < numHeldNoteSlots && heldNotes[(size_t) (base + n)] != 0)
++                {
++                    heldNotes[(size_t) (base + n)] = 0;
++                    --numHeldNotes;
++                }
++            }
++        }
++    }
++}
++
++void ContainerClipNode::releaseAllHeldNotes (MidiMessageArray& midi, double timeInBlock)
++{
++    for (int slot = 0; slot < numHeldNoteSlots; ++slot)
++    {
++        if (const auto source = heldNotes[(size_t) slot]; source != 0)
++        {
++            midi.addMidiMessage (juce::MidiMessage::noteOff ((slot / 128) + 1, slot % 128), timeInBlock, source - 1u);
++            heldNotes[(size_t) slot] = 0;
++        }
++    }
++
++    numHeldNotes = 0;
++}
++
+ //==============================================================================
+ //==============================================================================
+ ObjAuxReturnNode::ObjAuxReturnNode (ProcessState& editProcessState,
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+index 733c1cad3f7..425759f3cd9 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
++++ b/modules/tracktion_engine/playback/graph/tracktion_ContainerClipNode.h
+@@ -65,6 +65,18 @@ private:
+     };
+ 
+     std::shared_ptr<PlayerContext> playerContext;
++
++    // Objekat 0049 (b) - the notes this node has handed to the chain around it and not yet ended.
++    // The chain (an instrument mounted on the group) is only called while this node is inside its
++    // activation window: a note still held at the window's end would never receive its note-off, stay
++    // frozen in the instrument and sound again on the next entry into the window. Fixed size, no
++    // allocation on the audio thread; 0 = not held, otherwise the MPE source id + 1.
++    static constexpr int numHeldNoteSlots = 16 * 128;
++    std::array<uint32_t, numHeldNoteSlots> heldNotes {};
++    int numHeldNotes = 0;
++
++    void trackHeldNotes (const MidiMessageArray&);
++    void releaseAllHeldNotes (MidiMessageArray&, double timeInBlock);
+ };
+ 
+ 
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_LoopingMidiNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_LoopingMidiNode.cpp
+index 43fbfa7857c..2f8908ba81a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_LoopingMidiNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_LoopingMidiNode.cpp
+@@ -1509,6 +1509,9 @@ void LoopingMidiNode::process (ProcessContext& pc)
+         return;
+     }
+ 
++    // Objekat 0049 (a) - re-arm the note-offs of the next mute (see MidiNode::processSection).
++    wasMute = false;
++
+     generatorAndNoteList->processSection (pc.buffers.midi, pc.numSamples,
+                                           getEditBeatRange(),
+                                           getEditTimeRange(),
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_MidiNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_MidiNode.cpp
+index f802efbcc3c..80f7a49964f 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_MidiNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_MidiNode.cpp
+@@ -135,6 +135,10 @@ void MidiNode::processSection (Node::ProcessContext& pc,
+         return;
+     }
+ 
++    // Objekat 0049 (a) - the mute is over: re-arm the note-offs of the NEXT mute. wasMute was only ever
++    // set, so from the second mute on no note-off was sent and the held note stayed stuck.
++    wasMute = false;
++
+     if (! getPlayHeadState().isContiguousWithPreviousBlock() || localTime.getStart() <= 0.00001 || shouldCreateMessagesForTime)
+     {
+         MidiNodeHelpers::createMessagesForTime (pc.buffers.midi, sequence, localTime.getStart(),
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+index 509acf7f168..9e1234caf9a 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_PluginNode.cpp
+@@ -267,10 +267,15 @@ void PluginNode::process (ProcessContext& pc)
+                                                                          outputAudioBuffer));
+ 
+             // Then copy the buffers to the outputs
++            // Objekat 0049 (c) - the plugin saw its MIDI relative to the START OF THE SUB-BLOCK (input
++            // loop above) and hands it back the same way: put the sub-block's offset back so the
++            // timestamps are relative to the block again. Without it every message of a sub-block > 0
++            // moved EARLIER by the offset (128 samples = 2.67 ms) as soon as a plugin on the chain has
++            // automation (sub-blocks of 128).
+             if (subBlockNum == 0)
+                 outputBuffers.midi.swapWith (midiMessageArray);
+             else
+-                outputBuffers.midi.mergeFrom (midiMessageArray);
++                outputBuffers.midi.mergeFromWithOffset (midiMessageArray, subBlockTimeRange.getStart().inSeconds());
+ 
+             numSamplesDone += numSamplesThisBlock;
+             numSamplesLeft -= numSamplesThisBlock;
+-- 
+2.50.1 (Apple Git-155)
+

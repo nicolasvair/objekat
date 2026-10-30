@@ -540,7 +540,21 @@ Checked as still biting: `develop` still had the linear `std::find`.
   `wasLivePlayActive` bookkeeping; disarming and a destination that is not recording behave as before.
   Reproduced and measured with `rec.start {debug_stall_ms}` on the virtual card (`tools/scenario_record.py`,
   section R). Branch `objekat-record-0048` (`3ce916aa05e`, NOT published on the fork), commit on top of
-  `objekat-record-0047` (`c629811cdc8`). File: `tracktion_InputDevice.cpp`. The next number is `0049`.
+  `objekat-record-0047` (`c629811cdc8`). File: `tracktion_InputDevice.cpp`.
+- `0049` — **a group's instrument keeps its notes** (docs/plan_groupes_midi.md, E1; proven by
+  `tools/scenario_group_midi_proof.py` P4, P9, P12). Three defects, found with an instrument mounted on a
+  group's container and empty MIDI clips inside. (a) `MidiNode` / `LoopingMidiNode`: `wasMute` was only ever
+  set, so the first mute sent its note-offs and the next ones none (note stuck 0.390 vs 0.023 after the 2nd mute);
+  it is reset when the clip is not muted. (b) `ContainerClipNode`: the chain around the node (the instrument) is
+  only processed inside the node's activation window, so a note held at its end was never ended and sounded
+  again on re-entry (0.344 / 0.047 before the note, control 0); the node follows the notes it hands out (fixed
+  array, no allocation) and ends the held ones in the last block it is called for; a jump of the playhead
+  forgets them. (c) `PluginNode`: with automation the plugin runs in sub-blocks of 128 samples and sees its MIDI
+  relative to the sub-block, but the output was merged without putting the offset back: notes in a sub-block > 0
+  moved EARLIER (-128 samples = -2.67 ms under a flat volume curve); `mergeFromWithOffset`. Branch
+  `objekat-group-midi-0049` (`f0648743dc2`, NOT published on the fork), commit on top of `objekat-record-0048`
+  (`3ce916aa05e`). Files: `tracktion_MidiNode.cpp`, `tracktion_LoopingMidiNode.cpp`,
+  `tracktion_ContainerClipNode.{h,cpp}`, `tracktion_PluginNode.cpp`. The next number is `0050`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
