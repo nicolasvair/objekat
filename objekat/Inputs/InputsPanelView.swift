@@ -4,8 +4,8 @@ import Combine
 /// The "Inputs" tab of the left panel: the sound card's recording inputs, as the project names them.
 ///
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
-/// switches AirPods to the call profile, so nothing here does it on its own). Then two sections, « Mono
-/// inputs » then « Stereo inputs » (a pair does not take its monos away; an empty section is not shown),
+/// switches AirPods to the call profile, so nothing here does it on its own). Then two sections, « Stereo
+/// inputs » ABOVE « Mono inputs » (a pair does not take its monos away; an empty section is not shown),
 /// one row per input: its number, an editable name, the monitor button and the listening level, and under
 /// them the level meter (one bar for a mono, two thin ones, L and R, for a pair).
 ///
@@ -81,8 +81,8 @@ struct InputsPanelView: View {
 
     // MARK: Open
 
-    /// The rows as shown, top to bottom: every mono, then every pair. What ⇧ ranges and the arrows walk.
-    private var orderedRows: [InputRef] { monoRows + stereoRows }
+    /// The rows as shown, top to bottom: every pair, then every mono. What ⇧ ranges and the arrows walk.
+    private var orderedRows: [InputRef] { stereoRows + monoRows }
     private var monoRows: [InputRef] { viewModel.visibleRecordInputs.filter { !$0.isStereo } }
     private var stereoRows: [InputRef] { viewModel.visibleRecordInputs.filter(\.isStereo) }
 
@@ -91,13 +91,13 @@ struct InputsPanelView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    if !monos.isEmpty {
-                        sectionHeader(L("inputs.section.mono"))
-                        ForEach(monos, id: \.self) { ref in row(ref) }
-                    }
                     if !pairs.isEmpty {
                         sectionHeader(L("inputs.section.stereo"))
                         ForEach(pairs, id: \.self) { ref in row(ref) }
+                    }
+                    if !monos.isEmpty {
+                        sectionHeader(L("inputs.section.mono"))
+                        ForEach(monos, id: \.self) { ref in row(ref) }
                     }
                     // The void under the rows: a click there empties the selection and ends a rename
                     // (committing it), like a click on the canvas. Not an ancestor gesture, which would

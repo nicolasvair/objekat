@@ -852,7 +852,7 @@ struct StemsZoneView: View {
 // MARK: - The 'input' zone of a recording zone: the card input and the take mode
 //
 // The stems zone's counterpart at the TOP, outside the object's frame. Two rows: the title with the menu of
-// the card's inputs (a mono one or a stereo pair — the wire below follows: one wire or two — and "None" last),
+// the card's inputs (the stereo pairs above the monos — the wire below follows: one wire or two — and "None" last),
 // then the menu of the take mode. Greyed (and unusable) while a recording runs: the zone's input is frozen at
 // the press. An input the zone keeps but the card does not have is shown with its name and "absent".
 
@@ -903,14 +903,14 @@ struct RecordInputZoneView: View {
             if input.monoChoices.isEmpty && input.stereoChoices.isEmpty {
                 Text(L("synoptic.input.noCard"))
             }
-            if !input.monoChoices.isEmpty {
-                Section(L("synoptic.input.section.mono")) {
-                    ForEach(input.monoChoices) { choice in choiceButton(choice) }
-                }
-            }
             if !input.stereoChoices.isEmpty {
                 Section(L("synoptic.input.section.stereo")) {
                     ForEach(input.stereoChoices) { choice in choiceButton(choice) }
+                }
+            }
+            if !input.monoChoices.isEmpty {
+                Section(L("synoptic.input.section.mono")) {
+                    ForEach(input.monoChoices) { choice in choiceButton(choice) }
                 }
             }
             Divider()
