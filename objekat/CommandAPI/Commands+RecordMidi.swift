@@ -13,7 +13,8 @@ extension CommandRegistry {
                  summary: """
                  The MIDI inputs the engine offers, "All MIDI Ins" (`all_midi_in`) first: `id` (Tracktion's, what \
                  `rec.drop` / `rec.assign` take as `midi`), `name`, `virtual` (a software device, like \
-                 "All MIDI Ins" or the harness'), `enabled`. `zones` lists the MIDI recording zones: their `id`, \
+                 "All MIDI Ins" or the harness'), `enabled`, `computer_keyboard` (true for the computer keyboard's input, always \
+                 listed, second after "All MIDI Ins"). `zones` lists the MIDI recording zones: their `id`, \
                  `midi_input`, `present`, `instrument` (name or null) and whether the engine `live`ly holds its \
                  capture track (armed and able to record; the track plays nothing: arming is not hearing). Never an error: an empty list on a machine with no MIDI.
                  """,
@@ -128,9 +129,9 @@ extension CommandRegistry {
             "midi_inputs": .array(vm.midiInputs.map { d in
                 let key = vm.midiChainKey(for: d)
                 let chain = key.flatMap { vm.inputChains.midi[$0] }
-                return .object(["id": .string(d.id), "name": .string(d.id == MidiInputResolver.allInputsID
-                                                                      ? L("midi.all_inputs") : d.name),
+                return .object(["id": .string(d.id), "name": .string(d.displayName),
                                 "virtual": .bool(d.isVirtual), "enabled": .bool(d.enabled),
+                                "computer_keyboard": .bool(d.isComputerKeyboard),
                                 "heard": .bool(heard.contains(d.id) && chain?.instrument != nil),
                                 "instrument": .stringOrNull(chain?.instrument?.name),
                                 "host_id": .stringOrNull(chain?.hostID.uuidString)])

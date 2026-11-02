@@ -12698,6 +12698,29 @@
         }
       }
     },
+    "midi.computer_keyboard": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computer Keyboard"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teclado del ordenador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clavier ordinateur"
+          }
+        }
+      }
+    },
     "midi.input.unnamed": {
       "extractionState": "manual",
       "localizations": {

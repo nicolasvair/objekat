@@ -40,7 +40,8 @@
 
 /// `--virtual-midi`: adds ONE in-process MIDI input, "OBJ Virtual MIDI", that `-sendVirtualMidiEvents:` feeds,
 /// so MIDI recording can be tested with no hardware. Same rule as above — set before the first construction.
-/// The MIDI device settings (`virtualmididevices`, `midiin`, `virtualmidiin`) never reach Settings.xml.
+/// The MIDI device settings (`virtualmididevices`, `midiin`, `virtualmidiin`) never reach Settings.xml (with or
+/// without the flag: the computer keyboard's input is a virtual device too).
 + (void)setVirtualMidi:(BOOL)on;
 + (BOOL)isVirtualMidi;
 
@@ -1054,7 +1055,7 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // (`all_midi_in`) and, under `--virtual-midi`, "OBJ Virtual MIDI". Independent of the audio inputs: they
 // exist whether or not the card's inputs are open. Main thread.
 /// Every MIDI input the engine knows (the per-track devices left out): `{id, identifier, name, virtual,
-/// enabled}`. `id` is Tracktion's device id (stable across launches for a given piece of hardware).
+/// computerKeyboard, enabled}`. `id` is Tracktion's device id (stable across launches for a given piece of hardware).
 - (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)midiInputDevices;
 /// The loudest note-on velocity (0...127) seen on each device since the last read, by device id, only for
 /// the devices that played something. Reading clears.
@@ -1096,6 +1097,11 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (NSString* _Nullable)setMidiInputMonitor:(BOOL)on device:(NSString* _Nonnull)deviceID;
 /// The MIDI devices heard through an input chain (ids).
 - (NSArray<NSString*>* _Nonnull)midiInputMonitors;
+/// The COMPUTER KEYBOARD's MIDI input (« Computer Keyboard », a Tracktion virtual device created once at startup
+/// and always listed in `-midiInputDevices` with `computerKeyboard = YES`). Plays one note into it — straight into
+/// the device, never through "All MIDI Ins" — on channel 1. NO when the note is out of range or the device is
+/// missing. Main thread.
+- (BOOL)sendComputerKeyboardNote:(NSInteger)note velocity:(NSInteger)velocity on:(BOOL)on;
 /// `--virtual-midi` only. `{active, device_id, name, sent, pending}`.
 - (NSDictionary<NSString*, id>* _Nonnull)virtualMidiStatus;
 /// `--virtual-midi` only. Plays events into the virtual device at `delay_ms` from now each: `{kind: "on"|"off"|"cc",

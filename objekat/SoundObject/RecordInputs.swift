@@ -222,6 +222,9 @@ struct MidiInputInfo: Equatable, Hashable, Sendable {
     var name: String
     var isVirtual: Bool
     var enabled: Bool
+    /// The computer keyboard's input (« Computer Keyboard »): always listed, fed by the key monitor and not by
+    /// hardware, and never shown under its internal `name` (@see `displayName`).
+    var isComputerKeyboard: Bool = false
 
     /// The reference that names it.
     var ref: MidiInputRef { MidiInputRef(id: id, name: name) }
@@ -236,14 +239,19 @@ enum MidiInputResolver {
         return byName.count == 1 ? byName[0] : nil
     }
 
-    /// What the panel lists, in order: "All MIDI Ins" first, then the others by name.
+    /// What the panel lists, in order: "All MIDI Ins" first, the computer keyboard second, then the others by name.
     static func ordered(_ devices: [MidiInputInfo]) -> [MidiInputInfo] {
-        devices.sorted { a, b in
-            let aAll = a.id == allInputsID, bAll = b.id == allInputsID
-            if aAll != bAll { return aAll }
+        func rank(_ d: MidiInputInfo) -> Int { d.id == allInputsID ? 0 : d.isComputerKeyboard ? 1 : 2 }
+        return devices.sorted { a, b in
+            let ra = rank(a), rb = rank(b)
+            if ra != rb { return ra < rb }
             return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
         }
     }
+
+    /// The INTERNAL name of the computer keyboard's input, as the engine gives it (`kOBJComputerKeyboardMidiName`).
+    /// A constant of the contract, not a label: it is also what a project saved its reference under.
+    static let computerKeyboardInternalName = "Computer Keyboard"
 
     /// Tracktion's id for its "All MIDI Ins" virtual device.
     static let allInputsID = "all_midi_in"

@@ -35,7 +35,8 @@ extension EditViewModel {
             guard let id = d["id"] as? String else { return nil }
             return MidiInputInfo(id: id, name: d["name"] as? String ?? id,
                                  isVirtual: (d["virtual"] as? NSNumber)?.boolValue ?? false,
-                                 enabled: (d["enabled"] as? NSNumber)?.boolValue ?? false)
+                                 enabled: (d["enabled"] as? NSNumber)?.boolValue ?? false,
+                                 isComputerKeyboard: (d["computerKeyboard"] as? NSNumber)?.boolValue ?? false)
         }
         let ordered = MidiInputResolver.ordered(list)
         if ordered != midiInputs { midiInputs = ordered }
@@ -67,7 +68,8 @@ extension EditViewModel {
 
     /// The name to show for a MIDI input: the present device's, else the one the project remembers.
     func midiInputName(_ ref: MidiInputRef) -> String {
-        if let d = resolvedMidiInput(ref) { return d.id == MidiInputResolver.allInputsID ? L("midi.all_inputs") : d.name }
+        if let d = resolvedMidiInput(ref) { return d.displayName }
+        if ref.name == MidiInputResolver.computerKeyboardInternalName { return L("midi.computer_keyboard") }
         return ref.name.isEmpty ? L("midi.input.unnamed") : ref.name
     }
 
@@ -138,5 +140,16 @@ extension EditViewModel {
         var take = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
                                lane: plan.take.lane, kind: .midiClip(notes: notes, lengthBeats: lengthBeats))
         return take
+    }
+}
+
+extension MidiInputInfo {
+    /// The name to SHOW — the one place that decides it (the Inputs panel, the synoptic's choices, the zones'
+    /// names, the API): « All MIDI Ins » and the computer keyboard are localised, never shown under the
+    /// internal name the engine gives them; any other device keeps its own.
+    var displayName: String {
+        if id == MidiInputResolver.allInputsID { return L("midi.all_inputs") }
+        if isComputerKeyboard { return L("midi.computer_keyboard") }
+        return name
     }
 }

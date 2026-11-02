@@ -133,6 +133,11 @@ struct OBJRenderPluginFilter {
 //  - The `wavein` items (a wave input's gain, monitor mode, record adjustment...) are never
 //    persisted nor read: an input's settings belong to the PROJECT, not to a per-machine file, and
 //    Tracktion would otherwise write one at every device destruction.
+// The internal name of the computer keyboard's virtual MIDI input: a CONSTANT, never shown as it is (the
+// interface localises it from `computerKeyboard` in -midiInputDevices). Tracktion derives the device id from it
+// (`vmidiin_<hash>`), so it is also stable from one launch, and one machine, to the next.
+static const juce::String kOBJComputerKeyboardMidiName ("Computer Keyboard");
+
 struct OBJPropertyStorage : public te::PropertyStorage {
     using te::PropertyStorage::PropertyStorage;
 
@@ -157,19 +162,22 @@ struct OBJPropertyStorage : public te::PropertyStorage {
     }
     static bool isMidiScanSetting(te::SettingID s) { return s == te::SettingID::midiScanIntervalSeconds; }
 
-    /// `--virtual-midi`: the list of Tracktion's virtual MIDI devices lives in memory only.
+    /// `--virtual-midi` (the harness's "OBJ Virtual MIDI" input) is a flag of its own...
     static std::atomic<bool>& virtualMidiOn() { static std::atomic<bool> on { false }; return on; }
+    /// ...but the LIST of Tracktion's virtual MIDI devices lives in memory only, always: the app creates its
+    /// own virtual input ("Computer Keyboard", @see kOBJComputerKeyboardMidiName) at every launch, and
+    /// that must not leave anything in Settings.xml. It is rebuilt from scratch at each start.
     juce::String virtualMidiList;
 
     juce::var getProperty(te::SettingID setting, const juce::var& defaultValue = {}) override {
         if (isMidiScanSetting(setting)) return defaultValue;
-        if (virtualMidiOn() && setting == te::SettingID::virtualmididevices) return virtualMidiList;
+        if (setting == te::SettingID::virtualmididevices) return virtualMidiList;
         return te::PropertyStorage::getProperty(setting, defaultValue);
     }
 
     void setProperty(te::SettingID setting, const juce::var& value) override {
         if (isMidiScanSetting(setting)) return;
-        if (virtualMidiOn() && setting == te::SettingID::virtualmididevices) { virtualMidiList = value.toString(); return; }
+        if (setting == te::SettingID::virtualmididevices) { virtualMidiList = value.toString(); return; }
         te::PropertyStorage::setProperty(setting, value);
     }
 
@@ -2403,9 +2411,13 @@ static BOOL gOBJAudioDisabled = NO;
         _midiWatcher = std::make_unique<OBJMidiDevicesWatcher>();
         _midiWatcher->owner = self;
         _engine->getDeviceManager().addChangeListener(_midiWatcher.get());
+        // The computer keyboard's MIDI input: created ONCE, here, and never again whatever the mode does. A change
+        // of the device list destroys and rebuilds every input instance (@see -midiDevicesChanged), which would
+        // cut a live monitor or a recording: the mode is a flag on the app's side, the device is always there.
+        // The list that names it is kept in memory (OBJPropertyStorage), so it never reaches Settings.xml.
+        _engine->getDeviceManager().createVirtualMidiDevice(kOBJComputerKeyboardMidiName);
         if (OBJPropertyStorage::virtualMidiOn()) {
-            // Tracktion's own virtual MIDI input, fed by -sendVirtualMidiEvents:. The list that names it is
-            // kept in memory (OBJPropertyStorage), so it never reaches Settings.xml.
+            // Tracktion's own virtual MIDI input, fed by -sendVirtualMidiEvents:.
             _engine->getDeviceManager().createVirtualMidiDevice("OBJ Virtual MIDI");
             NSLog(@"[OBJ] --virtual-midi : entrée MIDI « OBJ Virtual MIDI »");
         }
@@ -11946,6 +11958,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
                              @"identifier": [NSString stringWithUTF8String:id.toRawUTF8()],
                              @"name": [NSString stringWithUTF8String:name.toRawUTF8()],
                              @"virtual": @(d->getDeviceType() == te::InputDevice::virtualMidiDevice),
+                             @"computerKeyboard": @(name == kOBJComputerKeyboardMidiName),
                              @"enabled": @(d->isEnabled()) }];
     }
     return result;
@@ -12128,6 +12141,25 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         }
     }).detach();
     return nil;
+}
+
+// The computer keyboard ------------------------------------------------------------------------
+
+// ONE note of the « Computer Keyboard » input, straight into its device (Tracktion timestamps 0 = now). Channel 1.
+// Deliberately NOT through "All MIDI Ins": that one is the physical devices' (@see VirtualMidiInputDevice::
+// handleMessageFromPhysicalDevice), and the keyboard must not leak into a take that listens to "all". The
+// device is looked up at each call — the list may have been rebuilt — and a note with no device is dropped.
+// Main thread (the key monitor's).
+- (BOOL)sendComputerKeyboardNote:(NSInteger)note velocity:(NSInteger)velocity on:(BOOL)on {
+    if (!_engine || note < 0 || note > 127) return NO;
+    for (auto& d : _engine->getDeviceManager().getMidiInDevices()) {
+        if (!d || d->isTrackDevice() || d->getName() != kOBJComputerKeyboardMidiName) continue;
+        const auto m = on ? juce::MidiMessage::noteOn(1, (int) note, (juce::uint8) std::clamp<NSInteger>(velocity, 1, 127))
+                          : juce::MidiMessage::noteOff(1, (int) note);
+        d->handleIncomingMidiMessage(nullptr, m);
+        return YES;
+    }
+    return NO;
 }
 
 // MARK: Virtual card (--virtual-audio)

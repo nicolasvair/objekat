@@ -154,7 +154,7 @@ struct SynopticBoundView: View {
             let visible = viewModel.visibleRecordInputs
             let named: [SynopticRecordInputChoice] = visible.map { .init(ref: $0, name: viewModel.inputName($0)) }
             let midiChoices: [SynopticMidiChoice] = viewModel.midiInputs.map {
-                .init(ref: $0.ref, name: $0.id == MidiInputResolver.allInputsID ? L("midi.all_inputs") : $0.name)
+                .init(ref: $0.ref, name: $0.displayName)
             }
             let midiSide: SynopticMidiInput? = o.recordMidiInput.map { r in
                 SynopticMidiInput(ref: r, name: viewModel.midiInputName(r),
