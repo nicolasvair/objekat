@@ -15,8 +15,12 @@ import Combine
 ///
 /// A MIDI input can carry ONE instrument (docs/plan_groupes_midi.md, E10): its button, on the row, names it (« Instrument »
 /// while there is none) and opens the picker or the instrument's editor; the speaker hears the input through it (greyed
-/// while there is no instrument). A recording zone armed on the input is heard through the zone's own instrument, not this
-/// one. A chain whose device is absent stays as a greyed row, instrument kept.
+/// while there is no instrument) — and it is the ONLY way to hear it live: arming a recording zone on the input is not
+/// listening (the zone's capture track plays nothing), the zone's own instrument plays the takes the zone holds. A chain
+/// whose device is absent stays as a greyed row, instrument kept.
+///
+/// The « Computer Keyboard » row (second, under « All MIDI Ins ») is a row like the others, plus its own line of controls
+/// (`ComputerKeyboardRowControls`: the mode and the octave) — the mode is what feeds it, @see EditViewModel+ComputerKeyboard.
 struct MidiInputsSection: View {
     @Bindable var viewModel: EditViewModel
     /// The list this section lives in takes the keyboard when a row is clicked.
@@ -79,6 +83,10 @@ struct MidiInputsSection: View {
                 Spacer(minLength: 4)
                 MidiInstrumentButton(viewModel: viewModel, device: d)
                 monitorButton(d, hasInstrument: hasInstrument)
+            }
+            if d.isComputerKeyboard {
+                ComputerKeyboardRowControls(viewModel: viewModel)
+                    .padding(.leading, InputRowStyle.meterLeading)
             }
             VULevelBar(level: Double(levels[d.id] ?? 0), height: 3)
                 .frame(height: 5)

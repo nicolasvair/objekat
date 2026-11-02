@@ -119,6 +119,23 @@ struct TransportView: View {
                     : nil
             )
 
+            // The computer keyboard as a MIDI input (the keys play notes while it is lit). No shortcut by design:
+            // the letters are what it takes, so the button — and the one on the Inputs row — is the way in.
+            Button {
+                viewModel.toggleComputerKeyboardMode()
+            } label: {
+                Image(systemName: "keyboard")
+                    .frame(width: 16)
+                    .foregroundStyle(viewModel.computerKeyboardOn ? Color.accentColor : Color.primary)
+            }
+            .buttonStyle(.bordered)
+            .help(L("transport.keyboard.help"))
+            .overlay(
+                viewModel.computerKeyboardOn
+                    ? RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor.opacity(0.7), lineWidth: 1)
+                    : nil
+            )
+
             PlayheadTimeText(position: displayedPosition, format: Self.formatPosition)
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(.secondary)

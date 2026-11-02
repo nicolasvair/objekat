@@ -10007,6 +10007,75 @@
         }
       }
     },
+    "inputs.keyboard.octave.down.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octave down (w key)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octava más grave (tecla w)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octave plus bas (touche w)"
+          }
+        }
+      }
+    },
+    "inputs.keyboard.octave.up.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octave up (x key)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octava más aguda (tecla x)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Octave plus haut (touche x)"
+          }
+        }
+      }
+    },
+    "inputs.keyboard.toggle.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The keyboard's letters play notes on this input (q z s e d f t g y h u j k o l p m; w / x: octave). Letter shortcuts go through ⇧ + letter while it is on."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las letras del teclado tocan notas en esta entrada (q z s e d f t g y h u j k o l p m; w / x: octava). Los atajos de letra pasan por ⇧ + letra mientras está encendido."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les lettres du clavier jouent des notes sur cette entrée (q z s e d f t g y h u j k o l p m ; w / x : octave). Les raccourcis à lettre passent par ⇧ + lettre tant qu'il est allumé."
+          }
+        }
+      }
+    },
     "inputs.midiMonitor.help": {
       "extractionState": "manual",
       "localizations": {
@@ -22239,6 +22308,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Time"
+          }
+        }
+      }
+    },
+    "transport.keyboard.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Computer keyboard — when lit, the letter keys play notes on the “Computer Keyboard” input (w / x: octave). Letter shortcuts then go through ⇧ + letter (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); the loop stays on its button or ⌘L."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teclado del ordenador — encendido, las letras tocan notas en la entrada «Teclado del ordenador» (w / x: octava). Los atajos de letra pasan entonces por ⇧ + letra (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); el bucle sigue en su botón o con ⌘L."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clavier ordinateur — allumé, les lettres jouent des notes sur l'entrée « Clavier ordinateur » (w / x : octave). Les raccourcis à lettre passent alors par ⇧ + lettre (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M) ; la boucle reste sur son bouton ou ⌘L."
           }
         }
       }
