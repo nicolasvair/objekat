@@ -1341,6 +1341,14 @@ final class EditViewModel {
     /// The MIDI inputs the engine offers right now (rec3-midi): refreshed when the engine says the list
     /// changed (@see EditViewModel+RecordMidi). Session state, never saved.
     var midiInputs: [MidiInputInfo] = []
+    /// The computer keyboard as a MIDI input (@see EditViewModel+ComputerKeyboard): whether its keys are
+    /// notes right now, and the MIDI note under the `q` key. Session state — never saved, not in the undo,
+    /// it survives a tab switch (one view-model for every tab).
+    var computerKeyboardOn = false
+    var computerKeyboardOctave = ComputerKeyboardMap.defaultOctave
+    /// The notes sounding, by the PHYSICAL key that started them (fixed at the press, so that an octave
+    /// change cannot hang a note). Read by the key monitor on every event: not observed.
+    @ObservationIgnored var computerKeyboardHeld: [UInt16: Int] = [:]
     /// The instant of the timeline the recording in flight was pressed at (nil when not recording), and what
     /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
     var recordingStartTime: Double? = nil

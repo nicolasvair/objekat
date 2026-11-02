@@ -247,6 +247,7 @@ final class CommandRegistry {
         registerPluginExpertCommands()
         registerAuxCommands()
         registerMIDICommands()
+        registerComputerKeyboardCommands()
         registerConsolidateCommands()
         registerDiskUsageCommands()
         registerFlacArchiveCommands()
