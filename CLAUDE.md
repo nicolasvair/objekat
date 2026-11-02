@@ -2950,6 +2950,27 @@ What has landed since mid-August, in order:
   no hardware (`tools/scenario_inputs_split_device.py`, `tools/test_coreaudio_probe.cpp`). Not seen: the message
   on screen, and a real pair of AirPods (not touched).
 
+  **The computer keyboard as a MIDI input (2 November 2026, branch `main`, steps K1-K6, no engine patch, no format change).**
+  « Computer Keyboard » is an ordinary MIDI input (a Tracktion virtual device, `createVirtualMidiDevice` ONCE at launch in
+  `OBJEngineCore.mm`, never at a mode switch: a list change rebuilds every input instance), always listed second after
+  "All MIDI Ins", name localised by `MidiInputInfo.displayName` (internal name `Computer Keyboard` is a constant, never shown).
+  Its notes go straight into the device (`sendComputerKeyboardNote:velocity:on:`), never through "All MIDI Ins". The virtual
+  device list is now in memory unconditionally (`OBJPropertyStorage`): nothing new reaches `Settings.xml`. The MODE (keys =
+  notes) is `EditViewModel.computerKeyboardOn` (off at launch, kept across tabs, not saved, not in the undo; buttons in the
+  transport bar and on the input's row, **no shortcut by decision**); octave 0…108 by 12 (`w` / `x`, base 60 = "C4"),
+  velocity 100. Table + decision are PURE (`Shared/ComputerKeyboardMap.swift`, `route(...)`, test
+  `tools/test_computer_keyboard_map.swift` 68), shared by the key monitor and `midi.keyboard.status|set|octave|key`. Rules: keys
+  by PHYSICAL keyCode; not taken with ⌘⌃⌥⇧ (so `s f e p t m` go through ⇧ while the mode is on — a tool taken with ⇧ is the
+  LOCKED one —, `l` is the loop button or ⌘L); note-off from the table filled at the press; the monitor takes the keys BEFORE a
+  plugin window is served (after our text fields, `KeyboardClaim` and the plugin browser, synchronously) and reads the RELEASE
+  before any early exit; `allNotesOff()` on ⌘ appearing, app resign, monitor removal, mode off and `parkProject()` (tab switch).
+  Sites: `Timeline/TimelineKeyHandler` (monitor), `EditViewModel+ComputerKeyboard`, `CommandAPI/Commands+ComputerKeyboard`,
+  `Inputs/ComputerKeyboardRowControls` (isolated: the Inputs rows are being reshaped). **Verified with no screen**: build and
+  the commands through a headless instance (the note reaches the device, velocity 100 on `input.levels.midi_activity`,
+  `Settings.xml` untouched). **Not seen, not heard, not run**: the AppKit monitor itself (needs a window, so `input.key` refuses
+  headless), the transport button and the row, a note played from a plugin window in front, ⇧ + letter tools while the mode is
+  on, a recording of the keyboard into a zone.
+
 ### What is owed
 
 **The debt is listening, not code.** Everything implemented without ever having been

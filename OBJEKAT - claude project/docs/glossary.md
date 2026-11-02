@@ -90,6 +90,8 @@ source, not a translation.
 | instrument de groupe | group instrument | instrumento de grupo | the virtual instrument a GROUP carries: it plays the empty MIDI clips below it. Below it: no audio, no aux, no consolidated instance, no second instrument |
 | hôte (d'un clip vide) | host (of an empty clip) | anfitrión | the first ancestor group of an empty clip that carries an active instrument |
 | chaîne d'entrée | input chain | cadena de entrada | the FX of a card input, or the instrument of a MIDI input: heard, never recorded (the recording is taken from the device, before it); mounted on the engine only while the input is heard or the chain is open |
+| clavier ordinateur | Computer Keyboard | teclado del ordenador | the MIDI input fed by the computer's letter keys (Ableton's way): always listed, second after "All MIDI Ins"; its MODE (keys = notes) is a button of the transport bar and of its row, with no shortcut |
+| octave du clavier | keyboard octave | octava del teclado | the base MIDI note under the `q` key, named like the piano roll (60 = C4); `w` down, `x` up |
 | hôte d'entrée | input host | anfitrión de entrada | the stable id (uuid) an input's chain is addressed by, as a stem's is: `plugin.*` and the signal view take it as their host |
 
 ## What does not get translated

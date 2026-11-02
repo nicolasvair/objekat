@@ -2398,8 +2398,9 @@ dormant.
 * `input.monitor {midi, on}` — hears a MIDI input through its instrument (the card form is above). `invalid_state` without
   an instrument. Not saved, not in the undo; ends with a new project or an opening.
 * `input.list` — `record_inputs[]` gain `host_id` (null without a chain) and `fx_count`. `input.list.midi_inputs` —
-  `{midi_inputs, zones, dormant_chains}`: `midi_inputs[]` is `{id, name, virtual, enabled, heard, instrument, host_id}` per
-  device (`instrument` is the plugin's name or null; `heard` is true only while monitored AND an instrument is there),
+  `{midi_inputs, zones, dormant_chains}`: `midi_inputs[]` is `{id, name, virtual, enabled, computer_keyboard, heard, instrument,
+  host_id}` per device (`computer_keyboard` is true for the computer keyboard's input, listed second after "All MIDI Ins";
+  `instrument` is the plugin's name or null; `heard` is true only while monitored AND an instrument is there),
   `zones` the MIDI recording zones, `dormant_chains` the chains whose device is not there (`host_id`, `midi_input`,
   `instrument`).
 * `rec.drop` — a zone CREATED from an input that carries FX (card input) or an instrument (MIDI input) starts with an
@@ -2410,6 +2411,31 @@ dormant.
   add_plugin / set_instrument / remove_instrument / level reads), without the model, the undo or the file — it is what
   `tools/scenario_input_chains.py` uses for the engine-level cases. `debug.transport_loop {start, end, enabled?}`
   (DEBUG) sets the transport's loop region on the view-model, since the public API has no door onto it.
+
+**The computer keyboard as a MIDI input.** « Computer Keyboard » is an ordinary MIDI input of the engine (a Tracktion
+virtual device created ONCE at launch, always listed — `input.list.midi_inputs` marks it `computer_keyboard: true`, its `name` is
+localised, its `id` is `vmidiin_<hash of the constant internal name>`, stable from one launch to the next). It is armed, dropped on
+the timeline, recorded, given an instrument (`input.set_instrument`) and heard (`input.monitor`) like any other. It is NOT fed by
+"All MIDI Ins" and does not feed it. What is specific is the MODE: while it is on, the key monitor turns the letter keys into
+notes on that device (velocity 100, channel 1). The mode is a flag of the app — it never changes the engine's device list — off at
+launch, kept across tabs, not saved, not in the undo; there is deliberately no keyboard shortcut for it (a button in the transport
+bar and one on the input's row). Keys are read by PHYSICAL keyCode (AZERTY home row: `q` C, `z` C#, `s` D, `e` D#, `d` E, `f` F,
+`t` F#, `g` G, `y` G#, `h` A, `u` A#, `j` B, `k` C+1, `o` C#+1, `l` D+1, `p` D#+1, `m` E+1); `w` / `x` move the octave down / up
+(base MIDI note under `q`: 60 = "C4" at launch, 0…108 by 12). With any of ⌘ ⌃ ⌥ ⇧ held a key is not taken, so while the mode is on
+the tool keys are `⇧S ⇧F ⇧E ⇧P ⇧T ⇧M` and the loop is its button or `⌘L`. A plugin window in front is served AFTER the
+computer keyboard for these keys only (our text fields, a plugin editing text and the plugin browser win over it). The
+note-off is read from a table filled at the press, so an octave change never hangs a note; `allNotesOff` runs when ⌘ appears, the
+app resigns, the mode goes off, the monitor goes away and on a tab switch.
+* `midi.keyboard.status` — `{on, octave, octave_name, held: [{key_code, note}], device_id}`.
+* `midi.keyboard.set {on}` — the mode (the transport button's twin). Off releases every note. Answers the status.
+* `midi.keyboard.octave {base | delta}` — exactly one: `base` the MIDI note under `q` (a multiple of 12, 0…108; `bad_params`
+  otherwise), `delta` a number of octaves (clamped). Answers the status.
+* `midi.keyboard.key {key_code, down?, repeat?, flags?}` — one PHYSICAL key through the SAME router as the monitor
+  (`ComputerKeyboardMap.route`), so a headless test proves the routing the hand gets (not the monitor's own early exits: text
+  field, plugin browser, plugin window — those need a window). `flags` is a list of `cmd` `ctrl` `alt` `shift`. Answers
+  `decision` (`note_on` + `note`, `note_off` + `note`, `octave` + `octave`, `swallow`, `pass_through`) with the status fields.
+  `pass_through` is also the answer while the mode is off. The note reaches the device: `input.levels.midi_activity` shows
+  velocity 100 on it.
 
 **Group instruments.** A GROUP can carry an instrument (`instrument.set` / `instrument.remove` accept any eligible group,
 beside a MIDI clip): it plays the notes of the EMPTY MIDI clips below it (a MIDI clip with no instrument of its own), a

@@ -1034,6 +1034,26 @@ Dropping an input on empty room makes a zone with an independent copy of the inp
 or the model's, no parameter link, a FX link bin flattened). Dropping it on an existing zone only assigns the source.
 Changing one side afterwards leaves the other alone: the input is the model of a setup, the zone is a take of it.
 
+### Decision: the computer keyboard is a real MIDI input, created once; the MODE only decides who feeds it
+
+« Computer Keyboard » is a Tracktion virtual MIDI device created at launch and never again: a change of the device list
+destroys and rebuilds every input instance (`midiDevicesChanged`), which would cut a live monitor or a recording, so the mode
+(keys = notes) is a flag of the app and never touches the engine. Being a device, it needs no special case anywhere downstream:
+the Inputs row, the drag onto the timeline, arming, recording, the instrument and the speaker are the existing ones. The
+virtual device list now lives in memory unconditionally (`OBJPropertyStorage`), so the device leaves nothing in
+`Settings.xml`; its internal name is a constant, never shown (`MidiInputInfo.displayName` localises it). Notes go straight into
+the device, never through "All MIDI Ins" (which is the physical devices').
+
+The routing is a PURE function (`ComputerKeyboardMap.route`: keyCode, modifiers, repeat, mode, held notes, octave → pass
+through / swallow / note on / octave), called by the key monitor and by `midi.keyboard.key` alike. Three rules: keys are read
+by PHYSICAL keyCode (what a key means and what it types are two questions); a key is taken only with no ⌘⌃⌥⇧, which is what
+keeps ⇧ + letter free for the tools; the note-off comes from the table filled at the press, never from the octave of the
+moment. The monitor takes these keys BEFORE a plugin window is served (one plays from a plugin window in front), but after our
+text fields, the claimants of the keyboard and the plugin browser, synchronously (no run-loop turn of latency), and the release
+is read first of all so no early exit can hang a note. Cost accepted: with the mode on, `s f e p t m` need ⇧ (a tool taken with
+⇧ is the LOCKED one) and `l` is the loop button or ⌘L; no keyboard shortcut turns the mode on, because the letters are what it
+takes.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
