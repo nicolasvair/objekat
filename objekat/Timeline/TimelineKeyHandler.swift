@@ -560,6 +560,8 @@ extension TimelineView {
                     vm.cmdKeyHeld = false
                     vm.optKeyHeld = false
                     vm.soloKeyHeld = false
+                    // The computer keyboard's notes: their keyUp goes to the next application too.
+                    vm.allNotesOff()
                     // ⌘-Tab away in the middle of holding 's' lifts the temporary solo, exactly as
                     // a plain release would — the rule stated above (no other owner exists any
                     // more for a temporary layer) now holds with NO exception.
@@ -1104,6 +1106,16 @@ extension TimelineView {
         }
 
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { event in
+            // THE COMPUTER KEYBOARD'S RELEASE comes before every early exit below: a note that was started must be
+            // ended whatever window or sheet holds the keyboard by now (a plugin browser opened under a held key,
+            // a script canvas…), otherwise it hangs. The note-off is read from the table filled at the press.
+            if event.type == .keyUp, vm.computerKeyboardKeyUp(keyCode: event.keyCode) {
+                InputProbe.shared.observe(event)
+                return nil
+            }
+            // ⌘ appearing ends every note too: the key still down is about to be part of a shortcut, and its
+            // release will be read as one.
+            if event.type == .flagsChanged, event.modifierFlags.contains(.command) { vm.allNotesOff() }
             // A script canvas's window has its own keys (⌘Z walks ITS history, Space plays its audio):
             // this monitor is app-wide, and ⌘Z there would have undone the PROJECT.
             if event.window is ScriptCanvasPanel { return event }
@@ -1152,6 +1164,22 @@ extension TimelineView {
                 return event
             }
 
+            // THE COMPUTER KEYBOARD (mode on): the note keys and `w` / `x` are taken HERE, before the plugin window
+            // is served, because a plugin window in front is the usual place one plays from (a decision of the
+            // plan, B2) — and ONLY those keys: everything else, ⇧ + letter included, follows the path it always
+            // had. Our own text fields come first (`isTextInput` also asks a plugin editor whether it is editing
+            // text), then the claimants of the keyboard; the plugin browser has already left above. Done inline,
+            // with no `DispatchQueue.main.async`: a note's latency is the hand's, not a run-loop turn more.
+            if event.type == .keyDown, vm.computerKeyboardOn, !vm.isLoadingProject, !isTextInput(),
+               !KeyboardClaim.shared.owns(event) {
+                let decision = vm.computerKeyboardKeyDown(
+                    keyCode: event.keyCode, flags: event.modifierFlags.intersection(.deviceIndependentFlagsMask),
+                    isRepeat: event.isARepeat)
+                if decision != .passThrough {
+                    if !event.isARepeat { cheat.schedule(nil, in: vm) }
+                    return nil
+                }
+            }
             // A plugin window has keyboard focus: it serves the key FIRST, as in any host. There is
             // no way to guess from here whether the plugin is editing text — its GUI is an opaque
             // NSView handling `keyDown:` itself, with no AppKit or JUCE field to ask (that is the case
@@ -1197,6 +1225,7 @@ extension TimelineView {
         if let m = rightClickMonitor { NSEvent.removeMonitor(m); rightClickMonitor = nil }
         for o in focusObservers { NotificationCenter.default.removeObserver(o) }
         focusObservers = []
+        viewModel.allNotesOff()   // the monitor that would have read the keyUps is gone
         viewModel.engine?.setPluginKeyFallback(nil)   // the relay was holding on to `handleKeyDown`
     }
 

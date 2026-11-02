@@ -127,6 +127,9 @@ extension EditViewModel {
     /// the engine first (`itemsWithCapturedPluginStates`/`stemsWithCapturedPluginStates`), exactly
     /// as a save would, so a knob turned live is not lost the moment the tab leaves the screen.
     func parkProject() -> ParkedProject {
+        // A key of the computer keyboard still down would play on into the document that comes next. (The MODE
+        // itself stays as it is: one view-model for every tab, and it is not a property of a document.)
+        allNotesOff()
         // `projectDocument` captures the bus chains' states itself.
         let doc = projectDocument(items: itemsWithCapturedPluginStates(),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
