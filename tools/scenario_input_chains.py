@@ -309,6 +309,27 @@ def e9(c, level, fxp, instp, dev):
     c.send("edit.undo", {})
     c.send("input.host", {"midi": dev, "open": False})
 
+    # M8: the instrument slot by HOST id (what the synoptic's card speaks): instrument.set / instrument.remove on the host
+    mh = c.send("input.host", {"midi": dev, "open": False})["host_id"]      # (the undos above forgot the old record)
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("instrument.set", {"id": mh, **instp})
+    check("M8 instrument.set on a MIDI input host: one undo point, the instrument is there",
+          r["instrument"]["name"] == "DLSMusicDevice" and c.send("perf.census")["undo_depth"] == depth + 1, r)
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M8 ... visible through input.list.midi_inputs and plugin.list", row["instrument"] == "DLSMusicDevice"
+          and [i["name"] for i in c.send("plugin.list", {"host": mh})["instruments"]] == ["DLSMusicDevice"], row)
+    ipid = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    check("M8 plugin.level accepts the instrument of a MIDI host", "level" in c.send("plugin.level", {"host": mh, "plugin": ipid}))
+    c.send("instrument.remove", {"id": mh})
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M8 instrument.remove on the host: gone", row["instrument"] is None, row)
+    r = refused_cmd(c, "instrument.remove", id=mh)
+    check("M8 ... removing again is invalid_state", r == "invalid_state", r)
+    c.send("edit.undo", {})
+    c.send("edit.undo", {})
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M8 undo x2: back to no instrument", row["instrument"] is None, row)
+
 
 def e11(c, instp, dev):
     LPF = {"identifier": "aufx,lpas,appl"}

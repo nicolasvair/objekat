@@ -80,10 +80,12 @@ struct SynopticBoundView: View {
         let (root, locations) = SynopticMapping.build(model, objectID: objectID,
                                                        fxLinkInfo: { viewModel.synopticFXInfo($0) })
 
-        let instLeaf = obj?.instruments.first.map { SynopticMapping.leaf($0) }
+        let instLeaf = viewModel.chainInstrument(objectID).map { SynopticMapping.leaf($0) }
         // The instrument slot at the chain's head: a MIDI clip's, and now a GROUP's (a consolidated instance has none).
         // A group where no instrument can go keeps the slot, greyed, with the reason in its tooltip.
-        let showsInstrumentSlot = obj.map { $0.isMIDI || ($0.isGroup && !$0.isConsolidateInstance) } ?? false
+        // A MIDI input's chain (the Inputs panel) has it too: the instrument, then the FX behind it.
+        let showsInstrumentSlot = obj.map { $0.isMIDI || ($0.isGroup && !$0.isConsolidateInstance) }
+            ?? viewModel.isMidiInputHost(objectID)
         let instrumentSlotRefusal = obj.flatMap { viewModel.instrumentSlotRefusalText(of: $0.id) }
         // A MIDI recording zone with no instrument records MUTED takes: the slot says so in orange.
         let instrumentWarning = obj.map { $0.isGroup && $0.recordMidiInput != nil && $0.instruments.isEmpty } ?? false
@@ -357,15 +359,15 @@ struct SynopticBoundView: View {
             onBeginGainEdit: { viewModel.pushUndo() },
             onAddInstrument: { activeSheet = .instrument },
             onRemoveInstrument: {
-                let instID = obj?.instruments.first?.id
+                let instID = viewModel.chainInstrument(objectID)?.id
                 viewModel.removeInstrument(objectID: objectID)
                 if let instID, selectedInstrumentID == instID { selectedInstrumentID = nil }
             },
             onOpenInstrumentEditor: {
-                if let id = obj?.instruments.first?.id { openEditor(id) }
+                if let id = viewModel.chainInstrument(objectID)?.id { openEditor(id) }
             },
             onToggleInstrumentBypass: {
-                if let id = obj?.instruments.first?.id {
+                if let id = viewModel.chainInstrument(objectID)?.id {
                     viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
                 }
             },
@@ -712,7 +714,7 @@ struct SynopticBoundView: View {
         // A recursive search: the plugin may live in the branch of a parallel block, or be the
         // instrument at the head of the chain (a MIDI clip).
         let candidates = viewModel.leafPlugins(objectID: objectID)
-            + (viewModel.find(id: objectID)?.instruments ?? [])
+            + viewModel.chainInstruments(objectID)
         guard let plug = candidates.first(where: { $0.id == pluginID })
         else { return }
         viewModel.togglePluginEditor(objectID: objectID, plug: plug)
@@ -725,7 +727,7 @@ struct SynopticBoundView: View {
     /// open them all (one already open is brought to the front).
     private func openEditors(clicked: UUID, ids: Set<UUID>) {
         let candidates = viewModel.leafPlugins(objectID: objectID)
-            + (viewModel.find(id: objectID)?.instruments ?? [])
+            + viewModel.chainInstruments(objectID)
         let plugs = candidates.filter { ids.contains($0.id) }      // reading order
         guard let clickedPlug = plugs.first(where: { $0.id == clicked }) else { return }
         if viewModel.isPluginEditorOpen(plug: clickedPlug) {
@@ -849,7 +851,7 @@ struct SynopticBoundView: View {
     /// The plugins whose output level this view shows: the cards of the chain and the instrument.
     private func meteredPluginIDs() -> [UUID] {
         viewModel.leafPlugins(objectID: objectID).map(\.id)
-            + (viewModel.find(id: objectID)?.instruments.map(\.id) ?? [])
+            + viewModel.chainInstruments(objectID).map(\.id)
     }
 
     /// Tells the engine which plugins to measure (an empty list = none). Only while on screen.
@@ -868,7 +870,7 @@ struct SynopticBoundView: View {
                 // The first poll after the transport stopped: one read per plugin EMPTIES the engine's
                 // peak-hold (a client keeps its maximum until read). Without it the first poll of the
                 // NEXT playback would draw the previous one's last peak for a frame.
-                for p in viewModel.leafPlugins(objectID: objectID) + (viewModel.find(id: objectID)?.instruments ?? []) {
+                for p in viewModel.leafPlugins(objectID: objectID) + viewModel.chainInstruments(objectID) {
                     _ = viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id)
                 }
             }
@@ -882,7 +884,7 @@ struct SynopticBoundView: View {
         let alpha = VUBallistics.releaseAlpha(interval: dt)
 
         let leaves = viewModel.leafPlugins(objectID: objectID)
-            + (viewModel.find(id: objectID)?.instruments ?? [])
+            + viewModel.chainInstruments(objectID)
         var next: [UUID: Double] = [:]
         for p in leaves where p.isEnabled {
             let raw = Float(viewModel.pluginAudioLevel(objectID: objectID, pluginID: p.id))

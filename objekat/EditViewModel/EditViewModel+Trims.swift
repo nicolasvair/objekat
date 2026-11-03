@@ -140,7 +140,7 @@ extension EditViewModel {
             }
         }
         if isInstrument(pluginID, of: host) {
-            update(id: host) { $0.instruments = set($0.instruments) }
+            updateChainInstruments(host) { set($0) }
         } else {
             _ = updateChainPlugins(host) { $0 = set($0) }
         }

@@ -235,8 +235,8 @@ extension EditViewModel {
     private func writeModelState(_ pluginID: UUID, host: UUID, fallback: String? = nil) {
         guard let xml = engine?.getPluginStateXML(pluginID.uuidString) ?? fallback else { return }
         if isInstrument(pluginID, of: host) {
-            update(id: host) { o in
-                o.instruments = o.instruments.map { p in
+            updateChainInstruments(host) { list in
+                list.map { p in
                     guard p.id == pluginID else { return p }
                     var q = p; q.stateXML = xml; return q
                 }

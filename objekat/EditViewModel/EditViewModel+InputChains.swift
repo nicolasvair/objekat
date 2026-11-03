@@ -361,14 +361,46 @@ extension EditViewModel {
         guard available.isInstrument, engine != nil else { return }
         pushUndo()
         let host = ensureMidiInputHost(device)
+        guard let key = inputChains.midiKey(ofHost: host) else { return }
+        inputChains.midi[key]?.input = device.ref
+        applyInputInstrument(hostID: host, available: available)
+    }
+
+    /// The same by the chain's host id (the synoptic's instrument card, the plugin pipeline). One undo point.
+    func setInputInstrument(hostID: UUID, available: AvailablePlugin) {
+        guard available.isInstrument, engine != nil, inputChains.midiKey(ofHost: hostID) != nil else { return }
+        pushUndo()
+        applyInputInstrument(hostID: hostID, available: available)
+    }
+
+    /// Without the undo point: swaps the instrument of the MIDI chain `hostID` names.
+    private func applyInputInstrument(hostID host: UUID, available: AvailablePlugin) {
         // Unmounted first, the live states of the FX captured (they are remounted behind the new instrument).
         if mountedInputHosts.contains(host) { unmountInputHost(host, capture: true) }
         guard let key = inputChains.midiKey(ofHost: host), var chain = inputChains.midi[key] else { return }
         chain.instrument = freshPlugin(available)
-        chain.input = device.ref
         inputChains.midi[key] = chain
         isDirty = true
         syncInputChains()
+    }
+
+    /// The same by the chain's host id.
+    func removeInputInstrument(hostID: UUID) {
+        guard let key = inputChains.midiKey(ofHost: hostID) else { return }
+        removeInputInstrument(chainKey: key)
+    }
+
+    /// Bypasses (or re-enables) the instrument of a MIDI input: a realtime flag on the live instance and in the model.
+    /// One undo point, like an FX's.
+    func toggleInputInstrumentEnabled(hostID: UUID, pluginID: UUID) {
+        guard let engine, let key = inputChains.midiKey(ofHost: hostID), var chain = inputChains.midi[key],
+              var inst = chain.instrument, inst.id == pluginID else { return }
+        pushUndo()
+        inst.isEnabled.toggle()
+        engine.setPlugin(pluginID.uuidString, enabled: inst.isEnabled, forObjectID: hostID.uuidString)
+        chain.instrument = inst
+        inputChains.midi[key] = chain
+        isDirty = true
     }
 
     /// Takes the instrument off a MIDI input; it stops being heard. One undo point.

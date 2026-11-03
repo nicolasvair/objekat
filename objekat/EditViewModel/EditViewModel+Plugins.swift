@@ -430,6 +430,8 @@ extension EditViewModel {
     /// Assigns a virtual instrument to a MIDI clip or to a group (replacing any current one), then pushes it
     /// to the engine. No effect on any other object.
     func setInstrument(objectID: UUID, available: AvailablePlugin) {
+        // A MIDI input's chain holds an instrument too (inputs panel): no group rule applies to it.
+        if case .midi? = inputHostKind(objectID) { setInputInstrument(hostID: objectID, available: available); return }
         guard let obj = find(id: objectID), obj.isMIDI || obj.isGroup, engine != nil else { return }
         // One instrument per chain, none below an instrument group, none over audio (E5): refused before the undo point.
         if refusesInstrument(on: objectID) { return }
@@ -443,6 +445,7 @@ extension EditViewModel {
 
     /// Removes the instrument of a MIDI clip or of a group (model + engine).
     func removeInstrument(objectID: UUID) {
+        if case .midi? = inputHostKind(objectID) { removeInputInstrument(hostID: objectID); return }
         guard find(id: objectID) != nil, engine != nil else { return }
         pushUndo()
         update(id: objectID) { $0.instruments = [] }
@@ -459,6 +462,7 @@ extension EditViewModel {
     /// The instrument's bypass. Undoable for the same reason as an FX's, and it is the SAME
     /// button on the same card — one of the two without ⌘Z would be the odd one out.
     func toggleInstrumentEnabled(objectID: UUID, pluginID: UUID) {
+        if case .midi? = inputHostKind(objectID) { toggleInputInstrumentEnabled(hostID: objectID, pluginID: pluginID); return }
         guard let engine,
               let inst = find(id: objectID)?.instruments.first(where: { $0.id == pluginID })
         else { return }
@@ -480,7 +484,36 @@ extension EditViewModel {
     /// instrument dropped onto another object does not join its FX chain (it needs MIDI as its
     /// input) but its instrument SLOT — @see transferInstrument.
     func isInstrument(_ pluginID: UUID, of objectID: UUID) -> Bool {
-        find(id: objectID)?.instruments.contains { $0.id == pluginID } ?? false
+        if let o = find(id: objectID) { return o.instruments.contains { $0.id == pluginID } }
+        return inputInstrument(objectID)?.id == pluginID          // a MIDI input's instrument
+    }
+
+    /// The instrument slot of a chain host: an object's, or a MIDI input's. Nil for a bus or an audio input.
+    func chainInstrument(_ hostID: UUID) -> ObjectPlugin? {
+        if let o = find(id: hostID) { return o.instruments.first }
+        return inputInstrument(hostID)
+    }
+
+    /// `chainInstrument` as the list the synoptic walks (empty or one).
+    func chainInstruments(_ hostID: UUID) -> [ObjectPlugin] {
+        chainInstrument(hostID).map { [$0] } ?? []
+    }
+
+    /// Rewrites the instrument slot of a chain host (an object's list, or the single instrument of a MIDI input's chain).
+    func updateChainInstruments(_ hostID: UUID, _ f: ([ObjectPlugin]) -> [ObjectPlugin]) {
+        if find(id: hostID) != nil {
+            update(id: hostID) { $0.instruments = f($0.instruments) }
+        } else if let key = inputChains.midiKey(ofHost: hostID), var chain = inputChains.midi[key] {
+            chain.instrument = f(chain.instrument.map { [$0] } ?? []).first
+            inputChains.midi[key] = chain
+            isDirty = true
+        }
+    }
+
+    /// Whether `hostID` is the chain of a MIDI input (it shows the instrument slot, like a MIDI clip).
+    func isMidiInputHost(_ hostID: UUID) -> Bool {
+        if case .midi? = inputHostKind(hostID) { return true }
+        return false
     }
 
     /// Dragging a MIDI clip's instrument onto another MIDI clip: it takes the place of

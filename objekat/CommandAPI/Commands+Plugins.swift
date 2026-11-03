@@ -961,7 +961,7 @@ extension CommandRegistry {
             guard let chain = vm.chainPlugins(host) else {
                 throw CommandError(code: .not_found, message: "unknown host: \(host.uuidString)")
             }
-            let isInstrument = vm.find(id: host)?.instruments.contains { $0.id == pluginID } ?? false
+            let isInstrument = vm.isInstrument(pluginID, of: host)
             guard isInstrument || EditViewModel.flattenLeaves(chain).contains(where: { $0.id == pluginID }) else {
                 throw CommandError(code: .not_found, message: "unknown plugin: \(pluginID.uuidString)")
             }
@@ -1462,20 +1462,20 @@ extension CommandRegistry {
         // MARK: instruments (MIDI clips)
 
         register("instrument.set",
-                 summary: "Sets the virtual instrument of a MIDI clip or of a GROUP (it plays the notes of the empty MIDI clips below it, a recorded take included). Replaces the previous one.",
-                 params: [ParamSpec("id", "uuid", "Target MIDI clip or group."),
+                 summary: "Sets the virtual instrument of a MIDI clip or of a GROUP (it plays the notes of the empty MIDI clips below it, a recorded take included), or of a MIDI input's chain (its `host_id`, @see input.host). Replaces the previous one.",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip, group or MIDI input host."),
                           ParamSpec("identifier", "string", required: false, "Exact identifier."),
                           ParamSpec("name", "string", required: false, "Name, failing an identifier."),
                           ParamSpec("format", "string", required: false, "Format to settle ties.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard let object = vm.find(id: id), object.isMIDI || object.isGroup else {
-                throw CommandError(code: .not_found, message: "unknown MIDI clip or group: \(id.uuidString)")
+            guard vm.isMidiInputHost(id) || vm.find(id: id).map({ $0.isMIDI || $0.isGroup }) == true else {
+                throw CommandError(code: .not_found, message: "unknown MIDI clip, group or MIDI input host: \(id.uuidString)")
             }
             let available = try CommandAdapters.resolvePlugin(p, in: vm)
             vm.setInstrument(objectID: id, available: available)
-            guard let instrument = vm.find(id: id)?.instruments.first else {
+            guard let instrument = vm.chainInstrument(id) else {
                 throw CommandError(code: .engine_error,
                                    message: "the engine could not instantiate '\(available.name)'")
             }
@@ -1484,15 +1484,15 @@ extension CommandRegistry {
         }
 
         register("instrument.remove",
-                 summary: "Removes the virtual instrument from a MIDI clip or a group.",
-                 params: [ParamSpec("id", "uuid", "Target MIDI clip or group.")],
+                 summary: "Removes the virtual instrument from a MIDI clip, a group or a MIDI input's chain (its `host_id`).",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip, group or MIDI input host.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let id = try p.uuid("id")
-            guard let object = vm.find(id: id), object.isMIDI || object.isGroup else {
-                throw CommandError(code: .not_found, message: "unknown MIDI clip or group: \(id.uuidString)")
+            guard vm.isMidiInputHost(id) || vm.find(id: id).map({ $0.isMIDI || $0.isGroup }) == true else {
+                throw CommandError(code: .not_found, message: "unknown MIDI clip, group or MIDI input host: \(id.uuidString)")
             }
-            guard !object.instruments.isEmpty else {
+            guard vm.chainInstrument(id) != nil else {
                 throw CommandError(code: .invalid_state, message: "no instrument to remove")
             }
             vm.removeInstrument(objectID: id)
