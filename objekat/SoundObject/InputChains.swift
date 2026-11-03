@@ -8,8 +8,8 @@ import Foundation
 // a stem's (`plugin.*`, the synoptic, the editors). The id is stable as long as the chain exists.
 //
 //  - audio: FX, keyed by `InputRef.key` ("3", "1-2") like the names — a pair taken apart keeps its chain under "1-2";
-//  - MIDI: ONE instrument, keyed by the device id; the name travels with it so a device that comes back under another
-//    id is found by `MidiInputResolver` (an absent one leaves the chain dormant).
+//  - MIDI: ONE instrument, then audio FX played after it, keyed by the device id; the name travels with it so a device
+//    that comes back under another id is found by `MidiInputResolver` (an absent one leaves the chain dormant).
 //
 // An empty chain is not worth a key: it is not written (`isEmpty`). Every key is optional on reading.
 
@@ -24,8 +24,39 @@ struct MidiInputChain: Codable, Equatable {
     var hostID: UUID
     var input: MidiInputRef
     var instrument: ObjectPlugin?
+    /// Audio FX played AFTER the instrument (engine order: instrument, then these). Optional on reading: a chain written
+    /// before they existed has only an instrument.
+    var plugins: [ObjectPlugin] = []
 
-    var isEmpty: Bool { instrument == nil }
+    var isEmpty: Bool { instrument == nil && plugins.isEmpty }
+
+    init(hostID: UUID, input: MidiInputRef, instrument: ObjectPlugin? = nil, plugins: [ObjectPlugin] = []) {
+        self.hostID = hostID
+        self.input = input
+        self.instrument = instrument
+        self.plugins = plugins
+    }
+
+    // By hand: with a synthesised `init(from:)` the missing `plugins` key of an already-saved chain would throw, and
+    // `InputChains.Lenient` would drop the whole chain in silence.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hostID = try c.decode(UUID.self, forKey: .hostID)
+        input = try c.decode(MidiInputRef.self, forKey: .input)
+        instrument = try c.decodeIfPresent(ObjectPlugin.self, forKey: .instrument)
+        plugins = (try? c.decodeIfPresent([ObjectPlugin].self, forKey: .plugins)) ?? []
+    }
+
+    // No `plugins` key when there are none: a chain without FX is written exactly as before.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(hostID, forKey: .hostID)
+        try c.encode(input, forKey: .input)
+        try c.encodeIfPresent(instrument, forKey: .instrument)
+        if !plugins.isEmpty { try c.encode(plugins, forKey: .plugins) }
+    }
+
+    enum CodingKeys: String, CodingKey { case hostID, input, instrument, plugins }
 }
 
 struct InputChains: Codable, Equatable {
@@ -90,9 +121,11 @@ struct InputChains: Codable, Equatable {
 
     /// Every plugin the chains carry, flattened (the instruments included).
     var allPlugins: [ObjectPlugin] {
-        audio.values.flatMap { chain in chain.plugins.flatMap { p -> [ObjectPlugin] in
-            p.isContainer ? p.childSeries.flatMap { $0 } : [p] } }
-        + midi.values.compactMap(\.instrument)
+        func flat(_ plugins: [ObjectPlugin]) -> [ObjectPlugin] {
+            plugins.flatMap { p -> [ObjectPlugin] in p.isContainer ? p.childSeries.flatMap { $0 } : [p] }
+        }
+        return audio.values.flatMap { flat($0.plugins) }
+            + midi.values.flatMap { chain in (chain.instrument.map { [$0] } ?? []) + flat(chain.plugins) }
     }
 
     /// The `InputRef` a key stands for: "3" is mono on channel 3 (first 2), "1-2" the pair (first 0).

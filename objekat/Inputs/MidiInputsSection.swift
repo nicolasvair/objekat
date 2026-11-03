@@ -41,7 +41,7 @@ struct MidiInputsSection: View {
     /// The chains whose device is not there: (chain key, chain), in key order.
     private var dormant: [(key: String, chain: MidiInputChain)] {
         viewModel.inputChains.midi
-            .filter { $0.value.instrument != nil && viewModel.resolvedMidiInput($0.value.input) == nil }
+            .filter { !$0.value.isEmpty && viewModel.resolvedMidiInput($0.value.input) == nil }
             .sorted { $0.key < $1.key }
             .map { (key: $0.key, chain: $0.value) }
     }
@@ -148,7 +148,12 @@ struct MidiInputsSection: View {
         .opacity(0.45)
         .help(L("inputs.dormant.help"))
         .contextMenu {
-            Button(L("inputs.instrument.remove")) { viewModel.removeInputInstrument(chainKey: key) }
+            if chain.instrument != nil {
+                Button(L("inputs.instrument.remove")) { viewModel.removeInputInstrument(chainKey: key) }
+            }
+            if !chain.plugins.isEmpty {
+                Button(L("inputs.fx.removeAll")) { viewModel.clearMidiInputFX(chainKey: key) }
+            }
         }
     }
 

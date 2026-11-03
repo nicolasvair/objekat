@@ -95,8 +95,8 @@ extension CommandRegistry {
 extension CommandRegistry {
 
     /// The payload of `input.list.midi_inputs` (and of `input.monitor` with `midi`). The devices carry what E9 added:
-    /// whether they are `heard` through an instrument, the `instrument` they hold (name or null) and the `host_id` of
-    /// their chain; `dormant_chains` lists the chains whose device is not there.
+    /// whether they are `heard` through an instrument, the `instrument` they hold (name or null), the number of FX
+    /// behind it (`fx_count`) and the `host_id` of their chain; `dormant_chains` lists the chains whose device is not there.
     @MainActor
     static func midiInputsPayload(_ vm: EditViewModel) -> JSONValue {
         let live = Set(vm.engine?.midiZonesLive() ?? [])
@@ -122,7 +122,8 @@ extension CommandRegistry {
             guard !chain.isEmpty, vm.resolvedMidiInput(chain.input) == nil else { return nil }
             return .object(["host_id": .string(chain.hostID.uuidString),
                             "midi_input": .object(["id": .string(chain.input.id), "name": .string(chain.input.name)]),
-                            "instrument": .stringOrNull(chain.instrument?.name)])
+                            "instrument": .stringOrNull(chain.instrument?.name),
+                            "fx_count": .int(EditViewModel.flattenLeaves(chain.plugins).count)])
         }
         _ = present
         return .object([
@@ -134,6 +135,7 @@ extension CommandRegistry {
                                 "computer_keyboard": .bool(d.isComputerKeyboard),
                                 "heard": .bool(heard.contains(d.id) && chain?.instrument != nil),
                                 "instrument": .stringOrNull(chain?.instrument?.name),
+                                "fx_count": .int(EditViewModel.flattenLeaves(chain?.plugins ?? []).count),
                                 "host_id": .stringOrNull(chain?.hostID.uuidString)])
             }),
             "zones": .array(zones),
@@ -187,6 +189,7 @@ extension CommandRegistry {
                             "mounted": .bool(vm.mountedInputHosts.contains(host)),
                             "live": .bool(vm.compiledInputHosts.contains(host) && engine.inputHostIsLive(host.uuidString)),
                             "plugins": .int(leaves),
+                            "fx_count": .int(leaves),
                             "instrument": .stringOrNull(vm.inputInstrument(host)?.name)])
         }
 

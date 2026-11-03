@@ -9,9 +9,10 @@ import Foundation
 // unregistering. `syncInputChains` is the one function that decides, and it is idempotent: every event that can change
 // the answer (monitor on/off, a card or a MIDI device that comes or goes, a load, a tab return, an undo) calls it.
 //
-// The ordinary plugin pipeline reaches an audio host through `chainPlugins` / `updateChainPlugins` (third case, after
-// the stems), so `plugin.*`, the synoptic and the editors need nothing new; a MIDI host has no FX list, only its
-// instrument (`inputChains.midi[…].instrument`), reached through the `input.*` doors.
+// The ordinary plugin pipeline reaches a host through `chainPlugins` / `updateChainPlugins` (third case, after the
+// stems), so `plugin.*`, the synoptic and the editors need nothing new. A MIDI host holds an INSTRUMENT
+// (`inputChains.midi[…].instrument`, reached through the `input.*` doors) and, after it, audio FX (`.plugins`, the
+// ordinary FX list: instrument first on the engine's hidden track, then the FX compiled behind it).
 
 extension EditViewModel {
 
@@ -65,21 +66,30 @@ extension EditViewModel {
 
     // MARK: Chain access (what `chainPlugins` / `updateChainPlugins` fall back on)
 
-    /// The FX of an audio host; a MIDI host has none (`[]`); nil when `hostID` is no input host.
+    /// The FX of a host (a MIDI host's come AFTER its instrument); nil when `hostID` is no input host.
     func inputChainPlugins(_ hostID: UUID) -> [ObjectPlugin]? {
         if let k = inputChains.audioKey(ofHost: hostID) { return inputChains.audio[k]?.plugins }
-        if inputChains.midiKey(ofHost: hostID) != nil { return [] }
+        if let k = inputChains.midiKey(ofHost: hostID) { return inputChains.midi[k]?.plugins }
         return nil
     }
 
     @discardableResult
     func updateInputChainPlugins(_ hostID: UUID, _ f: (inout [ObjectPlugin]) -> Void) -> Bool {
-        guard let k = inputChains.audioKey(ofHost: hostID), var chain = inputChains.audio[k] else { return false }
-        f(&chain.plugins)
-        Self.settlingChannelPicks(&chain.plugins)
-        inputChains.audio[k] = chain
-        isDirty = true
-        return true
+        if let k = inputChains.audioKey(ofHost: hostID), var chain = inputChains.audio[k] {
+            f(&chain.plugins)
+            Self.settlingChannelPicks(&chain.plugins)
+            inputChains.audio[k] = chain
+            isDirty = true
+            return true
+        }
+        if let k = inputChains.midiKey(ofHost: hostID), var chain = inputChains.midi[k] {
+            f(&chain.plugins)
+            Self.settlingChannelPicks(&chain.plugins)
+            inputChains.midi[k] = chain
+            isDirty = true
+            return true
+        }
+        return false
     }
 
     /// The instrument of a MIDI host.
@@ -190,9 +200,12 @@ extension EditViewModel {
             mountedInputHosts.insert(host)
             inputHostDevice[host] = device.id
             guard engine.registerMidiInputHost(host.uuidString, device: device.id) else { return }
-            if !compiledInputHosts.contains(host), let inst = chain.instrument {
-                pushInputInstrument(inst, host: host)
-                compiledInputHosts.insert(host)
+            if !compiledInputHosts.contains(host) {
+                if let inst = chain.instrument { pushInputInstrument(inst, host: host) }
+                // The FX are compiled AFTER the instrument: it takes slot 0 of the hidden track, the compile lays
+                // the FX behind it. A fresh mount has nothing to clear, so an empty list is not compiled.
+                if !chain.plugins.isEmpty { compileRack(objectID: host) }
+                if chain.instrument != nil || !chain.plugins.isEmpty { compiledInputHosts.insert(host) }
             }
             // The instrument arrived after the monitor was asked: the engine re-reads its switch.
             if heardMidiDeviceIDs.contains(device.id) { _ = engine.setMidiInputMonitor(true, device: device.id) }
@@ -238,14 +251,24 @@ extension EditViewModel {
             chain.plugins = capturingPluginStates(chain.plugins)
             if chain != inputChains.audio[key] { inputChains.audio[key] = chain }
         case .midi(let key):
-            guard var chain = inputChains.midi[key], var inst = chain.instrument,
-                  let xml = engine?.getPluginStateXML(inst.id.uuidString), !xml.isEmpty, xml != inst.stateXML else { return }
-            inst.stateXML = xml
-            chain.instrument = inst
-            inputChains.midi[key] = chain
+            guard let chain = inputChains.midi[key] else { return }
+            let captured = capturingInputChain(chain)
+            if captured != chain { inputChains.midi[key] = captured }
         case nil:
             return
         }
+    }
+
+    /// A MIDI chain with the live states of its instrument and its FX (what the engine holds), the model's where there are none.
+    private func capturingInputChain(_ chain: MidiInputChain) -> MidiInputChain {
+        var out = chain
+        if var inst = chain.instrument, let xml = engine?.getPluginStateXML(inst.id.uuidString),
+           !xml.isEmpty, xml != inst.stateXML {
+            inst.stateXML = xml
+            out.instrument = inst
+        }
+        if !chain.plugins.isEmpty { out.plugins = capturingPluginStates(chain.plugins) }
+        return out
     }
 
     /// The chains as a file or an undo point holds them: the live states of the mounted ones captured, the rest as the
@@ -260,12 +283,7 @@ extension EditViewModel {
                     out.audio[key] = chain
                 }
             case .midi(let key):
-                if var chain = out.midi[key], var inst = chain.instrument,
-                   let xml = engine?.getPluginStateXML(inst.id.uuidString), !xml.isEmpty {
-                    inst.stateXML = xml
-                    chain.instrument = inst
-                    out.midi[key] = chain
-                }
+                if let chain = out.midi[key] { out.midi[key] = capturingInputChain(chain) }
             case nil:
                 break
             }
@@ -303,24 +321,15 @@ extension EditViewModel {
             switch kind {
             case .audio(let key):
                 guard let was = old.audio[key], let now = snap.audio[key], was != now else { continue }
-                if was.hostID == now.hostID, let adopted = Self.adoptingPluginStates(was.plugins, now.plugins) {
-                    var probe = was
-                    probe.plugins = adopted
-                    if probe == now, Self.monoFolds(was.plugins) == Self.monoFolds(now.plugins),
-                       ChannelPicks.places(in: was.plugins) == ChannelPicks.places(in: now.plugins) {
-                        for change in Self.changedPluginStates(was.plugins, now.plugins) {
-                            engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString,
-                                                        forObjectID: host.uuidString)
-                        }
-                        continue
-                    }
-                }
-                compileRack(objectID: host)
+                restoreHostPlugins(host, was: was.plugins, now: now.plugins, sameHost: was.hostID == now.hostID)
             case .midi(let key):
                 guard let was = old.midi[key], let now = snap.midi[key], was != now else { continue }
-                if was.instrument?.id == now.instrument?.id, was.hostID == now.hostID, let inst = now.instrument {
-                    if let xml = inst.stateXML, xml != was.instrument?.stateXML {
+                if was.instrument?.id == now.instrument?.id, was.hostID == now.hostID {
+                    if let inst = now.instrument, let xml = inst.stateXML, xml != was.instrument?.stateXML {
                         engine?.applyPluginStateXML(xml, forPlugin: inst.id.uuidString, forObjectID: host.uuidString)
+                    }
+                    if was.plugins != now.plugins {
+                        restoreHostPlugins(host, was: was.plugins, now: now.plugins, sameHost: true)
                     }
                 } else {
                     unmountInputHost(host, capture: false)                  // another instrument: remounted below
@@ -330,6 +339,21 @@ extension EditViewModel {
         syncInputChains()
     }
 
+    /// An undo/redo on a mounted host's FX: plugins that differ only by their states get those handed back to the live
+    /// instances; anything else recompiles.
+    private func restoreHostPlugins(_ host: UUID, was: [ObjectPlugin], now: [ObjectPlugin], sameHost: Bool) {
+        if sameHost, let adopted = Self.adoptingPluginStates(was, now) {
+            if adopted == now, Self.monoFolds(was) == Self.monoFolds(now),
+               ChannelPicks.places(in: was) == ChannelPicks.places(in: now) {
+                for change in Self.changedPluginStates(was, now) {
+                    engine?.applyPluginStateXML(change.xml, forPlugin: change.id.uuidString, forObjectID: host.uuidString)
+                }
+                return
+            }
+        }
+        compileRack(objectID: host)
+    }
+
     // MARK: Editing the MIDI side
 
     /// Puts `available` as the instrument of a MIDI input (replacing any). One undo point.
@@ -337,8 +361,9 @@ extension EditViewModel {
         guard available.isInstrument, engine != nil else { return }
         pushUndo()
         let host = ensureMidiInputHost(device)
+        // Unmounted first, the live states of the FX captured (they are remounted behind the new instrument).
+        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: true) }
         guard let key = inputChains.midiKey(ofHost: host), var chain = inputChains.midi[key] else { return }
-        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: false) }
         chain.instrument = freshPlugin(available)
         chain.input = device.ref
         inputChains.midi[key] = chain
@@ -354,12 +379,26 @@ extension EditViewModel {
 
     /// The same by the chain's key: a chain whose device is absent (dormant) is reached this way too.
     func removeInputInstrument(chainKey key: String) {
-        guard var chain = inputChains.midi[key], chain.instrument != nil else { return }
+        guard let was = inputChains.midi[key], was.instrument != nil else { return }
         pushUndo()
-        let host = chain.hostID
-        engine?.setMidiInputMonitor(false, device: resolvedMidiInput(chain.input)?.id ?? chain.input.id)
-        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: false) }
+        let host = was.hostID
+        engine?.setMidiInputMonitor(false, device: resolvedMidiInput(was.input)?.id ?? was.input.id)
+        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: true) }   // the FX keep their live states
+        guard var chain = inputChains.midi[key] else { return }
         chain.instrument = nil
+        inputChains.midi[key] = chain
+        isDirty = true
+        syncInputChains()
+    }
+
+    /// Empties the FX of a MIDI input, its instrument kept (the Inputs tab, on a chain whose device is absent). One undo point.
+    func clearMidiInputFX(chainKey key: String) {
+        guard let was = inputChains.midi[key], !was.plugins.isEmpty else { return }
+        pushUndo()
+        let host = was.hostID
+        if mountedInputHosts.contains(host) { unmountInputHost(host, capture: false) }
+        guard var chain = inputChains.midi[key] else { return }
+        chain.plugins = []
         inputChains.midi[key] = chain
         isDirty = true
         syncInputChains()
@@ -395,7 +434,8 @@ extension EditViewModel {
 
     // MARK: Inheritance (a recording zone born from an input — E11)
 
-    /// What a NEW zone takes from the input it is dropped from: a copy of the input's FX (audio) or of its instrument (MIDI).
+    /// What a NEW zone takes from the input it is dropped from: a copy of the input's FX (audio), or of its instrument and
+    /// the FX behind it (MIDI).
     /// Independent: fresh ids, no parameter link and no FX link (a bin becomes its plugins), the live state when the chain is
     /// mounted and the model's otherwise. The input itself is untouched.
     func inheritedChain(for source: RecordSource) -> (plugins: [ObjectPlugin], instrument: ObjectPlugin?) {
@@ -406,9 +446,9 @@ extension EditViewModel {
         case .midi(let ref):
             let key = inputChains.midi[ref.id] != nil ? ref.id
                 : resolvedMidiInput(ref).flatMap { midiChainKey(for: $0) }
-            guard let key, let inst = inputChains.midi[key]?.instrument else { return ([], nil) }
-            guard let live = capturingPluginStates([inst]).first else { return ([], nil) }
-            return ([], independentCopies([live]).first)
+            guard let key, let chain = inputChains.midi[key], !chain.isEmpty else { return ([], nil) }
+            let live = capturingInputChain(chain)
+            return (independentCopies(live.plugins), live.instrument.flatMap { independentCopies([$0]).first })
         }
     }
 

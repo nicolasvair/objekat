@@ -101,6 +101,27 @@ enum InputChainsCodableTest {
               && InputChains.inputRef(forKey: "2-4") == nil && InputChains.inputRef(forKey: "0") == nil
               && InputChains.inputRef(forKey: "x") == nil)
 
+        // FX behind a MIDI instrument (inputs panel, step 1): an optional `plugins`, read leniently.
+        let fxOnly = MidiInputChain(hostID: hostM, input: dev, instrument: nil, plugins: [eq])
+        check("a MIDI chain with FX alone is not empty; with nothing it is", !fxOnly.isEmpty
+              && MidiInputChain(hostID: hostM, input: dev).isEmpty && !chains.midi["vmidiin_1"]!.isEmpty)
+        let both = InputChains(midi: ["k": MidiInputChain(hostID: hostM, input: dev, instrument: inst, plugins: [eq, comp])])
+        let bothBack = try dec.decode(InputChains.self, from: try enc.encode(both))
+        check("MIDI chain round trip keeps the instrument and the FX in order", bothBack.midi["k"]?.instrument == inst
+              && bothBack.midi["k"]?.plugins == [eq, comp])
+        check("a chain of FX alone is written (not dropped as empty)", (try dec.decode(InputChains.self, from:
+              try enc.encode(InputChains(midi: ["k": fxOnly])))).midi["k"]?.plugins == [eq])
+        let noFXJSON = String(data: try enc.encode(InputChains(midi: chains.midi)), encoding: .utf8)!
+        check("a chain without FX is written without a `plugins` key (as before)", !noFXJSON.contains("plugins"), noFXJSON)
+        let old = "{\"midi\":{\"k\":{\"hostID\":\"\(hostM.uuidString)\",\"input\":{\"id\":\"k\",\"name\":\"Keys\"},"
+            + "\"instrument\":\(String(data: try enc.encode(inst), encoding: .utf8)!)}}}"
+        let oldBack = try? dec.decode(InputChains.self, from: Data(old.utf8))
+        check("a chain saved before `plugins` existed is READ, not dropped", oldBack?.midi["k"]?.instrument == inst
+              && oldBack?.midi["k"]?.plugins.isEmpty == true, old)
+        let badFX = "{\"midi\":{\"k\":{\"hostID\":\"\(hostM.uuidString)\",\"input\":{\"id\":\"k\",\"name\":\"Keys\"},\"plugins\":\"x\"}}}"
+        check("unreadable `plugins` leave the chain with none", (try? dec.decode(InputChains.self, from: Data(badFX.utf8)))?.midi["k"]?.plugins.isEmpty == true)
+        check("allPlugins counts the FX behind an instrument", both.allPlugins.count == 3)
+
         print("\(total - fails.count)/\(total) assertions passed")
         if !fails.isEmpty { exit(1) }
     }

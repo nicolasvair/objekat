@@ -246,6 +246,69 @@ def e9(c, level, fxp, instp, dev):
     row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
     check("M6 undo of the setting: gone again", row["instrument"] is None, row)
 
+    # M7: audio FX BEHIND a MIDI input's instrument (inputs panel, step 1). Order [instrument, FX...] is proven by the
+    # sound: an FX laid before a generator would change nothing.
+    c.send("input.set_instrument", {"midi": dev, **instp})
+    mh = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)["host_id"]
+    c.send("input.monitor", {"midi": dev, "on": True})
+    c.send("midi.virtual.send", {"events": [{"kind": "on", "note": 48, "velocity": 100}, {"kind": "off", "note": 48, "delay_ms": 300}]})
+    time.sleep(2.0)
+
+    def play60():
+        level()
+        c.send("midi.virtual.send", {"events": [{"kind": "on", "note": 60, "velocity": 120}]})
+        time.sleep(0.8)
+        v = level()
+        c.send("midi.virtual.send", {"events": [{"kind": "off", "note": 60}]})
+        time.sleep(1.5)
+        return v
+
+    bare = play60()
+    check("M7 bare instrument heard (%.3f)" % bare, bare > 0.02, bare)
+    r = c.send("plugin.add", {"host": mh, **LPF})
+    fpid = r["plugin"]["id"]
+    check("M7 plugin.add on the MIDI host: listed behind the instrument",
+          [p["id"] for p in plist(mh)] == [fpid]
+          and [i["name"] for i in c.send("plugin.list", {"host": mh})["instruments"]] == ["DLSMusicDevice"], plist(mh))
+    check("M7 the FX instance is mounted", wait_loaded(fpid))
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M7 input.list.midi_inputs: fx_count 1, still heard", row["fx_count"] == 1 and row["heard"] is True, row)
+    k7 = cutoff_index(fpid)
+    c.send("plugin.set_param", {"plugin": fpid, "index": k7, "value": 0.003})
+    time.sleep(0.5)
+    filtered = play60()
+    check("M7 the note now goes THROUGH the FX: %.3f << %.3f" % (filtered, bare), filtered < 0.5 * bare, (filtered, bare))
+    # closed and not heard: unmounted, kept; heard again: back with its setting
+    c.send("input.monitor", {"midi": dev, "on": False})
+    c.send("input.host", {"midi": dev, "open": False})
+    check("M7 unmounted: the FX instance is gone, the chain kept", absent(fpid) and [p["id"] for p in plist(mh)] == [fpid])
+    c.send("input.monitor", {"midi": dev, "on": True})
+    check("M7 heard again: the FX is mounted again", wait_loaded(fpid))
+    time.sleep(1.0)
+    again = play60()
+    check("M7 ... behind the instrument still (%.3f ~ %.3f)" % (again, filtered), again < 0.5 * bare, (again, bare))
+    # save / reopen
+    c.send("project.save")
+    doc = json.load(open(os.path.join(tmp, "p", "p.objekat.json")))
+    mc = (doc.get("inputChains") or {}).get("midi", {}).get(dev, {})
+    check("M7 the file carries the instrument and the FX of the MIDI chain",
+          mc.get("instrument") and len(mc.get("plugins", [])) == 1, mc)
+    # an instrument replaced keeps the FX, which stay behind the new one
+    c.send("input.monitor", {"midi": dev, "on": False})
+    out = c.send("input.set_instrument", {"midi": dev, **instp})
+    row = next(d for d in out["midi_inputs"] if d["id"] == dev)
+    check("M7 replacing the instrument keeps the FX", row["fx_count"] == 1 and [p["id"] for p in plist(mh)] == [fpid], row)
+    c.send("edit.undo", {})
+    c.send("input.remove_instrument", {"midi": dev})
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M7 removing the instrument keeps the FX", row["instrument"] is None and row["fx_count"] == 1, row)
+    c.send("edit.undo", {})
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M7 undo of the removal: instrument and FX both back", row["instrument"] == "DLSMusicDevice" and row["fx_count"] == 1, row)
+    c.send("edit.undo", {})
+    c.send("edit.undo", {})
+    c.send("input.host", {"midi": dev, "open": False})
+
 
 def e11(c, instp, dev):
     LPF = {"identifier": "aufx,lpas,appl"}

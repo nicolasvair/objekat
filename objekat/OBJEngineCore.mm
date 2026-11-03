@@ -11584,6 +11584,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     [self closeEditorsAndPurgePluginsForObjectID:hostID];
     if (midi) {
         [self removeInstrumentForObjectID:hostID];
+        _objectChainMap.erase(host);                          // the FX compiled behind the instrument (their keys are gone)
         auto entry = _midiInputTracks[host];
         _midiInputTracks.erase(host);
         _edit->getTransport().ensureContextAllocated();
