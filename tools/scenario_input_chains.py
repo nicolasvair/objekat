@@ -392,13 +392,58 @@ def e11(c, instp, dev):
     time.sleep(0.3)
     check("H2 the input's FX moved, the zone's copy did not", abs(cutoff(pid)[1] - 0.2) < 0.01 and abs(cutoff(cid)[1] - 0.9) < 0.01, (cutoff(cid), cutoff(pid)))
 
-    # H3: an existing zone is never touched
+    # H3: a zone from a bare input inherits nothing; dropped on again by an input WITH FX, an ENTIRELY EMPTY group
+    # takes the copy (inputs panel, step 3) — and says so (`inherited` also on an assign)
     r0 = c.send("rec.drop", {"first": 1, "count": 1, "lane": 2, "time": 1})
     g3 = r0["group"]
     check("H3 a zone from a bare input inherits nothing", r0["outcome"] == "create" and "inherited" not in r0 and lst(g3)["plugins"] == [], r0)
+    depth = c.send("perf.census")["undo_depth"]
     r1 = c.send("rec.drop", {"first": 0, "count": 1, "lane": 2, "time": 2})
-    check("H3 dropping an input WITH FX on it assigns", r1["outcome"] == "assign" and r1["target"] == g3, r1)
-    check("H3 ... and its chain stays empty", lst(g3)["plugins"] == [] and "inherited" not in r1)
+    check("H3 dropping an input WITH FX on the empty zone assigns AND copies", r1["outcome"] == "assign" and r1["target"] == g3
+          and (r1.get("inherited") or {}).get("fx") == 1, r1)
+    c3 = lst(g3)["plugins"]
+    check("H3 ... one copy with an id of its own, one undo point", len(c3) == 1 and c3[0]["id"] != pid
+          and c.send("perf.census")["undo_depth"] == depth + 1, c3)
+    # a group that holds something keeps its chain: only its source changes
+    depth = c.send("perf.census")["undo_depth"]
+    r1b = c.send("rec.drop", {"first": 1, "count": 1, "lane": 2, "time": 2})
+    check("H7 a NON-empty group (it has an FX) keeps its chain, only the source changes",
+          r1b["outcome"] == "assign" and "inherited" not in r1b and [p["id"] for p in lst(g3)["plugins"]] == [c3[0]["id"]]
+          and c.send("perf.census")["undo_depth"] == depth + 1, r1b)
+    # the same source dropped again on a non-empty group: nothing changes, no undo point
+    depth = c.send("perf.census")["undo_depth"]
+    c.send("rec.drop", {"first": 1, "count": 1, "lane": 2, "time": 2})
+    check("H7 ... a redrop of the same source on it changes nothing, no undo point", c.send("perf.census")["undo_depth"] == depth)
+
+    # H8: a redrop of the SAME source on a group that is still empty copies, with its undo point
+    ra = c.send("rec.drop", {"first": 2, "count": 1, "lane": 10, "time": 1})        # input 3: bare
+    g8 = ra["group"]
+    h2 = c.send("input.host", {"first": 2})["host_id"]
+    p8 = c.send("plugin.add", {"host": h2, **LPF})["plugin"]["id"]                 # ... now it carries an FX
+    depth = c.send("perf.census")["undo_depth"]
+    rb = c.send("rec.drop", {"first": 2, "count": 1, "lane": 10, "time": 2})
+    c8 = lst(g8)["plugins"]
+    check("H8 same source, group still empty: assigns, copies, says so", rb["outcome"] == "assign" and rb["target"] == g8
+          and (rb.get("inherited") or {}).get("fx") == 1 and len(c8) == 1 and c8[0]["id"] != p8, (rb, c8))
+    check("H8 ... and the redrop made an undo point (it changed something)", c.send("perf.census")["undo_depth"] == depth + 1)
+    c.send("edit.undo", {})
+    check("H8 undo takes the copy away again", lst(g8)["plugins"] == [])
+    c.send("input.host", {"first": 2, "open": False})
+
+    # H9: assigning from the menu (rec.assign) copies nothing, even on an empty group
+    rc = c.send("rec.drop", {"first": 1, "count": 1, "lane": 12, "time": 1})
+    g9 = rc["group"]
+    c.send("rec.assign", {"group": g9, "first": 0, "count": 1})
+    check("H9 rec.assign on an empty group copies nothing", lst(g9)["plugins"] == [])
+
+    # H10: a group with a send is not empty (the send is something the user built)
+    rd = c.send("rec.drop", {"first": 1, "count": 1, "lane": 14, "time": 1})
+    g10 = rd["group"]
+    au = c.send("aux.create", {"start": 0, "end": 6, "lane": 20})["id"]
+    c.send("send.create", {"id": g10, "aux": au})
+    r10 = c.send("rec.drop", {"first": 0, "count": 1, "lane": 14, "time": 2})
+    check("H10 a group that carries a send is NOT empty: assigns, copies nothing",
+          r10["outcome"] == "assign" and r10["target"] == g10 and "inherited" not in r10 and lst(g10)["plugins"] == [], r10)
 
     # H1: a MIDI input with an instrument
     c.send("input.set_instrument", {"midi": dev, **instp})

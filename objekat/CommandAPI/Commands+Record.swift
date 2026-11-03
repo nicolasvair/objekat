@@ -560,8 +560,9 @@ extension CommandRegistry {
             o["reason"] = .string(why.rawValue)
         }
         o["group"] = .stringOrNull(group?.uuidString)
-        // A zone born from an input that carried FX / an instrument took a copy of it.
-        if let g = group, case .create = plan, let vm = try? CommandContext.shared.requireViewModel(),
+        // A zone born from an input that carried FX / an instrument took a copy of it — and so did an existing group
+        // that was entirely empty (`RecordDropInheritance`).
+        if let g = group, let vm = try? CommandContext.shared.requireViewModel(),
            let got = vm.lastDropInheritance[g] {
             o["inherited"] = .object(["fx": .int(got.fx), "instrument": .stringOrNull(got.instrument)])
         }

@@ -281,6 +281,29 @@ extension EditViewModel {
         return (r.plans[0], r.groups[0])
     }
 
+    /// Gives the zone `id` the chain `chain` copied from an input — the ONE function behind a new zone and a group that
+    /// was entirely empty (`RecordDropInheritance`). The FX are laid and compiled here unless the zone was born with them
+    /// (`fxAlreadyPlaced`: they went through `placeClip`); the instrument goes in once the zone is in place, because the
+    /// group rule needs its place to answer. A refused instrument leaves the zone without one, with the usual alert.
+    /// Records what was copied for `rec.drop`.
+    private func giveInheritedChain(_ chain: InheritedChain, to id: UUID, fxAlreadyPlaced: Bool) {
+        guard !chain.isNothing else { return }
+        if !fxAlreadyPlaced, !chain.plugins.isEmpty {
+            update(id: id) { $0.plugins = chain.plugins }
+            compileRack(objectID: id)
+        }
+        var instrumentName: String? = nil
+        if let inst = chain.instrument, !refusesInstrument(on: id) {
+            update(id: id) { $0.instruments = [inst] }
+            if let updated = find(id: id) { syncInstruments(updated) }
+            refreshPassiveChains()
+            instrumentName = inst.name
+        }
+        if !chain.plugins.isEmpty || instrumentName != nil {
+            lastDropInheritance[id] = InheritedInput(fx: Self.flattenLeaves(chain.plugins).count, instrument: instrumentName)
+        }
+    }
+
     /// Carries out the drop of several inputs, `refs` in the order of the lanes they take downwards from
     /// `displayLane`: each becomes a zone (or goes to the group on its lane), ALL in ONE undo point —
     /// taken before the first change, and not at all for a refusal (global: one lane refused, nothing
@@ -320,10 +343,23 @@ extension EditViewModel {
             }
         }
 
+        // What each lane copies from its input, worked out BEFORE the undo point: whether a redrop of the same source
+        // on a still-empty group changes anything depends on it (RecordDropInheritance).
+        let copies: [InheritedChain] = plans.indices.map { i in
+            switch plans[i] {
+            case .create:
+                return inheritedChain(for: refs[i])
+            case .assign(let id):
+                guard let zone = find(id: id), RecordDropInheritance.copiesChain(ontoExisting: zone) else { return .none }
+                return inheritedChain(for: refs[i])
+            case .refuse:
+                return .none
+            }
+        }
         let changes = plans.indices.contains { i in
             switch plans[i] {
             case .create: return true
-            case .assign(let id): return find(id: id)?.recordSource != refs[i]
+            case .assign(let id): return find(id: id)?.recordSource != refs[i] || !copies[i].isNothing
             case .refuse: return false
             }
         }
@@ -337,6 +373,8 @@ extension EditViewModel {
                 break
             case .assign(let id):
                 if find(id: id)?.recordSource != ref { applyRecordSource(ref, toGroup: id) }
+                // An entirely empty group takes the input's chain like a new zone; any other keeps its own.
+                giveInheritedChain(copies[i], to: id, fxAlreadyPlaced: false)
                 groups[i] = id
             case .create(let start, let end, _):
                 // The zone is born WITHOUT a label: its default name is its input's (`displayName(of:)`), as
@@ -346,22 +384,11 @@ extension EditViewModel {
                 var zone = SoundObject(startTime: start, duration: end - start, lane: displayLane + i,
                                        label: nil, kind: .group(children: [], isExpanded: false))
                 zone.recordSource = ref
-                // A NEW zone starts with a copy of what its input carries (E11): the FX of a card input, the instrument
-                // of a MIDI input. A zone that already exists (`.assign`) is never touched.
-                let inherited = inheritedChain(for: ref)
-                zone.plugins = inherited.plugins
+                // A NEW zone starts with a copy of what its input carries (E11): the FX of a card input, the FX AND the
+                // instrument of a MIDI input. The FX are on the zone before it is placed (the add compiles them as a paste).
+                zone.plugins = copies[i].plugins
                 let placed = placeClip(zone, snapshot: laneEntries)
-                var instrumentName: String? = nil
-                if let inst = inherited.instrument, !refusesInstrument(on: placed.id) {
-                    update(id: placed.id) { $0.instruments = [inst] }
-                    if let updated = find(id: placed.id) { syncInstruments(updated) }
-                    refreshPassiveChains()
-                    instrumentName = inst.name
-                }
-                if !inherited.plugins.isEmpty || instrumentName != nil {
-                    lastDropInheritance[placed.id] = InheritedInput(fx: Self.flattenLeaves(inherited.plugins).count,
-                                                                    instrument: instrumentName)
-                }
+                giveInheritedChain(copies[i], to: placed.id, fxAlreadyPlaced: true)
                 // A zone of the selection starts at its in and ends at its out, or earlier (an object behind).
                 if let s = timeSelection, start == max(0, s.timeRange.lowerBound),
                    end <= s.timeRange.upperBound { spent = true }
@@ -373,6 +400,15 @@ extension EditViewModel {
         if changes { isDirty = true }
         return (plans, groups)
     }
+}
+
+/// The chain a drop copies from an input: the FX, and the instrument of a MIDI input (independent copies).
+struct InheritedChain {
+    var plugins: [ObjectPlugin] = []
+    var instrument: ObjectPlugin? = nil
+
+    static let none = InheritedChain()
+    var isNothing: Bool { plugins.isEmpty && instrument == nil }
 }
 
 /// What a recording zone took from its input when it was born (docs/plan_groupes_midi.md, E11).

@@ -470,17 +470,18 @@ extension EditViewModel {
     /// the FX behind it (MIDI).
     /// Independent: fresh ids, no parameter link and no FX link (a bin becomes its plugins), the live state when the chain is
     /// mounted and the model's otherwise. The input itself is untouched.
-    func inheritedChain(for source: RecordSource) -> (plugins: [ObjectPlugin], instrument: ObjectPlugin?) {
+    func inheritedChain(for source: RecordSource) -> InheritedChain {
         switch source {
         case .audio(let ref):
-            guard let chain = inputChains.audio[ref.key], !chain.isEmpty else { return ([], nil) }
-            return (independentCopies(capturingPluginStates(chain.plugins)), nil)
+            guard let chain = inputChains.audio[ref.key], !chain.isEmpty else { return .none }
+            return InheritedChain(plugins: independentCopies(capturingPluginStates(chain.plugins)))
         case .midi(let ref):
             let key = inputChains.midi[ref.id] != nil ? ref.id
                 : resolvedMidiInput(ref).flatMap { midiChainKey(for: $0) }
-            guard let key, let chain = inputChains.midi[key], !chain.isEmpty else { return ([], nil) }
+            guard let key, let chain = inputChains.midi[key], !chain.isEmpty else { return .none }
             let live = capturingInputChain(chain)
-            return (independentCopies(live.plugins), live.instrument.flatMap { independentCopies([$0]).first })
+            return InheritedChain(plugins: independentCopies(live.plugins),
+                                  instrument: live.instrument.flatMap { independentCopies([$0]).first })
         }
     }
 
