@@ -3100,6 +3100,47 @@ a second one elsewhere. The most exposed points:
   AirPods in either direction, the output card disappearing under an aggregate. Checklist for the user: AirPods, a USB interface, a
   card unplugged mid-take, a rate mismatch, a Bluetooth switch, a project reopened with the choice remembered.
 
+- **The feedback of 4 November 2026 — ten requests, eleven lots, one commit each** (branch `claude/retours-2026-11-04`, NOT on
+  `main`, nothing pushed, no engine patch — the next is still `0051`, no session-format change; **written on a Linux machine:
+  NOTHING COMPILED, NOTHING RUN, NOTHING SEEN** — only `xcstrings.py check`/`orphans` and `py_compile` on the scenarios, and every
+  edited region re-read as a compiler would). Plan, decisions and what each lot owes the eye: `docs/plan_retours_2026-11-04.md`;
+  decisions: `architecture_decisions.md` ("The feedback of 4 November 2026"); API: `command_api.md`.
+  L1 no keyboard button in the transport bar (the Inputs row is the only one). L2 Esc disarms every recording zone
+  (`disarmAllRecordZones`, `rec.disarm_all`, also while recording: the take runs on zones frozen at the press). L3 the audio menu is a
+  TREE: the shared `TreePickerPopover` gains `.branch` rows (inline, accordion, current value at the right); four folded lines.
+  L4 the computer keyboard input is named after the layout (AZERTY / QWERTY / QWERTZ, Carbon TIS, `KeyboardLayoutWatcher`;
+  `midi.keyboard.status.layout_*`). L5 input strips in the Main's colour, a 56 pt leading column, the meter ends under the name,
+  the badges never drop (`keepsBadges`), the keyboard button on the left. L6 a group's block draws its audible MIDI takes' notes.
+  L7 the signal view's instrument slot takes a dropped instrument. L8 a loop recording leaves ONE UNDO STEP PER PASS (16 at most),
+  undo/redo refused while recording (`invalid_state`), a stretched MIDI take shows its notes during the drag. L9 recording opens an
+  empty top lane (the previous takes are REALLY one lane down, inside the press's undo point) and each finished pass leaves a ghost.
+  L10 a MIDI input's meter: a few blue pixels for the notes, the instrument's OUTPUT under them when it has one
+  (`MidiActivityMeter`; `input.levels.midi_activity.instrument_level`). L11 the red block draws what the take has made so far, notes
+  or loudness (`RecordLiveCapture`, pure; a ring of note events and a separate peak accumulator in `OBJEngineCore`; the tick is 30 Hz).
+  **The two engine-file lots are the ones to build first**: L10 and L11 touch `OBJEngineCore.mm` (MRC) and `.h`. L10 skips the
+  `isCurrentlyPlaying` condition of `audioLevelForPluginKey:forObjectID:` for an INPUT host — tested on the host key the caller
+  names, NOT on `_pluginOwnerHost` as the plan said: an instrument has no owner entry. L11: `OBJMidiActivity` keeps a fixed ring of
+  1024 events while `capturing` (producers only TRY the `SpinLock`, an event that finds it busy or the ring full is dropped; the
+  drain, on the main thread, takes the lock); `OBJInputMeter::recPeak` is read by `audioInputRecordPeaksDb`, never by the Inputs tab's
+  meters; `capturing` goes on in `startRecordingInputs:` and off in `finishRecording`. **Known approximations**, all on purpose: the
+  live picture is dated from the playhead (not latency-corrected, a few tens of ms); a drain straddling a lap is split around the jump
+  by the time since it (`RecordLiveCapture.split`); an event the ring dropped leaves a note open until the next note-on of its pitch.
+  **To do on the Mac, in order**: (1) a Debug build against the 1550-warning baseline — the likely snags are the new
+  `@MainActor` / `Sendable` edges (`Canvas` closures, `Timer`), `import Carbon` in L4, and the ObjC++ of L10/L11; (2) the pure Swift
+  tests (`test_tree_picker_model`, `test_audio_menu_model`, `test_keyboard_layout_name`, `test_midi_notes_drawing`,
+  `test_record_progress`, `test_record_loop_planner`, `test_record_live_capture`, `test_object_feature_badges`); (3) the scenarios
+  (`scenario_record` — calibration F, F2, R must stay at 0 samples —, `scenario_record_zones` L, `scenario_record_loop_undo`,
+  `scenario_record_loop_midi`, `scenario_record_loop_proof`, `scenario_input_chains` M13, `scenario_computer_keyboard` D2 with
+  the transport STOPPED — the first proof that the input host's level reads while stopped —, `scenario_plugin_expert`);
+  (4) `xcstrings.py check` / `orphans`. **Not seen, not heard, not felt, at all**: the audio menu's four folded lines and its
+  accordion; the layout name in the three languages and the tooltips' letters; the blue strips, the 56 pt column, the keyboard
+  button and its octave selector; the notes in a group's block in both drawing regimes; the instrument slot lighting up under a
+  drag; ⌘Z pass by pass and the notes appearing while a MIDI take is stretched; the empty top lane in red at the press and the
+  ghosts going down at each lap (nothing should jump at the stop); the blue mark and the instrument's bar on a MIDI row, stopped
+  and playing; the live notes and the live envelope in red, the ghosts keeping theirs, and above all **no stutter of the timeline
+  while recording** (the overlay redraws at 30 Hz) and **no change to the recording itself** (the calibration scenarios are the
+  proof; the WAV was NOT compared byte for byte with a run before the change, which would need the input signal to be identical from take to take, not established).
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged
