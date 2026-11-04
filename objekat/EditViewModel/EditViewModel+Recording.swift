@@ -251,14 +251,26 @@ extension EditViewModel {
 
     /// A loop edit under a recording (a bound moved, the loop switched on…) can make the head join a zone it was not going to
     /// reach: the previous takes it will replace are muted at once, in the SAME undo point as the start's. `head` is the
-    /// playhead now. Does nothing when not recording or for a zone in "add" mode.
+    /// playhead now. The same edit also pushes such a zone's children ONE lane down, as the press did for the zones it could
+    /// reach (L9), so the top lane is empty there too and the laps can leave their ghosts; `completeRecording` and the lap
+    /// tick read that shift from the same log. The mutes are skipped for a zone in "add" mode, the shift is not.
     func retakeRecordingMutes(head: Double) {
         guard isRecording else { return }
         var log = recordingMuteLog
         var changed = false
-        for zone in recordingZones where zone.mode.mutesPrevious {
+        let reach = RecordLoopPlanner.reachableRange(startPosition: head, loop: loopModeEnabled ? loopRegion : nil)
+        for zone in recordingZones {
             guard let group = find(id: zone.id), case .group(let children, _) = group.kind else { continue }
             let window = recordWindow(of: group)
+            // Same rule as the press: nothing to push, or a zone already pushed (the press or an earlier edit), is left alone.
+            if !children.isEmpty, log.laneShiftByZone[zone.id] == nil,
+               reach.lowerBound < window.end, reach.upperBound > window.start {
+                if log.undoDepthAfterPush == nil { log.wasDirty = isDirty; pushUndo(); log.undoDepthAfterPush = undoStack.count }
+                updateMany(Set(children.map(\.id))) { $0.lane += 1 }
+                log.laneShiftByZone[zone.id] = 1
+                changed = true
+            }
+            guard zone.mode.mutesPrevious else { continue }
             let ids = RecordLoopPlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
                                                      children: takePlannerChildren(children), startPosition: head,
                                                      loop: loopModeEnabled ? loopRegion : nil, mutesPrevious: true)

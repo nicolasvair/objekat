@@ -12849,7 +12849,10 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
 // ever try the lock (@see OBJMidiActivity), so a drain cannot make a MIDI thread wait.
 - (NSDictionary<NSString*, NSArray<NSDictionary<NSString*, NSNumber*>*>*>*)drainLiveRecordMidi {
     NSMutableDictionary* result = [NSMutableDictionary dictionary];
+    // Reserved here, once, so that `drain` never reallocates while it holds the spin lock (a producer that finds the
+    // lock busy drops its event).
     std::vector<OBJLiveMidiEvent> events;
+    events.reserve(OBJMidiActivity::kLiveRing);
     const double now = juce::Time::getMillisecondCounterHiRes();
     for (auto& kv : _midiActivity) {
         if (!kv.second->capturing.load(std::memory_order_relaxed)) continue;

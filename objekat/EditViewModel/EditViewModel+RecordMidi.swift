@@ -112,10 +112,12 @@ extension EditViewModel {
     }
 
     /// The level (0...1 on `VUScale`) at the output of the instrument `device` is heard through; nil when it has no
-    /// instrument or is not heard (nothing flows through the chain then). Reading EMPTIES the engine's peak hold.
+    /// instrument, 0 when it has one but is not heard (nothing flows through the chain then; the row keeps the look of
+    /// an input with an instrument). Reading EMPTIES the engine's peak hold.
     func midiInstrumentLevel(of device: MidiInputInfo, heard: Bool) -> Double? {
-        guard heard, let key = midiChainKey(for: device), let chain = inputChains.midi[key],
+        guard let key = midiChainKey(for: device), let chain = inputChains.midi[key],
               let inst = chain.instrument else { return nil }
+        guard heard else { return 0 }
         return pluginAudioLevel(objectID: chain.hostID, pluginID: inst.id)
     }
 

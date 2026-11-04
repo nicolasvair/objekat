@@ -62,10 +62,15 @@ final class KeyboardLayoutWatcher {
     }
 
     private static func readLayout() -> (localizedName: String?, characters: [UInt16: String]) {
-        var source = TISCopyCurrentKeyboardLayoutInputSource().takeRetainedValue()
+        // Both copies come back as implicitly unwrapped Optionals: with no input source at all (a login window, a
+        // sandbox) the layout is simply unknown.
+        guard var source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else { return (nil, [:]) }
         // An input method (Japanese, Chinese…) has no layout data of its own: its ASCII-capable layout stands in.
         if TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) == nil {
-            source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource().takeRetainedValue()
+            guard let ascii = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue() else {
+                return (nil, [:])
+            }
+            source = ascii
         }
         var localizedName: String?
         if let rawName = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) {

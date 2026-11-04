@@ -32,8 +32,8 @@ extension CommandRegistry {
                  cleared — what the row's blue activity mark shows. Only the inputs that played something appear \
                  (`activity`: {id, name, velocity, instrument_level}). `instrument_levels` lists EVERY input that \
                  carries an instrument: {id, name, instrument_level} — the level (0...1, the VU scale) at the \
-                 instrument's output, which is what the row's meter shows under the blue mark; null while the \
-                 input is not heard through it (monitor off), 0 while it is silent. The call asks the engine to \
+                 instrument's output, which is what the row's meter shows under the blue mark; 0 while the \
+                 input is not heard through it (monitor off) or silent. The call asks the engine to \
                  measure those instruments (owner `api.midi_activity`, kept), so the FIRST call answers 0: poll. \
                  Reading empties the engine's peak hold. Poll at the rate you want to see.
                  """,

@@ -120,7 +120,7 @@ struct MidiInputsSection: View {
             },
             meter: {
                 MidiActivityMeter(activity: (activity[d.id] ?? 0) > 0,
-                                  level: instrumentLevels[d.id].map(Double.init))
+                                  level: instrumentLevels[d.id].map { Double($0) })
             }
         )
         .onDrag { InputDragSession.shared.begin(sources: viewModel.draggedSources(startingFrom: .midi(d.ref))) }

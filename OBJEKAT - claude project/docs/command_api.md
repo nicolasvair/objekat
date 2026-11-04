@@ -2480,7 +2480,7 @@ app resigns, the mode goes off, the monitor goes away and on a tab switch.
   inputs that played a note since the PREVIOUS call (`velocity` the loudest note-on, 0…127; reading clears it);
   `instrument_levels[]` is `{id, name, instrument_level}` for EVERY input that carries an instrument. `instrument_level` is the
   level (0…1, the VU scale of the plugin cards) at the OUTPUT of the input's instrument — before its FX and the listening
-  gain — and is **null while the input is not heard** (monitor off) and 0 while it is silent. It reads **while the transport is
+  gain — and is **0 while the input is not heard** (monitor off) or silent. It reads **while the transport is
   stopped** too: an input's hidden track is live whatever the transport does (the cards of a signal view stay at 0 while it is
   stopped, as before). The call asks the engine to measure those instruments (measuring owner `api.midi_activity`, kept), so the
   FIRST call answers 0: poll. Reading empties the engine's peak hold.
