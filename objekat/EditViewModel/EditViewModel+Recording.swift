@@ -257,7 +257,10 @@ extension EditViewModel {
     /// its take will land on, from the press to the head, inside the zone's window. Empty when not
     /// recording. The overlay and `rec.status` both read this.
     func recordProgressBlocks(head: Double) -> [RecordProgressBlock] {
-        guard isRecording, let from = recordingStartTime else { return [] }
+        guard isRecording, let pressed = recordingStartTime else { return [] }
+        // Through a loop the head goes back: the block grows from where the CURRENT pass began (the press while
+        // the clock is not anchored yet, or when nothing looped).
+        let from = engine?.recordPassNow()?["start"]?.doubleValue ?? pressed
         return recordingZones.compactMap { zone in
             guard let e = laneEntry(forID: zone.id), case .group(let children, _) = e.item.kind else { return nil }
             let window = recordWindow(of: e.item)

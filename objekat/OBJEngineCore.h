@@ -1056,8 +1056,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// written in (it advances one second per second of file, never rebased by a loop edit); `timeline` is where the head was
 /// then. Valid when `onRecordingFinished` is called (and until the next recording starts); empty when nothing was journaled.
 @property (nonatomic, readonly, copy) NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull lastRecordJournal;
-/// The same journal, LIVE, while a recording runs (empty otherwise): the last point says where the current pass began.
-- (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)recordJournalNow;
+/// The CURRENT pass of the recording that runs, read LIVE from the journal: `start` = where it began on the timeline (seconds; the
+/// red block of a recording through a loop grows from there), `laps` = how many times the head has jumped since the anchor (0 = still
+/// the first pass). nil when no recording runs or the clock is not anchored yet.
+- (NSDictionary<NSString*, NSNumber*>* _Nullable)recordPassNow;
 
 // MIDI INPUTS (rec3-midi). Tracktion's own MIDI devices — physical ones, the "All MIDI Ins" virtual one
 // (`all_midi_in`) and, under `--virtual-midi`, "OBJ Virtual MIDI". Independent of the audio inputs: they

@@ -622,6 +622,10 @@ extension CommandRegistry {
                         "project_saved": .bool(vm.projectURL != nil),
                         "recording": .bool(vm.isRecording),
                         "recording_start": vm.recordingStartTime.map { .number($0) } ?? .null,
+                        // Recording through a loop (engine patch 0050): how many times the head has jumped back since the
+                        // press (the passes so far are lap + 1), and where the pass that runs began. 0 / null otherwise.
+                        "lap": .int(vm.isRecording ? (vm.engine?.recordPassNow()?["laps"]?.intValue ?? 0) : 0),
+                        "pass_start": vm.isRecording ? (vm.engine?.recordPassNow()?["start"]?.doubleValue).map { .number($0) } ?? .null : .null,
                         "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b in
                             .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
                                      "start": .number(b.start), "end": .number(b.end)])

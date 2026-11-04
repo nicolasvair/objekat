@@ -96,9 +96,12 @@ def record(c, vid, loop, name):
         ev.append({"kind": "on", "note": 40 + i, "velocity": 90, "delay_ms": on * 1000})
         ev.append({"kind": "off", "note": 40 + i, "velocity": 0, "delay_ms": (on + 0.05) * 1000})
     c.send("midi.virtual.send", {"events": ev})
-    time.sleep(0.1 + 0.2 * N + 0.5)
+    time.sleep(2.3)
+    mid = c.send("rec.status")                     # the second lap of a 1 s loop is running (clock ~2.3 s, head ~1.8 s)
+    time.sleep(0.1 + 0.2 * N + 0.5 - 2.3)
     st = c.send("rec.stop")
     c.send("rec.arm", {"group": gid, "on": False})
+    st["mid"] = mid
     return gid, st
 
 
@@ -113,6 +116,13 @@ try:
         # ---------------------------------------------------------------- M1
         section("M1 a MIDI recording through a loop [1 s, 2 s]")
         gid, st = record(c, vid, True, "loop")
+        mid = st["mid"]
+        pr = mid["progress"]
+        print("       mid-recording: lap %s, pass_start %s, progress %s" % (mid.get("lap"), mid.get("pass_start"),
+                                                                           [(round(b["start"], 2), round(b["end"], 2)) for b in pr]))
+        check("rec.status says the lap while it loops", mid.get("lap", 0) >= 1, mid.get("lap"))
+        check("the red block grows from the START OF THE PASS (the loop's start), never past the loop's end",
+              len(pr) == 1 and abs(pr[0]["start"] - 1.0) < 0.05 and pr[0]["end"] <= 2.0 + 0.05 and pr[0]["end"] > pr[0]["start"], pr)
         takes = sorted(st["last_takes"], key=lambda t: t["pass"])
         passes = takes[0]["passes"] if takes else 0
         print("       %d take(s), %d pass(es): %s" % (len(takes), passes, [(t["pass"], len(t["notes"]), t["audible"]) for t in takes]))
@@ -238,6 +248,7 @@ try:
         check("it holds every note", len(t3[0]["notes"]) == N, len(t3[0]["notes"]))
         o3 = obj(c.send("object.get", {"id": t3[0]["object"]}))
         check("it names no sequence", "midi_sequence" not in o3, o3.get("midi_sequence"))
+        check("rec.status in a linear recording: lap 0", st3["mid"].get("lap") == 0, st3["mid"].get("lap"))
         c.send("project.save")
         check("and the file writes none", not json.load(open(path)).get("midiSequences"))
 finally:

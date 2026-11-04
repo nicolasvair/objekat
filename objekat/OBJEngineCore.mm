@@ -11734,15 +11734,15 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 
 - (NSArray<NSDictionary<NSString*, NSNumber*>*>*)lastRecordJournal { return _lastRecordJournal ?: @[]; }
 
-- (NSArray<NSDictionary<NSString*, NSNumber*>*>*)recordJournalNow {
-    NSMutableArray* out = [NSMutableArray array];
+- (NSDictionary<NSString*, NSNumber*>*)recordPassNow {
     if (_edit && _recordListener)
         if (auto* epc = _edit->getCurrentPlaybackContext()) {
-            const double sr = epc->getSampleRate();
-            for (auto& p : epc->getRecordJournal())
-                [out addObject:@{ @"clock": @((double) p.clockSample / sr), @"timeline": @((double) p.timelineSample / sr) }];
+            const auto journal = epc->getRecordJournal();
+            if (! journal.empty())
+                return @{ @"start": @((double) journal.back().timelineSample / epc->getSampleRate()),
+                          @"laps": @((NSInteger) journal.size() - 1) };
         }
-    return out;
+    return nil;
 }
 
 - (BOOL)isRecordingNow { return _recordingActive; }

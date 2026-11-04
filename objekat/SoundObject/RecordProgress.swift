@@ -7,7 +7,10 @@ import Foundation
 // overlay AND `rec.status` ask the same functions, so what is drawn and what a script reads cannot drift):
 //
 //   - WHERE in time: from the press of "record" to the playhead, BOUNDED BY THE ZONE'S WINDOW — what the
-//     take will show once it exists (the file is longer than the window, but only the window is seen);
+//     take will show once it exists (the file is longer than the window, but only the window is seen).
+//     Recording THROUGH a loop, the head goes back at every wrap: the caller then gives the start of the
+//     CURRENT pass (`OBJEngineCore.recordPassNow`) in place of the press, the block growing again from the
+//     loop's start — one block per zone, on the lane its newest take will land on;
 //   - ON WHICH LANE: the one the take will land on, the TOP lane of the zone's takes — the lane
 //     `RecordTakePlanner.takeLane` gives (the previous takes go down by one at the stop) — and not the
 //     zone's own row. Nothing of the zone lies above that lane, so no row held open by a child pushes it.
@@ -23,7 +26,8 @@ enum RecordProgress {
         let end: Double
     }
 
-    /// The stretch of the timeline the block covers: from the press (`recordStart`) to the playhead
+    /// The stretch of the timeline the block covers: from the press (`recordStart`, or the start of the current pass
+    /// when the recording runs through a loop) to the playhead
     /// (`head`), cut to the window [`windowStart`, `windowEnd`]. nil when nothing of it lies in the window
     /// yet (the head has not reached it, or the press was already past it).
     static func span(recordStart: Double, head: Double, windowStart: Double, windowEnd: Double) -> Span? {
