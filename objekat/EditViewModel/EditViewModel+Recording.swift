@@ -308,6 +308,7 @@ extension EditViewModel {
             var muteIDs: [UUID] = [], unmuteIDs: [UUID] = [], shiftIDs: [UUID] = []
             var path = ""
             var passCount = 1
+            var newSequence: MidiSequence? = nil     // a MIDI recording through a loop: what its takes look through
             if let file {
                 // A recording is a succession of passes (one when nothing looped): the engine's journal says which.
                 let segments = RecordLoopPlanner.segments(journal: journal, origin: file.origin, length: file.length)
@@ -325,6 +326,22 @@ extension EditViewModel {
                     madeTakes.append(Made(object: o, take: t))
                 }
                 muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
+            } else if let capture,
+                      case let segments = RecordLoopPlanner.segments(journal: journal, origin: capture.origin,
+                                                                     length: capture.length),
+                      segments.count > 1 {
+                // Recorded through a loop: one take per pass, all looking through ONE sequence of the whole capture.
+                let plan = RecordLoopPlanner.plan(windowStart: window.start, windowEnd: window.end, children: kids,
+                                                  segments: segments, mutesPrevious: zone.mode.mutesPrevious,
+                                                  mutedAtStart: Set(early))
+                if let made = midiLoopTakes(from: capture, plan: plan) {
+                    passCount = segments.count
+                    newSequence = made.sequence
+                    for (o, t) in zip(made.objects, plan.takes) {
+                        madeTakes.append(Made(object: o, take: t, notes: o.midiNotes.count))
+                    }
+                    muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
+                }
             } else if let capture {
                 let plan = RecordTakePlanner.plan(
                     windowStart: window.start, windowEnd: window.end, children: kids,
@@ -346,6 +363,7 @@ extension EditViewModel {
                 continue
             }
             if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
+            if let seq = newSequence { midiSequences[seq.id] = seq }   // immutable, outside the undo
             setMuted(muteIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
             setMuted(unmuteIDs, false)
             // The newest on top: the previous takes go down by one lane per take, the takes take the top lanes.

@@ -76,6 +76,12 @@ extension CommandRegistry {
             if item.isMIDI {
                 payload["midi_notes"] = .int(item.midiNotes.count)
                 payload["midi_length_beats"] = .number(item.midiLengthBeats)
+                // A take of a recording made through a loop: the shared sequence it looks through (format 37) and
+                // where its beat 0 is on it. Absent for a classic clip (nearly all of them, and any edited take).
+                if let ref = item.liveMidiSequence {
+                    payload["midi_sequence"] = .object(["id": .string(ref.id.uuidString),
+                                                        "offset_beats": .number(ref.offsetBeats)])
+                }
                 // Who plays the notes: "own" (a clip with its instrument), "hosted" (an EMPTY clip below a group that
                 // carries one: `instrument_host`), "none" (an empty clip with no instrument group above it: muted).
                 let host = GroupInstrumentRule.host(of: item, ancestors: vm.ancestorChain(of: item.id))

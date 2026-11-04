@@ -143,6 +143,39 @@ extension EditViewModel {
     }
 }
 
+extension EditViewModel {
+
+    /// The takes a MIDI zone receives from a capture made THROUGH a loop (engine patch 0050): one take per pass that
+    /// crosses the zone's window (`plan`, `RecordLoopPlanner`), all looking through ONE shared sequence — what the
+    /// keyboard played during the whole capture, `MidiTakePlanner.notes` taken ONCE (the sustain pedal folded once,
+    /// over the capture), in beats from the capture's origin. A take is an ordinary empty-instrument `.midiClip`
+    /// whose notes are only its window of the sequence (`MidiSequenceWindow`); the window resolves again when its
+    /// edges move. nil when nothing was played (no take at all, like a linear recording). The caller registers the
+    /// sequence (`midiSequences`) when it keeps the takes.
+    func midiLoopTakes(from midi: RecordedMidi, plan: RecordLoopPlanner.Plan)
+        -> (sequence: MidiSequence, objects: [SoundObject])? {
+        let bpm = recordingBPM
+        guard !plan.takes.isEmpty,
+              let notes = MidiTakePlanner.notes(midi.notes, pedal: midi.pedal, takeStart: midi.origin,
+                                                captureEnd: midi.origin + midi.length, bpm: bpm) else { return nil }
+        let sequence = MidiSequence(id: UUID(), notes: notes)
+        let perSecond = bpm / 60
+        let objects = plan.takes.map { t -> SoundObject in
+            let lengthBeats = max(1.0, t.duration * perSecond)
+            var o = SoundObject(id: UUID(), startTime: t.start, duration: t.duration, lane: t.lane,
+                                kind: .midiClip(notes: [], lengthBeats: lengthBeats))
+            let ref = MidiSequenceRef(id: sequence.id, offsetBeats: t.sourceOffset * perSecond)
+            let window = MidiSequenceWindow.notes(of: notes, offsetBeats: ref.offsetBeats,
+                                                  lengthBeats: t.duration * perSecond, clipID: o.id)
+            o.kind = .midiClip(notes: window, lengthBeats: lengthBeats)
+            o.midiSequence = ref.signed(window)
+            o.isMuted = !t.audible
+            return o
+        }
+        return (sequence, objects)
+    }
+}
+
 extension MidiInputInfo {
     /// The name to SHOW — the one place that decides it (the Inputs panel, the synoptic's choices, the zones'
     /// names, the API): « All MIDI Ins » and the computer keyboard are localised, never shown under the
