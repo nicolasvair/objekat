@@ -984,9 +984,16 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // wait for `onAudioDeviceChanged` (AudioDeviceStatus.generation) before reading back.
 /// nil on success (or already open), otherwise why not (no card, no inputs, refused by the OS).
 /// `OBJInputsSeparateDeviceReason` when the output device has no inputs of its own (the AirPods
-/// layout: speaker and microphone are two CoreAudio devices with one name) — refused BEFORE anything
-/// is touched, the output keeps playing exactly as it was.
+/// layout: speaker and microphone are two CoreAudio devices with one name) AND no microphone half can be
+/// named — refused BEFORE anything is touched, the output keeps playing exactly as it was. When it CAN be
+/// named, the microphone is opened as the input card, through the private aggregate.
+/// A Bluetooth microphone is NOT instant: the call answers nil at once, the inputs open (or not) a
+/// second or more later — `-inputsState` says where it stands, `-inputsFailureMessage` why it failed.
 - (NSString* _Nullable)openAudioInputs;
+/// 0 closed, 1 stabilising (a Bluetooth microphone waiting for the system to settle), 2 open, 3 failed.
+- (NSInteger)inputsState;
+/// Why the last opening failed (the state machine gave up, the frequency rule refused, the system said no); nil otherwise.
+- (NSString* _Nullable)inputsFailureMessage;
 /// YES when the inputs listed under the output device's name belong to ANOTHER device (AirPods), which
 /// `-openAudioInputs` refuses: JUCE would build an aggregate and the profile switch (call mode) makes
 /// CoreAudio restart it from its own thread while the main thread is still opening it — a crash.
@@ -1164,6 +1171,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // The chosen INPUT card (@see -setInputDevice:): its UID and name, nil when the inputs are the output card's.
 @property (nonatomic, copy, nullable) NSString* inputDeviceUID;
 @property (nonatomic, copy, nullable) NSString* inputDeviceName;
+// Where opening the inputs stands: 0 closed, 1 stabilising (a Bluetooth microphone waiting for the system to
+// settle), 2 open, 3 failed (`inputsMessage` says why). @see -inputsState.
+@property (nonatomic) NSInteger inputsState;
+@property (nonatomic, copy, nullable) NSString* inputsMessage;
 // Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
 // 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la
 // carte a été ramenée à `sampleRate`), 2 = outOfRangeKept (inutilisable mais rien de mieux à

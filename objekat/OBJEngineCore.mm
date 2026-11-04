@@ -29,6 +29,7 @@
 #include "OBJVirtualAudioDevice.h"        // --virtual-audio: a paced test card with synthetic inputs
 #include "Shared/OBJCoreAudioProbe.h"     // does the output device own its inputs? (AirPods = no)
 #include "Shared/OBJAggregateDevice.h"     // a private aggregate for an input card other than the output card
+#include "Shared/OBJInputCardPolicy.h"     // the input's frequency rule, the Bluetooth state machine, the absence judge
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -1586,6 +1587,47 @@ struct OBJDeviceChangeWatcher : public juce::ChangeListener {
     }
 };
 
+/// What the Bluetooth state machine listens to while it waits for the system to calm down: the audio device
+/// manager's own change broadcasts (the device list, the open device) and CoreAudio's own properties —
+/// the device list, and the rate and channel layout of the cards involved. Main thread, both ways.
+struct OBJInputCardWatch : public juce::ChangeListener {
+    juce::AudioDeviceManager&  dm;
+    std::function<void()>      onChange;
+    struct Registered { AudioObjectID object; AudioObjectPropertyAddress address; AudioObjectPropertyListenerBlock block; };
+    std::vector<Registered>    registered;
+
+    OBJInputCardWatch(juce::AudioDeviceManager& manager, const std::vector<AudioObjectID>& devices, std::function<void()> fn)
+        : dm(manager), onChange(std::move(fn))
+    {
+        dm.addChangeListener(this);
+        add(kAudioObjectSystemObject, { kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain });
+        for (AudioObjectID d : devices) {
+            if (d == kAudioObjectUnknown) continue;
+            add(d, { kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain });
+            add(d, { kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeInput, kAudioObjectPropertyElementMain });
+            add(d, { kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain });
+        }
+    }
+    ~OBJInputCardWatch() override
+    {
+        dm.removeChangeListener(this);
+        for (auto& r : registered) {
+            AudioObjectRemovePropertyListenerBlock(r.object, &r.address, dispatch_get_main_queue(), r.block);
+            Block_release(r.block);          // this file is MRC: the block was copied to the heap by `add`
+        }
+    }
+    void add(AudioObjectID object, AudioObjectPropertyAddress address)
+    {
+        std::function<void()>* fn = &onChange;
+        AudioObjectPropertyListenerBlock block = Block_copy(^(UInt32, const AudioObjectPropertyAddress*) { if (*fn) (*fn)(); });
+        if (AudioObjectAddPropertyListenerBlock(object, &address, dispatch_get_main_queue(), block) == noErr)
+            registered.push_back({ object, address, block });
+        else
+            Block_release(block);
+    }
+    void changeListenerCallback(juce::ChangeBroadcaster*) override { if (onChange) onChange(); }
+};
+
 // Timer générique à callback (même patron que OBJLatencyWatcher ci-dessus).
 struct OBJCallbackTimer : public juce::Timer {
     std::function<void()> onTick;
@@ -2335,6 +2377,16 @@ struct OBJExportLoadScope {
     // just before: leaving the aggregate puts it back, channel mask included.
     objaggregate::Live                                    _aggregate;
     int                                                   _aggregateSerial;
+
+    // The Bluetooth microphone: the machine that decides when it is safe to build the aggregate, and what it
+    // owns while it waits (@see -beginBluetoothOpenFor:). `_btFailure` outlives the machine's `failed` state
+    // until the next request, a close or a change of card, so the interface can say why.
+    OBJBluetoothInputMachine                              _bt;
+    NSString*                                             _btUID;
+    NSString*                                             _btFailure;
+    dispatch_source_t                                     _btTimer;
+    std::unique_ptr<objaggregate::PreSwitch>              _btPreSwitch;
+    std::unique_ptr<OBJInputCardWatch>                    _btWatch;
     juce::AudioDeviceManager::AudioDeviceSetup            _aggregateRealSetup;
 
     // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
@@ -11147,6 +11199,8 @@ static void objDumpPluginList(te::PluginList& pl,
     if (_aggregate && dm.getCurrentAudioDevice() != nullptr && objRealOutputName(dm.getAudioDeviceSetup()) == newName) return;
     BOOL wasPlaying = [self isCurrentlyPlaying];
     [self stop];
+    [self cancelBluetoothOpen];
+    if (_bt.state == OBJBluetoothInputState::open) _bt.close();
     // Another card: the aggregate is built on the old one, so it goes first (JUCE back on the real
     // card BEFORE the aggregate is destroyed under it).
     if (_aggregate) [self leaveAggregate];
@@ -11291,6 +11345,8 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* dev = dm.getCurrentAudioDevice();
     s.rateDecision = (NSInteger)OBJRateDecisionKind::unknown;       // rien d'ouvert : rien de décidé
+    s.inputsState = [self inputsState];
+    s.inputsMessage = _btFailure;
     if (dev == nullptr || !dev->isOpen()) return s;                 // --no-audio, ouverture ratée
     const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
     if (outs == 0) return s;                                        // device entrée seule
@@ -11417,6 +11473,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     }
     if ((uid == nil && _inputDeviceUID == nil) || [uid isEqualToString:_inputDeviceUID ?: @""]) return nil;
     if (_recordingActive) return @"a recording is running";
+    [self cancelBluetoothOpen];
 
     const BOOL wasOpen = [self audioInputsOpen];
     NSLog(@"[OBJ] setInputDevice: %@ (was %@, inputs %s)", uid ?: @"(same card)", _inputDeviceUID ?: @"(same card)",
@@ -11438,7 +11495,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto* dev = dm.getCurrentAudioDevice();
     if (dev == nullptr || !dev->isOpen()) return @"no audio device is open";
     if ([self audioInputsOpen]) { [self ensureInputMeter]; return nil; }
-    if (_inputDeviceUID != nil) return [self openSeparateAudioInputs];
+    if (_inputDeviceUID != nil) return [self beginOpenInputsFor:_inputDeviceUID];
 
     auto setup = dm.getAudioDeviceSetup();
     const juce::String outName = setup.outputDeviceName;
@@ -11448,13 +11505,19 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (type == nullptr || !type->getDeviceNames(true).contains(outName))
         return @"this device has no inputs";
     // The inputs under this name may be ANOTHER CoreAudio device (AirPods: speaker and microphone are
-    // two devices with one name). JUCE would aggregate them, the switch to the call profile makes
-    // CoreAudio retire and republish both, and the aggregate restarts itself from a CoreAudio thread
-    // while this one is still inside setAudioDeviceSetup — a crash. Refuse before touching anything:
-    // the output stays exactly as it is (@see Shared/OBJCoreAudioProbe.h).
+    // two devices with one name). JUCE's own aggregation of them is what crashed (the switch to the call
+    // profile makes CoreAudio retire and republish both while this thread is still inside
+    // setAudioDeviceSetup), so it is never used: the microphone half is taken as THE INPUT CARD and opened
+    // through our own private aggregate, after the Bluetooth state machine has waited for the switch to
+    // settle (@see -beginBluetoothOpenFor:). With no microphone to be found, the old refusal stands, before
+    // anything is touched.
     if (objOutputInputsAreSeparate(dm)) {
-        NSLog(@"[OBJ] openAudioInputs refused: the inputs of '%s' are a separate device", outName.toRawUTF8());
-        return OBJInputsSeparateDeviceReason;
+        NSString* sibling = [self separateInputSiblingUID];
+        if (sibling == nil) {
+            NSLog(@"[OBJ] openAudioInputs refused: the inputs of '%s' are a separate device nobody can name", outName.toRawUTF8());
+            return OBJInputsSeparateDeviceReason;
+        }
+        return [self beginOpenInputsFor:sibling];
     }
 
     // How many channels to ask for: a throw-away input-only object of the same card answers without
@@ -11495,18 +11558,50 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     return failure;
 }
 
+/// The input card that carries the inputs of an output card whose inputs are a SEPARATE device (AirPods), when
+/// it can be named: nil otherwise. `--virtual-audio` with `splitin:1`: the second card, if there is one.
+- (NSString* _Nullable)separateInputSiblingUID {
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    if (type == nullptr) return nil;
+    if (type->getTypeName() == objvirtual::cardName())
+        return objvirtual::state().config.numIn2 > 0 ? @(objvirtual::secondCardName()) : nil;
+    if (type->getTypeName() != "CoreAudio") return nil;
+    const juce::String outName = objRealOutputName(dm.getAudioDeviceSetup());
+    const std::string uid = objcoreaudio::siblingInputUID(objcoreaudio::listDevices(), outName.toStdString(),
+                                                          [self outputCardUID]);
+    return uid.empty() ? nil : @(uid.c_str());
+}
+
+/// Is this input card a Bluetooth microphone? `--virtual-audio` with `hfp:1`: the second card plays one.
+- (BOOL)inputCardIsBluetooth:(NSString*)uid {
+    auto* type = _engine->getDeviceManager().deviceManager.getCurrentDeviceTypeObject();
+    if (type == nullptr) return NO;
+    if (type->getTypeName() == objvirtual::cardName())
+        return objvirtual::state().config.hfp && [uid isEqualToString:@(objvirtual::secondCardName())];
+    if (type->getTypeName() != "CoreAudio") return NO;
+    return objcoreaudio::isBluetooth(objcoreaudio::listDevices(), std::string([uid UTF8String]));
+}
+
+/// Opens the inputs on `uid`, a card other than the output's: at once, or — a Bluetooth microphone — by the
+/// state machine, which answers nil NOW and finishes later (`-inputsState` says where it stands).
+- (NSString* _Nullable)beginOpenInputsFor:(NSString*)uid {
+    if ([self inputCardIsBluetooth:uid]) return [self beginBluetoothOpenFor:uid];
+    return [self openSeparateAudioInputsFor:uid];
+}
+
 /// The inputs of ANOTHER card than the output's. `--virtual-audio`: the virtual second card, as one
-/// device with the output card's outputs. A real CoreAudio card: not yet (@see the aggregate device).
-- (NSString* _Nullable)openSeparateAudioInputs {
+/// device with the output card's outputs. A real CoreAudio card: the private aggregate.
+- (NSString* _Nullable)openSeparateAudioInputsFor:(NSString*)uid {
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* type = dm.getCurrentDeviceTypeObject();
     if (type == nullptr) return @"no audio device is open";
-    if (type->getTypeName() == "CoreAudio") return [self openAggregateInputs];
+    if (type->getTypeName() == "CoreAudio") return [self openAggregateInputsFor:uid];
     if (type->getTypeName() != objvirtual::cardName())
         return @"an input card different from the output card is not available on this card type";
 
     auto setup = dm.getAudioDeviceSetup();
-    const juce::String inName = juce::String::fromUTF8([_inputDeviceUID UTF8String]);
+    const juce::String inName = juce::String::fromUTF8([uid UTF8String]);
     const int numIn = inName == objvirtual::secondCardName() ? objvirtual::state().config.numIn2
                                                               : objvirtual::state().config.numIn;
     if (numIn <= 0) return @"this input card has no input channels";
@@ -11541,7 +11636,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 /// CoreAudio device (so JUCE builds no combiner — the output is the master clock and the input
 /// is drift-compensated against it). The input card is listed first, so its channels are the aggregate's
 /// first (window [0, N)); the output card's channels follow, at [J, J+M).
-- (NSString* _Nullable)openAggregateInputs {
+- (NSString* _Nullable)openAggregateInputsFor:(NSString*)uid {
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* type = dm.getCurrentDeviceTypeObject();
     auto* cur  = dm.getCurrentAudioDevice();
@@ -11549,13 +11644,30 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 
     const std::string outUID = [self outputCardUID];
     if (outUID.empty()) return @"the output card cannot be identified";
-    const std::string inUID = std::string([_inputDeviceUID UTF8String]);
+    const std::string inUID = std::string([uid UTF8String]);
     objaggregate::Card outCard, inCard;
     if (!objaggregate::describe(outUID, outCard)) return @"the output card is not available";
     if (!objaggregate::describe(inUID, inCard))   return @"this input card is not available";
     if (inCard.inputChannels <= 0) return @"this input card has no input channels";
     if (outCard.outputChannels <= 0) return @"the output card has no output channels";
     const objaggregate::Window win = objaggregate::window(outCard, inCard);
+
+    // THE FREQUENCY: the output card decides, the input card aligns on it or the choice is refused with a
+    // message (never the other way round, never a resampling nobody asked for).
+    {
+        const double outRate = cur->getCurrentSampleRate();
+        const OBJInputRateDecision d = objDecideInputRate(outRate, objaggregate::nominalRate(inUID),
+                                                          objaggregate::availableRates(inUID));
+        if (d.kind == OBJInputRateKind::refuse) {
+            NSLog(@"[OBJ] input card refused: %s runs at %.0f Hz and does not offer %.0f Hz", inCard.name.c_str(),
+                  objaggregate::nominalRate(inUID), outRate);
+            return [NSString stringWithFormat:@"%s does not offer %.0f Hz, the rate of the output card (it runs at %.0f Hz).",
+                    inCard.name.c_str(), outRate, objaggregate::nominalRate(inUID)];
+        }
+        if (d.kind == OBJInputRateKind::align && !objaggregate::setNominalRate(inUID, d.rate))
+            return [NSString stringWithFormat:@"%s did not move to %.0f Hz, the rate of the output card.",
+                    inCard.name.c_str(), d.rate];
+    }
 
     const auto before = dm.getAudioDeviceSetup();     // the REAL setup, put back on any failure
     NSLog(@"[OBJ] openAggregateInputs : in %s (%d), out %s (%d, window from %d)", inCard.name.c_str(), win.inCount,
@@ -11634,6 +11746,121 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     return failure;
 }
 
+// MARK: The Bluetooth microphone
+//
+// Opening a Bluetooth headset's microphone flips it from music to the call profile, and the system republishes
+// its devices in bursts, changing their rate. An aggregate built DURING that would hold devices that are
+// about to vanish. So the open goes through `OBJBluetoothInputMachine`: a throw-away IOProc started on the
+// microphone PROVOKES the switch (on `--virtual-audio` with `hfp:1`, a scripted burst of device-list changes
+// stands in for it), every change of the system is counted, and the aggregate is built once the system has
+// been calm for a second — or given up on at six, with a message the interface shows.
+
+static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
+
+- (NSInteger)inputsState {
+    if (_bt.state != OBJBluetoothInputState::closed) return (NSInteger) _bt.state;
+    return [self audioInputsOpen] ? (NSInteger) OBJBluetoothInputState::open : (NSInteger) OBJBluetoothInputState::closed;
+}
+
+- (NSString* _Nullable)inputsFailureMessage { return _btFailure; }
+
+- (void)notifyAudioDeviceChanged {
+    if (self.onAudioDeviceChanged) self.onAudioDeviceChanged();
+}
+
+- (NSString* _Nullable)beginBluetoothOpenFor:(NSString*)uid {
+    if (_bt.state == OBJBluetoothInputState::stabilising) return nil;       // already on its way
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    if (type == nullptr) return @"no audio device is open";
+    [self setBluetoothFailure:nil];
+    [_btUID release];
+    _btUID = [uid copy];
+    _bt.request(objBtNow());
+    NSLog(@"[OBJ] Bluetooth input %@: stabilising", uid);
+
+    std::vector<AudioObjectID> devices;
+    const bool virt = type->getTypeName() == objvirtual::cardName();
+    if (!virt) {
+        devices.push_back(objaggregate::deviceByUID(std::string([uid UTF8String])));
+        devices.push_back(objaggregate::deviceByUID([self outputCardUID]));
+    }
+    __unsafe_unretained OBJEngineCore* me = self;
+    _btWatch = std::make_unique<OBJInputCardWatch>(dm, devices, [me] { [me bluetoothNoteChange]; });
+
+    if (virt) {
+        // The simulated profile switch: a burst of device-list changes, a quarter of a second apart.
+        for (int i = 0; i < 5; ++i)
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t) (i * 0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                if (me->_bt.state == OBJBluetoothInputState::stabilising && objvirtual::state().fireDeviceChange)
+                    objvirtual::state().fireDeviceChange();
+            });
+    } else {
+        _btPreSwitch = std::make_unique<objaggregate::PreSwitch>();
+        if (!_btPreSwitch->start(std::string([uid UTF8String])))
+            NSLog(@"[OBJ] Bluetooth input: the pre-switch could not start (the system may not switch)");
+    }
+
+    _btTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(_btTimer, dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), 100 * NSEC_PER_MSEC, 10 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(_btTimer, ^{ [me bluetoothTick]; });
+    dispatch_resume(_btTimer);
+    [self notifyAudioDeviceChanged];
+    return nil;
+}
+
+- (void)bluetoothNoteChange { _bt.noteChange(objBtNow()); }
+
+- (void)bluetoothTick {
+    switch (_bt.poll(objBtNow())) {
+        case OBJBluetoothAction::none: return;
+        case OBJBluetoothAction::giveUp:
+            [self setBluetoothFailure:@"The Bluetooth microphone did not settle: the audio system kept changing. Try again."];
+            NSLog(@"[OBJ] Bluetooth input: given up");
+            [self releaseBluetoothHelpers];
+            [self notifyAudioDeviceChanged];
+            return;
+        case OBJBluetoothAction::openNow: {
+            NSLog(@"[OBJ] Bluetooth input: calm, opening");
+            NSString* uid = [[_btUID copy] autorelease];
+            // The watch and the timer go BEFORE the open (it changes the device itself); the pre-switch stays
+            // until the inputs are open, or the headset would flip back to music under it.
+            [self releaseBluetoothWatching];
+            NSString* why = [self openSeparateAudioInputsFor:uid];
+            if (why != nil) { _bt.failed(); [self setBluetoothFailure:why]; } else _bt.opened();
+            [self releaseBluetoothHelpers];
+            [self notifyAudioDeviceChanged];
+            return;
+        }
+    }
+}
+
+- (void)releaseBluetoothWatching {
+    if (_btTimer != nil) { dispatch_source_cancel(_btTimer); dispatch_release(_btTimer); _btTimer = nil; }
+    _btWatch.reset();
+}
+
+- (void)releaseBluetoothHelpers {
+    [self releaseBluetoothWatching];
+    _btPreSwitch.reset();
+}
+
+/// The inputs were closed, another card was chosen, the output changed: the machine starts over.
+- (void)cancelBluetoothOpen {
+    [self releaseBluetoothHelpers];
+    if (_bt.state == OBJBluetoothInputState::closed && _btFailure == nil) return;
+    _bt.close();
+    [self setBluetoothFailure:nil];
+    [_btUID release];
+    _btUID = nil;
+}
+
+- (void)setBluetoothFailure:(NSString* _Nullable)why {
+    if (why == _btFailure) return;
+    [_btFailure release];
+    _btFailure = [why copy];
+}
+
 /// Back to the real output card, inputs closed, then the aggregate destroyed — in THAT order: JUCE
 /// must have let go of the aggregate before it disappears under it.
 - (void)leaveAggregate { [self leaveAggregateWithSetup:_aggregateRealSetup]; }
@@ -11658,12 +11885,16 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 }
 
 - (void)closeAudioInputs {
+    const BOOL btWasWaiting = _bt.state == OBJBluetoothInputState::stabilising || _bt.state == OBJBluetoothInputState::failed;
+    [self cancelBluetoothOpen];
+    if (btWasWaiting) [self notifyAudioDeviceChanged];
     [self stopRecordingIfActive];
     [self releaseInputMeter];
     _monitoredInputs.clear();
     _inputMonitorGains.clear();
     _armedInputs.clear();
     [self syncInputMonitors];
+    if (_bt.state == OBJBluetoothInputState::open) _bt.close();
     if (_aggregate) {
         NSLog(@"[OBJ] closeAudioInputs (aggregate)");
         const BOOL wasPlayingAgg = [self isCurrentlyPlaying];
@@ -12621,6 +12852,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
               @"input_latency": @(st.config.inLatency),
               @"output_latency": @(st.config.outLatency),
               @"split_inputs": @(st.config.splitIn),
+              @"hfp": @(st.config.hfp),
               @"announced_input_latency": @(onVirtual ? dev->getInputLatencyInSamples() : st.config.inLatency + block),
               @"announced_output_latency": @(onVirtual ? dev->getOutputLatencyInSamples() : st.config.outLatency + block),
               @"loopback_delay": @(objvirtual::loopbackDelaySamples(st.config, block)),

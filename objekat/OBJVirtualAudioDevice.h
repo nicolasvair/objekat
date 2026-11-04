@@ -40,6 +40,7 @@
 #include <tracktion_engine/tracktion_engine.h>
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -78,6 +79,10 @@ struct Config {
     /// them (`-openAudioInputs`, same test as on a real card), which makes that refusal reachable with
     /// no hardware. Nothing else changes: the card still has its inputs, they are just never opened.
     bool   splitIn     = false;
+    /// `hfp:1`: the SECOND card plays a Bluetooth headset's microphone. Opening it is not instant: the engine
+    /// starts the pre-switch, and the card answers with a BURST of device-list changes (the system's way of
+    /// republishing a headset that changes profile) before it settles. Reachable with no headset at all.
+    bool   hfp         = false;
 };
 
 /// "in:4,out:2,in2:0,sr:48000,bs:256,inlat:64,outlat:96,splitin:0" — every key optional, unknown keys and malformed
@@ -111,6 +116,7 @@ inline Config parseConfig(const std::string& spec)
         else if (key == "inlat")  c.inLatency  = std::max(0, (int) v);
         else if (key == "outlat") c.outLatency = std::max(0, (int) v);
         else if (key == "splitin") c.splitIn   = v != 0.0;
+        else if (key == "hfp")     c.hfp       = v != 0.0;
     }
     c.numIn2 = std::min(c.numIn2, kMaxInputs - c.numIn);       // the signals are shared: 64 channels in all
     return c;
@@ -151,6 +157,9 @@ struct State {
     Config config;
     bool   active = false;                   // `--virtual-audio` was given (and audio is not disabled)
     std::array<ChannelSignal, kMaxInputs> inputs;
+    /// Set by the card type while it exists: tells the audio device manager that the device list changed (what
+    /// CoreAudio does when a headset republishes). Main thread only.
+    std::function<void()> fireDeviceChange;
 };
 
 inline State& state() { static State s; return s; }
@@ -424,7 +433,11 @@ private:
 class OBJVirtualAudioDeviceType : public juce::AudioIODeviceType
 {
 public:
-    explicit OBJVirtualAudioDeviceType(const Config& cfg) : juce::AudioIODeviceType(cardName()), config(cfg) {}
+    explicit OBJVirtualAudioDeviceType(const Config& cfg) : juce::AudioIODeviceType(cardName()), config(cfg)
+    {
+        state().fireDeviceChange = [this] { callDeviceChangeListeners(); };
+    }
+    ~OBJVirtualAudioDeviceType() override { state().fireDeviceChange = nullptr; }
 
     void scanForDevices() override {}
 

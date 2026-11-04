@@ -178,6 +178,88 @@ try:
     stop(proc, SOCK)
     proc = None
 
+    # ════════════════════════════════════════════════════════════════════════════════════════
+    section("PHASE B — hfp:1 : the second card is a Bluetooth microphone (state machine)")
+    proc = launch(SOCK, ["--virtual-audio=in:2,in2:3,hfp:1"])
+    with ObjekatClient(SOCK) as c:
+        check("the virtual card says it plays a headset", c.send("audio.virtual.status").get("hfp") is True)
+        st = c.send("audio.set_input_device", {"uid": CARD2})
+        check("choosing it opens nothing yet (state closed)", st["inputs_state"] == "closed" and st["input_channels"] == 0, st)
+
+        result = {}
+        def enable():
+            try:
+                with ObjekatClient(SOCK) as c2:
+                    t0 = time.time()
+                    result["list"] = c2.send("input.enable")
+                    result["secs"] = time.time() - t0
+            except Exception as e:                      # noqa: BLE001 — reported by the assertion below
+                result["error"] = e
+        import threading
+        th = threading.Thread(target=enable); th.start()
+        seen = set()
+        t_end = time.time() + 12
+        while th.is_alive() and time.time() < t_end:
+            seen.add(c.send("audio.status")["inputs_state"])
+            time.sleep(0.1)
+        th.join(timeout=5)
+        check("input.enable answered open on the second card (3 channels)",
+              result.get("list", {}).get("open") is True and result["list"]["channels"] == 3, result)
+        check("it WAITED for the burst and the calm (%.1f s: more than 1.5, under 6)" % result.get("secs", -1),
+              1.5 < result.get("secs", 0) < 6, result.get("secs"))
+        check("the state was observed as stabilising on the way", "stabilising" in seen, sorted(seen))
+        st = c.send("audio.status")
+        check("... and is open at the end", st["inputs_state"] == "open" and st["input_channels"] == 3, st)
+        check("the output kept running throughout", st["running"] is True and st["device"] == CARD and st["output_channels"] == 2, st)
+        check("the transport plays on it",
+              (c.send("transport.play"), time.sleep(0.4), c.send("transport.state")["position"])[2] > 0.2)
+        c.send("transport.stop")
+
+        c.send("input.disable")
+        check("input.disable: state closed again", c.send("audio.status")["inputs_state"] == "closed")
+
+        # Closing WHILE it stabilises cancels the machine: no late opening.
+        def enable_and_ignore():
+            try:
+                with ObjekatClient(SOCK) as c3:
+                    c3.send("input.enable")
+            except Exception:                           # noqa: BLE001 — the cancelled open may answer an error
+                pass
+        th2 = threading.Thread(target=enable_and_ignore)
+        th2.daemon = True; th2.start()
+        time.sleep(0.4)
+        check("(stabilising right now)", c.send("audio.status")["inputs_state"] == "stabilising")
+        c.send("input.disable")
+        time.sleep(2.5)
+        st = c.send("audio.status")
+        check("a close while stabilising cancels it: nothing opens later", st["inputs_state"] == "closed" and st["input_channels"] == 0, st)
+        th2.join(timeout=8)
+    stop(proc, SOCK)
+    proc = None
+
+    # ════════════════════════════════════════════════════════════════════════════════════════
+    section("PHASE C — splitin:1 : the inputs of the output card are another device")
+    proc = launch(SOCK, ["--virtual-audio=in:2,in2:3,splitin:1"])
+    with ObjekatClient(SOCK) as c:
+        check("inputs_separate is announced before opening", c.send("audio.status")["inputs_separate"] is True)
+        lst = c.send("input.enable")
+        check("with a microphone half to be found, it opens (3 channels, the second card)",
+              lst["open"] is True and lst["channels"] == 3, lst)
+        st = c.send("audio.status")
+        check("... on a running output, inputs_separate false once open", st["running"] is True and st["inputs_separate"] is False, st)
+        c.send("input.disable")
+    stop(proc, SOCK)
+    proc = None
+    proc = launch(SOCK, ["--virtual-audio=in:2,splitin:1"])
+    with ObjekatClient(SOCK) as c:
+        e = refusal(c, "input.enable")
+        check("with NO microphone half to be found, the old refusal stands",
+              e is not None and e.code == "invalid_state" and (e.details or {}).get("reason") == "inputs_on_separate_device",
+              e and (e.code, e.message, e.details))
+        check("... and the output is untouched", c.send("audio.status")["running"] is True)
+    stop(proc, SOCK)
+    proc = None
+
     check("Settings.xml is byte for byte what it was", digest(settings_bytes()) == before)
 finally:
     stop(proc, SOCK)

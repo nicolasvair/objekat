@@ -30,6 +30,24 @@ enum SampleRateDecision: Int, Equatable {
     init(raw: Int) { self = SampleRateDecision(rawValue: raw) ?? .unknown }
 }
 
+/// Where opening the inputs stands — the Swift mirror of `OBJBluetoothInputState` (`Shared/OBJInputCardPolicy.h`),
+/// raw values included. A Bluetooth microphone is `stabilising` for a second or more while the headset
+/// switches to the call profile; every other card goes straight from `closed` to `open`.
+enum InputsState: Int, Equatable {
+    case closed = 0, stabilising = 1, open = 2, failed = 3
+
+    /// The API's own spelling (`audio.status.inputs_state`).
+    var apiName: String {
+        switch self {
+        case .closed: return "closed"
+        case .stabilising: return "stabilising"
+        case .open: return "open"
+        case .failed: return "failed"
+        }
+    }
+    init(raw: Int) { self = InputsState(rawValue: raw) ?? .closed }
+}
+
 /// A snapshot of the audio device actually open in the engine — the Swift-side mirror of
 /// `OBJAudioDeviceSnapshot`, kept as plain `Equatable` data so `AudioDeviceStatus.refresh()` can
 /// tell "nothing changed" from a real change and write only on the latter (@see the memory note
@@ -50,6 +68,9 @@ struct AudioDeviceSnapshot: Equatable {
     /// card's own. A choice: it is set while the inputs are still closed.
     var inputDeviceUID: String? = nil
     var inputDeviceName: String? = nil
+    /// Where opening the inputs stands (@see `InputsState`) and, after a failure, why.
+    var inputsState: InputsState = .closed
+    var inputsMessage: String? = nil
     var running: Bool
     /// What the sample-rate policy decided (@see `SampleRateDecision`) and the rate the card had
     /// BEFORE it — the one that was refused, for `.fallback` and `.outOfRangeKept`.
@@ -117,6 +138,8 @@ final class AudioDeviceStatus {
                                        inputChannels: live.inputChannels,
                                        inputsSeparate: live.inputsSeparate,
                                        inputDeviceUID: live.inputDeviceUID, inputDeviceName: live.inputDeviceName,
+                                       inputsState: InputsState(raw: live.inputsState),
+                                       inputsMessage: live.inputsMessage,
                                        running: live.running,
                                        rateDecision: SampleRateDecision(raw: live.rateDecision),
                                        deviceRateBeforeDecision: live.deviceRateBeforeDecision)

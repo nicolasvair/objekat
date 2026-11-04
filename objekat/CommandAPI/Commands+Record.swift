@@ -42,6 +42,18 @@ extension CommandRegistry {
                 }
                 throw CommandError(code: .engine_error, message: why)
             }
+            // A Bluetooth microphone is not instant: the state machine answers "stabilising" and finishes
+            // a second or more later. This call waits for it (bounded: the machine gives up at six
+            // seconds by itself), then reports a failure like any other.
+            var waited = 0.0
+            while engine.inputsState() == InputsState.stabilising.rawValue && waited < 12 {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                waited += 0.1
+            }
+            if engine.inputsState() == InputsState.failed.rawValue {
+                let why = engine.inputsFailureMessage() ?? "the inputs did not open"
+                throw CommandError(code: .engine_error, message: why)
+            }
             _ = await Self.awaitDeviceSettled(from: before)
             return Self.inputListPayload(engine)
         }
@@ -51,7 +63,10 @@ extension CommandRegistry {
                           "they are closed.",
                  undo: .none) { _ in
             let engine = try CommandContext.shared.requireEngine()
-            guard engine.audioInputsOpen() else { return Self.inputListPayload(engine) }
+            // Also while a Bluetooth microphone is stabilising or has failed: closing cancels the machine.
+            guard engine.audioInputsOpen() || engine.inputsState() != InputsState.closed.rawValue else {
+                return Self.inputListPayload(engine)
+            }
             let before = AudioDeviceStatus.shared.generation
             engine.closeAudioInputs()
             _ = await Self.awaitDeviceSettled(from: before)

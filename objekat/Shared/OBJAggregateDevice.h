@@ -40,6 +40,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -187,6 +188,94 @@ inline bool describe(const std::string& uid, Card& out)
     out = c;
     return true;
 }
+
+/// The card's nominal rate now (0 = unknown) and the rates it offers (empty = unknown).
+inline double nominalRate(const std::string& uid)
+{
+    const AudioObjectID dev = deviceByUID(uid);
+    if (dev == kAudioObjectUnknown) return 0;
+    AudioObjectPropertyAddress a { kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    Float64 r = 0; UInt32 size = sizeof(r);
+    return AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, &r) == noErr ? (double) r : 0.0;
+}
+
+inline std::vector<double> availableRates(const std::string& uid)
+{
+    std::vector<double> out;
+    const AudioObjectID dev = deviceByUID(uid);
+    if (dev == kAudioObjectUnknown) return out;
+    AudioObjectPropertyAddress a { kAudioDevicePropertyAvailableNominalSampleRates, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    UInt32 size = 0;
+    if (AudioObjectGetPropertyDataSize(dev, &a, 0, nullptr, &size) != noErr || size == 0) return out;
+    std::vector<AudioValueRange> ranges(size / sizeof(AudioValueRange));
+    if (AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, ranges.data()) != noErr) return out;
+    for (const auto& r : ranges) {
+        out.push_back(r.mMinimum);
+        if (r.mMaximum != r.mMinimum) out.push_back(r.mMaximum);
+        // A continuous range lists its ends only: the usual rates inside it are offered too.
+        for (double c : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 })
+            if (c > r.mMinimum && c < r.mMaximum) out.push_back(c);
+    }
+    return out;
+}
+
+/// Asks the card to run at `rate` (a nominal rate is the card's, for every application) and waits, bounded,
+/// until it says so. True if it does.
+inline bool setNominalRate(const std::string& uid, double rate, int waitMs = 2000)
+{
+    const AudioObjectID dev = deviceByUID(uid);
+    if (dev == kAudioObjectUnknown) return false;
+    AudioObjectPropertyAddress a { kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    Float64 r = rate;
+    if (AudioObjectSetPropertyData(dev, &a, 0, nullptr, sizeof(r), &r) != noErr) return false;
+    for (int waited = 0; waited <= waitMs; waited += 25) {
+        const double now = nominalRate(uid);
+        if (now > 0 && std::fabs(now - rate) <= 1.0) return true;
+        usleep(25 * 1000);
+    }
+    return false;
+}
+
+/// A throw-away IOProc started on a card's input, to PROVOKE what opening it provokes: a Bluetooth headset
+/// switches from music to the call profile, and the system republishes its devices and changes their rate.
+/// It reads nothing and touches nothing; it only keeps the input running until it is stopped. Without the
+/// microphone permission the system simply delivers silence.
+class PreSwitch {
+public:
+    PreSwitch() = default;
+    PreSwitch(const PreSwitch&) = delete;
+    PreSwitch& operator=(const PreSwitch&) = delete;
+    ~PreSwitch() { stop(); }
+
+    bool start(const std::string& uid)
+    {
+        stop();
+        dev_ = deviceByUID(uid);
+        if (dev_ == kAudioObjectUnknown) return false;
+        const OSStatus c = AudioDeviceCreateIOProcID(dev_, &PreSwitch::ioProc, nullptr, &proc_);
+        if (c != noErr || proc_ == nullptr) { proc_ = nullptr; dev_ = kAudioObjectUnknown; return false; }
+        if (AudioDeviceStart(dev_, proc_) != noErr) { stop(); return false; }
+        return true;
+    }
+
+    void stop()
+    {
+        if (proc_ != nullptr && dev_ != kAudioObjectUnknown) {
+            AudioDeviceStop(dev_, proc_);
+            AudioDeviceDestroyIOProcID(dev_, proc_);
+        }
+        proc_ = nullptr;
+        dev_ = kAudioObjectUnknown;
+    }
+
+    bool running() const { return proc_ != nullptr; }
+
+private:
+    static OSStatus ioProc(AudioObjectID, const AudioTimeStamp*, const AudioBufferList*, const AudioTimeStamp*,
+                           AudioBufferList*, const AudioTimeStamp*, void*) { return noErr; }
+    AudioObjectID dev_ = kAudioObjectUnknown;
+    AudioDeviceIOProcID proc_ = nullptr;
+};
 
 /// A live aggregate.
 struct Live {

@@ -44,6 +44,8 @@ struct DeviceInfo {
     int inputChannels  = 0;
     std::string uid;           // the CoreAudio UID: what identifies a card across launches and names (last, so
                                // the aggregate initialisation { name, out, in } of the tests still reads)
+    bool bluetooth = false;    // the transport is Bluetooth (classic or LE): opening its microphone flips the
+                               // headset from music to the call profile (@see OBJInputCardPolicy.h)
 };
 
 enum class Ownership {
@@ -98,6 +100,30 @@ inline std::string outputUID(const std::vector<DeviceInfo>& devices, const std::
     return count == 1 ? found : std::string();
 }
 
+/// True when the device with this UID is listed and its transport is Bluetooth. Pure.
+inline bool isBluetooth(const std::vector<DeviceInfo>& devices, const std::string& uid)
+{
+    for (const auto& d : devices) if (!uid.empty() && d.uid == uid) return d.bluetooth;
+    return false;
+}
+
+/// The device that carries the INPUTS of the output card called `outputName` when they are a separate
+/// device (AirPods: a speaker and a microphone, two CoreAudio devices under one name): the one input-capable
+/// device with that name that is not the output itself. Empty when there is none or more than one. Pure.
+inline std::string siblingInputUID(const std::vector<DeviceInfo>& devices, const std::string& outputName,
+                                   const std::string& outputUID)
+{
+    const std::string want = trimmed(outputName);
+    std::string found;
+    int count = 0;
+    for (const auto& d : devices) {
+        if (d.inputChannels <= 0 || d.uid.empty() || d.uid == outputUID || trimmed(d.name) != want) continue;
+        ++count;
+        found = d.uid;
+    }
+    return count == 1 ? found : std::string();
+}
+
 #if defined(__APPLE__)
 
 namespace detail {
@@ -145,6 +171,14 @@ inline bool deviceUID(AudioObjectID dev, std::string& out)
     return true;
 }
 
+inline bool isBluetoothTransport(AudioObjectID dev)
+{
+    AudioObjectPropertyAddress a { kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    UInt32 t = 0, size = sizeof(t);
+    if (AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, &t) != noErr) return false;
+    return t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE;
+}
+
 } // namespace detail
 
 /// Every CoreAudio device the system lists right now. Empty if the system answers nothing. Never opens
@@ -162,6 +196,7 @@ inline std::vector<DeviceInfo> listDevices()
         DeviceInfo d;
         if (!detail::deviceName(id, d.name)) continue;
         detail::deviceUID(id, d.uid);              // best effort: a device with no UID keeps ""
+        d.bluetooth = detail::isBluetoothTransport(id);
         if (!detail::channelCount(id, kAudioObjectPropertyScopeOutput, d.outputChannels)) continue;
         if (!detail::channelCount(id, kAudioObjectPropertyScopeInput, d.inputChannels)) continue;
         result.push_back(std::move(d));

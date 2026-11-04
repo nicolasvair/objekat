@@ -89,6 +89,25 @@ int main(int argc, char** argv)
         check("outputUID: names are trimmed", outputUID(l, "  Speakers ") == "uid-spk");
     }
 
+    // The Bluetooth transport and the input half of a headset.
+    {
+        std::vector<DeviceInfo> l = {
+            { "Speakers", 2, 0, "uid-spk" }, { "Muse", 18, 18, "uid-muse" },
+            { "AirPods", 2, 0, "uid-air-out" }, { "AirPods", 0, 1, "uid-air-in" },
+            { "Twin", 2, 2, "uid-t1" }, { "Twin", 2, 2, "uid-t2" } };
+        l[2].bluetooth = true; l[3].bluetooth = true;
+        check("isBluetooth: the headset's microphone", isBluetooth(l, "uid-air-in"));
+        check("isBluetooth: a wired card is not", !isBluetooth(l, "uid-muse"));
+        check("isBluetooth: an unknown or empty uid is not", !isBluetooth(l, "uid-zzz") && !isBluetooth(l, ""));
+        check("siblingInputUID: the AirPods' microphone", siblingInputUID(l, "AirPods", "uid-air-out") == "uid-air-in");
+        check("siblingInputUID: a card with its own inputs has none", siblingInputUID(l, "Muse", "uid-muse").empty());
+        l.push_back({ "AirPods", 0, 1, "uid-air-in2" });
+        check("siblingInputUID: two candidates are ambiguous", siblingInputUID(l, "AirPods", "uid-air-out").empty());
+        l.pop_back();
+        check("siblingInputUID: names are trimmed", siblingInputUID(l, " AirPods ", "uid-air-out") == "uid-air-in");
+        check("siblingInputUID: output-only speakers have none", siblingInputUID(l, "Speakers", "uid-spk").empty());
+    }
+
     if (argc > 1 && std::strcmp(argv[1], "--live") == 0) {
         std::printf("\nLive (read-only):\n");
         const auto devices = listDevices();

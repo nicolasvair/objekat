@@ -63,7 +63,17 @@ try:
         st = c.send("audio.set_input_device", {"uid": card["uid"]})
         check("the choice alone opens nothing", st["input_channels"] == 0 and st["device"] == out, st)
 
-        lst = c.send("input.enable")
+        try:
+            lst = c.send("input.enable")
+        except ObjekatError as e:
+            # The frequency rule: the OUTPUT card decides, the input card aligns or the choice is refused.
+            check("the rate rule refuses with a message naming both rates", "does not offer" in e.message and "Hz" in e.message, e.message)
+            st = c.send("audio.status")
+            check("... and nothing moved (output running, inputs closed)",
+                  st["running"] is True and st["input_channels"] == 0 and st["device"] == out, st)
+            print("  (refused: %s)  moving the output card to 48000 Hz and trying again" % e.message)
+            c.send("audio.set_sample_rate", {"hz": 48000})
+            lst = c.send("input.enable")
         check("input.enable opens the chosen card (%d channels)" % card["channels"],
               lst["open"] is True and lst["channels"] == card["channels"], lst)
         st = c.send("audio.status")
