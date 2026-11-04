@@ -187,6 +187,33 @@ enum Run {
             check("reachable from before the loop = press to loop end", near(r2.lowerBound, 5) && near(r2.upperBound, 15))
         }
 
+        // ── The journal -> the passes of a file ─────────────────────────────────────────────────────────────
+        do {
+            typealias J = L.JournalPoint
+            let lin = L.segments(journal: [], origin: 4, length: 10)
+            check("no journal: one linear pass", lin == [S(fileStart: 0, length: 10, timelineStart: 4)])
+            check("a single point (an anchor) = a linear pass at the file's own origin",
+                  L.segments(journal: [J(clock: 4, timeline: 4)], origin: 4, length: 10) == lin)
+            check("a file that starts before the anchor: the first stretch is extended back",
+                  L.segments(journal: [J(clock: 4.5, timeline: 4.5)], origin: 4, length: 10) == lin)
+            // press at 1 (clock 1 = timeline 1), loop [3,5]: wraps at clock 5, 7, 9 ; the file starts at 0.98
+            let j = [J(clock: 1, timeline: 1), J(clock: 5, timeline: 3), J(clock: 7, timeline: 3), J(clock: 9, timeline: 3)]
+            let s = L.segments(journal: j, origin: 0.98, length: 8.5)       // file 0.98 .. 9.48 on the clock
+            check("four passes", s.count == 4)
+            check("pass 0 starts with the file, 0.02 s before the anchor",
+                  near(s[0].fileStart, 0) && near(s[0].timelineStart, 0.98) && near(s[0].length, 4.02))
+            check("pass 1: file 4.02 s in, timeline 3, 2 s", near(s[1].fileStart, 4.02) && near(s[1].timelineStart, 3) && near(s[1].length, 2))
+            check("the last pass runs to the file's end (the tail)", near(s[3].fileStart, 8.02) && near(s[3].length, 0.48))
+            check("the passes chain in the file", zip(s, s.dropFirst()).allSatisfy { near($0.fileStart + $0.length, $1.fileStart) })
+            check("a file that ends before a point drops the later passes", L.segments(journal: j, origin: 1, length: 3).count == 1)
+            check("a file that begins after the first points drops them", L.segments(journal: j, origin: 7.5, length: 1).count == 1
+                  && near(L.segments(journal: j, origin: 7.5, length: 1)[0].timelineStart, 3.5))
+            check("timeline(forClock:) — inside a pass", near(L.timeline(forClock: 6, journal: j), 4))
+            check("timeline(forClock:) — on a wrap, the new pass", near(L.timeline(forClock: 7, journal: j), 3))
+            check("timeline(forClock:) — before the anchor, extrapolated back", near(L.timeline(forClock: 0.5, journal: j), 0.5))
+            check("timeline(forClock:) — no journal", near(L.timeline(forClock: 2.5, journal: []), 2.5))
+        }
+
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)
     }

@@ -2006,6 +2006,7 @@ struct OBJExportLoadScope {
     // one is writing, and the listener collecting the result. @see -startRecordingInputs:.
     std::set<std::pair<int, int>>                             _armedInputs;
     std::map<std::pair<int, int>, juce::File>                 _recordFiles;
+    NSArray<NSDictionary<NSString*, NSNumber*>*>*              _lastRecordJournal;   // @see -lastRecordJournal
     std::unique_ptr<OBJRecordListener>                        _recordListener;
     bool                                                      _recordingActive;
     juce::String                                              _recordCardSignature;   // the card as it was at the press (@see -stopRecordingIfCardChanged)
@@ -11731,6 +11732,19 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 // The file is chosen here, not by Tracktion: `OBJEngineBehaviour::getFileForNewAudioRecording` answers from
 // `recordFiles`, filled for the length of one recording.
 
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>*)lastRecordJournal { return _lastRecordJournal ?: @[]; }
+
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>*)recordJournalNow {
+    NSMutableArray* out = [NSMutableArray array];
+    if (_edit && _recordListener)
+        if (auto* epc = _edit->getCurrentPlaybackContext()) {
+            const double sr = epc->getSampleRate();
+            for (auto& p : epc->getRecordJournal())
+                [out addObject:@{ @"clock": @((double) p.clockSample / sr), @"timeline": @((double) p.timelineSample / sr) }];
+        }
+    return out;
+}
+
 - (BOOL)isRecordingNow { return _recordingActive; }
 
 - (void)setAudioInputsArmed:(NSArray<NSDictionary<NSString*, NSNumber*>*>*)inputs {
@@ -11950,11 +11964,16 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         }
 
     // The journal of the passes (engine patch 0050): where the timeline was, from where the recording clock started.
-    // Quiet trace: one line per recording (the first 200 points).
+    // Kept for the host (`lastRecordJournal`), and a quiet trace: one line per recording (the first 200 points).
+    _lastRecordJournal = @[];
     if (_edit)
         if (auto* epc = _edit->getCurrentPlaybackContext()) {
             const auto journal = epc->getRecordJournal();
             const double sr = epc->getSampleRate();
+            NSMutableArray* all = [NSMutableArray arrayWithCapacity:journal.size()];
+            for (auto& p : journal)
+                [all addObject:@{ @"clock": @((double) p.clockSample / sr), @"timeline": @((double) p.timelineSample / sr) }];
+            _lastRecordJournal = all;
             NSMutableString* pts = [NSMutableString string];
             for (size_t i = 0; i < journal.size() && i < 200; ++i)
                 [pts appendFormat:@" (%.6f,%.6f)", (double) journal[i].clockSample / sr, (double) journal[i].timelineSample / sr];

@@ -1050,6 +1050,14 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// hidden tracks; the files stay. A MIDI zone's take is `{zone, device, origin, length, notes: [{pitch,
 /// start, end, velocity}], sustain: [{time, down}]}` — seconds on the timeline (sustain = CC64 events); a zone that played no note has none.
 @property (nonatomic, copy, nullable) void (^onRecordingFinished)(NSArray<NSDictionary<NSString*, id>*>* _Nonnull takes);
+/// The PASSES of the recording that just finished (engine patch 0050, docs/plan_enregistrement_audio.md "Rec en boucle"):
+/// the journal of the recording clock, one `{clock, timeline}` per discontinuity of the head (seconds; the first is the
+/// anchor at the press, the next ones every loop wrap or jump). `clock` is the time the recording's files and MIDI notes are
+/// written in (it advances one second per second of file, never rebased by a loop edit); `timeline` is where the head was
+/// then. Valid when `onRecordingFinished` is called (and until the next recording starts); empty when nothing was journaled.
+@property (nonatomic, readonly, copy) NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull lastRecordJournal;
+/// The same journal, LIVE, while a recording runs (empty otherwise): the last point says where the current pass began.
+- (NSArray<NSDictionary<NSString*, NSNumber*>*>* _Nonnull)recordJournalNow;
 
 // MIDI INPUTS (rec3-midi). Tracktion's own MIDI devices — physical ones, the "All MIDI Ins" virtual one
 // (`all_midi_in`) and, under `--virtual-midi`, "OBJ Virtual MIDI". Independent of the audio inputs: they

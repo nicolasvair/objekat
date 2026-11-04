@@ -76,6 +76,39 @@ enum RecordLoopPlanner {
         var shiftBy: Int { takes.count }
     }
 
+    /// One point of the engine's journal (`OBJEngineCore.lastRecordJournal`): from this instant of the RECORDING CLOCK on,
+    /// the head is at `timeline` and advances one second per second, until the next point. The clock is the time
+    /// the recording's files and MIDI notes are written in: file sample f is at `origin + f / rate` on it.
+    struct JournalPoint: Equatable {
+        let clock: Double
+        let timeline: Double
+    }
+
+    /// The passes of ONE file (its first sample at `origin` on the clock, `length` seconds long) from the journal. The
+    /// first stretch is extended back to the file's start and the last one to its end (the latency tail), whatever the
+    /// journal says there; a stretch outside the file is dropped. Without a journal, a linear recording from `origin`.
+    static func segments(journal: [JournalPoint], origin: Double, length: Double) -> [Segment] {
+        guard length > 0 else { return [] }
+        guard !journal.isEmpty else { return [Segment(fileStart: 0, length: length, timelineStart: origin)] }
+        let end = origin + length
+        var out: [Segment] = []
+        for (i, p) in journal.enumerated() {
+            let a = i == 0 ? origin : max(p.clock, origin)
+            let b = i + 1 < journal.count ? min(journal[i + 1].clock, end) : end
+            guard b > a else { continue }
+            out.append(Segment(fileStart: a - origin, length: b - a, timelineStart: p.timeline + (a - p.clock)))
+        }
+        return out
+    }
+
+    /// Where the head was at an instant of the recording clock (a MIDI note's stamp): the stretch that holds it, the
+    /// first one extended back, the last one forward. A clock with no journal is the timeline itself.
+    static func timeline(forClock c: Double, journal: [JournalPoint]) -> Double {
+        guard let first = journal.first else { return c }
+        let p = journal.last(where: { $0.clock <= c }) ?? first
+        return p.timeline + (c - p.clock)
+    }
+
     /// The range of the timeline the head is going to walk over from `startPosition`: `[start, ∞)` without a
     /// loop (or when it is behind the head), the loop's own range (extended back to the press if the press is
     /// before it) otherwise. A loop shorter than `minimumLoopLength` counts for none.
