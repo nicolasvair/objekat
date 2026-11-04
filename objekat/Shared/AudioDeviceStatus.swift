@@ -46,6 +46,10 @@ struct AudioDeviceSnapshot: Equatable {
     /// a microphone, two CoreAudio devices, one name). `input.enable` refuses them, and the Inputs tab
     /// says so instead of offering to enable them. Always false once the inputs are open.
     var inputsSeparate: Bool = false
+    /// The card the inputs are taken from when it is NOT the output card (UID and name); nil = the output
+    /// card's own. A choice: it is set while the inputs are still closed.
+    var inputDeviceUID: String? = nil
+    var inputDeviceName: String? = nil
     var running: Bool
     /// What the sample-rate policy decided (@see `SampleRateDecision`) and the rate the card had
     /// BEFORE it — the one that was refused, for `.fallback` and `.outOfRangeKept`.
@@ -111,7 +115,9 @@ final class AudioDeviceStatus {
                                        sampleRate: live.sampleRate, bufferSize: live.bufferSize,
                                        outputChannels: live.outputChannels,
                                        inputChannels: live.inputChannels,
-                                       inputsSeparate: live.inputsSeparate, running: live.running,
+                                       inputsSeparate: live.inputsSeparate,
+                                       inputDeviceUID: live.inputDeviceUID, inputDeviceName: live.inputDeviceName,
+                                       running: live.running,
                                        rateDecision: SampleRateDecision(raw: live.rateDecision),
                                        deviceRateBeforeDecision: live.deviceRateBeforeDecision)
         guard next != snapshot else { return }

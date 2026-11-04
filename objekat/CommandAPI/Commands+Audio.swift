@@ -31,6 +31,7 @@ extension CommandRegistry {
             let engine = try CommandContext.shared.requireEngine()
             return .object([
                 "outputs": .array(engine.availableOutputDevices().map { .string($0) }),
+                "inputs": Self.inputDevicesPayload(engine),
                 "sample_rates": .array(engine.availableSampleRates().map { .number($0.doubleValue) }),
                 "buffer_sizes": .array(engine.availableBufferSizes().map { .int($0.intValue) }),
             ])
@@ -91,6 +92,42 @@ extension CommandRegistry {
             let before = AudioDeviceStatus.shared.generation
             engine.setOutputDevice(name)
             let settled = await Self.awaitDeviceSettled(from: before)
+            return Self.audioStatusPayload(settled: settled)
+        }
+
+        register("audio.devices.inputs",
+                 summary: """
+                 The cards the inputs can be taken from, re-read from the system: \
+                 `{uid, name, channels, same_as_output, selected}`. `same_as_output` is the output card's own \
+                 entry (choosing it is choosing `null`); `selected` is the card the engine was told to use \
+                 (`selected: null` on none of them = the output card's own inputs).
+                 """,
+                 undo: .none) { _ in
+            let engine = try CommandContext.shared.requireEngine()
+            return .object(["inputs": Self.inputDevicesPayload(engine),
+                            "input_device": Self.inputDevicePayload()])
+        }
+
+        register("audio.set_input_device",
+                 summary: """
+                 Chooses the card the inputs are taken from: a UID of `audio.devices.inputs`, or `null` for the \
+                 output card's own inputs. Only a choice while the inputs are closed (it takes effect when \
+                 they open); if they are open they are closed and opened again on the new card. Never writes \
+                 the user's remembered choice (`pref.inputDevice`) — a script must not.
+                 """,
+                 params: [ParamSpec("uid", "string", required: false, "A UID of `audio.devices.inputs`; null or absent = the output card.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            // `null` and an absent key both mean "the output card's own inputs".
+            var uid: String? = nil
+            if let v = p.raw["uid"], case .null = v { uid = nil } else if p.raw["uid"] != nil { uid = try p.string("uid") }
+            let before = AudioDeviceStatus.shared.generation
+            if let why = engine.setInputDevice(uid) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            AudioDeviceStatus.shared.refresh()
+            let settled = AudioDeviceStatus.shared.generation != before
+                ? true : await Self.awaitDeviceSettled(from: before, timeoutMs: 600)
             return Self.audioStatusPayload(settled: settled)
         }
 
@@ -185,6 +222,7 @@ extension CommandRegistry {
             "output_channels": .int(s.outputChannels),
             "input_channels": .int(s.inputChannels),
             "inputs_separate": .bool(s.inputsSeparate),
+            "input_device": Self.inputDevicePayload(),
             "running": .bool(s.running),
             "rate_decision": .string(s.rateDecision.apiName),
             "device_rate_before": .number(s.deviceRateBeforeDecision),
@@ -214,6 +252,26 @@ extension CommandRegistry {
         }
         if let settled { obj["settled"] = .bool(settled) }
         return .object(obj)
+    }
+
+    /// The chosen input card: `{uid, name}`, or null when the inputs are the output card's own.
+    @MainActor
+    static func inputDevicePayload() -> JSONValue {
+        let s = AudioDeviceStatus.shared.snapshot
+        guard let uid = s.inputDeviceUID else { return .null }
+        return .object(["uid": .string(uid), "name": .stringOrNull(s.inputDeviceName)])
+    }
+
+    @MainActor
+    static func inputDevicesPayload(_ engine: OBJEngineCore) -> JSONValue {
+        let chosen = engine.currentInputDeviceUID()
+        return .array(engine.availableInputDevices().map { d in
+            .object(["uid": .string(d["uid"] as? String ?? ""),
+                     "name": .string(d["name"] as? String ?? ""),
+                     "channels": .int((d["channels"] as? NSNumber)?.intValue ?? 0),
+                     "same_as_output": .bool((d["same_as_output"] as? NSNumber)?.boolValue ?? false),
+                     "selected": .bool(chosen != nil && chosen == d["uid"] as? String)])
+        })
     }
 
     /// Polls `AudioDeviceStatus.generation` (the same 20 ms interval as `Quiescence.waitIdle`)

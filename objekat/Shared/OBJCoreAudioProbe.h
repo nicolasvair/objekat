@@ -42,6 +42,8 @@ struct DeviceInfo {
     std::string name;          // UTF-8, as the system names it (what JUCE lists)
     int outputChannels = 0;
     int inputChannels  = 0;
+    std::string uid;           // the CoreAudio UID: what identifies a card across launches and names (last, so
+                               // the aggregate initialisation { name, out, in } of the tests still reads)
 };
 
 enum class Ownership {
@@ -80,6 +82,22 @@ inline Ownership classify(const std::vector<DeviceInfo>& devices, const std::str
     return (inputOnlyTwin || withInputs > 0) ? Ownership::separateInputs : Ownership::noInputs;
 }
 
+/// The UID of the output card called `outputName`, when ONE output-capable device carries that name
+/// (two identical interfaces, a leftover aggregate: ambiguous, so empty — the caller then cannot tell
+/// which card the output is, and treats every input card as another one). Pure.
+inline std::string outputUID(const std::vector<DeviceInfo>& devices, const std::string& outputName)
+{
+    const std::string want = trimmed(outputName);
+    std::string found;
+    int count = 0;
+    for (const auto& d : devices) {
+        if (d.outputChannels <= 0 || trimmed(d.name) != want) continue;
+        ++count;
+        found = d.uid;
+    }
+    return count == 1 ? found : std::string();
+}
+
 #if defined(__APPLE__)
 
 namespace detail {
@@ -113,6 +131,20 @@ inline bool deviceName(AudioObjectID dev, std::string& out)
     return true;
 }
 
+inline bool deviceUID(AudioObjectID dev, std::string& out)
+{
+    AudioObjectPropertyAddress a { kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    CFStringRef cf = nullptr;
+    UInt32 size = sizeof(cf);
+    if (AudioObjectGetPropertyData(dev, &a, 0, nullptr, &size, &cf) != noErr || cf == nullptr) return false;
+    char buf[512];
+    const bool ok = CFStringGetCString(cf, buf, sizeof(buf), kCFStringEncodingUTF8);
+    CFRelease(cf);
+    if (!ok) return false;
+    out = buf;
+    return true;
+}
+
 } // namespace detail
 
 /// Every CoreAudio device the system lists right now. Empty if the system answers nothing. Never opens
@@ -129,6 +161,7 @@ inline std::vector<DeviceInfo> listDevices()
     for (AudioObjectID id : ids) {
         DeviceInfo d;
         if (!detail::deviceName(id, d.name)) continue;
+        detail::deviceUID(id, d.uid);              // best effort: a device with no UID keeps ""
         if (!detail::channelCount(id, kAudioObjectPropertyScopeOutput, d.outputChannels)) continue;
         if (!detail::channelCount(id, kAudioObjectPropertyScopeInput, d.inputChannels)) continue;
         result.push_back(std::move(d));

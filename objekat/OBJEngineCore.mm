@@ -2257,6 +2257,12 @@ struct OBJExportLoadScope {
     // open (@see OBJInputMeter, -openAudioInputs).
     std::unique_ptr<OBJInputMeter>                        _inputMeter;
 
+    // The card the INPUTS are taken from, when it is not the output card: its CoreAudio UID (the name of
+    // the second card under `--virtual-audio`). nil = the output card's own inputs, which is the default
+    // and the only thing that existed before. Only a CHOICE, remembered while the inputs are closed;
+    // opening them is what uses it (@see -setInputDevice:, -openAudioInputs).
+    NSString*                                             _inputDeviceUID;
+
     // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
     // -endBulkLoad. Tant qu'il vit, l'Edit n'alloue aucun nouveau graphe de lecture — chaque
     // compileUserRackForObjectID: appelé pendant la file de plugins différés se contente de
@@ -11214,7 +11220,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     s.outputChannels = outs;
     s.inputChannels = dev->getActiveInputChannels().countNumberOfSetBits();
     s.running = dev->isPlaying();
-    s.inputsSeparate = s.inputChannels == 0 && objOutputInputsAreSeparate(dm);
+    // With another card CHOSEN for the inputs, the output card's own inputs are not in question.
+    s.inputsSeparate = s.inputChannels == 0 && _inputDeviceUID == nil && objOutputInputsAreSeparate(dm);
+    s.inputDeviceUID = _inputDeviceUID;
+    s.inputDeviceName = _inputDeviceUID != nil ? [self nameOfInputDevice:_inputDeviceUID] : nil;
     // La décision de fréquence — sauf si la carte ne tourne plus à ce qu'elle avait décidé (le
     // système ou une autre application l'a changée depuis) : un message « passée à 48k » devant
     // une carte à 96k serait faux, et ce changement-là est suivi, pas combattu.
@@ -11257,6 +11266,85 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     _inputMeter.reset();
 }
 
+// MARK: The input card (it may differ from the output card)
+//
+// The inputs come from the OUTPUT card unless another one is CHOSEN (`-setInputDevice:`, by CoreAudio
+// UID: a name is not an identity, two AirPods or two identical interfaces share one). The choice is
+// only remembered here; the inputs open on demand like they always did, and open on the chosen card.
+
+/// The CoreAudio UID of the output card, when it can be told (exactly one output-capable device
+/// carries the open output's name); empty otherwise. Under `--virtual-audio`, the virtual card's name.
+- (std::string)outputCardUID {
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    const juce::String outName = dm.getAudioDeviceSetup().outputDeviceName;
+    if (type == nullptr || outName.isEmpty()) return {};
+    if (type->getTypeName() == objvirtual::cardName()) return objvirtual::cardName();
+    if (type->getTypeName() != "CoreAudio") return {};
+    return objcoreaudio::outputUID(objcoreaudio::listDevices(), outName.toStdString());
+}
+
+- (NSString* _Nullable)nameOfInputDevice:(NSString*)uid {
+    for (NSDictionary* d in [self availableInputDevices])
+        if ([d[@"uid"] isEqualToString:uid]) return d[@"name"];
+    return nil;
+}
+
+- (NSArray<NSDictionary<NSString*, id>*>*)availableInputDevices {
+    NSMutableArray* result = [NSMutableArray array];
+    if (gOBJAudioDisabled) return result;
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    if (type == nullptr) return result;
+    const std::string outUID = [self outputCardUID];
+
+    if (type->getTypeName() == objvirtual::cardName()) {
+        auto& cfg = objvirtual::state().config;
+        if (cfg.numIn > 0)
+            [result addObject:@{ @"uid": @(objvirtual::cardName()), @"name": @(objvirtual::cardName()),
+                                 @"channels": @(cfg.numIn), @"same_as_output": @YES }];
+        if (cfg.numIn2 > 0)
+            [result addObject:@{ @"uid": @(objvirtual::secondCardName()), @"name": @(objvirtual::secondCardName()),
+                                 @"channels": @(cfg.numIn2), @"same_as_output": @NO }];
+        return result;
+    }
+    if (type->getTypeName() != "CoreAudio") return result;
+    for (const auto& d : objcoreaudio::listDevices()) {
+        if (d.inputChannels <= 0 || d.uid.empty()) continue;
+        [result addObject:@{ @"uid": @(d.uid.c_str()), @"name": @(d.name.c_str()),
+                             @"channels": @(d.inputChannels),
+                             @"same_as_output": @(!outUID.empty() && d.uid == outUID) }];
+    }
+    return result;
+}
+
+- (NSString* _Nullable)currentInputDeviceUID { return _inputDeviceUID; }
+
+- (NSString* _Nullable)setInputDevice:(NSString* _Nullable)uid {
+    if (uid.length == 0) uid = nil;
+    // Choosing the output card itself is choosing "the same card".
+    if (uid != nil) {
+        BOOL listed = NO;
+        for (NSDictionary* d in [self availableInputDevices]) {
+            if (![d[@"uid"] isEqualToString:uid]) continue;
+            listed = YES;
+            if ([d[@"same_as_output"] boolValue]) uid = nil;
+            break;
+        }
+        if (!listed) return @"no such input card";
+    }
+    if ((uid == nil && _inputDeviceUID == nil) || [uid isEqualToString:_inputDeviceUID ?: @""]) return nil;
+    if (_recordingActive) return @"a recording is running";
+
+    const BOOL wasOpen = [self audioInputsOpen];
+    NSLog(@"[OBJ] setInputDevice: %@ (was %@, inputs %s)", uid ?: @"(same card)", _inputDeviceUID ?: @"(same card)",
+          wasOpen ? "open" : "closed");
+    if (wasOpen) [self closeAudioInputs];
+    _inputDeviceUID = [uid copy];
+    if (!wasOpen) return nil;          // only a choice: nothing changes in the engine until the inputs open
+    return [self openAudioInputs];
+}
+
 - (BOOL)audioInputsAreOnSeparateDevice {
     if (gOBJAudioDisabled) return NO;
     return objOutputInputsAreSeparate(_engine->getDeviceManager().deviceManager);
@@ -11268,6 +11356,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto* dev = dm.getCurrentAudioDevice();
     if (dev == nullptr || !dev->isOpen()) return @"no audio device is open";
     if ([self audioInputsOpen]) { [self ensureInputMeter]; return nil; }
+    if (_inputDeviceUID != nil) return [self openSeparateAudioInputs];
 
     auto setup = dm.getAudioDeviceSetup();
     const juce::String outName = setup.outputDeviceName;
@@ -11311,6 +11400,47 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         NSLog(@"[OBJ] ERROR opening the inputs: %s", err.toRawUTF8());
         failure = [NSString stringWithUTF8String:err.toRawUTF8()];
         // A failed reopening leaves the card closed: bring the output back as it was.
+        auto back = before;
+        dm.setAudioDeviceSetup(back, true);
+    } else {
+        [self ensureInputMeter];
+    }
+    if (wasPlaying) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
+        });
+    }
+    return failure;
+}
+
+/// The inputs of ANOTHER card than the output's. `--virtual-audio`: the virtual second card, as one
+/// device with the output card's outputs. A real CoreAudio card: not yet (@see the aggregate device).
+- (NSString* _Nullable)openSeparateAudioInputs {
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    if (type == nullptr) return @"no audio device is open";
+    if (type->getTypeName() != objvirtual::cardName())
+        return @"an input card different from the output card is not available on this card type";
+
+    auto setup = dm.getAudioDeviceSetup();
+    const juce::String inName = juce::String::fromUTF8([_inputDeviceUID UTF8String]);
+    const int numIn = inName == objvirtual::secondCardName() ? objvirtual::state().config.numIn2
+                                                              : objvirtual::state().config.numIn;
+    if (numIn <= 0) return @"this input card has no input channels";
+
+    NSLog(@"[OBJ] openSeparateAudioInputs : %s, %d canaux", inName.toRawUTF8(), numIn);
+    const BOOL wasPlaying = [self isCurrentlyPlaying];
+    [self stop];
+    const auto before = setup;
+    setup.inputDeviceName = inName;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange(0, numIn, true);
+    auto err = dm.setAudioDeviceSetup(setup, true);
+    NSString* failure = nil;
+    if (!err.isEmpty()) {
+        NSLog(@"[OBJ] ERROR opening the inputs: %s", err.toRawUTF8());
+        failure = [NSString stringWithUTF8String:err.toRawUTF8()];
         auto back = before;
         dm.setAudioDeviceSetup(back, true);
     } else {
@@ -12255,7 +12385,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     const int block = onVirtual ? dev->getCurrentBufferSizeSamples() : st.config.blockSize;
 
     NSMutableArray* signals = [NSMutableArray array];
-    for (int i = 0; i < st.config.numIn; ++i) {
+    for (int i = 0; i < st.config.numIn + st.config.numIn2; ++i) {
         auto& sig = st.inputs[(size_t) i];
         [signals addObject:@{ @"channel": @(i),
                               @"signal": [NSString stringWithUTF8String:objvirtual::signalName((objvirtual::Signal) sig.kind.load())],
@@ -12267,6 +12397,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
               @"open": @(onVirtual),
               @"inputs": @(st.config.numIn),
               @"outputs": @(st.config.numOut),
+              @"second_card_inputs": @(st.config.numIn2),
               @"sample_rate": @(onVirtual ? dev->getCurrentSampleRate() : st.config.sampleRate),
               @"block_size": @(block),
               @"input_latency": @(st.config.inLatency),
@@ -12283,8 +12414,9 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
                                        period:(double)period {
     auto& st = objvirtual::state();
     if (!st.active) return @"the virtual card is not active (launch with --virtual-audio)";
-    if (channel < 0 || channel >= st.config.numIn)
-        return [NSString stringWithFormat:@"channel %ld outside 0..%d", (long) channel, st.config.numIn - 1];
+    const int totalIn = st.config.numIn + st.config.numIn2;     // the second card's channels follow the main card's
+    if (channel < 0 || channel >= totalIn)
+        return [NSString stringWithFormat:@"channel %ld outside 0..%d", (long) channel, totalIn - 1];
     objvirtual::Signal kind;
     if (!objvirtual::parseSignal(std::string([signal UTF8String]), kind))
         return [NSString stringWithFormat:@"unknown signal '%@'", signal];

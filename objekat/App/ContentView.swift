@@ -177,6 +177,12 @@ struct ContentView: View {
                 // `--virtual-audio` is a test fixture: it must not become the remembered choice.
                 if !OBJEngineCore.isVirtualAudio() { AudioOutputDevice.shared.name = selectedDevice }
             }
+            // Input card: the choice (a UID) is handed to the engine, which only remembers it until the
+            // inputs open. A card that is not there any more resets the choice to "the output card".
+            if !OBJEngineCore.isVirtualAudio(), let savedInput = AudioInputDevice.shared.uid {
+                if engine.setInputDevice(savedInput) != nil { AudioInputDevice.shared.uid = nil }
+                AudioDeviceStatus.shared.refresh()
+            }
             // At launch, AppKit gives first responder to the window's first text field — the BPM
             // one — which ends up selected without anyone asking for it.
             // `NSApp.keyWindow` is still nil at that first onAppear (the window is not key):

@@ -993,6 +993,19 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// Re-asked of the system each time (@see OBJCoreAudioProbe.h); NO for a card whose inputs are its
 /// own, for one with no inputs at all, and for no device. Main thread.
 - (BOOL)audioInputsAreOnSeparateDevice;
+// The INPUT card, when it is not the output card (lot D). The inputs come from the OUTPUT card unless
+// another one is CHOSEN, by CoreAudio UID (a name is not an identity). Only a choice: it is remembered
+// while the inputs are closed, and used when they open (-openAudioInputs). Main thread.
+/// The cards that have input channels, as `{uid, name, channels, same_as_output}`, re-read from the system.
+/// The output card's own entry is `same_as_output` (choosing it is choosing nil). Never lists the private
+/// aggregate the engine builds. Under `--virtual-audio`: the virtual cards.
+- (NSArray<NSDictionary<NSString*, id>*>* _Nonnull)availableInputDevices;
+/// The chosen input card's UID; nil = the output card's own inputs (the default).
+- (NSString* _Nullable)currentInputDeviceUID;
+/// Chooses the input card (nil or the output card's UID = the same card). If the inputs are open they are
+/// closed and opened again on the new card. nil on success, otherwise why not (no such card, a recording
+/// is running, the new card would not open).
+- (NSString* _Nullable)setInputDevice:(NSString* _Nullable)uid;
 - (void)closeAudioInputs;
 - (BOOL)audioInputsOpen;
 /// The names of the open card's input channels, in order (empty while closed).
@@ -1148,6 +1161,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Les entrées de cette carte sont un AUTRE périphérique de même nom (AirPods) : non prises en charge
 // (@see -audioInputsAreOnSeparateDevice). Toujours NO une fois les entrées ouvertes ou sans carte.
 @property (nonatomic) BOOL      inputsSeparate;
+// The chosen INPUT card (@see -setInputDevice:): its UID and name, nil when the inputs are the output card's.
+@property (nonatomic, copy, nullable) NSString* inputDeviceUID;
+@property (nonatomic, copy, nullable) NSString* inputDeviceName;
 // Ce que la politique de fréquence a décidé de la carte (@see Shared/OBJSampleRatePolicy.h) :
 // 0 = adopt (la fréquence de la carte est prise telle quelle), 1 = fallback (inutilisable, la
 // carte a été ramenée à `sampleRate`), 2 = outOfRangeKept (inutilisable mais rien de mieux à

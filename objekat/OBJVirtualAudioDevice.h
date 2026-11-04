@@ -55,6 +55,10 @@ namespace objvirtual {
 /// exactly as on a card that has both).
 inline const char* cardName() { return "OBJ Virtual"; }
 
+/// The SECOND card (`in2:N`): an input-only card with its own N channels, to test an input card that is
+/// not the output card. Its name is also its UID.
+inline const char* secondCardName() { return "OBJ Virtual In 2"; }
+
 constexpr int kMaxInputs = 64;
 
 /// What `--virtual-audio=...` asks for. Defaults are the plan's: 4 in, 2 out, 48 kHz, 256 frames,
@@ -62,6 +66,9 @@ constexpr int kMaxInputs = 64;
 struct Config {
     int    numIn       = 4;
     int    numOut      = 2;
+    /// `in2:N`: an INPUT-ONLY second card of N channels ("OBJ Virtual In 2"). The signals of its channels
+    /// follow those of the main card: channel c of the second card is `inputs[numIn + c]`.
+    int    numIn2      = 0;
     double sampleRate  = 48000.0;
     int    blockSize   = 256;
     int    inLatency   = 64;
@@ -73,7 +80,7 @@ struct Config {
     bool   splitIn     = false;
 };
 
-/// "in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0" — every key optional, unknown keys and malformed
+/// "in:4,out:2,in2:0,sr:48000,bs:256,inlat:64,outlat:96,splitin:0" — every key optional, unknown keys and malformed
 /// values ignored (a typo must not turn a test run into a failure to start). The rate must be one the
 /// device lists (`availableRates()`), anything else keeps the default.
 inline std::vector<double> availableRates()  { return { 44100.0, 48000.0, 88200.0, 96000.0 }; }
@@ -94,6 +101,7 @@ inline Config parseConfig(const std::string& spec)
         const double v = std::atof(item.c_str() + colon + 1);
         if (key == "in")          c.numIn      = std::max(0, std::min(kMaxInputs, (int) v));
         else if (key == "out")    c.numOut     = std::max(1, std::min(32, (int) v));
+        else if (key == "in2")    c.numIn2     = std::max(0, std::min(kMaxInputs, (int) v));
         else if (key == "sr") {
             for (double r : availableRates()) if (std::fabs(r - v) < 0.5) c.sampleRate = r;
         }
@@ -104,6 +112,7 @@ inline Config parseConfig(const std::string& spec)
         else if (key == "outlat") c.outLatency = std::max(0, (int) v);
         else if (key == "splitin") c.splitIn   = v != 0.0;
     }
+    c.numIn2 = std::min(c.numIn2, kMaxInputs - c.numIn);       // the signals are shared: 64 channels in all
     return c;
 }
 
@@ -157,16 +166,23 @@ inline int loopbackDelaySamples(const Config& c, int blockSize)
 class OBJVirtualAudioDevice : public juce::AudioIODevice
 {
 public:
-    OBJVirtualAudioDevice(const Config& cfg, bool withInputs, bool withOutputs)
+    /// `inputCard`: 0 = no inputs, 1 = the main card's, 2 = the second card's (`in2:`). A device made with
+    /// the main card as output and the second as input is the virtual equivalent of an aggregate: one
+    /// device, one clock, the inputs of another card.
+    OBJVirtualAudioDevice(const Config& cfg, int inputCard, bool withOutputs)
         : juce::AudioIODevice(cardName(), cardName()),
-          config(cfg), hasIn(withInputs && cfg.numIn > 0), hasOut(withOutputs),
-          rate(cfg.sampleRate), block(cfg.blockSize) {}
+          config(cfg),
+          inputBase(inputCard == 2 ? cfg.numIn : 0),
+          inputCount(inputCard == 2 ? cfg.numIn2 : inputCard == 1 ? cfg.numIn : 0),
+          hasIn(inputCount > 0), hasOut(withOutputs),
+          rate(cfg.sampleRate), block(cfg.blockSize),
+          inputPrefix(inputCard == 2 ? "In2 " : "In ") {}
 
     ~OBJVirtualAudioDevice() override { stop(); }
 
     //--------------------------------------------------------------------------
     juce::StringArray getOutputChannelNames() override { return names("Out ", hasOut ? config.numOut : 0); }
-    juce::StringArray getInputChannelNames() override  { return names("In ",  hasIn  ? config.numIn  : 0); }
+    juce::StringArray getInputChannelNames() override  { return names(inputPrefix, hasIn ? inputCount : 0); }
 
     juce::Array<double> getAvailableSampleRates() override
     {
@@ -190,7 +206,7 @@ public:
         stop();
 
         activeIn = inputChannels;
-        activeIn.setRange(hasIn ? config.numIn : 0, kMaxInputs, false);
+        activeIn.setRange(hasIn ? inputCount : 0, kMaxInputs, false);
         activeOut = outputChannels;
         activeOut.setRange(hasOut ? config.numOut : 0, 256, false);
 
@@ -308,7 +324,7 @@ private:
             // ---- the inputs for this block
             for (int i = 0; i < nIn; ++i)
             {
-                auto& sig = state().inputs[(size_t) inChannels[(size_t) i]];
+                auto& sig = state().inputs[(size_t) (inputBase + inChannels[(size_t) i])];
                 const int kind = sig.kind.load(std::memory_order_relaxed);
                 float* dst = inBuf[(size_t) i].data();
 
@@ -390,9 +406,11 @@ private:
 
     //--------------------------------------------------------------------------
     const Config config;
+    const int  inputBase, inputCount;      // which signals, and how many channels, this device's inputs are
     const bool hasIn, hasOut;
     double rate;
     int    block;
+    const char* inputPrefix;
     juce::BigInteger activeIn, activeOut;
     bool   opened = false;
     juce::String lastError;
@@ -412,8 +430,14 @@ public:
 
     juce::StringArray getDeviceNames(bool wantInputNames = false) const override
     {
-        const bool any = wantInputNames ? config.numIn > 0 : config.numOut > 0;
-        return any ? juce::StringArray(cardName()) : juce::StringArray();
+        juce::StringArray names;
+        if (wantInputNames) {
+            if (config.numIn > 0)  names.add(cardName());
+            if (config.numIn2 > 0) names.add(secondCardName());
+        } else if (config.numOut > 0) {
+            names.add(cardName());
+        }
+        return names;
     }
 
     int getDefaultDeviceIndex(bool) const override { return 0; }
@@ -421,7 +445,7 @@ public:
     int getIndexOfDevice(juce::AudioIODevice* device, bool asInput) const override
     {
         if (device == nullptr || device->getName() != cardName()) return -1;
-        return (asInput ? config.numIn > 0 : config.numOut > 0) ? 0 : -1;
+        return (asInput ? (config.numIn > 0 || config.numIn2 > 0) : config.numOut > 0) ? 0 : -1;
     }
 
     bool hasSeparateInputsAndOutputs() const override { return false; }
@@ -429,11 +453,12 @@ public:
     juce::AudioIODevice* createDevice(const juce::String& outputDeviceName,
                                       const juce::String& inputDeviceName) override
     {
-        const juce::String mine(cardName());
+        const juce::String mine(cardName()), second(secondCardName());
         if (outputDeviceName.isNotEmpty() && outputDeviceName != mine) return nullptr;
-        if (inputDeviceName.isNotEmpty() && inputDeviceName != mine) return nullptr;
+        if (inputDeviceName.isNotEmpty() && inputDeviceName != mine && inputDeviceName != second) return nullptr;
         if (outputDeviceName.isEmpty() && inputDeviceName.isEmpty()) return nullptr;
-        return new OBJVirtualAudioDevice(config, inputDeviceName.isNotEmpty(), outputDeviceName.isNotEmpty());
+        const int inputCard = inputDeviceName.isEmpty() ? 0 : inputDeviceName == second ? 2 : 1;
+        return new OBJVirtualAudioDevice(config, inputCard, outputDeviceName.isNotEmpty());
     }
 
 private:

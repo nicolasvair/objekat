@@ -76,6 +76,19 @@ int main(int argc, char** argv)
           classify({ { "Scarlett 4i4 ", 4, 4 } }, " Scarlett 4i4") == Ownership::ownInputs);
     check("a different case is a different device", classify({ { "Scarlett", 2, 2 } }, "scarlett") == Ownership::noSuchOutput);
 
+    // The output card's UID (the input card list marks that one as "the same card").
+    {
+        const std::vector<DeviceInfo> l = {
+            { "Speakers", 2, 0, "uid-spk" }, { "Muse", 18, 18, "uid-muse" },
+            { "AirPods", 2, 0, "uid-air-out" }, { "AirPods", 0, 1, "uid-air-in" },
+            { "Twin", 2, 2, "uid-t1" }, { "Twin", 2, 2, "uid-t2" } };
+        check("outputUID: one card, its UID", outputUID(l, "Muse") == "uid-muse");
+        check("outputUID: the output half of a pair, not the input-only twin", outputUID(l, "AirPods") == "uid-air-out");
+        check("outputUID: two identical cards are ambiguous", outputUID(l, "Twin").empty());
+        check("outputUID: no such card", outputUID(l, "Nothing").empty());
+        check("outputUID: names are trimmed", outputUID(l, "  Speakers ") == "uid-spk");
+    }
+
     if (argc > 1 && std::strcmp(argv[1], "--live") == 0) {
         std::printf("\nLive (read-only):\n");
         const auto devices = listDevices();
