@@ -633,6 +633,8 @@ extension CommandRegistry {
                                      "lane": .int(t.lane), "outside_window": .bool(t.outsideWindow),
                                      "muted": .array(t.muted.map { .string($0.uuidString) }),
                                      "source": .string(t.path.isEmpty ? "midi" : "audio"),
+                                     "pass": .int(t.pass), "passes": .int(t.passes), "partial": .bool(t.partial),
+                                     "audible": .bool(t.audible),
                                      "notes": t.path.isEmpty ? Self.takeNotesJSON(vm, t.object) : .array([])])
                         })])
     }

@@ -112,6 +112,13 @@ def new_project(c, tmp, name):
     return os.path.join(tmp, name)
 
 
+def kids(c, gid):
+    c.send("group.expand", {"id": gid, "expanded": True})
+    out = [o for o in c.send("object.list")["objects"] if o["parent"] == gid]
+    c.send("group.expand", {"id": gid, "expanded": False})
+    return out
+
+
 def make_zone(c, first, start, end, lane):
     c.send("timesel.set", {"start": start, "end": end, "lanes": [lane]})
     r = c.send("rec.drop", {"first": first, "count": 1, "lane": lane, "time": (start + end) / 2})
@@ -220,8 +227,8 @@ def run(stock):
             pos_press = c.send("transport.state")["position"]
             c.send("rec.start")
             time.sleep(1.5)
-            t = c.send("rec.stop")["last_takes"]
-            check("[%s] the recording gave a take" % tag, len(t) == 1, t)
+            t = sorted(c.send("rec.stop")["last_takes"], key=lambda x: x["pass"])    # one take per pass, one file
+            check("[%s] the recording gave a take" % tag, len(t) >= 1, t)
             if t:
                 sr, arr = read_wav(t[0]["path"])
                 sil = leading_silence(arr[:, 0])
@@ -262,7 +269,7 @@ def run(stock):
                 c.send("transport.stop") if c.send("transport.state")["playing"] else None
             else:
                 check("[0050] the recording goes on through the three loop edits", rec_going is True, rec_going)
-                t = c.send("rec.stop")["last_takes"]
+                t = sorted(c.send("rec.stop")["last_takes"], key=lambda x: x["pass"])
                 j = last_journal(app.err)
                 check("[0050] a journal exists", j is not None)
                 if j is not None:
@@ -303,6 +310,44 @@ def run(stock):
                       j is not None and len(j[0]) == 1 and len(t) == 1 and 1.9 < t[0]["duration"] < 2.3, (j, t))
                 c.send("debug.transport_loop", {"enabled": False})
 
+                # ── P6 -------------------------------------------------------------------------------
+                section("P6 [%s] audio takes N per zone: one per pass crossing the window, one file, newest on top, one undo" % tag)
+                new_project(c, tmp, "p6")
+                z = make_zone(c, 0, 2.0, 4.5, 0)
+                c.send("rec.arm", {"group": z, "on": True})
+                c.send("debug.transport_loop", {"start": 3.0, "end": 5.0, "enabled": True})
+                c.send("transport.seek", {"seconds": 1.0})
+                d0 = c.send("perf.census")["undo_depth"]
+                c.send("rec.start")
+                wait_pos(c, 3.5)
+                time.sleep(5.2)                                           # 1 -> 5, then 3 -> 5 two times and a bit
+                r = c.send("rec.stop")
+                tk = r["last_takes"]
+                j = last_journal(app.err)
+                pts = j[0] if j else []
+                print("       journal: %s" % ", ".join("(%.3f, %.3f)" % p for p in pts))
+                print("       takes: %s" % "; ".join("pass %d lane %d [%.3f +%.3f] off %.3f %s" % (t["pass"], t["lane"], t["start"], t["duration"],
+                      t["source_offset"], "audible" if t["audible"] else "muted") for t in tk))
+                check("one take per pass that crosses the window (%d passes in the journal)" % len(pts),
+                      len(tk) == len(pts) and len(tk) >= 3, (len(tk), len(pts)))
+                check("one file for all of them", len({t["path"] for t in tk}) == 1)
+                check("the newest on lane 0, the older ones below: lanes read newest..oldest",
+                      [t["lane"] for t in sorted(tk, key=lambda t: t["pass"])] == list(range(len(tk) - 1, -1, -1)))
+                check("only the LAST pass is audible (mute mode)", [t["audible"] for t in sorted(tk, key=lambda t: t["pass"])]
+                      == [False] * (len(tk) - 1) + [True])
+                check("the passes after the first start on the loop's start (3.000) and are cropped at the window's end (4.5)",
+                      all(abs(t["start"] - 3.0) < 1e-3 and abs(t["start"] + t["duration"] - 4.5) < 1e-3 for t in tk if 0 < t["pass"] < len(tk) - 1))
+                if tk:
+                    t0 = min(tk, key=lambda t: t["pass"])
+                    check("pass 0 starts at the window's start, 2.000", abs(t0["start"] - 2.0) < 1e-3, t0["start"])
+                    # one continuous file: the takes' file positions chain through the loop (offset_k = k-th pass's file start)
+                    offs = [t["source_offset"] for t in sorted(tk, key=lambda t: t["pass"])]
+                    check("file offsets increase pass after pass", all(b > a for a, b in zip(offs, offs[1:])), offs)
+                check("rec.stop is ONE undo point", c.send("perf.census")["undo_depth"] == d0 + 1)
+                c.send("edit.undo")
+                check("one undo takes every take away", kids(c, z) == [])
+                c.send("debug.transport_loop", {"enabled": False})
+
                 # ── P2 -------------------------------------------------------------------------------
                 section("P2 [%s] the journal against the render (noise, loopback, loop [3 s, 5 s] switched on by the tick)" % tag)
                 new_project(c, tmp, "p2")
@@ -316,9 +361,9 @@ def run(stock):
                 c.send("rec.start")
                 wait_pos(c, 3.2)
                 time.sleep(6.5)                                   # ~3 laps
-                t = c.send("rec.stop")["last_takes"]
+                t = sorted(c.send("rec.stop")["last_takes"], key=lambda x: x["pass"])
                 j = last_journal(app.err)
-                check("a take and a journal", len(t) == 1 and j is not None, (t, j))
+                check("a take and a journal", len(t) >= 1 and j is not None, (t, j))
                 if t and j:
                     pts = j[0]
                     sr, arr = read_wav(t[0]["path"])

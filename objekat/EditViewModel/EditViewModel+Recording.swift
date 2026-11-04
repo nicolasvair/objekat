@@ -57,6 +57,12 @@ struct RecordTakeReport: Equatable {
     let muted: [UUID]
     /// The notes of a MIDI take (0 for an audio one); the path is empty for it.
     var notes: Int = 0
+    /// Recording through a loop (engine patch 0050): the pass this take is (0 = the first), how many passes the zone
+    /// got, whether this take is the pass the stop cut short, and whether it is heard. A linear recording is one pass.
+    var pass: Int = 0
+    var passes: Int = 1
+    var partial = false
+    var audible = true
 }
 
 /// The block the timeline draws for a zone while it records (@see RecordProgress).
@@ -181,9 +187,12 @@ extension EditViewModel {
         for zone in zones {
             guard let group = find(id: zone.id), case .group(let children, _) = group.kind else { continue }
             let window = recordWindow(of: group)
-            let ids = RecordTakePlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
+            // The loop (when on) is going to bring the head back through the window: a press beyond it is no reason to
+            // leave the previous takes audible.
+            let ids = RecordLoopPlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
                                                      children: takePlannerChildren(children),
                                                      startPosition: startTime,
+                                                     loop: loopModeEnabled ? loopRegion : nil,
                                                      mutesPrevious: zone.mode.mutesPrevious)
             guard !ids.isEmpty else { continue }
             if log.undoDepthAfterPush == nil { pushUndo(); log.undoDepthAfterPush = undoStack.count }
@@ -201,6 +210,28 @@ extension EditViewModel {
         lastRecordingTakes = []
         isRecording = true
         return nil
+    }
+
+    /// A loop edit under a recording (a bound moved, the loop switched on…) can make the head join a zone it was not going to
+    /// reach: the previous takes it will replace are muted at once, in the SAME undo point as the start's. `head` is the
+    /// playhead now. Does nothing when not recording or for a zone in "add" mode.
+    func retakeRecordingMutes(head: Double) {
+        guard isRecording else { return }
+        var log = recordingMuteLog
+        var changed = false
+        for zone in recordingZones where zone.mode.mutesPrevious {
+            guard let group = find(id: zone.id), case .group(let children, _) = group.kind else { continue }
+            let window = recordWindow(of: group)
+            let ids = RecordLoopPlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
+                                                     children: takePlannerChildren(children), startPosition: head,
+                                                     loop: loopModeEnabled ? loopRegion : nil, mutesPrevious: true)
+            guard !ids.isEmpty else { continue }
+            if log.undoDepthAfterPush == nil { log.wasDirty = isDirty; pushUndo(); log.undoDepthAfterPush = undoStack.count }
+            setMuted(ids, true)
+            log.mutedByZone[zone.id, default: []] += ids
+            changed = true
+        }
+        if changed { recordingMuteLog = log }
     }
 
     /// Mutes or unmutes objects, in the model and in the engine.
@@ -244,7 +275,8 @@ extension EditViewModel {
     /// The engine says the recording is over, with the files it wrote. Each frozen zone that is still a
     /// recordable group gets its take — one undo point for the lot (the one `beginRecording` pushed for
     /// the mutes, when there was one), none if nothing was recorded: then the mutes are given back.
-    func completeRecording(files: [RecordedFile], midi: [RecordedMidi] = []) {
+    func completeRecording(files: [RecordedFile], midi: [RecordedMidi] = [],
+                           journal: [RecordLoopPlanner.JournalPoint] = []) {
         guard isRecording else { return }
         let zones = recordingZones
         let log = recordingMuteLog
@@ -267,43 +299,68 @@ extension EditViewModel {
                 continue
             }
             let window = recordWindow(of: group)
-            let span: (origin: Double, length: Double) = file.map { ($0.origin, $0.length) }
-                ?? (capture?.origin ?? 0, capture?.length ?? 0)
-            let plan = RecordTakePlanner.plan(
-                windowStart: window.start, windowEnd: window.end, children: takePlannerChildren(children),
-                capture: .init(origin: span.origin, length: span.length),
-                mutesPrevious: zone.mode.mutesPrevious, mutedAtStart: Set(early))
+            let kids = takePlannerChildren(children)
 
-            // A MIDI take is made BEFORE the undo point is pushed: no note, no take (the mutes are given back).
-            var made: SoundObject
+            // What this zone receives: one or several takes (one per pass through a loop), each with the lane, the
+            // audibility and the report that goes with it.
+            struct Made { let object: SoundObject; let take: RecordLoopPlanner.Take; var notes = 0 }
+            var madeTakes: [Made] = []
+            var muteIDs: [UUID] = [], unmuteIDs: [UUID] = [], shiftIDs: [UUID] = []
             var path = ""
-            var noteCount = 0
+            var passCount = 1
             if let file {
-                made = SoundObject(id: UUID(), startTime: plan.take.start, duration: plan.take.duration,
-                                   lane: plan.take.lane,
-                                   kind: .clip(filePath: file.path, sourceOffset: plan.take.sourceOffset,
-                                               fileDuration: file.length, speedRatio: 1.0, isReversed: false))
-                made.fileSize = Self.fileSize(atPath: file.path)
+                // A recording is a succession of passes (one when nothing looped): the engine's journal says which.
+                let segments = RecordLoopPlanner.segments(journal: journal, origin: file.origin, length: file.length)
+                let plan = RecordLoopPlanner.plan(windowStart: window.start, windowEnd: window.end, children: kids,
+                                                  segments: segments, mutesPrevious: zone.mode.mutesPrevious,
+                                                  mutedAtStart: Set(early))
+                passCount = segments.count
                 path = file.path
-            } else if let capture, let m = midiTakeObject(from: capture, zone: group, plan: plan) {
-                made = m
-                if case .midiClip(let notes, _) = m.kind { noteCount = notes.count }
-            } else {
+                for t in plan.takes {
+                    var o = SoundObject(id: UUID(), startTime: t.start, duration: t.duration, lane: t.lane,
+                                        kind: .clip(filePath: file.path, sourceOffset: t.sourceOffset,
+                                                    fileDuration: file.length, speedRatio: 1.0, isReversed: false))
+                    o.fileSize = Self.fileSize(atPath: file.path)
+                    o.isMuted = !t.audible
+                    madeTakes.append(Made(object: o, take: t))
+                }
+                muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
+            } else if let capture {
+                let plan = RecordTakePlanner.plan(
+                    windowStart: window.start, windowEnd: window.end, children: kids,
+                    capture: .init(origin: capture.origin, length: capture.length),
+                    mutesPrevious: zone.mode.mutesPrevious, mutedAtStart: Set(early))
+                // A MIDI take is made BEFORE the undo point is pushed: no note, no take (the mutes are given back).
+                if let m = midiTakeObject(from: capture, zone: group, plan: plan) {
+                    var n = 0
+                    if case .midiClip(let notes, _) = m.kind { n = notes.count }
+                    let t = RecordLoopPlanner.Take(start: plan.take.start, duration: plan.take.duration,
+                                                   sourceOffset: plan.take.sourceOffset, lane: plan.take.lane,
+                                                   outsideWindow: plan.take.outsideWindow, audible: true, pass: 0)
+                    madeTakes.append(Made(object: m, take: t, notes: n))
+                    muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
+                }
+            }
+            if madeTakes.isEmpty {
                 if !early.isEmpty { setMuted(early, false) }
                 continue
             }
             if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
-            let take = made
-            setMuted(plan.mutedIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
-            setMuted(plan.unmuteIDs, false)
-            // The newest on top: the previous takes go down by one lane, the take takes the top one.
-            updateMany(Set(plan.shiftIDs)) { $0.lane += 1 }
-            addChild(take, toGroupID: zone.id)
-            reports.append(RecordTakeReport(group: zone.id, object: take.id, path: path,
-                                            start: plan.take.start, duration: plan.take.duration,
-                                            sourceOffset: plan.take.sourceOffset, lane: plan.take.lane,
-                                            outsideWindow: plan.take.outsideWindow, muted: plan.mutedIDs,
-                                            notes: noteCount))
+            setMuted(muteIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
+            setMuted(unmuteIDs, false)
+            // The newest on top: the previous takes go down by one lane per take, the takes take the top lanes.
+            let down = madeTakes.count
+            updateMany(Set(shiftIDs)) { $0.lane += down }
+            for m in madeTakes {                      // oldest first: the newest is the last one added
+                addChild(m.object, toGroupID: zone.id)
+                reports.append(RecordTakeReport(group: zone.id, object: m.object.id, path: path,
+                                                start: m.take.start, duration: m.take.duration,
+                                                sourceOffset: m.take.sourceOffset, lane: m.take.lane,
+                                                outsideWindow: m.take.outsideWindow, muted: muteIDs,
+                                                notes: m.notes, pass: m.take.pass, passes: passCount,
+                                                partial: passCount > 1 && m.take.pass == passCount - 1,
+                                                audible: m.take.audible))
+            }
         }
         // Nothing recorded at all: the point pushed for the mutes holds a state identical to this one.
         if reports.isEmpty, let depth = log.undoDepthAfterPush, undoStack.count == depth {

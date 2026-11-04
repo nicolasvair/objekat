@@ -126,7 +126,12 @@ final class ObjekatSession {
                     }
                     return RecordedMidi(zone: zone, origin: origin, length: length, notes: notes, pedal: pedal)
                 }
-                self.viewModel.completeRecording(files: files, midi: midi)
+                let journal = self.engine.lastRecordJournal.compactMap { d -> RecordLoopPlanner.JournalPoint? in
+                    guard let c = (d["clock"] as? NSNumber)?.doubleValue, let t = (d["timeline"] as? NSNumber)?.doubleValue
+                    else { return nil }
+                    return .init(clock: c, timeline: t)
+                }
+                self.viewModel.completeRecording(files: files, midi: midi, journal: journal)
                 if self.isPlaying { self.stop() }
             }
         }
@@ -140,6 +145,10 @@ final class ObjekatSession {
             switch change {
             case .region: self.loopRegionChanged(self.viewModel.loopRegion)
             case .mode:   self.loopModeChanged(self.viewModel.loopModeEnabled)
+            }
+            // The loop may now bring the head through a zone it was not going to reach: its previous takes are muted too.
+            if self.viewModel.isRecording, !self.viewModel.loopRegionDragging {
+                self.viewModel.retakeRecordingMutes(head: self.engine.currentPlaybackPosition())
             }
         }
         // The device really open — the title bar's grey line and `audio.status` read the same
