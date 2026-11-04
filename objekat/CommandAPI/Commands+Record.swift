@@ -479,6 +479,18 @@ extension CommandRegistry {
             return Self.recordStatusJSON(vm)
         }
 
+        register("rec.disarm_all",
+                 summary: """
+                 Disarms every recording zone at once, as Esc does in the timeline. Session state like `rec.arm`; \
+                 allowed while recording (the take in progress finishes, the next one starts with nothing armed). \
+                 Answers the same status as `rec.status`; a second call answers the same.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.disarmAllRecordZones()
+            return Self.recordStatusJSON(vm)
+        }
+
         register("rec.status",
                  summary: """
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \

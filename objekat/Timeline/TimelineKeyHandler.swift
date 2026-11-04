@@ -730,6 +730,9 @@ extension TimelineView {
                     // Esc gives the click its normal part back.
                     vm.soloKeyHeld = false
                     KeyboardClaim.shared.revoke()   // gives a value box's keyboard back too
+                    // A bare Esc also leaves every recording zone unarmed (the earlier branches above do not:
+                    // each of them answers what it is in the middle of and returns first).
+                    vm.disarmAllRecordZones()
                 }
             case 36, 76:  // Return / numpad Enter
                 // 's' held → freezes into the committed solo what one is hearing temporarily (the starting

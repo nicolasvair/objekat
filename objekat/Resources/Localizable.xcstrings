@@ -2164,6 +2164,29 @@
         }
       }
     },
+    "cheatsheet.record.escDisarm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disarm every recording zone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desarmar todas las zonas de grabación"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désarmer toutes les zones d'enregistrement"
+          }
+        }
+      }
+    },
     "cheatsheet.redo": {
       "extractionState": "manual",
       "localizations": {
