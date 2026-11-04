@@ -283,6 +283,7 @@ enum CrossProjectImport {
             no.recordInput = nil
             no.recordMidiInput = nil      // the same for a MIDI zone: its input is the origin machine's device
             no.recordTakeMode = nil
+            no.midiSequence = nil         // the sequence lives in the ORIGIN project: the clip keeps the notes it holds
 
             // The instrument slot (index 0 of a MIDI clip) is never linked and never a rack —
             // a fresh id, cold, is enough (mirrors `copiedInstruments`'s shape with no engine read).

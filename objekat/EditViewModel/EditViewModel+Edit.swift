@@ -163,6 +163,32 @@ extension EditViewModel {
         obj.duration = D
         obj.fadeIn   = fi
         obj.fadeOut  = fo
+        // A take of a recording through a loop looks at its sequence through a window: the end moved, so
+        // what it shows resolves again (@see `resolveMidiSequenceWindow`).
+        resolveMidiSequenceWindow(of: &obj, startShiftBeats: 0)
+    }
+
+    /// The window of a MIDI take on its shared sequence, resolved again after an edge moved: the clip's notes
+    /// become the sequence's notes that begin in the new window, so pulling an edge out reveals what the capture
+    /// holds there and pushing it back hides it. Reads the object AFTER `startTime` / `duration` have changed;
+    /// `startShiftBeats` is how far the START edge moved (positive = in). A clip that is not a take, or whose
+    /// notes were edited since (or whose sequence is gone), is DETACHED here and left to the classic rules —
+    /// returns false then so that the caller does the classic work; true when the window did the work.
+    @discardableResult
+    func resolveMidiSequenceWindow(of obj: inout SoundObject, startShiftBeats: Double) -> Bool {
+        guard obj.midiSequence != nil else { return false }
+        guard case .midiClip(let notes, let lengthBeats) = obj.kind,
+              let ref = obj.midiSequence,
+              let hit = MidiSequenceWindow.resolved(ref: ref, current: notes, sequence: midiSequences[ref.id],
+                                                    shiftedByBeats: startShiftBeats,
+                                                    lengthBeats: beatsFromSeconds(obj.duration), clipID: obj.id)
+        else {
+            obj.midiSequence = nil      // an edited clip, or a sequence that is gone: a classic clip from here on
+            return false
+        }
+        obj.kind = .midiClip(notes: hit.notes, lengthBeats: max(0.01, lengthBeats - startShiftBeats))
+        obj.midiSequence = hit.ref
+        return true
     }
 
     func updateDuration(id: UUID, duration: Double) {
@@ -172,6 +198,8 @@ extension EditViewModel {
             if obj.isClip || obj.isMIDI {   // the same ObjWindowFade chain on the engine side
                 engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: id.uuidString)
             }
+            // A take's window resolved again: the engine's MidiList follows.
+            if obj.midiSequence != nil { syncMidiNotes(obj) }
         }
         isDirty = true
     }
@@ -223,12 +251,16 @@ extension EditViewModel {
             // matter outside the bounds of an audio clip: the clip masks them, pulling the edge
             // back to the left gives them again. A non-destructive trim.
             let dBeats = beatsFromSeconds(delta)
-            obj.kind = .midiClip(notes: notes.map { n in
-                                    var m = n
-                                    m.startBeat -= dBeats
-                                    return m
-                                 },
-                                 lengthBeats: max(0.01, lengthBeats - dBeats))
+            // A take of a recording through a loop resolves its window on the shared sequence instead
+            // (the notes it reveals are the capture's, not a rebasing of what the clip holds).
+            if !resolveMidiSequenceWindow(of: &obj, startShiftBeats: dBeats) {
+                obj.kind = .midiClip(notes: notes.map { n in
+                                        var m = n
+                                        m.startBeat -= dBeats
+                                        return m
+                                     },
+                                     lengthBeats: max(0.01, lengthBeats - dBeats))
+            }
         }
     }
 

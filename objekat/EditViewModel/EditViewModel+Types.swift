@@ -51,6 +51,9 @@ struct ProjectDocument: Codable {
     /// an input, never what is recorded. Added within format 36 (an older build ignores the key). nil/absent ⇒ none.
     /// See `InputChains`.
     var inputChains: InputChains?
+    /// The MIDI sequences the takes of a recording through a loop look through (format 37, @see `MidiSequenceWindow`):
+    /// only the ones a `midiClip`'s `midiSequence` still names. nil/absent ⇒ none (every session written before).
+    var midiSequences: [MidiSequence]?
     /// TRANSIENT, never encoded: what `LegacyGainMigration` did to this document when it was decoded
     /// (nil = not decoded from a file). Read by the load to report it (`project.load_status`).
     var legacyGainMigration: LegacyGainMigration.Report? = nil
@@ -58,7 +61,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs, inputChains
+        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs, inputChains, midiSequences
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -78,7 +81,8 @@ struct ProjectDocument: Codable {
          fxLinks: [FXLink]? = nil,
          canvasSettings: [String: CanvasProjectSettings]? = nil,
          recordInputs: RecordInputsConfig? = nil,
-         inputChains: InputChains? = nil) {
+         inputChains: InputChains? = nil,
+         midiSequences: [MidiSequence]? = nil) {
         self.schemaNote = SessionSchema.note
         self.items = items
         self.stems = stems
@@ -95,6 +99,7 @@ struct ProjectDocument: Codable {
         self.canvasSettings = canvasSettings
         self.recordInputs = recordInputs
         self.inputChains = inputChains
+        self.midiSequences = midiSequences
     }
 }
 

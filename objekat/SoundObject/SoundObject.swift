@@ -609,6 +609,20 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// (`RecordTakeMode.stored`). TOP LEVEL and carried like `recordInput`: `derivedCopy` keeps it
     /// (a duplicate of a zone keeps its way of taking), `CrossProjectImport` clears the INPUT, not this.
     var recordTakeMode: RecordTakeMode? = nil
+    /// The window of a MIDI take on the shared sequence of a recording made through a loop — session format 37
+    /// (@see `MidiSequenceWindow`). nil = a classic clip, which is nearly every clip. TOP LEVEL, on a `.midiClip`
+    /// only. The clip's notes hold only its window; the window resolves again when its edges move; the first
+    /// edit of its notes drops this field (the `midiNotes` setter), and a reference whose `signature` no longer
+    /// matches the notes the clip holds is dead (`liveMidiSequence`). `derivedCopy` keeps it for a copy that
+    /// holds the same notes, `CrossProjectImport` drops it (the sequence lives in the origin project).
+    var midiSequence: MidiSequenceRef? = nil
+
+    /// `midiSequence` while it still holds: the clip has not been edited, nor rebuilt by a site that does not
+    /// know about sequences, since it was resolved. The one reading the writer and the trim doors go through.
+    var liveMidiSequence: MidiSequenceRef? {
+        guard let ref = midiSequence, case .midiClip(let notes, _) = kind, ref.matches(notes) else { return nil }
+        return ref
+    }
 
     /// What this group listens to when it records: its card input, or its MIDI input (nil = not a zone).
     var recordSource: RecordSource? {
@@ -884,7 +898,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// The MIDI clip's notes (empty for the other types). The setter only applies to a `.midiClip`.
     var midiNotes: [MidiNote] {
         get { if case .midiClip(let n, _) = kind { return n }; return [] }
-        set { if case .midiClip(_, let len) = kind { kind = .midiClip(notes: newValue, lengthBeats: len) } }
+        // Every write of the notes is an EDIT: the take becomes a classic clip (copy on first edit — the notes
+        // it holds are its own from now on; nothing is written back to the sequence nor to the other takes).
+        set { if case .midiClip(_, let len) = kind { kind = .midiClip(notes: newValue, lengthBeats: len); midiSequence = nil } }
     }
     /// The MIDI clip's musical length (beats); 0 for the other types.
     var midiLengthBeats: Double {
@@ -1341,6 +1357,12 @@ struct SoundObject: Identifiable, Codable, Equatable {
         derived.recordInput = recordInput
         derived.recordMidiInput = recordMidiInput
         derived.recordTakeMode = recordTakeMode
+        // A copy that holds the SAME notes keeps looking through the same window (a paste, a duplicate); one
+        // whose notes the caller has cut or rebuilt does not — it is a classic clip unless the caller says
+        // otherwise (@see `MidiSequenceWindow.split`).
+        if let ref = liveMidiSequence, case .midiClip(let notes, _) = kind, ref.matches(notes) {
+            derived.midiSequence = ref
+        }
         return derived
     }
 
@@ -1378,7 +1400,7 @@ struct SoundObject: Identifiable, Codable, Equatable {
         case isMuted, stemID, plugins, instruments, label, colorIndex, colorHex, sends, baseBPM, kind
         case chainInGainDb, chainOutGainDb, pianoRollOpen
         case isInfinite, automation, automationOpen, automationTouch, loopEnabled
-        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode, recordMidiInput, zoneInstruments
+        case loopRangeStart, loopRangeEnd, markers, fileSize, channelMode, araSource, recordInput, recordTakeMode, recordMidiInput, zoneInstruments, midiSequence
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "definitionID" — a data contract, not a name a reader sees, and every session on disk
         // already carries it under that key (cas E7: rename the code, never the key).
@@ -1434,6 +1456,9 @@ struct SoundObject: Identifiable, Codable, Equatable {
         try c.encodeIfPresent(recordInput, forKey: .recordInput)
         try c.encodeIfPresent(recordInput == nil ? recordMidiInput : nil, forKey: .recordMidiInput)
         try c.encodeIfPresent(recordTakeMode?.stored, forKey: .recordTakeMode)
+        // Written only while it holds (a clip edited, or rebuilt by a site that does not know about
+        // sequences, is a classic clip in the file — which is why no migration is needed).
+        try c.encodeIfPresent(liveMidiSequence, forKey: .midiSequence)
         try c.encode(kind, forKey: .kind)
     }
 
@@ -1493,5 +1518,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
         // Absent (or a value this build does not know) = the default, `.mute`; stored as nil.
         recordTakeMode = (try? c.decodeIfPresent(RecordTakeMode.self, forKey: .recordTakeMode))?.stored
         kind       = try c.decode(Kind.self, forKey: .kind)
+        // The signature is not in the file: it is what the notes held here say, read now.
+        if case .midiClip(let notes, _) = kind,
+           let ref = try? c.decodeIfPresent(MidiSequenceRef.self, forKey: .midiSequence) {
+            midiSequence = ref.signed(notes)
+        }
     }
 }

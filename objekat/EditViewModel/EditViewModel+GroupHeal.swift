@@ -465,6 +465,7 @@ extension EditViewModel {
             let splitBeat = beatsFromSeconds(rel)
             n.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: splitBeat).left,
                                lengthBeats: max(0.01, min(lengthBeats, splitBeat)))
+            n.midiSequence = nil     // a rebuilt clip: a classic one (the sequence's window is not followed here)
         case .aux, .group:
             break   // a window: its content (a group's children) is not cut here
         }
@@ -491,6 +492,7 @@ extension EditViewModel {
             let splitBeat = beatsFromSeconds(rel)
             n.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: splitBeat).right,
                                lengthBeats: max(0.01, lengthBeats - splitBeat))
+            n.midiSequence = nil
         case .aux, .group:
             break
         }
@@ -545,6 +547,7 @@ extension EditViewModel {
         healExtend(&m, by: b, automation: auto)
         let shifted = nb.map { n -> MidiNote in var q = n; q.startBeat += beatsA; return q }
         m.kind = .midiClip(notes: na + shifted, lengthBeats: beatsA + lb)
+        m.midiSequence = nil
         return m
     }
 

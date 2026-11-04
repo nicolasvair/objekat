@@ -1326,6 +1326,11 @@ final class EditViewModel {
     }
 
     var snapEnabled: Bool = true
+    /// The MIDI sequences the takes of a recording made through a loop look through (format 37, @see
+    /// `MidiSequenceWindow`). IMMUTABLE once recorded, outside the undo (a snapshot's clip may name a sequence the
+    /// live model no longer uses: it stays here until the project closes). Replaced on every load; the file keeps
+    /// only the ones a clip still names (@see `projectDocument`).
+    @ObservationIgnored var midiSequences: [UUID: MidiSequence] = [:]
     /// What the script canvases keep in THIS project, by `remember` key (the spectral editor's monitoring
     /// level). Written into the project document, replaced on every load, emptied by a new project.
     var canvasSettings: [String: CanvasProjectSettings] = [:]

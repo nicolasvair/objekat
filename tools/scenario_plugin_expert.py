@@ -206,7 +206,7 @@ try:
             text = f.read()
         import json
         doc = json.loads(text)
-        check("the session is written in format 36", doc.get("version") == 36, str(doc.get("version")))
+        check("the session is written in format 37", doc.get("version") == 37, str(doc.get("version")))
         check("the file carries outputTrimDb", '"outputTrimDb"' in text)
         check("no compensationDb while it is 0", '"compensationDb"' not in text)
         cmd("project.new")

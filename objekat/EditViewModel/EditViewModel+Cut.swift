@@ -358,7 +358,12 @@ extension EditViewModel {
             lc.markers    = markL
             lc.kind = .midiClip(notes: leftNotes,
                                 lengthBeats: max(0.01, min(lengthBeats, splitBeat)))
-            let rc = child.derivedCopy(
+            // A take of a recording through a loop: each half keeps looking through the sequence, from where it is.
+            let seqRefs = child.liveMidiSequence.map {
+                MidiSequenceWindow.split(ref: $0, original: notes, left: leftNotes, right: rightNotes, atBeat: splitBeat)
+            }
+            lc.midiSequence = seqRefs?.left
+            var rc = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: child.fadeOut,
                 fadeInCurve: Self.freshCutCurve,
@@ -370,6 +375,7 @@ extension EditViewModel {
                 araSource: .some(copiedARASource(of: child)),
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
+            rc.midiSequence = seqRefs?.right
             rightIDMap[child.id] = rc.id
             return (lc, rc)
 
@@ -801,9 +807,14 @@ extension EditViewModel {
             left.markers    = markL
             left.kind     = .midiClip(notes: leftNotes,
                                       lengthBeats: max(0.01, min(lengthBeats, splitBeat)))
+            // A take of a recording through a loop: each half keeps looking through the sequence, from where it is.
+            let seqRefs = original.liveMidiSequence.map {
+                MidiSequenceWindow.split(ref: $0, original: notes, left: leftNotes, right: rightNotes, atBeat: splitBeat)
+            }
+            left.midiSequence = seqRefs?.left
 
             let rightID = UUID()
-            let right = original.derivedCopy(
+            var right = original.derivedCopy(
                 id: rightID, startTime: splitTime, duration: original.duration - splitRel,
                 lane: original.lane,
                 fadeIn: 0, fadeOut: min(original.fadeOut, original.duration - splitRel),
@@ -815,6 +826,7 @@ extension EditViewModel {
                 araSource: .some(copiedARASource(of: original)),
                 kind: .midiClip(notes: rightNotes,
                                 lengthBeats: max(0.01, lengthBeats - splitBeat)))
+            right.midiSequence = seqRefs?.right
 
             // Model: replace the original with `left`, insert `right` just after.
             if let parent {

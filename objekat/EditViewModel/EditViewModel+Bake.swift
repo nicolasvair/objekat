@@ -189,6 +189,7 @@ extension EditViewModel {
             // distinct notes. @see EditViewModel.freshNoteIDs
             if case .midiClip(let notes, let len) = o.kind {
                 n.kind = .midiClip(notes: Self.freshNoteIDs(notes), lengthBeats: len)
+                n.midiSequence = nil     // taken from a sidecar: the sequence it named is not this project's to follow
             }
             return n
         }

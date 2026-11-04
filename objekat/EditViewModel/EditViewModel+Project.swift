@@ -268,7 +268,25 @@ extension EditViewModel {
                         fxLinks: fxLinksDoc(for: items, stems: capturedStems),
                         canvasSettings: canvasSettings.isEmpty ? nil : canvasSettings,
                         recordInputs: recordInputs.isEmpty ? nil : recordInputs,
-                        inputChains: inputChainsForDocument())
+                        inputChains: inputChainsForDocument(),
+                        midiSequences: midiSequencesForDocument(items: items))
+    }
+
+    /// The sequences a document keeps: the ones a clip of `items` still names (a take that was edited, or a
+    /// sequence nobody looks through any more, leaves nothing behind in the file). Sorted by id — a file does not
+    /// change from one save to the next.
+    func midiSequencesForDocument(items: [SoundObject]) -> [MidiSequence]? {
+        guard !midiSequences.isEmpty else { return nil }
+        var wanted = Set<UUID>()
+        func walk(_ list: [SoundObject]) {
+            for o in list {
+                if let ref = o.liveMidiSequence { wanted.insert(ref.id) }
+                if case .group(let children, _) = o.kind { walk(children) }
+            }
+        }
+        walk(items)
+        let kept = wanted.compactMap { midiSequences[$0] }.sorted { $0.id.uuidString < $1.id.uuidString }
+        return kept.isEmpty ? nil : kept
     }
 
     /// The registry as written for `items`: the bins their blocks still refer to. The bus chains

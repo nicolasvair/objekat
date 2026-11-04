@@ -857,6 +857,7 @@ extension EditViewModel {
                     c.fadeOut  = 0
                     c.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: keepBeat).left,
                                        lengthBeats: max(0.01, min(lengthBeats, keepBeat)))
+                    c.midiSequence = nil     // a rebuilt clip: a classic one
                     needsPosResync.append(c.id)
                     needsMidiResync.append(c.id)
                     updated.append(c)
@@ -872,6 +873,7 @@ extension EditViewModel {
                     c.markers    = child.markers.shiftedInTime(by: -(cutHi - absStart))
                     c.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: dropBeat).right,
                                        lengthBeats: max(0.01, lengthBeats - dropBeat))
+                    c.midiSequence = nil
                     needsPosResync.append(c.id)
                     needsMidiResync.append(c.id)
                     updated.append(c)
@@ -890,6 +892,7 @@ extension EditViewModel {
                     left.markers    = markL
                     left.kind = .midiClip(notes: Self.splitMidiNotes(notes, atBeat: loBeat).left,
                                           lengthBeats: max(0.01, min(lengthBeats, loBeat)))
+                    left.midiSequence = nil
                     needsPosResync.append(left.id)
                     needsMidiResync.append(left.id)
                     updated.append(left)

@@ -233,6 +233,7 @@ extension EditViewModel {
         canvasSettings = doc.canvasSettings ?? [:]
         setRecordInputs(doc.recordInputs ?? RecordInputsConfig())
         setInputChains(doc.inputChains ?? InputChains())
+        midiSequences = Dictionary((doc.midiSequences ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         consolidateEditStack.removeAll()
         resetTransientSessionState(preservingClipboard: preservingClipboard)
 

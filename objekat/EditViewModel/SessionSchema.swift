@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 36
+    static let formatVersion = 37
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -307,6 +307,16 @@ enum SessionSchema {
         "  empty clip. Takes are ordinary `midiClip` children whose notes before the clip's start have a negative",
         "  startBeat (the handles, like an audio take's). A build from before format 35 ignores both keys; a",
         "  format 35 build ignores the meaning (it keeps the instrument for the armed zone only).",
+        "midiSequences + midiSequence (format 37, both optional: a build that does not know them ignores them and",
+        "  reads every take as a classic clip) — a MIDI recording made THROUGH A LOOP is one continuous capture, the way",
+        "  an audio one is one file: `midiSequences` is the document's list of those captures, { id, notes }, the",
+        "  notes in beats from the capture's origin (same fields as a midiClip's). A TAKE is an ordinary `midiClip`",
+        "  that also carries `midiSequence`: { id, offsetBeats } — the sequence it looks through, and where its beat 0",
+        "  is on it. Its `notes` hold ONLY its window (the sequence's notes that begin in",
+        "  [offsetBeats, offsetBeats + its length), rebased on the clip: sequence beat = clip beat + offsetBeats), so",
+        "  the clip plays from its own notes and needs the sequence only to REVEAL more when an edge is pulled out. The",
+        "  first edit of the notes drops `midiSequence` (the clip becomes a classic one); a sequence no clip names is",
+        "  not written. Sequences are never edited. A single-pass recording has none.",
         "",
         "IDS — every `id` in this file is UNIQUE in the whole project, whatever it names: items (at every",
         "  depth of the tree), plugins (plain ones, racks, `fxBlock` entries AND the instances they hold,",

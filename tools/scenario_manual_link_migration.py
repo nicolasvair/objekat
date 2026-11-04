@@ -214,7 +214,7 @@ def main():
     # ── the legacy file: version 31, two reverbs tied by a manual link, a detached residue ──
     path1 = find_file(folder)
     doc = json.load(open(path1))
-    check("a freshly saved file is format 36", doc.get("version") == 36, str(doc.get("version")))
+    check("a freshly saved file is format 37", doc.get("version") == 37, str(doc.get("version")))
     out, inside = link_fields(doc)
     check("...and holds no link field outside a bin", out == [], str(out))
     check("...while the bin's instances hold theirs", len(inside) >= 2, str(inside))
@@ -306,7 +306,7 @@ def main():
     finally:
         a.close()
     doc2 = json.load(open(find_file(folder2)))
-    check("the migrated file is saved as format 36", doc2.get("version") == 36, str(doc2.get("version")))
+    check("the migrated file is saved as format 37", doc2.get("version") == 37, str(doc2.get("version")))
     out2, inside2 = link_fields(doc2)
     check("...with no link field outside a bin", out2 == [], str(out2))
     check("...and the bin's instances still hold theirs", len(inside2) >= 2, str(inside2))
