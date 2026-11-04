@@ -26,7 +26,11 @@ extension EditViewModel {
     func editRecordInputs(_ change: (inout RecordInputsConfig) -> Bool) -> Bool {
         var next = recordInputs
         guard change(&next) else { return false }
-        if next.deviceName == nil { next.deviceName = AudioDeviceStatus.shared.snapshot.name }
+        // The card the inputs are taken from: the input card chosen in the audio menu, else the output's own.
+        if next.deviceName == nil {
+            let snap = AudioDeviceStatus.shared.snapshot
+            next.deviceName = snap.inputDeviceName ?? snap.name
+        }
         recordInputs = next
         engine?.setAudioInputStereoPairs(next.pairs.map { NSNumber(value: $0) })
         isDirty = true

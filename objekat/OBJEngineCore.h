@@ -1177,6 +1177,9 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // Les entrées de cette carte sont un AUTRE périphérique de même nom (AirPods) : non prises en charge
 // (@see -audioInputsAreOnSeparateDevice). Toujours NO une fois les entrées ouvertes ou sans carte.
 @property (nonatomic) BOOL      inputsSeparate;
+// Idem, ET aucun micro n'est nommable (@see -separateInputSiblingUID) : l'ouverture sera refusée — l'onglet Entrées le dit
+// d'avance. Faux dès qu'un micro frère existe (il s'ouvre alors par l'agrégat privé).
+@property (nonatomic) BOOL      inputsSeparateUnnamed;
 // The chosen INPUT card (@see -setInputDevice:): its UID and name, nil when the inputs are the output card's.
 @property (nonatomic, copy, nullable) NSString* inputDeviceUID;
 @property (nonatomic, copy, nullable) NSString* inputDeviceName;

@@ -64,6 +64,8 @@ struct AudioDeviceSnapshot: Equatable {
     /// a microphone, two CoreAudio devices, one name). `input.enable` refuses them, and the Inputs tab
     /// says so instead of offering to enable them. Always false once the inputs are open.
     var inputsSeparate: Bool = false
+    /// ... and no microphone can be named for them: opening is refused, and the Inputs tab says so up front.
+    var inputsSeparateUnnamed: Bool = false
     /// The card the inputs are taken from when it is NOT the output card (UID and name); nil = the output
     /// card's own. A choice: it is set while the inputs are still closed.
     var inputDeviceUID: String? = nil
@@ -137,6 +139,7 @@ final class AudioDeviceStatus {
                                        outputChannels: live.outputChannels,
                                        inputChannels: live.inputChannels,
                                        inputsSeparate: live.inputsSeparate,
+                                       inputsSeparateUnnamed: live.inputsSeparateUnnamed,
                                        inputDeviceUID: live.inputDeviceUID, inputDeviceName: live.inputDeviceName,
                                        inputsState: InputsState(raw: live.inputsState),
                                        inputsMessage: live.inputsMessage,

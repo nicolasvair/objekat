@@ -72,9 +72,21 @@ struct InputsPanelView: View {
     // MARK: Closed
 
     private var enableBar: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if AudioDeviceStatus.shared.snapshot.inputsSeparate {
-                // AirPods and the like: the microphone is another device, which the engine refuses.
+        let snap = AudioDeviceStatus.shared.snapshot
+        return VStack(alignment: .leading, spacing: 8) {
+            if let card = snap.inputDeviceName {
+                // Another card than the output's is chosen for the inputs (the audio menu's « Input »).
+                Text(L("inputs.card", card))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if snap.inputsState == .stabilising {
+                // A Bluetooth microphone: the system is switching the headset to its call profile.
+                Text(L("inputs.stabilising"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if snap.inputsSeparateUnnamed {
+                // AirPods and the like with no microphone to be found: the engine refuses them.
                 Text(L("inputs.separateDevice"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -87,6 +99,11 @@ struct InputsPanelView: View {
             }
             if let failure {
                 Text(L("inputs.openFailed", failure))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if snap.inputsState == .failed, let why = snap.inputsMessage {
+                // The opening failed after the click (a Bluetooth microphone that never came).
+                Text(L("inputs.openFailed", why))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

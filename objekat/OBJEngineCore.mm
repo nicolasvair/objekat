@@ -11379,6 +11379,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     s.running = dev->isPlaying();
     // With another card CHOSEN for the inputs, the output card's own inputs are not in question.
     s.inputsSeparate = s.inputChannels == 0 && _inputDeviceUID == nil && objOutputInputsAreSeparate(dm);
+    s.inputsSeparateUnnamed = s.inputsSeparate && [self separateInputSiblingUID] == nil;
     s.inputDeviceUID = _inputDeviceUID;
     s.inputDeviceName = _inputDeviceUID != nil ? [self nameOfInputDevice:_inputDeviceUID] : nil;
     // La décision de fréquence — sauf si la carte ne tourne plus à ce qu'elle avait décidé (le

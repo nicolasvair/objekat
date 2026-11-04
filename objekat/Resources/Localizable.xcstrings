@@ -347,6 +347,98 @@
         }
       }
     },
+    "audio.menu.input": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrée"
+          }
+        }
+      }
+    },
+    "audio.menu.input.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input unavailable: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrada no disponible: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrée indisponible : %@"
+          }
+        }
+      }
+    },
+    "audio.menu.input.same": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Same card as the output"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Misma tarjeta que la salida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Même carte que la sortie"
+          }
+        }
+      }
+    },
+    "audio.menu.input.stabilising": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The microphone is switching mode, a few seconds…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El micrófono está cambiando de modo, unos segundos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le micro change de mode, quelques secondes…"
+          }
+        }
+      }
+    },
     "audio.menu.noDevice": {
       "extractionState": "manual",
       "localizations": {
@@ -9800,6 +9892,29 @@
         }
       }
     },
+    "inputs.card": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrada: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entrée : %@"
+          }
+        }
+      }
+    },
     "inputs.dormant.help": {
       "extractionState": "manual",
       "localizations": {
@@ -10312,19 +10427,42 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The microphone of this device is a separate device (e.g. AirPods): not supported."
+            "value": "This device's microphone is a separate device that cannot be found: pick an input card in the audio menu."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "El micrófono de este dispositivo es un periférico aparte (p. ej. AirPods): no compatible."
+            "value": "El micrófono de este dispositivo es un dispositivo aparte que no se encuentra: elija una tarjeta de entrada en el menú de audio."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Le micro de cet appareil est un périphérique séparé (ex. AirPods) : non pris en charge."
+            "value": "Le micro de cet appareil est un périphérique séparé, introuvable : choisissez une carte d'entrée dans le menu audio."
+          }
+        }
+      }
+    },
+    "inputs.stabilising": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Bluetooth microphone is switching mode — a few seconds…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El micrófono Bluetooth está cambiando de modo — unos segundos…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le micro Bluetooth change de mode — quelques secondes…"
           }
         }
       }

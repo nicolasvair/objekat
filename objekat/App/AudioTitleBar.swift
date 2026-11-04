@@ -56,6 +56,9 @@ final class AudioDeviceWatcher {
 struct AudioSettingsMenu: View {
     @Bindable var viewModel: EditViewModel
     @State private var shown = false
+    /// Why the last choice of an input card was refused (a recording is running…): said under the rows
+    /// until the popover is closed or a choice succeeds.
+    @State private var inputError: String? = nil
 
     var body: some View {
         Button { shown.toggle() } label: {
@@ -64,8 +67,9 @@ struct AudioSettingsMenu: View {
         .buttonStyle(.borderless)
         .frame(width: 26)
         .help(L("audio.menu.help"))
+        .onChange(of: shown) { _, now in if !now { inputError = nil } }
         .popover(isPresented: $shown, arrowEdge: .bottom) {
-            TreePickerPopover(sections: { Self.sections(engine: viewModel.engine) },
+            TreePickerPopover(sections: { Self.sections(engine: viewModel.engine, inputError: inputError) },
                               closesOnChoose: false, minWidth: 260,
                               onChoose: { choose($0) },
                               dismiss: { shown = false })
@@ -77,7 +81,7 @@ struct AudioSettingsMenu: View {
     /// Evaluated in the popover's `body`: the two reads below (`AudioDeviceWatcher.generation` and the
     /// snapshot) are what redraw it when a card comes or goes or when the engine has changed something.
     @MainActor
-    static func sections(engine: OBJEngineCore?) -> [TreePickerSection] {
+    static func sections(engine: OBJEngineCore?, inputError: String? = nil) -> [TreePickerSection] {
         _ = AudioDeviceWatcher.shared.generation
         let snap = AudioDeviceStatus.shared.snapshot
         let state = AudioMenuState(
@@ -92,9 +96,19 @@ struct AudioSettingsMenu: View {
             currentSampleRate: snap.sampleRate,
             sampleRateNote: rateDecisionNote(snap),
             bufferSizes: (engine?.availableBufferSizes() ?? []).map { $0.intValue },
-            currentBufferSize: snap.bufferSize)
+            currentBufferSize: snap.bufferSize,
+            // The cards with inputs OTHER than the output card (its own are the row « same card »). The
+            // engine never lists its private aggregate; the choice ticked is the engine's, not the wish.
+            inputCards: ((engine?.availableInputDevices() as? [[String: Any]]) ?? []).compactMap { d in
+                guard (d["same_as_output"] as? Bool) != true, let uid = d["uid"] as? String,
+                      let name = d["name"] as? String else { return nil }
+                return AudioMenuInputCard(uid: uid, name: name)
+            },
+            currentInput: snap.inputDeviceUID,
+            inputNote: inputNote(snap, error: inputError))
         return AudioMenuModel.sections(state, labels: AudioMenuLabels(
-            output: L("audio.menu.device"), sampleRate: L("audio.menu.sampleRate"),
+            output: L("audio.menu.device"), input: L("audio.menu.input"),
+            sameInputCard: L("audio.menu.input.same"), sampleRate: L("audio.menu.sampleRate"),
             buffer: L("audio.menu.buffer"), noOutputDevice: L("audio.menu.noDevice")))
     }
 
@@ -108,6 +122,14 @@ struct AudioSettingsMenu: View {
                 AudioOutputDevice.shared.name = name   // publishes and persists (previews aligned)
             }
             viewModel.engine?.setOutputDevice(name)    // applies to the engine
+        case .input(let uid):
+            // The engine decides (a recording refuses, a card may not open); what it ends up holding is
+            // the choice remembered — `--virtual-audio` being a fixture, it never becomes one.
+            inputError = viewModel.engine?.setInputDevice(uid)
+            if !OBJEngineCore.isVirtualAudio() {
+                AudioInputDevice.shared.uid = viewModel.engine?.currentInputDeviceUID()
+            }
+            AudioDeviceStatus.shared.refresh()
         case .sampleRate(let hz):
             viewModel.engine?.setSampleRate(hz)
         case .buffer(let frames):
@@ -118,6 +140,17 @@ struct AudioSettingsMenu: View {
     }
 
     // MARK: Formatting
+
+    /// The sentence under the input rows: a refusal first, else what the engine says of the inputs it is
+    /// opening. Nil while all is quiet.
+    static func inputNote(_ s: AudioDeviceSnapshot, error: String?) -> String? {
+        if let error { return L("audio.menu.input.failed", error) }
+        switch s.inputsState {
+        case .stabilising: return L("audio.menu.input.stabilising")
+        case .failed: return L("audio.menu.input.failed", s.inputsMessage ?? "")
+        case .closed, .open: return nil
+        }
+    }
 
     /// The sentence under the sample-rate rows when the policy changed (or could not change) the
     /// card's rate: `nil` for `adopt` and `unknown`, which say nothing.

@@ -19,10 +19,24 @@ struct AudioMenuState: Equatable {
     /// The buffer sizes the card offers (the menu keeps the useful ones).
     var bufferSizes: [Int] = []
     var currentBufferSize: Int = 0
+    /// The cards one can record from OTHER than the output card (its own inputs are the row « same card »).
+    var inputCards: [AudioMenuInputCard] = []
+    /// The input card CHOSEN (its UID); nil = the output card's own inputs, which is the default.
+    var currentInput: String? = nil
+    /// One sentence under the input rows: the microphone is switching, or opening failed. Nil says nothing.
+    var inputNote: String? = nil
+}
+
+/// An input card of the menu: its UID is its identity (a name is not one — two identical interfaces).
+struct AudioMenuInputCard: Equatable {
+    var uid: String
+    var name: String
 }
 
 struct AudioMenuLabels: Equatable {
     var output: String
+    var input: String
+    var sameInputCard: String
     var sampleRate: String
     var buffer: String
     var noOutputDevice: String
@@ -31,6 +45,8 @@ struct AudioMenuLabels: Equatable {
 /// What a click on a row of the menu asks for.
 enum AudioMenuAction: Equatable {
     case output(String)
+    /// nil = the output card's own inputs.
+    case input(String?)
     case sampleRate(Double)
     case buffer(Int)
 }
@@ -39,16 +55,21 @@ enum AudioMenuModel {
     // MARK: Ids
 
     private static let outPrefix = "out:"
+    private static let inPrefix = "in:"
+    private static let sameInputRow = "in-same"
     private static let ratePrefix = "rate:"
     private static let bufferPrefix = "buf:"
 
     static func outputID(_ name: String) -> String { outPrefix + name }
+    static func inputID(_ uid: String?) -> String { uid.map { inPrefix + $0 } ?? sameInputRow }
     static func rateID(_ hz: Double) -> String { ratePrefix + String(hz) }
     static func bufferID(_ frames: Int) -> String { bufferPrefix + String(frames) }
 
     /// The meaning of a row's id; nil for an id the menu does not know.
     static func action(forID id: String) -> AudioMenuAction? {
         if id.hasPrefix(outPrefix) { return .output(String(id.dropFirst(outPrefix.count))) }
+        if id == sameInputRow { return .input(nil) }
+        if id.hasPrefix(inPrefix) { return .input(String(id.dropFirst(inPrefix.count))) }
         if id.hasPrefix(ratePrefix), let hz = Double(id.dropFirst(ratePrefix.count)) { return .sampleRate(hz) }
         if id.hasPrefix(bufferPrefix), let n = Int(id.dropFirst(bufferPrefix.count)) { return .buffer(n) }
         return nil
@@ -65,6 +86,14 @@ enum AudioMenuModel {
                 TreePickerNode(id: outputID($0), name: $0, checked: $0 == state.currentOutput)
             },
             collapsible: false, emptyText: labels.noOutputDevice, dividerAfter: true))
+
+        var inputNodes = [TreePickerNode(id: inputID(nil), name: labels.sameInputCard, checked: state.currentInput == nil)]
+        inputNodes += state.inputCards.map {
+            TreePickerNode(id: inputID($0.uid), name: $0.name, checked: $0.uid == state.currentInput)
+        }
+        if let note = state.inputNote { inputNodes.append(.note("input.note", note)) }
+        result.append(TreePickerSection(id: "input", title: labels.input, nodes: inputNodes,
+                                        collapsible: false, dividerAfter: true))
 
         if !state.sampleRates.isEmpty {
             var nodes = state.sampleRates.map {
