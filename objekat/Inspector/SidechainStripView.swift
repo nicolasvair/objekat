@@ -98,175 +98,46 @@ struct SidechainStripIfAny: View {
 /// The source picker: "None", then the stems, then the objects as a tree. A group is chosen by a
 /// click on its NAME; its chevron opens its children (a native menu could not do both: a submenu's
 /// title is not clickable on macOS). Refused entries stay visible, greyed, their reason as help.
+/// The list and the popover are `TreePickerPopover`'s (Shared/), shared with the audio menu; this
+/// type only turns the view-model's `SidechainSourceTree` into rows and a click into a key.
 struct SidechainSourcePicker: View {
     let viewModel: EditViewModel
     let host: UUID
     let plugin: UUID
     let dismiss: () -> Void
 
-    @State private var expanded: Set<UUID> = []
-    @State private var stemsOpen = false
-    @State private var objectsOpen = true
-    @State private var seeded = false
+    /// The id of the « None » row; every other row carries its object's or stem's UUID string.
+    private static let noneID = "none"
 
     var body: some View {
-        let tree = viewModel.sidechainSourceTree(host: host, plugin: plugin)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if let tree {
-                    row(name: L("plugin.sidechain.none"), depth: 0, checked: tree.current == nil, refusal: nil) {
-                        choose(nil)
-                    }
-                    Divider().padding(.vertical, 3)
-                    section(L("plugin.sidechain.stems"), open: $stemsOpen)
-                    if stemsOpen {
-                        if tree.stems.isEmpty { empty(L("sidechain.picker.noStems")) }
-                        ForEach(tree.stems) { s in
-                            row(name: s.name, depth: 1, checked: tree.current == s.id, refusal: s.refusal) { choose(s.id) }
-                        }
-                    }
-                    section(L("sidechain.picker.objects"), open: $objectsOpen)
-                    if objectsOpen {
-                        if tree.objects.isEmpty { empty(L("sidechain.picker.noObjects")) }
-                        nodes(tree.objects, depth: 1, current: tree.current)
-                    }
-                }
-            }
-            .padding(6)
+        TreePickerPopover(sections: { Self.sections(viewModel.sidechainSourceTree(host: host, plugin: plugin)) },
+                          closesOnChoose: true,
+                          onChoose: { choose($0) },
+                          dismiss: dismiss)
+    }
+
+    /// Pure: the picker's content, as the shared component lists it.
+    static func sections(_ tree: SidechainSourceTree?) -> [TreePickerSection] {
+        guard let tree else { return [] }
+        func node(_ n: SidechainSourceTree.Node, _ current: UUID?) -> TreePickerNode {
+            TreePickerNode(id: n.id.uuidString, name: n.name, checked: current == n.id,
+                           disabledReason: n.refusal.map { EditViewModel.sidechainReasonText($0) },
+                           children: n.children.map { node($0, current) })
         }
-        .frame(width: Self.width(for: tree))
-        .frame(maxHeight: 420)
-        .fixedSize(horizontal: false, vertical: true)
-        .onAppear { seed(tree) }
+        return [
+            TreePickerSection(id: "none", nodes: [TreePickerNode(id: noneID, name: L("plugin.sidechain.none"),
+                                                                 checked: tree.current == nil)],
+                              dividerAfter: true),
+            TreePickerSection(id: "stems", title: L("plugin.sidechain.stems"),
+                              nodes: tree.stems.map { node($0, tree.current) }, initiallyOpen: false,
+                              emptyText: L("sidechain.picker.noStems")),
+            TreePickerSection(id: "objects", title: L("sidechain.picker.objects"),
+                              nodes: tree.objects.map { node($0, tree.current) }, initiallyOpen: true,
+                              emptyText: L("sidechain.picker.noObjects")),
+        ]
     }
 
-    /// As wide as the longest name needs (every row, folded ones included, so unfolding never makes
-    /// the popover jump), from 280 pt up to what the screen leaves.
-    static func width(for tree: SidechainSourceTree?) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: 11)
-        func w(_ name: String, _ depth: Int) -> CGFloat {
-            // indent + chevron + gap + row padding + check + gap + text + scroll padding & slack
-            CGFloat(depth) * 14 + 14 + 4 + 8 + 9 + 5
-                + ceil((name as NSString).size(withAttributes: [.font: font]).width) + 12 + 16
-        }
-        var widest: CGFloat = 0
-        func walk(_ list: [SidechainSourceTree.Node], _ depth: Int) {
-            for n in list { widest = max(widest, w(n.name, depth)); walk(n.children, depth + 1) }
-        }
-        if let tree { walk(tree.stems, 1); walk(tree.objects, 1) }
-        let screen = (NSApp.keyWindow?.screen ?? NSScreen.main)?.visibleFrame.width ?? 1200
-        return min(max(280, widest), max(280, screen - 80))
-    }
-
-    /// Opens the section and the groups that lead to the current key, once.
-    private func seed(_ tree: SidechainSourceTree?) {
-        guard !seeded, let tree, let current = tree.current else { return }
-        seeded = true
-        if tree.stems.contains(where: { $0.id == current }) { stemsOpen = true }
-        func open(_ list: [SidechainSourceTree.Node]) {
-            for n in list where SidechainSourceTree.contains(current, under: n) {
-                expanded.insert(n.id); open(n.children)
-            }
-        }
-        open(tree.objects)
-    }
-
-    private func choose(_ source: UUID?) {
-        try? viewModel.setSidechain(host: host, plugin: plugin, source: source)
-        dismiss()
-    }
-
-    private func nodes(_ list: [SidechainSourceTree.Node], depth: Int, current: UUID?) -> AnyView {
-        AnyView(ForEach(list) { n in
-            VStack(alignment: .leading, spacing: 0) {
-                row(name: n.name, depth: depth, checked: current == n.id, refusal: n.refusal,
-                    expandable: !n.children.isEmpty, isExpanded: expanded.contains(n.id),
-                    toggle: { if expanded.contains(n.id) { expanded.remove(n.id) } else { expanded.insert(n.id) } }) {
-                    choose(n.id)
-                }
-                if expanded.contains(n.id) { nodes(n.children, depth: depth + 1, current: current) }
-            }
-        })
-    }
-
-    private func section(_ title: String, open: Binding<Bool>) -> some View {
-        Button { open.wrappedValue.toggle() } label: {
-            HStack(spacing: 4) {
-                Image(systemName: open.wrappedValue ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .frame(width: 12)
-                Text(title).font(.system(size: 11, weight: .semibold))
-                Spacer()
-            }
-            .foregroundStyle(.secondary)
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func empty(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.tertiary)
-            .padding(.leading, 30)
-            .padding(.vertical, 3)
-    }
-
-    private func row(name: String, depth: Int, checked: Bool, refusal: BridgeScope.Refusal?,
-                     expandable: Bool = false, isExpanded: Bool = false, toggle: (() -> Void)? = nil,
-                     action: @escaping () -> Void) -> some View {
-        HStack(spacing: 4) {
-            // The chevron: opens / closes a group's children; it never chooses.
-            Group {
-                if expandable, let toggle {
-                    Button(action: toggle) {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .frame(width: 14, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help(L("sidechain.picker.children"))
-                } else {
-                    Color.clear.frame(width: 14, height: 18)
-                }
-            }
-            // The name: chooses this source (a group whole, when it is one).
-            Button(action: action) {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .opacity(checked ? 1 : 0)
-                    Text(verbatim: name)
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 0)
-                }
-                .padding(.vertical, 2)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(SidechainRowStyle())
-            .disabled(refusal != nil)
-            .help(refusal.map { EditViewModel.sidechainReasonText($0) } ?? "")
-        }
-        .padding(.leading, CGFloat(depth) * 14)
-    }
-}
-
-/// A picker row: highlighted under the pointer like a menu item, greyed when disabled.
-private struct SidechainRowStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var hovered = false
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 4)
-            .foregroundStyle(isEnabled ? (hovered ? Color.white : Color.primary) : Color.secondary.opacity(0.6))
-            .background(RoundedRectangle(cornerRadius: 4)
-                .fill(isEnabled && hovered ? Color.accentColor : Color.clear))
-            .onHover { hovered = $0 }
+    private func choose(_ id: String) {
+        try? viewModel.setSidechain(host: host, plugin: plugin, source: id == Self.noneID ? nil : UUID(uuidString: id))
     }
 }
