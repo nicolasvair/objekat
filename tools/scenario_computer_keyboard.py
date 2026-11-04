@@ -162,6 +162,13 @@ try:
         check("the mode is off at launch", st0["on"] is False, st0)
         check("octave 60 (C4) at launch", st0["octave"] == 60 and st0["octave_name"] == "C4", st0)
         check("nothing held", st0["held"] == [], st0)
+        # The layout the keys are named after depends on the machine: only the shape is asserted.
+        check("layout_family and layout_name are present (string or null)",
+              "layout_family" in st0 and "layout_name" in st0
+              and st0["layout_family"] in (None, "azerty", "qwerty", "qwertz")
+              and (st0["layout_name"] is None or isinstance(st0["layout_name"], str)), st0)
+        check("a known family is shown under its title",
+              st0["layout_family"] is None or st0["layout_name"] == st0["layout_family"].upper(), st0)
         c.send("project.new")
         c.send("input.enable")
         lst = c.send("input.list.midi_inputs")["midi_inputs"]

@@ -10,6 +10,21 @@ struct ComputerKeyboardRowControls: View {
 
     private var range: ClosedRange<Int> { ComputerKeyboardMap.octaveRange }
 
+    /// The tooltips name the REAL letters on this machine's layout (AZERTY, QWERTY…), read through the watcher so
+    /// they follow a change of layout. The notes in the order of the keyboard's pitches.
+    private var noteKeysText: String {
+        let watcher = KeyboardLayoutWatcher.shared
+        return ComputerKeyboardMap.noteOffsets.sorted { $0.value < $1.value }
+            .map { watcher.label(forKeyCode: $0.key).lowercased() }
+            .joined(separator: " ")
+    }
+    private var octaveDownKeyText: String {
+        KeyboardLayoutWatcher.shared.label(forKeyCode: ComputerKeyboardMap.octaveDownKeyCode).lowercased()
+    }
+    private var octaveUpKeyText: String {
+        KeyboardLayoutWatcher.shared.label(forKeyCode: ComputerKeyboardMap.octaveUpKeyCode).lowercased()
+    }
+
     var body: some View {
         let on = viewModel.computerKeyboardOn
         HStack(spacing: InputRowStyle.controlSpacing) {
@@ -22,7 +37,7 @@ struct ComputerKeyboardRowControls: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(on ? Color.accentColor : Color.secondary)
-            .help(L("inputs.keyboard.toggle.help"))
+            .help(L("inputs.keyboard.toggle.help", noteKeysText, octaveDownKeyText, octaveUpKeyText))
 
             Spacer(minLength: 4)
 
@@ -31,7 +46,7 @@ struct ComputerKeyboardRowControls: View {
             }
             .buttonStyle(.plain)
             .disabled(viewModel.computerKeyboardOctave <= range.lowerBound)
-            .help(L("inputs.keyboard.octave.down.help"))
+            .help(L("inputs.keyboard.octave.down.help", octaveDownKeyText))
 
             Text(verbatim: viewModel.computerKeyboardOctaveName)
                 .font(.system(size: 10, design: .monospaced))
@@ -42,7 +57,7 @@ struct ComputerKeyboardRowControls: View {
             }
             .buttonStyle(.plain)
             .disabled(viewModel.computerKeyboardOctave >= range.upperBound)
-            .help(L("inputs.keyboard.octave.up.help"))
+            .help(L("inputs.keyboard.octave.up.help", octaveUpKeyText))
         }
         .foregroundStyle(on ? Color.primary : Color.secondary)
     }

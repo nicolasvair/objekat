@@ -69,7 +69,7 @@ extension EditViewModel {
     /// The name to show for a MIDI input: the present device's, else the one the project remembers.
     func midiInputName(_ ref: MidiInputRef) -> String {
         if let d = resolvedMidiInput(ref) { return d.displayName }
-        if ref.name == MidiInputResolver.computerKeyboardInternalName { return L("midi.computer_keyboard") }
+        if ref.name == MidiInputResolver.computerKeyboardInternalName { return KeyboardLayoutWatcher.shared.inputDisplayName }
         return ref.name.isEmpty ? L("midi.input.unnamed") : ref.name
     }
 
@@ -179,10 +179,11 @@ extension EditViewModel {
 extension MidiInputInfo {
     /// The name to SHOW — the one place that decides it (the Inputs panel, the synoptic's choices, the zones'
     /// names, the API): « All MIDI Ins » and the computer keyboard are localised, never shown under the
-    /// internal name the engine gives them; any other device keeps its own.
+    /// internal name the engine gives them (the keyboard is named after the layout in use: « Clavier AZERTY »);
+    /// any other device keeps its own.
     var displayName: String {
         if id == MidiInputResolver.allInputsID { return L("midi.all_inputs") }
-        if isComputerKeyboard { return L("midi.computer_keyboard") }
+        if isComputerKeyboard { return KeyboardLayoutWatcher.shared.inputDisplayName }
         return name
     }
 }
