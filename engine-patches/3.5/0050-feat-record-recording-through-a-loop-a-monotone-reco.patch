@@ -1,0 +1,760 @@
+From 10e6401b937b3fd28801ccd19be31d36b5e3096c Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 4 Nov 2026 14:41:34 +0100
+Subject: [PATCH] feat(record): recording through a loop - a monotone recording
+ clock and a journal of the passes (objekat 0050)
+
+Behind EngineBehaviour::recordsThroughLoop() (false in the stock engine, true in objekat unless OBJ_REC_STOCK is set).
+
+The recorder is paired with the play head's UNLOOPED clock, which every setLoopRange/setPosition rebases, so a loop
+edit under a recording, or a punch-in during a play that already loops (N laps further), breaks the file's position
+on the timeline. Under the flag:
+
+- EditPlaybackContext: a recording clock, anchored by the audio thread at the first playing block after the arm to the
+  head's LOOPED position, then one sample per sample of the reference stream and never rebased. It replaces the
+  unlooped time in getUnloopedEditTimeOfNextBlock, getUnloopedPosition and globalStreamTimeToEditTimeUnlooped (armed but
+  not anchored yet: the looped position of the block, the inputs being handed over before process() anchors).
+  A journal of the passes (clock sample, timeline sample) at every discontinuity of the head, written in
+  NodePlaybackContext::process from referenceSampleRangeToSplitTimelineRange into a lock-free buffer drained by the
+  transport's tick; getRecordJournal() for the host. Diagnostic: how often the head's own clock moved against ours.
+- PlayHead: setLoopRangeRollingIn (loop bounds change without losing the head's place).
+- TransportControl: no 2 s minimum and a start from the caret; a change of `looping` or of the range is applied at
+  once (applyLoopToPlayHeadNow) instead of stopping the recording; the rec end is read on the recording clock.
+- WaveInputDevice: isLooping=false at the stop (no split into _take_N, one continuous file); the file is never deleted
+  because the end time looks earlier; a block is written whatever time the clock says once the take has started.
+- MidiInputDevice: isLooping=false at the stop; the stamps of one capture are monotone.
+- getDefaultRecordingParameters: the take starts at the press, not at the loop's start.
+
+Proven by tools/scenario_record_loop_proof.py: stock = a 1.5 s punch-in on a looping play gives a 2.000 s file that is
+entirely silent, and a loop switched on under a recording ends it; with this patch no silence, the recording goes on,
+and the journal matches the render to the sample on every pass. scenario_record (F, F2, R) and scenario_midi_record
+unchanged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../model/edit/tracktion_EditUtilities.cpp    |   2 +-
+ .../devices/tracktion_MidiInputDevice.cpp     |  21 +-
+ .../devices/tracktion_WaveInputDevice.cpp     |  25 +-
+ .../tracktion_EditPlaybackContext.cpp         | 230 +++++++++++++++++-
+ .../playback/tracktion_EditPlaybackContext.h  |  40 +++
+ .../playback/tracktion_TransportControl.cpp   |  89 ++++++-
+ .../playback/tracktion_TransportControl.h     |   6 +
+ .../utilities/tracktion_EngineBehaviour.h     |   7 +
+ .../tracktion_graph/tracktion_PlayHead.h      |  34 +++
+ 9 files changed, 440 insertions(+), 14 deletions(-)
+
+diff --git a/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp b/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
+index 294478a0b6c..c098b9d79aa 100644
+--- a/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
++++ b/modules/tracktion_engine/model/edit/tracktion_EditUtilities.cpp
+@@ -1328,7 +1328,7 @@ InputDeviceInstance::RecordingParameters getDefaultRecordingParameters (const Ed
+         if (playStart < loopRange.getEnd() - 0.5s)
+             params.punchRange = params.punchRange.withEnd (loopRange.getEnd());
+     }
+-    else if (context.isLooping())
++    else if (context.isLooping() && ! edit.engine.getEngineBehaviour().recordsThroughLoop())   // objekat 0050: the take starts at the press, not at the loop's start
+     {
+         params.punchRange = params.punchRange.withStart (context.getLoopTimes().getStart());
+     }
+diff --git a/modules/tracktion_engine/playback/devices/tracktion_MidiInputDevice.cpp b/modules/tracktion_engine/playback/devices/tracktion_MidiInputDevice.cpp
+index 9b4a4ec53db..c65b6638a14 100644
+--- a/modules/tracktion_engine/playback/devices/tracktion_MidiInputDevice.cpp
++++ b/modules/tracktion_engine/playback/devices/tracktion_MidiInputDevice.cpp
+@@ -839,6 +839,7 @@ public:
+         detail::ScopedActiveRecordingDevice scopedActiveRecordingDevice;
+         const TimeRange punchRange;
+         juce::MidiMessageSequence recorded;
++        double lastRecordedStamp = -1.0e300;   // objekat 0050: the time stamps of a recording never go back
+         TimePosition unloopedStopTime;
+ 
+         std::shared_ptr<choc::fifo::SingleReaderSingleWriterFIFO<juce::MidiMessage>> liveNotes;
+@@ -1051,9 +1052,23 @@ public:
+                 recContext->liveNotes->push (m1);
+ 
+             const std::shared_lock sl (contextLock);
++            const bool monotone = edit.engine.getEngineBehaviour().recordsThroughLoop();
+ 
+             for (auto& recContext : recordingContexts)
+-                recContext->recorded.addEvent (m2);
++            {
++                if (monotone)
++                {
++                    // objekat 0050: the recording clock only goes forward; the stamps of the messages (taken on
++                    // another thread than the audio one) may be a hair out of order
++                    const auto t = std::max (m2.getTimeStamp(), recContext->lastRecordedStamp);
++                    recContext->lastRecordedStamp = t;
++                    recContext->recorded.addEvent (juce::MidiMessage (m2, t));
++                }
++                else
++                {
++                    recContext->recorded.addEvent (m2);
++                }
++            }
+         }
+ 
+         juce::ScopedLock sl (consumerLock);
+@@ -1110,6 +1125,10 @@ public:
+         if (recContext->recorded.getNumEvents() == 0)
+             return {};
+ 
++        // objekat 0050: recording through a loop is never cut into takes
++        if (edit.engine.getEngineBehaviour().recordsThroughLoop())
++            isLooping = false;
++
+         auto track = findAudioTrackForID (edit, recContext->targetID);
+         auto clipSlot = track ? nullptr : findClipSlotForID (edit, recContext->targetID);
+ 
+diff --git a/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp b/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
+index 807192083c4..0bd2b8566aa 100644
+--- a/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
++++ b/modules/tracktion_engine/playback/devices/tracktion_WaveInputDevice.cpp
+@@ -766,8 +766,17 @@ public:
+ 
+         rc->closeFileWriter();
+ 
++        // objekat 0050: recording through a loop, a recording is never cut into takes (the file is one
++        // continuous file and the journal says where the head was), and "did we get as far as adding any
++        // sample" is asked of the file, not of a clock
++        const bool throughLoop = edit.engine.getEngineBehaviour().recordsThroughLoop();
++
++        if (throughLoop)
++            isLooping = false;
++
+         // If we didn't get as far as adding any samples, delete the header of the file that will have been written
+-        if (rc->punchTimes.getStart() >= context.getUnloopedPosition())
++        if (throughLoop ? (rc->file.existsAsFile() && AudioFile (edit.engine, rc->file).getLength() <= 0.0)
++                        : (rc->punchTimes.getStart() >= context.getUnloopedPosition()))
+         {
+             rc->file.deleteFile();
+             return {};
+@@ -810,8 +819,10 @@ public:
+         if (recordedFileLength <= 1ms)
+             return {};
+ 
+-        auto newClipLen = std::min (recordedFileLength,
+-                                    recordedRange.getLength());
++        // objekat 0050: the whole file is the recording (its end is not told by a clock that a loop can take back)
++        auto newClipLen = edit.engine.getEngineBehaviour().recordsThroughLoop()
++                            ? recordedFileLength
++                            : std::min (recordedFileLength, recordedRange.getLength());
+ 
+         if (newClipLen <= 0.01s)
+         {
+@@ -1262,7 +1273,13 @@ public:
+ 
+                 recordingContext->muteTargetNow = recordingContext->muteTimes.overlaps (blockRange);
+ 
+-                if (recordingContext->recordingBlockRange.overlaps (blockRange))
++                // objekat 0050: once the take has started writing, a block is written whatever time the clock
++                // says (never a hole), until the recording's end
++                const bool inRange = (! recordingContext->firstRecCallback && edit.engine.getEngineBehaviour().recordsThroughLoop())
++                                        ? blockRange.getStart() < recordingContext->recordingBlockRange.getEnd()
++                                        : recordingContext->recordingBlockRange.overlaps (blockRange);
++
++                if (inRange)
+                 {
+                     if (! recordingContext->hasHitThreshold)
+                     {
+diff --git a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
+index 32cf7c5f2c3..4de7d5299aa 100644
+--- a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
++++ b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.cpp
+@@ -259,10 +259,136 @@ struct EditPlaybackContext::NodePlaybackContext
+         edit time of the first sample of the block that fillNextNodeBlock() is about to render. */
+     TimePosition getUnloopedEditTimeOfNextBlock() const
+     {
+-        return TimePosition::fromSamples (playHead.referenceSamplePositionToTimelinePositionUnlooped (static_cast<int64_t> (std::llround (referenceStreamRange.getEnd()))),
++        const auto ref = static_cast<int64_t> (std::llround (referenceStreamRange.getEnd()));
++
++        // objekat 0050: the recording clock when there is one (it is never rebased by a loop edit)
++        if (recordClockActive.load (std::memory_order_acquire))
++            return TimePosition::fromSamples (recordClockAt (ref), getSampleRate());
++
++        // Armed, not anchored yet (the inputs of the first block are handed over BEFORE process() anchors
++        // the clock): the anchor will be the head's LOOPED position of this very block, so say that, and not
++        // the unlooped one that is N laps further in a loop that has been running for a while.
++        if (recordClockArmed.load (std::memory_order_acquire) && playHead.isPlaying())
++            return TimePosition::fromSamples (playHead.referenceSamplePositionToTimelinePosition (ref), getSampleRate());
++
++        return TimePosition::fromSamples (playHead.referenceSamplePositionToTimelinePositionUnlooped (ref),
+                                           getSampleRate());
+     }
+ 
++    //==============================================================================
++    // objekat 0050 - the recording clock and the journal of the passes
++
++    /** The recording clock at a reference sample position: monotone, one sample per sample. */
++    int64_t recordClockAt (int64_t referenceSamplePosition) const
++    {
++        const auto a = recordAnchor.load();
++        return a.timeline + (referenceSamplePosition - a.reference);
++    }
++
++    /** Message thread. */
++    void armRecordClock()
++    {
++        {
++            const std::lock_guard<std::mutex> lg (journalLock);
++            journal.clear();
++        }
++
++        journalFifo.reset();
++        journalOverflow.store (false, std::memory_order_release);
++        rebaseCount.store (0, std::memory_order_relaxed);
++        lastRebaseJump.store (0, std::memory_order_relaxed);
++        recordClockActive.store (false, std::memory_order_release);
++        recordClockArmed.store (true, std::memory_order_release);
++    }
++
++    /** Message thread. */
++    void endRecordClock()
++    {
++        recordClockArmed.store (false, std::memory_order_release);
++        recordClockActive.store (false, std::memory_order_release);
++    }
++
++    /** Message thread. Empties the audio thread's buffer into the journal and returns a copy of it. */
++    std::vector<EditPlaybackContext::RecordJournalPoint> getRecordJournal()
++    {
++        const std::lock_guard<std::mutex> lg (journalLock);
++        drainJournalLocked();
++        return journal;
++    }
++
++    void drainRecordJournal()
++    {
++        const std::lock_guard<std::mutex> lg (journalLock);
++        drainJournalLocked();
++    }
++
++    /** Audio thread, once per block, after the pending position was applied and before the graph is
++        processed: anchors the clock if it is armed and the head runs, and journals where the head is
++        going to be in this block, split where a loop wraps it. */
++    void updateRecordJournal (juce::Range<int64_t> referenceSampleRange)
++    {
++        if (! recordClockActive.load (std::memory_order_acquire))
++        {
++            if (! recordClockArmed.load (std::memory_order_acquire) || ! playHead.isPlaying())
++                return;
++
++            // Anchor: the looped position of the block's first sample, as the clock of a recording that
++            // starts from the head (the position the recorder was told about is this one, not the
++            // unlooped one, which is many laps further in a loop that has been running a while).
++            const auto anchorPos = playHead.referenceSamplePositionToTimelinePosition (referenceSampleRange.getStart());
++            recordAnchor.store ({ referenceSampleRange.getStart(), anchorPos });
++            lastJournalTimelineEndValid = false;
++            lastStockMinusClockValid = false;
++            recordClockActive.store (true, std::memory_order_release);
++        }
++
++        if (! playHead.isPlaying() || playHead.isUserDragging())
++            return;
++
++        const auto clockStart = recordClockAt (referenceSampleRange.getStart());
++
++        // Diagnostic: how often the head's own unlooped clock (the one the stock engine records with) is
++        // rebased relative to the recording clock, e.g. by a loop edit.
++        {
++            const auto stockMinusClock = playHead.referenceSamplePositionToTimelinePositionUnlooped (referenceSampleRange.getStart()) - clockStart;
++
++            if (lastStockMinusClockValid && stockMinusClock != lastStockMinusClock)
++            {
++                rebaseCount.fetch_add (1, std::memory_order_relaxed);
++                lastRebaseJump.store (stockMinusClock - lastStockMinusClock, std::memory_order_relaxed);
++            }
++
++            lastStockMinusClock = stockMinusClock;
++            lastStockMinusClockValid = true;
++        }
++
++        const auto split = referenceSampleRangeToSplitTimelineRange (playHead, referenceSampleRange);
++
++        if (! lastJournalTimelineEndValid || split.timelineRange1.getStart() != lastJournalTimelineEnd)
++            pushJournalPoint ({ clockStart, split.timelineRange1.getStart() });
++
++        if (split.isSplit)
++        {
++            pushJournalPoint ({ clockStart + split.timelineRange1.getLength(), split.timelineRange2.getStart() });
++            lastJournalTimelineEnd = split.timelineRange2.getEnd();
++        }
++        else
++        {
++            lastJournalTimelineEnd = split.timelineRange1.getEnd();
++        }
++
++        lastJournalTimelineEndValid = true;
++    }
++
++    bool didRecordJournalOverflow() const   { return journalOverflow.load (std::memory_order_acquire); }
++
++    std::pair<int, int64_t> getRecordClockRebaseStats() const
++    {
++        return { rebaseCount.load (std::memory_order_relaxed), lastRebaseJump.load (std::memory_order_relaxed) };
++    }
++    bool isRecordClockActive() const        { return recordClockActive.load (std::memory_order_acquire); }
++    bool isRecordClockArmed() const         { return recordClockArmed.load (std::memory_order_acquire); }
++
+     /** True if a position change that will be applied at the start of the next process() call is
+         pending, i.e. the play head does not yet map the next block where it will really sit. */
+     bool hasPendingImmediatePositionChange() const
+@@ -390,6 +516,8 @@ struct EditPlaybackContext::NodePlaybackContext
+             }
+         }
+ 
++        updateRecordJournal (referenceSampleRange);   // objekat 0050
++
+         scratchMidiBuffer.clear();
+ 
+         if (isUsingInterpolator || destNumSamples != (int) numSamplesToProcess)
+@@ -451,6 +579,51 @@ private:
+     TracktionNodePlayer player;
+     const size_t maxNumThreads;
+ 
++    // objekat 0050
++    struct RecordAnchor
++    {
++        int64_t reference = 0;   /**< a position of the reference stream... */
++        int64_t timeline = 0;    /**< ...and the timeline position the head had there. */
++    };
++
++    MultipleWriterSeqLock<RecordAnchor> recordAnchor;
++    std::atomic<bool> recordClockArmed { false }, recordClockActive { false }, journalOverflow { false };
++    static constexpr int journalCapacity = 8192;
++    juce::AbstractFifo journalFifo { journalCapacity };
++    std::array<EditPlaybackContext::RecordJournalPoint, (size_t) journalCapacity> journalSlots;
++    std::mutex journalLock;
++    std::vector<EditPlaybackContext::RecordJournalPoint> journal;       // message thread, under journalLock
++    int64_t lastJournalTimelineEnd = 0;                                 // audio thread
++    bool lastJournalTimelineEndValid = false;
++    int64_t lastStockMinusClock = 0;                                    // audio thread
++    bool lastStockMinusClockValid = false;
++    std::atomic<int> rebaseCount { 0 };
++    std::atomic<int64_t> lastRebaseJump { 0 };
++
++    void pushJournalPoint (EditPlaybackContext::RecordJournalPoint p)
++    {
++        const auto scope = journalFifo.write (1);
++
++        if (scope.blockSize1 > 0)
++            journalSlots[(size_t) scope.startIndex1] = p;
++        else
++            journalOverflow.store (true, std::memory_order_release);
++    }
++
++    void drainJournalLocked()
++    {
++        for (;;)
++        {
++            const auto scope = journalFifo.read (journalFifo.getNumReady());
++
++            if (scope.blockSize1 + scope.blockSize2 == 0)
++                return;
++
++            for (int i = 0; i < scope.blockSize1; ++i)  journal.push_back (journalSlots[(size_t) (scope.startIndex1 + i)]);
++            for (int i = 0; i < scope.blockSize2; ++i)  journal.push_back (journalSlots[(size_t) (scope.startIndex2 + i)]);
++        }
++    }
++
+     int latencySamples = 0;
+     choc::buffer::FrameCount numSamplesToProcess = 0;
+     juce::Range<double> referenceStreamRange;
+@@ -773,6 +946,9 @@ juce::Result EditPlaybackContext::startRecording (TimePosition start, TimePositi
+                 return juce::Result::fail (res.error());
+ 
+     // Now start the recordings
++    if (edit.engine.getEngineBehaviour().recordsThroughLoop())
++        armRecordClock();   // objekat 0050
++
+     startPlaying (start);
+ 
+     for (auto& inputAndContext : inputAndContexts)
+@@ -1095,10 +1271,53 @@ TimePosition EditPlaybackContext::getPosition() const
+ 
+ TimePosition EditPlaybackContext::getUnloopedPosition() const
+ {
++    // objekat 0050: the recording clock when there is one
++    if (nodePlaybackContext->isRecordClockActive())
++        return TimePosition::fromSamples (nodePlaybackContext->recordClockAt (nodePlaybackContext->playHead.getReferenceSampleRange().getStart()),
++                                          nodePlaybackContext->getSampleRate());
++
+     return TimePosition::fromSamples (nodePlaybackContext->playHead.getUnloopedPosition(),
+                                       nodePlaybackContext->getSampleRate());
+ }
+ 
++void EditPlaybackContext::armRecordClock()
++{
++    if (nodePlaybackContext)
++        nodePlaybackContext->armRecordClock();
++}
++
++void EditPlaybackContext::endRecordClock()
++{
++    if (nodePlaybackContext)
++        nodePlaybackContext->endRecordClock();
++}
++
++bool EditPlaybackContext::isRecordClockActive() const
++{
++    return nodePlaybackContext && nodePlaybackContext->isRecordClockActive();
++}
++
++std::vector<EditPlaybackContext::RecordJournalPoint> EditPlaybackContext::getRecordJournal()
++{
++    return nodePlaybackContext ? nodePlaybackContext->getRecordJournal() : std::vector<RecordJournalPoint>();
++}
++
++void EditPlaybackContext::drainRecordJournal()
++{
++    if (nodePlaybackContext)
++        nodePlaybackContext->drainRecordJournal();
++}
++
++std::pair<int, int64_t> EditPlaybackContext::getRecordClockRebaseStats() const
++{
++    return nodePlaybackContext ? nodePlaybackContext->getRecordClockRebaseStats() : std::pair<int, int64_t> { 0, 0 };
++}
++
++bool EditPlaybackContext::didRecordJournalOverflow() const
++{
++    return nodePlaybackContext && nodePlaybackContext->didRecordJournalOverflow();
++}
++
+ TimeRange EditPlaybackContext::getLoopTimes() const
+ {
+     return tracktion::timeRangeFromSamples (nodePlaybackContext->playHead.getLoopRange(),
+@@ -1226,6 +1445,15 @@ TimePosition EditPlaybackContext::globalStreamTimeToEditTimeUnlooped (double glo
+ 
+     const auto sampleRate = getSampleRate();
+     const auto globalSamplePos = tracktion::graph::timeToSample (globalStreamTime, sampleRate);
++
++    // objekat 0050: the recording clock when there is one
++    if (nodePlaybackContext->isRecordClockActive())
++        return TimePosition::fromSamples (nodePlaybackContext->recordClockAt (globalSamplePos), sampleRate);
++
++    // armed, not anchored yet: the anchor will be the looped position (see getUnloopedEditTimeOfNextBlock)
++    if (nodePlaybackContext->isRecordClockArmed() && nodePlaybackContext->playHead.isPlaying())
++        return TimePosition::fromSamples (nodePlaybackContext->playHead.referenceSamplePositionToTimelinePosition (globalSamplePos), sampleRate);
++
+     const auto timelinePosition = nodePlaybackContext->playHead.referenceSamplePositionToTimelinePositionUnlooped (globalSamplePos);
+ 
+     return TimePosition::fromSamples (timelinePosition, sampleRate);
+diff --git a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
+index 0a805f52543..867552c850d 100644
+--- a/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
++++ b/modules/tracktion_engine/playback/tracktion_EditPlaybackContext.h
+@@ -147,6 +147,46 @@ public:
+         (objekat 0047) */
+     TimePosition getUnloopedEditTimeOfNextBlock() const;
+ 
++    //==============================================================================
++    // objekat 0050 - the recording clock and the journal of the passes.
++    // Only used when EngineBehaviour::recordsThroughLoop() is true.
++
++    /** One discontinuity of the play head during a recording: from this instant of the recording clock
++        on, the timeline is at `timelineSample`, advancing one sample per sample. Both are in samples
++        of the context's sample rate. */
++    struct RecordJournalPoint
++    {
++        int64_t clockSample = 0;
++        int64_t timelineSample = 0;
++    };
++
++    /** Message thread. Arms the recording clock: it is anchored by the audio thread at the first block
++        played from now on, to the play head's position there, and then runs one sample per sample of
++        the reference stream, whatever the loop does. The journal is emptied. */
++    void armRecordClock();
++
++    /** Message thread. Ends the recording clock; the journal is kept until the next arm. */
++    void endRecordClock();
++
++    /** True once the audio thread has anchored the clock and until endRecordClock(). */
++    bool isRecordClockActive() const;
++
++    /** Message thread. The points recorded so far (the audio thread's lock-free buffer is emptied into
++        it first): the first is the anchor, the next ones every instant at which the play head did not
++        continue where it was (a loop wrap, a loop edge that moved the head...). */
++    std::vector<RecordJournalPoint> getRecordJournal();
++
++    /** Message thread. Empties the audio thread's buffer into the journal (no copy): called by the transport's
++        tick, so that the buffer never fills up in a long recording. */
++    void drainRecordJournal();
++
++    /** Diagnostic: how many times, since the last arm, the play head's own unlooped clock moved relative to the
++        recording clock (a loop edit rebases the former, never the latter), and by how many samples the last time. */
++    std::pair<int, int64_t> getRecordClockRebaseStats() const;
++
++    /** True if the journal's buffer ever overflowed since the last arm (points were lost). */
++    bool didRecordJournalOverflow() const;
++
+     /** Audio thread only: true if a position change that is not tied to a jump time is waiting to
+         be applied by the next fillNextNodeBlock(), so the play head does not yet say where the next
+         block will really be. (objekat 0047) */
+diff --git a/modules/tracktion_engine/playback/tracktion_TransportControl.cpp b/modules/tracktion_engine/playback/tracktion_TransportControl.cpp
+index 1c5ff245c77..17986a7b888 100644
+--- a/modules/tracktion_engine/playback/tracktion_TransportControl.cpp
++++ b/modules/tracktion_engine/playback/tracktion_TransportControl.cpp
+@@ -265,7 +265,11 @@ private:
+             }
+             else if (i == IDs::looping)
+             {
+-                transport.stopIfRecording();
++                // objekat 0050: a loop can be switched on and off under a recording
++                if (transport.engine.getEngineBehaviour().recordsThroughLoop())
++                    transport.applyLoopToPlayHeadNow();
++                else
++                    transport.stopIfRecording();
+ 
+                 auto& ecm = transport.engine.getExternalControllerManager();
+ 
+@@ -618,6 +622,11 @@ struct TransportControl::PlayHeadWrapper
+ 
+     TimePosition getUnloopedPosition() const
+     {
++        // objekat 0050: the recording clock when there is one (the play head's own unlooped clock is
++        // rebased by every loop edit)
++        if (transport.playbackContext && transport.playbackContext->isRecordClockActive())
++            return transport.playbackContext->getUnloopedPosition();
++
+         if (auto ph = getNodePlayHead())
+             return TimePosition::fromSamples (ph->getUnloopedPosition(), getSampleRate());
+ 
+@@ -664,6 +673,13 @@ struct TransportControl::PlayHeadWrapper
+             ph->setLoopRange (loop, tracktion::toSamples (newRange, getSampleRate()));
+     }
+ 
++    /** objekat 0050: the loop is switched on, moved or off with the head left where it is. */
++    void setLoopRangeRollingIn (bool loop, TimeRange newRange)
++    {
++        if (auto ph = getNodePlayHead())
++            ph->setLoopRangeRollingIn (loop, tracktion::toSamples (newRange, getSampleRate()));
++    }
++
+     void setUserIsDragging (bool isDragging)
+     {
+          if (auto ph = getNodePlayHead())
+@@ -1104,8 +1120,17 @@ void TransportControl::timerCallback()
+         }
+     }
+ 
++    // objekat 0050: under a recording the loop reaches the play head at once (and not every 10th tick)
++    if (engine.getEngineBehaviour().recordsThroughLoop() && isRecording())
++    {
++        applyLoopToPlayHeadNow();
++
++        if (playbackContext)
++            playbackContext->drainRecordJournal();
++        loopUpdateCounter = 10;
++    }
+     // Periodically update the loop times from the transport state
+-    if (--loopUpdateCounter == 0)
++    else if (--loopUpdateCounter == 0)
+     {
+         loopUpdateCounter = 10;
+ 
+@@ -1228,12 +1253,35 @@ void TransportControl::setLoopPoint2 (TimePosition t)
+     loopPoint2 = juce::jlimit (0_tp, toPosition (edit.getLength() + Edit::getMaximumLength() * 0.75), t);
+ }
+ 
++void TransportControl::applyLoopToPlayHeadNow()
++{
++    // objekat 0050. Only while recording through a loop: the transport's loop (on/off, bounds) is handed to the
++    // play head now, which keeps its position (@see PlayHead::setLoopRangeRollingIn). Same loop as the last
++    // time = nothing to do.
++    if (! playbackContext || ! isRecording() || ! engine.getEngineBehaviour().recordsThroughLoop())
++        return;
++
++    auto lr = getLoopRange();
++    lr = lr.withEnd (std::max (lr.getEnd(), lr.getStart() + 0.001s));
++    const bool loop = looping.get();
++
++    if (appliedLoopValid && appliedLoopOn == loop && appliedLoopRange == lr)
++        return;
++
++    appliedLoopValid = true;
++    appliedLoopOn = loop;
++    appliedLoopRange = lr;
++    playHeadWrapper->setLoopRangeRollingIn (loop, lr);
++}
++
+ void TransportControl::setLoopRange (TimeRange times)
+ {
+     auto maxEndTime = toPosition (edit.getLength() + Edit::getMaximumLength() * 0.75);
+ 
+     loopPoint1 = juce::jlimit (0_tp, maxEndTime, times.getStart());
+     loopPoint2 = juce::jlimit (0_tp, maxEndTime, times.getEnd());
++
++    applyLoopToPlayHeadNow();   // objekat 0050 (a no-op unless recording through a loop)
+ }
+ 
+ TimeRange TransportControl::getLoopRange() const noexcept
+@@ -1426,6 +1474,7 @@ std::optional<std::pair<SyncPoint, std::optional<TimeRange>>> TransportControl::
+ 
+     CRASH_TRACER
+     sectionPlayer.reset();
++    appliedLoopValid = false;   // objekat 0050
+     std::optional<SyncPoint> punchInPoint;
+     std::optional<TimeRange> punchRange;
+ 
+@@ -1460,7 +1509,24 @@ std::optional<std::pair<SyncPoint, std::optional<TimeRange>>> TransportControl::
+                 transportState->startTime   = position.get();
+                 transportState->endTime     = Edit::getMaximumEditEnd();
+ 
+-                if (looping)
++                // objekat 0050: recording through the loop starts from the caret, with no minimum loop
++                // length; a caret at or after the loop's end records straight on (the loop reaches the
++                // head later, when it applies)
++                const bool throughLoop = engine.getEngineBehaviour().recordsThroughLoop();
++                appliedLoopValid = false;
++
++                if (throughLoop)
++                {
++                    if (looping.get() && edit.recordingPunchInOut)
++                    {
++                        engine.getUIBehaviour().showWarningMessage (TRANS("Recording can be done in either loop mode or punch in/out mode, but not both at the same time!"));
++                        return std::nullopt;
++                    }
++
++                    if (abs (transportState->startTime) < 0.005s)
++                        transportState->startTime = 0s;
++                }
++                else if (looping)
+                 {
+                     if (loopRange.getLength() < 2s)
+                     {
+@@ -1522,7 +1588,7 @@ std::optional<std::pair<SyncPoint, std::optional<TimeRange>>> TransportControl::
+                     if (edit.getNumCountInBeats() > 0)
+                         playHeadWrapper->setLoopTimes (true, { transportState->startTime.get(), Edit::getMaximumEditEnd() });
+ 
+-                    if (looping)
++                    if (looping && (! throughLoop || transportState->startTime.get() < getLoopRange().getEnd()))
+                     {
+                         // The order of this is critical as the audio thread might jump in and reset the
+                         // roll-in-to-loop status of the loop-range is not set first
+@@ -1622,8 +1688,12 @@ std::optional<SyncPoint> TransportControl::performStopRecording()
+         const bool discardRecordings = transportState->discardRecordings;
+         const auto syncPoint = playbackContext->getSyncPoint();
+         assert (syncPoint);
+-        playbackContext->stopRecording (syncPoint->unloopedTime, discardRecordings)
++        // objekat 0050: the recording clock, when there is one, tells where the recording ends
++        const auto unloopedEnd = playbackContext->isRecordClockActive() ? playbackContext->getUnloopedPosition()
++                                                                        : syncPoint->unloopedTime;
++        playbackContext->stopRecording (unloopedEnd, discardRecordings)
+             .map_error ([this] (auto err) { engine.getUIBehaviour().showWarningAlert (TRANS("Recording"), err); });
++        playbackContext->endRecordClock();   // objekat 0050
+ 
+         sendChangeMessage();
+         listeners.call (&TransportControl::Listener::recordingStopped, *syncPoint, discardRecordings);
+@@ -1669,9 +1739,14 @@ void TransportControl::performStop()
+         playbackContext->stopRecording (recEndTime, transportState->discardRecordings)
+             .map_error ([this] (auto err) { engine.getUIBehaviour().showWarningAlert (TRANS("Recording"), err); });
+ 
++        // objekat 0050: the head's own position is the truth when recording through a loop (the recording
++        // clock counts every lap, and the loop may have been switched off since)
++        const bool throughLoop = playbackContext->isRecordClockActive();
++        playbackContext->endRecordClock();
++
+         position = transportState->discardRecordings ? transportState->startTime.get()
+-                                                     : (looping ? recEndPos
+-                                                                : recEndTime);
++                                                     : ((looping || throughLoop) ? recEndPos
++                                                                                 : recEndTime);
+ 
+         listeners.call (&TransportControl::Listener::recordingStopped, *syncPoint, transportState->discardRecordings);
+     }
+diff --git a/modules/tracktion_engine/playback/tracktion_TransportControl.h b/modules/tracktion_engine/playback/tracktion_TransportControl.h
+index fc2e2899a06..205aa888909 100644
+--- a/modules/tracktion_engine/playback/tracktion_TransportControl.h
++++ b/modules/tracktion_engine/playback/tracktion_TransportControl.h
+@@ -103,6 +103,10 @@ public:
+     */
+     void stopIfRecording();
+ 
++    /** objekat 0050. While recording through a loop: hands the transport's loop (on/off and bounds) to the play
++        head now, which keeps its position. Nothing otherwise. */
++    void applyLoopToPlayHeadNow();
++
+     /** Stops recording without stopping playback. */
+     void stopRecording (bool discardRecordings = false);
+ 
+@@ -403,6 +407,8 @@ private:
+     TimecodeSnapType currentSnapType;
+     bool isDelayedChangePending = false;
+     int loopUpdateCounter = 10;
++    bool appliedLoopValid = false, appliedLoopOn = false;   // objekat 0050: the last loop handed to the play head
++    TimeRange appliedLoopRange;
+     bool isStopInProgress = false;
+     bool recordingIsStoppingFlag = false;
+ 
+diff --git a/modules/tracktion_engine/utilities/tracktion_EngineBehaviour.h b/modules/tracktion_engine/utilities/tracktion_EngineBehaviour.h
+index 816628b1e98..0eedbd8089b 100644
+--- a/modules/tracktion_engine/utilities/tracktion_EngineBehaviour.h
++++ b/modules/tracktion_engine/utilities/tracktion_EngineBehaviour.h
+@@ -141,6 +141,13 @@ public:
+     /// Should track contents be audible whilst a recording is in progress
+     virtual bool muteTrackContentsWhilstRecording()                                 { return false; }
+ 
++    /// objekat 0050. When true a recording goes THROUGH the transport's loop instead of being cut into
++    /// takes: the clock the recorders read (stop time, input block times, MIDI time stamps) is a
++    /// monotone one, anchored at the press and never rebased, the play head's passes (where the
++    /// timeline jumps) are journalled (@see EditPlaybackContext::getRecordJournal), the file stays one
++    /// continuous file whatever the loop does, and a loop can be started, moved or stopped while it records.
++    virtual bool recordsThroughLoop()                                               { return false; }
++
+     /// 0 = normal, 1 = high, 2 = realtime
+     virtual void setProcessPriority (int /*level*/)                                 {}
+ 
+diff --git a/modules/tracktion_graph/tracktion_graph/tracktion_PlayHead.h b/modules/tracktion_graph/tracktion_graph/tracktion_PlayHead.h
+index 4b03362f5ef..d52d09d96bd 100644
+--- a/modules/tracktion_graph/tracktion_graph/tracktion_PlayHead.h
++++ b/modules/tracktion_graph/tracktion_graph/tracktion_PlayHead.h
+@@ -102,6 +102,13 @@ public:
+     /** Sets a playback range and whether to loop or not. */
+     void setLoopRange (bool loop, juce::Range<int64_t> loopRange, bool updatePosition = true);
+ 
++    /** objekat 0050. Switches the loop on, moves it or switches it off WHILE playing, without ever
++        moving the head: it keeps its current position, the new bounds only decide where the NEXT wrap
++        happens. A head before the region plays on and enters it (roll-in); a head at or after the
++        region's end, or loop == false, leaves the head playing straight on.
++    */
++    void setLoopRangeRollingIn (bool loop, juce::Range<int64_t> loopRange);
++
+     /** Puts the play head in to roll in to loop mode.
+         If this position is before the loop start position, the play head won't
+         be wrapped to enable count in to loop recordings etc.
+@@ -269,6 +276,33 @@ inline void PlayHead::setLoopRange (bool loop, juce::Range<int64_t> loopRange, b
+     }
+ }
+ 
++inline void PlayHead::setLoopRangeRollingIn (bool loop, juce::Range<int64_t> loopRange)
++{
++    // The unlooped clock restarts at the head's current position (so that wrapping it in the new
++    // bounds gives the head back where it is), THEN the bounds and the flags change.
++    const auto pos = getPosition();
++
++    SyncPositions newSyncPositions;
++    newSyncPositions.referenceSyncPosition = referenceSampleRange.load().getStart();
++    newSyncPositions.playoutSyncPosition = pos;
++    setSyncPositions (newSyncPositions);
++
++    if (loop && loopRange.getLength() > 0 && pos < loopRange.getEnd())
++    {
++        timelinePlayRange.store (loopRange);
++        rollInToLoop = pos < loopRange.getStart();
++        looping = true;
++    }
++    else
++    {
++        looping = false;
++        rollInToLoop = false;
++
++        if (loopRange.getLength() > 0)
++            timelinePlayRange.store (loopRange);
++    }
++}
++
+ inline void PlayHead::setRollInToLoop (int64_t position)
+ {
+     rollInToLoop = true;
+-- 
+2.50.1 (Apple Git-155)
+

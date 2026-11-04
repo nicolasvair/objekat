@@ -401,6 +401,12 @@ static const char* objThreadPoolStrategyName(int s) {
 // un ObjGainPlugin post-FX, l'utilisateur ne pouvait ajouter que 4 plugins avant
 // de heurter le jassertfalse dans PluginList::insertPlugin.
 struct OBJEngineBehaviour : public te::EngineBehaviour {
+    // Engine patch 0050 (docs/plan_enregistrement_audio.md, "rec en boucle"): a recording goes THROUGH the loop.
+    // ON for every recording (the loop may be switched on after the press); the environment variable
+    // OBJ_REC_STOCK=1 puts the stock behaviour back (test A/B only: tools/scenario_record_loop_proof.py).
+    std::atomic<bool> recordThroughLoop { getenv("OBJ_REC_STOCK") == nullptr };
+    bool recordsThroughLoop() override { return recordThroughLoop.load(); }
+
     // @see OBJRenderPluginFilter. Hors clonage de rendu, le comportement natif s'applique
     // (`p.edit.shouldLoadPlugins()`), donc le graphe live n'est jamais amputé.
     bool shouldLoadPlugin(te::ExternalPlugin& p) override {
@@ -11941,6 +11947,21 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
                                 @"path": [NSString stringWithUTF8String:path.toRawUTF8()],
                                 @"origin": @(cap.origin), @"length": @(length),
                                 @"sampleRate": @(af.getSampleRate()) }];
+        }
+
+    // The journal of the passes (engine patch 0050): where the timeline was, from where the recording clock started.
+    // Quiet trace: one line per recording (the first 200 points).
+    if (_edit)
+        if (auto* epc = _edit->getCurrentPlaybackContext()) {
+            const auto journal = epc->getRecordJournal();
+            const double sr = epc->getSampleRate();
+            NSMutableString* pts = [NSMutableString string];
+            for (size_t i = 0; i < journal.size() && i < 200; ++i)
+                [pts appendFormat:@" (%.6f,%.6f)", (double) journal[i].clockSample / sr, (double) journal[i].timelineSample / sr];
+            const auto rb = epc->getRecordClockRebaseStats();
+            NSLog(@"[REC] +%.1f ms journal: %zu point(s)%s, stock-clock rebases %d (last %lld samples) (clock,timeline):%@",
+                  objRecMs(), journal.size(), epc->didRecordJournalOverflow() ? " OVERFLOW" : "",
+                  rb.first, (long long) rb.second, pts);
         }
 
     // The clips Tracktion made on the hidden tracks go (the files stay), and the destinations are

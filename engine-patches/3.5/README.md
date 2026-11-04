@@ -554,7 +554,26 @@ Checked as still biting: `develop` still had the linear `std::find`.
   moved EARLIER (-128 samples = -2.67 ms under a flat volume curve); `mergeFromWithOffset`. Branch
   `objekat-group-midi-0049` (`f0648743dc2`, NOT published on the fork), commit on top of `objekat-record-0048`
   (`3ce916aa05e`). Files: `tracktion_MidiNode.cpp`, `tracktion_LoopingMidiNode.cpp`,
-  `tracktion_ContainerClipNode.{h,cpp}`, `tracktion_PluginNode.cpp`. The next number is `0050`.
+  `tracktion_ContainerClipNode.{h,cpp}`, `tracktion_PluginNode.cpp`.
+- `0050` — **recording through a loop: a monotone recording clock and a journal of the passes**
+  (docs/plan_enregistrement_audio.md, "Rec en boucle"; proven by `tools/scenario_record_loop_proof.py`). Behind
+  `EngineBehaviour::recordsThroughLoop()` (false in the stock engine; objekat's behaviour returns true unless the
+  environment variable `OBJ_REC_STOCK` is set, which is how the scenario compares). The recorder was paired with the play
+  head's UNLOOPED clock, rebased by every `setLoopRange` / `setPosition`: a punch-in during a play that already loops was
+  N laps off (a 1.5 s take gave a 2.000 s file entirely silent) and a loop switched on under a recording ended it
+  (`valueTreePropertyChanged(looping)` -> `stopIfRecording`). Under the flag: a recording clock anchored by the audio
+  thread at the first playing block after the arm, to the head's LOOPED position, then one sample per sample and never
+  rebased (it replaces the unlooped time in `getUnloopedEditTimeOfNextBlock`, `getUnloopedPosition`,
+  `globalStreamTimeToEditTimeUnlooped`); a lock-free journal of `(clock, timeline)` at every discontinuity written in
+  `NodePlaybackContext::process` from `referenceSampleRangeToSplitTimelineRange` and drained by the transport's tick
+  (`EditPlaybackContext::getRecordJournal`); `PlayHead::setLoopRangeRollingIn`; no 2 s minimum, start from the caret, a
+  change of the loop applied at once (`TransportControl::applyLoopToPlayHeadNow`); `isLooping=false` at the stop in the
+  wave and MIDI recorders (no `_take_N`, one continuous file); the file never deleted when the end time looks earlier; no
+  hole in the written blocks; monotone MIDI stamps; the take starts at the press and not at the loop's start
+  (`getDefaultRecordingParameters`). Branch `objekat-record-loop-0050` (`10e6401b937`, NOT published on the fork),
+  commit on top of `objekat-group-midi-0049` (`f0648743dc2`). Files: `tracktion_EditPlaybackContext.{h,cpp}`,
+  `tracktion_TransportControl.{h,cpp}`, `tracktion_WaveInputDevice.cpp`, `tracktion_MidiInputDevice.cpp`,
+  `tracktion_EditUtilities.cpp`, `tracktion_EngineBehaviour.h`, `tracktion_PlayHead.h`. The next number is `0051`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine
