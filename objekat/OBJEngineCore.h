@@ -992,6 +992,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (NSString* _Nullable)openAudioInputs;
 /// 0 closed, 1 stabilising (a Bluetooth microphone waiting for the system to settle), 2 open, 3 failed.
 - (NSInteger)inputsState;
+/// Called on the main thread when the inputs were closed because a card they depend on is GONE (judged by UID,
+/// once the device list has been stable for a second): `kind` 0 = the input card, 1 = the output card (the
+/// aggregate cannot outlive it); `name` = that card's name; `tookInterrupted` = a recording was running and
+/// has been ended cleanly (its take is delivered through `onRecordingFinished` BEFORE this call). For kind 0 the
+/// choice of the input card is already back to "the output card's own"; nothing switches back when the card
+/// returns.
+@property (nonatomic, copy, nullable) void (^onInputCardLost)(NSInteger kind, NSString* _Nonnull name, BOOL tookInterrupted);
+/// TEST HOOK (`audio.virtual.set_present`): "unplugs" or "plugs back" the virtual second card.
+- (NSString* _Nullable)setVirtualInputCardPresent:(BOOL)present;
 /// Why the last opening failed (the state machine gave up, the frequency rule refused, the system said no); nil otherwise.
 - (NSString* _Nullable)inputsFailureMessage;
 /// YES when the inputs listed under the output device's name belong to ANOTHER device (AirPods), which

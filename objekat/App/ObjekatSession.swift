@@ -135,6 +135,20 @@ final class ObjekatSession {
                 if self.isPlaying { self.stop() }
             }
         }
+        // A card the inputs depended on is gone: the engine already closed them (and ended a running take, whose
+        // object arrived through `onRecordingFinished` just before). The CHOICE of the input card is reset here,
+        // in the preference too; the interface speaks only when a take was interrupted — otherwise the card
+        // simply is not offered any more.
+        engine.onInputCardLost = { [weak self] kind, name, interrupted in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if kind == 0 { AudioInputDevice.shared.uid = nil }
+                AudioDeviceStatus.shared.refresh()
+                guard interrupted else { return }
+                self.viewModel.notify(L(kind == 0 ? "inputCard.lost.title" : "outputCard.lost.title"),
+                                      L(kind == 0 ? "inputCard.lost.info" : "outputCard.lost.info", name))
+            }
+        }
         // Fixes the bug flagged by project_load_progress_plan: a project load stops the engine
         // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
         // left the transport showing ▶ although the sound had already stopped.

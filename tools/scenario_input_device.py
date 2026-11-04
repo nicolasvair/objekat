@@ -260,6 +260,86 @@ try:
     stop(proc, SOCK)
     proc = None
 
+    # ════════════════════════════════════════════════════════════════════════════════════════
+    section("PHASE D — the input card goes away (judged by UID, after a stable second)")
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="objk-indev-")
+    proc = launch(SOCK, ["--virtual-audio=in:2,in2:3"])
+    with ObjekatClient(SOCK) as c:
+        # D1: no recording running — the inputs close, the choice resets, nothing is said.
+        c.send("audio.set_input_device", {"uid": CARD2}); c.send("input.enable")
+        c.send("app.dialogs", {"clear": True})
+        c.send("audio.virtual.set_present", {"present": False})
+        st = c.send("audio.status")
+        check("an unplug is not judged at once (still open at 0.2 s)", (time.sleep(0.2), c.send("audio.status"))[1]["input_channels"] == 3)
+        time.sleep(2.0)
+        st = c.send("audio.status")
+        check("D1 after a stable second: the inputs are closed", st["input_channels"] == 0 and st["inputs_state"] == "closed", st)
+        check("... the choice is back to the output card's own", st["input_device"] is None, st["input_device"])
+        check("... the output kept running", st["running"] is True and st["device"] == CARD, st)
+        check("... and nothing was said (no take was interrupted)", c.send("app.dialogs")["count"] == 0)
+        ids = [d["uid"] for d in c.send("audio.devices.inputs")["inputs"]]
+        check("the unplugged card is not offered", CARD2 not in ids, ids)
+        e = refusal(c, "audio.set_input_device", uid=CARD2)
+        check("choosing it while it is away is refused", e is not None and e.code == "invalid_state", e and e.message)
+        c.send("audio.virtual.set_present", {"present": True})
+        time.sleep(1.8)
+        st = c.send("audio.status")
+        check("D2 plugged back: NOTHING switches back by itself", st["input_device"] is None and st["input_channels"] == 0, st)
+        check("... and the card is offered again", CARD2 in [d["uid"] for d in c.send("audio.devices.inputs")["inputs"]])
+
+        # D3: a take is running — it is kept, becomes an object, ONE notification.
+        P = os.path.join(tmp, "p", "p.objekat")
+        c.send("project.new"); c.send("project.save_as", {"path": P})
+        c.send("audio.set_input_device", {"uid": CARD2}); c.send("input.enable")
+        c.send("audio.virtual.set_input", {"channel": 2, "signal": "sine", "frequency": 440, "amplitude": 0.5})
+        c.send("timesel.set", {"start": 0, "end": 30, "lanes": [0]})
+        r = c.send("rec.drop", {"first": 0, "count": 1, "lane": 0, "time": 15})
+        c.send("timesel.clear")
+        c.send("rec.arm", {"group": r["group"], "on": True})
+        c.send("transport.seek", {"seconds": 0})
+        c.send("app.dialogs", {"clear": True})
+        c.send("rec.start")
+        time.sleep(1.5)
+        check("D3 recording on the second card", c.send("rec.status")["recording"] is True)
+        c.send("audio.virtual.set_present", {"present": False})
+        time.sleep(2.6)
+        rs = c.send("rec.status")
+        check("the recording ended cleanly", rs["recording"] is False, rs)
+        gid = r["group"]
+        c.send("group.expand", {"id": gid, "expanded": True})
+        takes = [o for o in c.send("object.list")["objects"] if o["parent"] == gid]
+        check("the take was KEPT as an object in the zone (%d)" % len(takes), len(takes) == 1, takes)
+        files = []
+        d = os.path.join(os.path.dirname(P), "samples", "rec")
+        if os.path.isdir(d): files = os.listdir(d)
+        check("... with its file on disk", len(files) == 1, files)
+        st = c.send("audio.status")
+        check("the inputs are closed and the choice reset", st["input_channels"] == 0 and st["input_device"] is None, st)
+        dl = c.send("app.dialogs")
+        check("exactly ONE notification, about the input card", dl["count"] == 1 and "Input card gone" in dl["dialogs"][0]["title"], dl)
+        check("the transport is stopped", not c.send("transport.state")["playing"])
+    stop(proc, SOCK)
+    proc = None
+
+    # ════════════════════════════════════════════════════════════════════════════════════════
+    section("PHASE E — the inputs follow a change of output")
+    proc = launch(SOCK, ["--virtual-audio=in:2,in2:3"])
+    with ObjekatClient(SOCK) as c:
+        c.send("audio.set_input_device", {"uid": CARD2}); c.send("input.enable")
+        check("E1 open on the second card", c.send("audio.status")["input_channels"] == 3)
+        c.send("audio.set_device", {"name": CARD})              # the same output card: nothing to do
+        st = c.send("audio.status")
+        check("the same output card changes nothing", st["input_channels"] == 3 and st["input_device"]["uid"] == CARD2, st)
+        # With no input card chosen, a change of output leaves the inputs closed, as it always did.
+        c.send("audio.set_input_device", {"uid": None})
+        c.send("input.disable")
+        c.send("audio.set_device", {"name": CARD})
+        check("no choice: the inputs stay closed", c.send("audio.status")["input_channels"] == 0)
+    stop(proc, SOCK)
+    proc = None
+    shutil.rmtree(tmp, ignore_errors=True)
+
     check("Settings.xml is byte for byte what it was", digest(settings_bytes()) == before)
 finally:
     stop(proc, SOCK)

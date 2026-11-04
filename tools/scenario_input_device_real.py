@@ -94,6 +94,29 @@ try:
         st = c.send("audio.set_input_device", {"uid": None})
         check("null = the same card again", st["input_device"] is None and st["device"] == out, st["input_device"])
 
+        # A change of OUTPUT while the inputs are open on a chosen card: they follow (reopened on the new output).
+        outs = c.send("audio.devices")["outputs"]
+        names = [o if isinstance(o, str) else o.get("name", "") for o in outs]
+        other = [n for n in names if n != out and not any(b in n.lower() for b in bad) and MASK not in n]
+        c.send("audio.set_input_device", {"uid": card["uid"]}); c.send("input.enable")
+        if other:
+            try:
+                c.send("audio.set_device", {"name": other[0]})
+                time.sleep(1.0)
+                st = c.send("audio.status")
+                check("output -> %s: the inputs followed (aggregate rebuilt, %d channels)" % (other[0], card["channels"]),
+                      st["device"] == other[0] and st["input_channels"] == card["channels"]
+                      and st["input_device"] is not None and st["running"] is True, st)
+                c.send("audio.set_device", {"name": out})
+                time.sleep(1.0)
+                st = c.send("audio.status")
+                check("back to %s: still followed" % out, st["device"] == out and st["input_channels"] == card["channels"], st)
+            except ObjekatError as e:
+                check("output change", False, e.message)
+        else:
+            print("  (no other output card: the follow-the-output check is skipped)")
+        c.send("input.disable")
+
         # open once more and leave through a change of the choice while open
         c.send("audio.set_input_device", {"uid": card["uid"]}); c.send("input.enable")
         st = c.send("audio.set_input_device", {"uid": None})

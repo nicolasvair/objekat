@@ -1407,6 +1407,7 @@ struct OBJLatencyWatcher : public juce::Timer {
 - (BOOL)isLiveInputFirst:(NSInteger)first count:(NSInteger)count;     // @see "Input monitoring"
 - (void)stopRecordingIfActive;   // @see "Recording"
 - (void)stopRecordingIfCardChanged;   // @see "Recording"
+- (void)checkCardPresence;           // @see "The input card is gone"
 - (void)midiDevicesChanged;      // @see "MIDI inputs"
 - (void)syncMidiZoneMonitors;    // @see "MIDI inputs"
 - (void)syncMidiInputMonitors;   // @see "Input chains"
@@ -1580,6 +1581,8 @@ struct OBJDeviceChangeWatcher : public juce::ChangeListener {
         // it ends cleanly, the files are kept. A broadcast that changes nothing about the card (a device list
         // or a MIDI list that moved, a start/stop of the same device) leaves it alone.
         [owner stopRecordingIfCardChanged];
+        // A card the inputs depend on may be gone (judged by UID, once the list is stable).
+        [owner checkCardPresence];
         // An input that closed or vanished with the change stops being monitored; the others are
         // re-attached to their hidden track (the engine rebuilt its devices).
         [owner syncInputMonitors];
@@ -2382,6 +2385,10 @@ struct OBJExportLoadScope {
     // owns while it waits (@see -beginBluetoothOpenFor:). `_btFailure` outlives the machine's `failed` state
     // until the next request, a close or a change of card, so the interface can say why.
     OBJBluetoothInputMachine                              _bt;
+    OBJAbsenceJudge                                       _absence;           // @see -checkCardPresence
+    NSString*                                             _inputCardName;     // the chosen input card's name, for a message after it is gone
+    BOOL                                                  _inCardLoss;
+    int                                                   _presenceToken;
     NSString*                                             _btUID;
     NSString*                                             _btFailure;
     dispatch_source_t                                     _btTimer;
@@ -11198,6 +11205,9 @@ static void objDumpPluginList(te::PluginList& pl,
     // name over the aggregate's in the setup — that would reopen the card alone, inputs lost).
     if (_aggregate && dm.getCurrentAudioDevice() != nullptr && objRealOutputName(dm.getAudioDeviceSetup()) == newName) return;
     BOOL wasPlaying = [self isCurrentlyPlaying];
+    // Inputs on a CHOSEN card that were open (or opening) follow the change of output: reopened on the new one.
+    const BOOL reopenInputs = _inputDeviceUID != nil &&
+        ([self audioInputsOpen] || _bt.state == OBJBluetoothInputState::stabilising);
     [self stop];
     [self cancelBluetoothOpen];
     if (_bt.state == OBJBluetoothInputState::open) _bt.close();
@@ -11228,6 +11238,15 @@ static void objDumpPluginList(te::PluginList& pl,
         return;
     }
     if (!sameDevice) [self applySampleRatePolicy];
+    if (reopenInputs && !sameDevice) {
+        // The new output may BE the chosen input card: then it is the same card again.
+        if ([_inputDeviceUID isEqualToString:@([self outputCardUID].c_str())]) { [_inputDeviceUID release]; _inputDeviceUID = nil; }
+        if (_inputDeviceUID != nil) {
+            NSString* why = [self openAudioInputs];
+            if (why != nil) { [self setBluetoothFailure:why]; NSLog(@"[OBJ] inputs not reopened on the new output: %@", why); }
+        }
+        [self notifyAudioDeviceChanged];
+    }
     // Relance si on était en lecture (l'Edit est intact, pas besoin de reconstruire)
     if (wasPlaying) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -11441,7 +11460,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         if (cfg.numIn > 0)
             [result addObject:@{ @"uid": @(objvirtual::cardName()), @"name": @(objvirtual::cardName()),
                                  @"channels": @(cfg.numIn), @"same_as_output": @YES }];
-        if (cfg.numIn2 > 0)
+        if (cfg.numIn2 > 0 && objvirtual::state().secondPresent)
             [result addObject:@{ @"uid": @(objvirtual::secondCardName()), @"name": @(objvirtual::secondCardName()),
                                  @"channels": @(cfg.numIn2), @"same_as_output": @NO }];
         return result;
@@ -11479,7 +11498,9 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     NSLog(@"[OBJ] setInputDevice: %@ (was %@, inputs %s)", uid ?: @"(same card)", _inputDeviceUID ?: @"(same card)",
           wasOpen ? "open" : "closed");
     if (wasOpen) [self closeAudioInputs];
+    [_inputDeviceUID release];
     _inputDeviceUID = [uid copy];
+    [self rememberInputCardName:uid];
     if (!wasOpen) return nil;          // only a choice: nothing changes in the engine until the inputs open
     return [self openAudioInputs];
 }
@@ -11573,6 +11594,13 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     return uid.empty() ? nil : @(uid.c_str());
 }
 
+- (void)rememberInputCardName:(NSString* _Nullable)uid {
+    NSString* name = uid != nil ? [self nameOfInputDevice:uid] : nil;
+    if (name == nil) return;                      // keep what was known: the card may be about to vanish
+    [_inputCardName release];
+    _inputCardName = [name copy];
+}
+
 /// Is this input card a Bluetooth microphone? `--virtual-audio` with `hfp:1`: the second card plays one.
 - (BOOL)inputCardIsBluetooth:(NSString*)uid {
     auto* type = _engine->getDeviceManager().deviceManager.getCurrentDeviceTypeObject();
@@ -11586,6 +11614,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 /// Opens the inputs on `uid`, a card other than the output's: at once, or — a Bluetooth microphone — by the
 /// state machine, which answers nil NOW and finishes later (`-inputsState` says where it stands).
 - (NSString* _Nullable)beginOpenInputsFor:(NSString*)uid {
+    [self rememberInputCardName:uid];
     if ([self inputCardIsBluetooth:uid]) return [self beginBluetoothOpenFor:uid];
     return [self openSeparateAudioInputsFor:uid];
 }
@@ -11759,6 +11788,7 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
 
 - (NSInteger)inputsState {
     if (_bt.state != OBJBluetoothInputState::closed) return (NSInteger) _bt.state;
+    if (_btFailure != nil && ![self audioInputsOpen]) return (NSInteger) OBJBluetoothInputState::failed;
     return [self audioInputsOpen] ? (NSInteger) OBJBluetoothInputState::open : (NSInteger) OBJBluetoothInputState::closed;
 }
 
@@ -11986,6 +12016,101 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
     const auto& requested = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).inputPairs;
     for (int first : objinput::validPairs(n, requested)) [result addObject:@(first)];
     return result;
+}
+
+// MARK: The input card is gone
+//
+// A card that leaves the system's list is not necessarily gone (a Bluetooth headset republishes its
+// devices when its profile changes, a USB hub blinks): absence is judged BY UID, and only once the list
+// has been STABLE for a second (`OBJAbsenceJudge`). Then the inputs close — a running recording is ended
+// cleanly FIRST (its take is kept and becomes an object through `onRecordingFinished`), the aggregate is left
+// before the card disappears from under it — the choice of the input card goes back to the output card's own,
+// and `onInputCardLost` tells the interface (which says so only if a take was interrupted). Nothing
+// switches back by itself when the card returns.
+
+/// The UIDs the system lists right now (the virtual cards' names under `--virtual-audio`).
+- (std::vector<std::string>)presentCardUIDs {
+    std::vector<std::string> uids;
+    auto* type = _engine->getDeviceManager().deviceManager.getCurrentDeviceTypeObject();
+    if (type == nullptr) return uids;
+    if (type->getTypeName() == objvirtual::cardName()) {
+        uids.push_back(objvirtual::cardName());
+        if (objvirtual::state().config.numIn2 > 0 && objvirtual::state().secondPresent)
+            uids.push_back(objvirtual::secondCardName());
+        return uids;
+    }
+    if (type->getTypeName() != "CoreAudio") return uids;
+    for (const auto& d : objcoreaudio::listDevices())
+        if (!d.uid.empty() && !objaggregate::isOurs(d.name)) uids.push_back(d.uid);
+    return uids;
+}
+
+- (void)checkCardPresence {
+    if (gOBJAudioDisabled || _inCardLoss) return;
+    std::string inUID, outUID;
+    if (_aggregate) {
+        std::lock_guard<std::mutex> lock(objAgg().mutex);
+        inUID = objAgg().inputUID;
+        outUID = objAgg().outputUID;
+    } else if (_inputDeviceUID != nil) {
+        inUID = std::string([_inputDeviceUID UTF8String]);
+    }
+    if (inUID.empty()) return;
+
+    const double now = objBtNow();
+    _absence.note([self presentCardUIDs], now);
+    bool undecided = false;
+    int lost = -1;
+    switch (_absence.verdict(inUID, now)) {
+        case OBJPresence::absent:    lost = 0; break;
+        case OBJPresence::undecided: undecided = true; break;
+        case OBJPresence::present:   break;
+    }
+    if (lost < 0 && !outUID.empty()) {
+        switch (_absence.verdict(outUID, now)) {
+            case OBJPresence::absent:    lost = 1; break;
+            case OBJPresence::undecided: undecided = true; break;
+            case OBJPresence::present:   break;
+        }
+    }
+    if (lost >= 0) { [self handleCardLoss:lost]; return; }
+    if (undecided) {
+        // No further broadcast is guaranteed: look again once the list has had time to settle.
+        const int token = ++_presenceToken;
+        __unsafe_unretained OBJEngineCore* me = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t) (0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (me->_presenceToken == token) [me checkCardPresence];
+        });
+    }
+}
+
+- (void)handleCardLoss:(int)kind {
+    _inCardLoss = YES;
+    NSString* name = nil;
+    if (kind == 0) {
+        name = _inputCardName != nil ? [[_inputCardName copy] autorelease] : @"";
+    } else {
+        std::lock_guard<std::mutex> lock(objAgg().mutex);
+        name = [NSString stringWithUTF8String:objAgg().outputName.c_str()];
+    }
+    const BOOL interrupted = _recordingActive;
+    NSLog(@"[OBJ] %s card gone (%@)%s", kind == 0 ? "input" : "output", name, interrupted ? ", a take was running" : "");
+    if (interrupted) [self stop];            // the take is kept: finishRecording delivers it before we say anything
+    [self closeAudioInputs];
+    if (kind == 0) { [_inputDeviceUID release]; _inputDeviceUID = nil; }
+    if (self.onInputCardLost) self.onInputCardLost(kind, name, interrupted);
+    [self notifyAudioDeviceChanged];
+    _inCardLoss = NO;
+}
+
+- (NSString* _Nullable)setVirtualInputCardPresent:(BOOL)present {
+    auto& st = objvirtual::state();
+    if (!st.active) return @"the virtual card is not active (launch with --virtual-audio)";
+    if (st.config.numIn2 <= 0) return @"the virtual card has no second card (in2:N)";
+    if (st.secondPresent == (bool) present) return nil;
+    st.secondPresent = present;
+    if (st.fireDeviceChange) st.fireDeviceChange();
+    return nil;
 }
 
 // MARK: Input monitoring

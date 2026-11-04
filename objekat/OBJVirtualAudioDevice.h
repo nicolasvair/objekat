@@ -160,6 +160,9 @@ struct State {
     /// Set by the card type while it exists: tells the audio device manager that the device list changed (what
     /// CoreAudio does when a headset republishes). Main thread only.
     std::function<void()> fireDeviceChange;
+    /// `audio.virtual.set_present`: the second card can be "unplugged" and "plugged back" (the list it publishes and
+    /// the devices it creates follow). Main thread only.
+    bool secondPresent = true;
 };
 
 inline State& state() { static State s; return s; }
@@ -446,7 +449,7 @@ public:
         juce::StringArray names;
         if (wantInputNames) {
             if (config.numIn > 0)  names.add(cardName());
-            if (config.numIn2 > 0) names.add(secondCardName());
+            if (config.numIn2 > 0 && state().secondPresent) names.add(secondCardName());
         } else if (config.numOut > 0) {
             names.add(cardName());
         }
@@ -469,6 +472,7 @@ public:
         const juce::String mine(cardName()), second(secondCardName());
         if (outputDeviceName.isNotEmpty() && outputDeviceName != mine) return nullptr;
         if (inputDeviceName.isNotEmpty() && inputDeviceName != mine && inputDeviceName != second) return nullptr;
+        if (inputDeviceName == second && !state().secondPresent) return nullptr;
         if (outputDeviceName.isEmpty() && inputDeviceName.isEmpty()) return nullptr;
         const int inputCard = inputDeviceName.isEmpty() ? 0 : inputDeviceName == second ? 2 : 1;
         return new OBJVirtualAudioDevice(config, inputCard, outputDeviceName.isNotEmpty());

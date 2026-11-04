@@ -9754,6 +9754,52 @@
         }
       }
     },
+    "inputCard.lost.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The input card “%@” went away during a recording. The take is kept; the input goes back to “Same card as the output”."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La tarjeta de entrada «%@» desapareció durante una grabación. La toma se conserva; la entrada vuelve a «La misma tarjeta que la salida»."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carte d’entrée « %@ » a disparu pendant un enregistrement. La prise est conservée ; l’entrée revient à « Même carte que la sortie »."
+          }
+        }
+      }
+    },
+    "inputCard.lost.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input card gone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tarjeta de entrada desaparecida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carte d’entrée disparue"
+          }
+        }
+      }
+    },
     "inputs.dormant.help": {
       "extractionState": "manual",
       "localizations": {
@@ -12786,6 +12832,52 @@
           "stringUnit": {
             "state": "translated",
             "value": "Filtrer…"
+          }
+        }
+      }
+    },
+    "outputCard.lost.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The output card “%@” went away during a recording. The take is kept; the inputs are closed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La tarjeta de salida «%@» desapareció durante una grabación. La toma se conserva; las entradas se cierran."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La carte de sortie « %@ » a disparu pendant un enregistrement. La prise est conservée ; les entrées sont fermées."
+          }
+        }
+      }
+    },
+    "outputCard.lost.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Output card gone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tarjeta de salida desaparecida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carte de sortie disparue"
           }
         }
       }

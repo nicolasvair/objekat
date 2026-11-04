@@ -148,6 +148,29 @@ extension CommandRegistry {
             return JSONValue.fromFoundation(engine.virtualAudioStatus())
         }
 
+        register("audio.virtual.set_present",
+                 summary: """
+                 "Unplugs" (`present: false`) or "plugs back" (`true`) the virtual SECOND card (`--virtual-audio` \
+                 with `in2:N`): it leaves or rejoins the list the audio system publishes, exactly like a card \
+                 pulled from the machine. What the engine does about a chosen input card that is gone (judged \
+                 by UID once the list has been stable for a second: the inputs close, a running recording is \
+                 ended with its take kept, the choice goes back to the output card's own) is reachable with no \
+                 hardware this way. Nothing switches back when the card returns. Only exists under \
+                 `--virtual-audio`.
+                 """,
+                 params: [ParamSpec("present", "bool", "false = unplug, true = plug back.")],
+                 undo: .none) { p in
+            let engine = try CommandContext.shared.requireEngine()
+            guard OBJEngineCore.isVirtualAudio() else {
+                throw CommandError(code: .invalid_state,
+                                   message: "the virtual card is not active (launch with --virtual-audio)")
+            }
+            if let why = engine.setVirtualInputCardPresent(try p.bool("present")) {
+                throw CommandError(code: .invalid_state, message: why)
+            }
+            return JSONValue.fromFoundation(engine.virtualAudioStatus())
+        }
+
         register("audio.virtual.set_input",
                  summary: """
                  Chooses what input `channel` of the virtual card carries: `silence` (the default), \
