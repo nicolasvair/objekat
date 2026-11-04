@@ -1821,6 +1821,7 @@ struct TimelineView: View {
             pixelsPerSecond: pixelsPerSecond,
             waveformDisplayDB: viewModel.waveformDisplayDB,
             offBins: viewModel.offFXLinkIDs,
+            secPerBeat: 60.0 / viewModel.tempo,
             isRenaming: viewModel.renamingID == item.id,
             onRename: { label in
                 if let label { viewModel.renameObject(id: item.id, label: label) }
@@ -3678,7 +3679,7 @@ struct TimelineView: View {
                     into: ctx, groups: groups, geo: groupGeo, waveformCache: waveformCache,
                     waveformDisplayDB: waveformDisplayDB,
                     scrollOffsetX: cullScrollX, viewportWidth: cullViewportWidth,
-                    offBins: offBins)
+                    offBins: offBins, secPerBeat: secPerBeat)
 
                 // ── Phase 3: FADES / MUTE / LABEL per block (over the waveform) ──────
                 // Skipped when the block is too narrow → when scrolling zoomed out, an empty loop.
@@ -3907,6 +3908,7 @@ struct TimelineView: View {
             liveScroll: liveScroll,
             waveformDisplayDB: waveformDisplayDB,
             offBins: viewModel.offFXLinkIDs,
+            secPerBeat: 60.0 / viewModel.tempo,
             previewOffset:   previewOffset(for: group),
             previewResizeDX: previewResizeDX(for: group),
             previewTrimDX:   previewTrimDX(for: group),

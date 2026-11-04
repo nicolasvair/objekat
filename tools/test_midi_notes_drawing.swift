@@ -132,6 +132,45 @@ enum MidiNotesDrawingTest {
     let capped = rects(loopNote, spb: 0.5, pps: 100, size: CGSize(width: 1_000_000, height: 100), loop: (0, 0.01))
     check("repeats are capped at maxLoopRepeats + 1", capped.count <= MidiNotesDrawing.maxLoopRepeats + 1, "\(capped.count)")
 
+    // MARK: - A layout chosen by the caller (a group's composite: one scale for several clips)
+    check("layout(pitchRange:) = the layout measured over the same notes",
+          MidiNotesDrawing.layout(pitchRange: 60...67, size: size) == lay)
+    check("…widened to minSpan and re-centred the same way",
+          MidiNotesDrawing.layout(pitchRange: 60...62, size: size) == l2)
+    func rectsOn(_ notes: [MidiNote], _ layout: MidiNotesDrawing.Layout, xOffset: Double = 0,
+                 size: CGSize, loop: (start: Double, end: Double)? = nil,
+                 visible: ClosedRange<Double>? = nil) -> [(CGRect, Int)] {
+        var out: [(CGRect, Int)] = []
+        MidiNotesDrawing.forEachNote(notes: notes, layout: layout, secPerBeat: 0.5, pixelsPerSecond: 100,
+                                     xOffset: xOffset, size: size, loopRange: loop,
+                                     visibleX: visible) { out.append(($0, $1)) }
+        return out
+    }
+    let viaLayout = rectsOn(three, lay!, size: size)
+    check("a given layout that is the clip's own gives the old rectangles",
+          viaLayout.count == r.count && zip(viaLayout, r).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 })
+    // Pitch range 55...70: lo 54, hi 71, span 17, top 71, rowH = 80 / 18; pitch 60 is row 11.
+    let group = MidiNotesDrawing.layout(pitchRange: 55...70, size: size)
+    check("a wider range: span 17, top 71", group.span == 17 && group.top == 71, "\(group)")
+    let onGroup = rectsOn(three, group, size: size)
+    check("the notes sit on the given rows, not on their own",
+          near(onGroup[0].0.minY, 10 + 11 * (80.0 / 18.0)) && near(onGroup[0].0.height, 80.0 / 18.0 - 1),
+          "\(onGroup[0].0)")
+    // Two clips of one group share the rows: the same pitch has the same y whichever clip holds it.
+    let other = [MidiNote(pitch: 60, startBeat: 3, lengthBeats: 1)]
+    check("one pitch, one y, across two clips",
+          near(rectsOn(other, group, size: size)[0].0.minY, onGroup[0].0.minY))
+    // A clip laid at an offset far to the left of the block: its looped repeats still reach the block.
+    let far = rectsOn(loopNote, group, xOffset: -10_000, size: size, loop: (0, 1))
+    check("a looped clip starting far left still repeats into the block", far.count == 4, "\(far.count)")
+    check("…on the same grid of periods", far.first.map { near($0.0.minX, 0) } ?? false)
+    // The window skips whole repeats too.
+    let farWin = rectsOn(loopNote, group, xOffset: -10_000, size: size, loop: (0, 1), visible: 150...250)
+    check("…and a window picks the repeat that reaches it", farWin.count == 1 && near(farWin[0].0.minX, 200),
+          "\(farWin.map { $0.0.minX })")
+    // A clip that starts after the block's right edge draws nothing.
+    check("an offset past the right edge draws nothing", rectsOn(three, group, xOffset: 500, size: size).isEmpty)
+
     // MARK: - Degenerate inputs
     check("no notes → no layout", MidiNotesDrawing.layout(notes: [MidiNote](), secPerBeat: 0.5, pixelsPerSecond: 100, size: size) == nil)
     check("a zero tempo draws nothing", rects(three, spb: 0, size: size).isEmpty)
