@@ -155,12 +155,6 @@ struct ContentView: View {
         .onChange(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
         }
-        .onChange(of: viewModel.loopRegion) { _, newRegion in
-            session.loopRegionChanged(newRegion)
-        }
-        .onChange(of: viewModel.loopModeEnabled) { _, enabled in
-            session.loopModeChanged(enabled)
-        }
         .onDisappear {
             FirstClickThrough.remove(&firstClickMonitor)
         }

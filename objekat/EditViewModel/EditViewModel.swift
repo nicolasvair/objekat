@@ -821,8 +821,25 @@ final class EditViewModel {
         timeSelectionFromRuler ? timeSelection?.timeRange : nil
     }
 
-    var loopModeEnabled: Bool = false
-    var loopRegion: ClosedRange<Double>? = nil
+    /// The loop is the user's intent; the engine follows through `loopRelay` (set by `ObjekatSession.start`, so that it
+    /// works headless too, where no view's `.onChange` exists). A drag of a ruler marker (`loopRegionDragging`) is
+    /// applied to the engine once, on release, while recording (@see `ObjekatSession.loopRegionChanged`).
+    var loopModeEnabled: Bool = false {
+        didSet { if loopModeEnabled != oldValue { loopRelay?(.mode) } }
+    }
+    var loopRegion: ClosedRange<Double>? = nil {
+        didSet { if loopRegion != oldValue { loopRelay?(.region) } }
+    }
+    enum LoopChange { case mode, region }
+    @ObservationIgnored var loopRelay: ((LoopChange) -> Void)? = nil
+    @ObservationIgnored var loopRegionDragging = false
+
+    /// The hand let go of a loop marker: what the drag held back goes to the engine.
+    func endLoopRegionDrag() {
+        guard loopRegionDragging else { return }
+        loopRegionDragging = false
+        loopRelay?(.region)
+    }
 
     func toggleLoopMode() {
         if loopModeEnabled { loopModeEnabled = false; return }

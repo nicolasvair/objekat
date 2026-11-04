@@ -15,6 +15,8 @@ struct TimeRulerView: View {
     var loopRegion: ClosedRange<Double>? = nil
     var loopModeEnabled: Bool = false
     var onLoopRegionChanged: ((ClosedRange<Double>) -> Void)? = nil
+    /// The hand let go of a loop marker (after the last `onLoopRegionChanged` of the drag).
+    var onLoopRegionDragEnded: (() -> Void)? = nil
     var tempo: Double = 120.0
     var timeSigNumerator: Int = 4
     var timeSigDenominator: Int = 4
@@ -273,7 +275,8 @@ struct TimeRulerView: View {
                 pixelsPerSecond: pixelsPerSecond,
                 snapEnabled: snapEnabled,
                 snapGrid: snapGrid,
-                onRegionChanged: { onLoopRegionChanged?($0) }
+                onRegionChanged: { onLoopRegionChanged?($0) },
+                onDragEnded: { onLoopRegionDragEnded?() }
             )
             .frame(width: totalDuration * pixelsPerSecond, height: height)
         }
@@ -334,6 +337,7 @@ private struct LoopMarkerDragSurface: NSViewRepresentable {
     var snapEnabled: Bool
     var snapGrid: Double
     var onRegionChanged: (ClosedRange<Double>) -> Void
+    var onDragEnded: () -> Void = {}
 
     func makeNSView(context: Context) -> MarkerView { MarkerView() }
 
@@ -343,6 +347,7 @@ private struct LoopMarkerDragSurface: NSViewRepresentable {
         v.snapEnabled    = snapEnabled
         v.snapGrid       = snapGrid
         v.onRegionChanged = onRegionChanged
+        v.onDragEnded    = onDragEnded
         v.needsDisplay   = true
     }
 
@@ -352,6 +357,7 @@ private struct LoopMarkerDragSurface: NSViewRepresentable {
         var snapEnabled: Bool = false
         var snapGrid: Double = 1.0
         var onRegionChanged: ((ClosedRange<Double>) -> Void)? = nil
+        var onDragEnded: (() -> Void)? = nil
 
         private let hitRadius: Double = 12
         private var dragState: DragState? = nil
@@ -423,7 +429,12 @@ private struct LoopMarkerDragSurface: NSViewRepresentable {
 
             monitorUp = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
                 guard let self else { return event }
-                if self.dragState != nil { self.dragState = nil; return nil }
+                if self.dragState != nil {
+                    self.dragState = nil
+                    // After the drag's last (asynchronous) region change
+                    DispatchQueue.main.async { self.onDragEnded?() }
+                    return nil
+                }
                 return event
             }
         }

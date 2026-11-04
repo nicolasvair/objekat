@@ -134,6 +134,14 @@ final class ObjekatSession {
         // directly (`engine?.stop()`), which never touched `isPlaying` — a reopen while playing
         // left the transport showing ▶ although the sound had already stopped.
         viewModel.projectLoadWillBeginHook = { [weak self] in self?.stop() }
+        // The loop reaches the engine through the model, not through a view's `.onChange` (absent headless).
+        viewModel.loopRelay = { [weak self] change in
+            guard let self else { return }
+            switch change {
+            case .region: self.loopRegionChanged(self.viewModel.loopRegion)
+            case .mode:   self.loopModeChanged(self.viewModel.loopModeEnabled)
+            }
+        }
         // The device really open — the title bar's grey line and `audio.status` read the same
         // object. The hook is set BEFORE attaching: `attach`'s own first `refresh()` must reach
         // it too, to cover the startup device (restored from Settings.xml) with no extra call.
@@ -170,9 +178,12 @@ final class ObjekatSession {
         // Objekat's loop mode is on but Tracktion is not looping yet: we turn it on as soon as the
         // playhead ENTERS the region. The end bound is EXCLUDED — a cursor sitting exactly on the
         // loop's end is AFTER it (like a clip's right edge), and we read straight on.
-        if viewModel.loopModeEnabled, !viewModel.isRecording,
+        // Under a recording the loop is kept (engine patch 0050: the recording goes THROUGH it), unless it is too short
+        // for the recorder (`RecordLoopPlanner.minimumLoopLength`): that one records linearly.
+        if viewModel.loopModeEnabled,
            !tracktionLoopActive,
            let r = viewModel.loopRegion,
+           !viewModel.isRecording || Self.loopIsLongEnoughToRecord(r),
            playheadPosition >= r.lowerBound,
            playheadPosition < r.upperBound {
             engine.setTracktionLoopRegionFrom(r.lowerBound, to: r.upperBound)
@@ -207,7 +218,8 @@ final class ObjekatSession {
     func startRecording() -> String? {
         guard !viewModel.isLoadingProject else { return "a project is loading" }
         guard !viewModel.isRecording else { return "already recording" }
-        if tracktionLoopActive {
+        // The loop is KEPT under the recording (engine patch 0050), except a loop too short for the recorder.
+        if tracktionLoopActive, let r = viewModel.loopRegion, !Self.loopIsLongEnoughToRecord(r) {
             engine.deactivateTracktionLoop()
             tracktionLoopActive = false
         }
@@ -314,10 +326,21 @@ final class ObjekatSession {
     }
 
     /// Resyncs the Tracktion region on the fly if the engine loop is already active.
+    /// Under a recording: a region under `minimumLoopLength` is ignored (the last valid bounds are kept), and a ruler
+    /// marker being dragged is applied once, on release (`EditViewModel.endLoopRegionDrag`) — the head would otherwise
+    /// follow every pixel of the drag.
     func loopRegionChanged(_ newRegion: ClosedRange<Double>?) {
         if tracktionLoopActive, let r = newRegion {
+            if viewModel.isRecording {
+                guard Self.loopIsLongEnoughToRecord(r), !viewModel.loopRegionDragging else { return }
+            }
             engine.setTracktionLoopRegionFrom(r.lowerBound, to: r.upperBound)
         }
+    }
+
+    /// A loop shorter than this is not a loop for the recorder (the recording is linear).
+    static func loopIsLongEnoughToRecord(_ r: ClosedRange<Double>) -> Bool {
+        r.upperBound - r.lowerBound >= RecordLoopPlanner.minimumLoopLength
     }
 
     /// Loop mode switched off during playback: we cut the Tracktion loop straight away, without

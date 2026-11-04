@@ -9,8 +9,8 @@ to false), so that a result is always read against the reference.
   P1  PUNCH-IN during a play that is ALREADY looping. Stock: the recorder is told the LOOPED position of the press but gets the
       play head's UNLOOPED clock, which is N laps further: the file starts with N x L of silence (WaveInputDevice
       firstRecCallback: `adjustSamples -= (blockStart - punchStart)` < 0 -> silence). 0050: the recording clock is anchored at the
-      LOOPED position of the press -> no silence. (Needs the loop to be kept under the recording: E4 -- this scenario ran
-      during E0 with a temporary change of `ObjekatSession.startRecording` / `tickPlayhead`, which is not committed.)
+      LOOPED position of the press -> no silence. (Needs the loop to be kept under the recording: `ObjekatSession`, E4. The
+      scenario was first run, in E0, with the same change made by hand.)
   P2  JOURNAL vs RENDER. White noise on the timeline, the card's loopback as the input, a loop [3 s, 5 s] switched on by the tick
       while a recording started from 1 s runs. The journal the engine kept (`[REC] ... journal:` in stderr: (clock, timeline) at
       every discontinuity of the head) must say where every stretch of the file comes from: for each stretch the file is
@@ -288,6 +288,21 @@ def run(stock):
             c.send("debug.transport_loop", {"enabled": False})
 
             if not stock:
+                # ── P5 -------------------------------------------------------------------------------
+                section("P5 [%s] a loop under 250 ms is not a loop for the recorder: the recording is linear" % tag)
+                new_project(c, tmp, "p5")
+                z = make_zone(c, 0, 0, 30, 0)
+                c.send("rec.arm", {"group": z, "on": True})
+                c.send("debug.transport_loop", {"start": 3.0, "end": 3.1, "enabled": True})
+                c.send("transport.seek", {"seconds": 2.0})
+                c.send("rec.start")
+                wait_pos(c, 4.0)
+                t = c.send("rec.stop")["last_takes"]
+                j = last_journal(app.err)
+                check("a 100 ms loop: the journal has ONE point (no wrap) and the take lasts the recording",
+                      j is not None and len(j[0]) == 1 and len(t) == 1 and 1.9 < t[0]["duration"] < 2.3, (j, t))
+                c.send("debug.transport_loop", {"enabled": False})
+
                 # ── P2 -------------------------------------------------------------------------------
                 section("P2 [%s] the journal against the render (noise, loopback, loop [3 s, 5 s] switched on by the tick)" % tag)
                 new_project(c, tmp, "p2")
