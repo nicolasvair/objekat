@@ -66,6 +66,47 @@ func check(_ label: String, _ ok: Bool, _ detail: String = "") {
               TreePickerModel.widest([nested], measure: measure) == TreePickerModel.rowWidth(textWidth: 23 * 6, depth: 2))
         check("no section, no width", TreePickerModel.widest([], measure: measure) == 0)
 
+        // branches: a row that only opens and closes
+        let kid = TreePickerNode(id: "k", name: "K", checked: true)
+        let br = TreePickerNode.branch("br", "Output", detail: "Muse", children: [kid])
+        check("a branch is not choosable, not selectable, role branch",
+              !br.isChoosable && !br.selectable && br.role == .branch && br.detail == "Muse" && !br.startsOpen)
+        check("a branch sees a ticked child", br.containsChecked)
+        let br2 = TreePickerNode.branch("br2", "Rate", detail: nil, startsOpen: true,
+                                        children: [TreePickerNode(id: "r1", name: "48 kHz")])
+        let br3 = TreePickerNode.branch("br3", "Buffer", detail: "512", children: [TreePickerNode(id: "b1", name: "512")])
+        let menu = TreePickerSection(id: "audio", nodes: [br, br2, br3])
+        let both = TreePickerModel.seed([menu])
+        check("default: a branch holding a ticked row opens, and a startsOpen one", both.nodes == ["br", "br2"], "\(both.nodes)")
+        let folded = TreePickerModel.seed([menu], opensCheckedBranches: false)
+        check("opensCheckedBranches false: only startsOpen branches open", folded.nodes == ["br2"], "\(folded.nodes)")
+        let inner = TreePickerNode(id: "grp", name: "Group", children: [TreePickerNode(id: "leaf", name: "Leaf", checked: true)])
+        let withGroup = TreePickerSection(id: "w", nodes: [.branch("brg", "B", detail: nil, children: [inner])])
+        check("a group inside a branch still opens on its ticked row",
+              TreePickerModel.seed([withGroup], opensCheckedBranches: false).nodes == ["grp"])
+
+        // toggled
+        let sib = ["br", "br2", "br3"]
+        check("toggled opens a closed branch",
+              TreePickerModel.toggled("br", expanded: [], siblings: sib, accordion: true) == ["br"])
+        check("toggled closes an open one",
+              TreePickerModel.toggled("br", expanded: ["br"], siblings: sib, accordion: true).isEmpty)
+        check("accordion: opening one closes its siblings",
+              TreePickerModel.toggled("br3", expanded: ["br", "br2"], siblings: sib, accordion: true) == ["br3"])
+        check("accordion leaves what is not a sibling",
+              TreePickerModel.toggled("br3", expanded: ["br", "grp"], siblings: sib, accordion: true) == ["br3", "grp"])
+        check("no accordion: the siblings stay open",
+              TreePickerModel.toggled("br3", expanded: ["br", "br2"], siblings: sib, accordion: false) == ["br", "br2", "br3"])
+
+        // width counts the detail
+        let withDetail = TreePickerSection(id: "d", nodes: [.branch("b", "abcd", detail: "xy", children: [])])
+        check("widest counts a branch's detail after a 12 pt gap",
+              TreePickerModel.widest([withDetail], measure: measure) == TreePickerModel.rowWidth(textWidth: 24 + 12 + 12, depth: 0))
+        let wideChild = TreePickerSection(id: "e", nodes: [.branch("b", "ab", detail: "x", children: [
+            TreePickerNode(id: "c", name: "a child that is much longer than the line")])])
+        check("a folded branch's children still count",
+              TreePickerModel.widest([wideChild], measure: measure) == TreePickerModel.rowWidth(textWidth: 41 * 6, depth: 1))
+
         print("\n\(total - fails.count)/\(total) assertions passed")
         exit(fails.isEmpty ? 0 : 1)
     }
