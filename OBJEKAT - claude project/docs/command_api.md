@@ -725,7 +725,7 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--project=<path>` | opens a project on startup |
 | `--exec=<script.jsonl>` | replays a JSON-lines scenario (`#` for a comment, `{DIR}` = the script's folder) |
 | `--no-audio` | opens no output device |
-| `--virtual-audio[=in:4,out:2,sr:48000,bs:256,inlat:64,outlat:96,splitin:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout), which `input.enable` then refuses. Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
+| `--virtual-audio[=in:4,out:2,in2:0,sr:48000,bs:256,inlat:64,outlat:96,splitin:0,hfp:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout): `input.enable` then refuses, unless `in2:N` gives a second, input-only card ("OBJ Virtual In 2", N channels) that can be its microphone. `hfp:1` makes that second card play a Bluetooth microphone (opening it waits for the system to settle, see "An input card other than the output card"). Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
 
@@ -796,7 +796,7 @@ That is end-of-process noise, with no effect on the result.
 | `object.add_marker` … | the markers an OBJECT carries, in its own frame of reference |
 | `comment.*` | free texts laid over a span of the timeline |
 | `timesel.*` / `clipboard.*` | time selection, copy, cut, delete, **ripple delete**, group, paste |
-| `audio.*` | the output device really in use — status, the list, switching device / rate / buffer |
+| `audio.*` | the output device really in use — status, the list, switching device / rate / buffer — and the INPUT card (`audio.devices.inputs`, `audio.set_input_device`) |
 | `wait_idle`, `batch`, `job.*`, `perf.*` | determinism and measurement |
 
 ### A plugin's sidechain (the audio bridge)
@@ -2262,6 +2262,11 @@ card changes; it is only the answer to "does the output device own its inputs?",
 `input.enable` (below) can be exercised with no hardware (`tools/scenario_inputs_split_device.py`).
 `audio.virtual.status` reports it as `split_inputs`.
 
+`in2:N` (default `0`) adds a SECOND card, input-only, "OBJ Virtual In 2", with N channels of its own: the input card
+to choose (`audio.set_input_device`) when it is not the output card. `hfp:1` (default `0`) makes it play a Bluetooth
+headset's microphone: the engine's state machine then waits for a burst of device-list changes (simulated, a quarter of
+a second apart) to calm down before it opens. The card can be unplugged and plugged back with `audio.virtual.set_present`.
+
 The virtual card **never reaches `~/Library/objekat/Settings.xml`**: while it is on, the engine's
 property storage neither reads nor writes any device setting (`audio_device_setup`, the default
 wave in/out, the wave in/out items, the layout presets). A normal launch afterwards finds the
@@ -2272,6 +2277,9 @@ file as it was — `tools/scenario_virtual_audio.py` asserts it by hash.
   `announced_output_latency` = `input_latency` / `output_latency` plus one buffer each, the way
   CoreAudio reports them; their sum equals `loopback_delay`). `{"active": false}` on a normal
   launch (and under `--no-audio`).
+* `audio.virtual.set_present {present}` — "unplugs" (`false`) or "plugs back" (`true`) the second card (`in2:N`): it leaves
+  or rejoins the list the audio system publishes, like a card pulled from the machine. `invalid_state` outside
+  `--virtual-audio`. Answers like `audio.virtual.status`.
 * `audio.virtual.set_input {channel, signal, frequency?, amplitude?, period?}` — what input
   `channel` carries: `silence` (default), `sine` (`frequency` Hz at `amplitude`, phase-continuous
   across a change of frequency), `impulse` (one sample of `amplitude` every `period` seconds, the
@@ -2291,20 +2299,24 @@ a block: a block-based callback cannot hand back samples it has not produced yet
 Recording starts from the card's INPUTS, and they are **closed at launch**: opening them on a real
 card makes macOS ask for the microphone (and wakes a Bluetooth headset into its call profile), so
 nothing opens them until a command — the "Inputs" tab's *Enable inputs* button — asks. They are the
-inputs of the SAME device as the output; there is no separate input card. A card whose inputs are another device
-with the same name (AirPods) is therefore **not supported**: opening them made JUCE aggregate the two devices, and the
-switch to the call profile made CoreAudio restart the aggregate from its own thread in the middle of the opening (a
-crash). The engine asks the system first (`objekat/Shared/OBJCoreAudioProbe.h`: the output device must carry input
-channels ITSELF; with several same-name devices, every output-capable one must) and refuses before touching anything. These nine `input.*` names sit beside the
+inputs of the output device unless ANOTHER card is chosen for them (`audio.set_input_device`, below). A card whose
+inputs are another device with the same name (AirPods) used to be refused outright: opening them made JUCE aggregate the
+two devices, and the switch to the call profile made CoreAudio restart the aggregate from its own thread in the middle of
+the opening (a crash). JUCE's aggregation is therefore never used. The engine asks the system first
+(`objekat/Shared/OBJCoreAudioProbe.h`: the output device must carry input channels ITSELF; with several same-name devices,
+every output-capable one must); when it does not, the microphone half is looked up (`siblingInputUID`) and taken as THE
+INPUT CARD, opened through the engine's own private aggregate once the Bluetooth state machine says the system is calm.
+Only with no microphone to be found is the old refusal kept, before anything is touched. These nine `input.*` names sit beside the
 synthetic-navigation ones (`input.scroll`, `input.record.*`, ...) and share only the prefix.
 
-* `input.enable` — opens the inputs of the current output device, waits for the device to settle
-  (`audio.status.generation` moves), answers like `input.list`. A no-op when already open.
+* `input.enable` — opens the inputs (the output device's, or the chosen input card's), waits for the device to settle
+  (`audio.status.generation` moves), answers like `input.list`. With a Bluetooth microphone it waits while the state is
+  `stabilising` (1 s of calm, 6 s at most, 12 s for the call). A no-op when already open.
   `invalid_state` with no device open (`--no-audio`, or the open failed), `invalid_state` too with
   `details.reason = "inputs_on_separate_device"` when the inputs are a separate device (AirPods; the output is not
   touched, not even restarted: `generation` does not move), `engine_error` when the
   card refuses (the output keeps playing: the previous setup is restored).
-* `input.disable` — closes them again; the output is untouched.
+* `input.disable` — closes them again (cancelling a Bluetooth opening still stabilising); the output is untouched.
 * `input.list` — `{open, device, channels, channel_names, pairs, inputs, engine_devices, record_inputs}`.
   `inputs` is what can be recorded from RIGHT NOW: the enabled devices, each
   `{index, name, first, count, stereo, enabled}` (`first` 0-based, `count` 1 or 2).
@@ -2567,6 +2579,55 @@ Built app: the entitlement `com.apple.security.device.audio-input` and `NSMicrop
 -6 dB, silence below -90 dB, a loopback of the bip reads its peak); `tools/scenario_input_monitor.py`
 asserts the names, the pairs, their round trip through the project file and the monitoring (the
 Main's level through `stem.level`).
+
+#### An input card other than the output card (`audio.devices.inputs`, `audio.set_input_device`)
+
+The inputs are taken from the OUTPUT card unless another card is CHOSEN. The choice is a CoreAudio UID (a name is not an
+identity: two identical interfaces, or the two halves of a pair of AirPods, share one) and is only a choice while the inputs
+are closed: it is used when they open.
+
+* `audio.devices.inputs` — `{inputs: [{uid, name, channels, same_as_output, selected}], input_device}`, re-read from the
+  system. The output card's own entry is `same_as_output` (choosing it is choosing `null`). The engine's private aggregate
+  is never listed. Under `--virtual-audio`: the virtual cards.
+* `audio.set_input_device {uid?}` — chooses the card; `null` or the output card's UID = the same card. With the inputs
+  open they are closed and opened again on the new card. `invalid_state` for an unknown UID, while a recording is running,
+  or when the new card would not open (the previous choice is then kept in the engine as the failed one:
+  `inputs_state` says `failed`). It NEVER writes the user's remembered choice (`pref.inputDevice`): the menu does, a script
+  must not.
+* `audio.status` (and `live`) gains `input_device` (`{uid, name}` or `null`), `inputs_state` (`closed`, `stabilising`,
+  `open`, `failed`) and `inputs_message` (why, after a failure). `inputs_separate` keeps its meaning (the output card's
+  inputs are another device) even when a microphone can be named for them.
+
+**One device for the engine.** When the input card is not the output card, the engine builds a PRIVATE aggregate device
+(`objekat/Shared/OBJAggregateDevice.h`): the input card first (so the input window is `[0, N)`), the output card as the
+master clock, the input card drift-compensated. JUCE sees ONE CoreAudio device, so its own combiner is never involved. The
+aggregate is invisible: the output card's name is what every list, `audio.status`, the title bar, the channel names and
+`Settings.xml` carry (the file never learns it), and the recording's card signature uses the REAL UIDs. Leaving it
+(`input.disable`, choosing the same card, changing the output, the card disappearing) restores the output card alone.
+
+**The frequency is the output's.** The input card aligns on the project's rate (it is asked to move to it) or the choice is
+REFUSED, with a message naming both rates ("X does not offer 48000 Hz, the rate of the output card (it runs at 44100 Hz)"),
+never the other way round and never a resampling nobody asked for. A CoreAudio nominal rate belongs to the card for every
+application: this costs what the output's own change costs.
+
+**Bluetooth microphones.** Opening the microphone of a headset flips it from music to the call profile: CoreAudio retires
+and republishes its devices and changes its rate in bursts. A Bluetooth input therefore goes through a state machine
+(`closed -> stabilising -> open | failed`, pure, `objekat/Shared/OBJInputCardPolicy.h`): a throw-away IOProc provokes the
+switch, the machine waits for 1 s without a change of the device list, of the rate or of the channel counts, and gives up
+at 6 s (`failed`, with the message the interface shows).
+
+**A card that goes away.** Absence is judged BY UID, once the system's list has been stable for a second (`OBJAbsenceJudge`:
+a headset republishes its devices when its profile changes). The inputs then close; a running recording is ended with its
+take KEPT (one notification); the choice goes back to the output card's own and the remembered preference is reset. Nothing
+switches back when the card returns. The output card disappearing keeps the input choice.
+
+Asserted by `tools/scenario_input_device.py` (phases A-E on the virtual cards: the choice, the Bluetooth burst, the
+`splitin` sibling, the disappearance, the inputs following an output change), `tools/test_input_card_policy.cpp`,
+`tools/test_aggregate_device.cpp`, `tools/test_coreaudio_probe.cpp`, and on REAL cards, under the state guard,
+`tools/scenario_input_device_real.py`. **The guard**: any test that touches real cards runs as
+`tools/audio_state_guard.py run -- CMD`, which snapshots and restores the cards' rates, the system defaults, the
+preferences and `Settings.xml`. What none of it can prove: the signal through the aggregate (the microphone permission is
+the user's), the latency, and the behaviour of real AirPods.
 
 ### Export
 

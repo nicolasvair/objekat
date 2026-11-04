@@ -3078,6 +3078,28 @@ a second one elsewhere. The most exposed points:
   block restarting at each lap on screen, the ruler bound drag, a real card and a real MIDI keyboard through a loop, and the whole
   test campaign (the `test` agent's).
 
+- **An input card other than the output card (4 November 2026, branch `main`, no engine patch — the next is still `0051`,
+  nothing pushed).** Lot D, nine steps, one commit each (`8815a3c5` is step 0). Plan: the lot D brief (not in the repository);
+  decisions: `architecture_decisions.md`; API: `command_api.md` ("An input card other than the output card"). The inputs come from
+  the output card unless another is CHOSEN (`audio.set_input_device`, a CoreAudio UID; the audio menu's « Input » section, « Same
+  card as the output » first; remembered in `pref.inputDevice`, never by a script). **The engine opens it as ONE private aggregate**
+  (`Shared/OBJAggregateDevice.h`, input card first, output card as the clock), never JUCE's combiner; the aggregate's name is
+  masked everywhere (lists, status, channel names, `Settings.xml`, and a recording's card signature uses the real UIDs). The output
+  decides the frequency (the input aligns or the choice is refused with both rates named). A Bluetooth microphone goes through a
+  state machine (`stabilising`, `audio.status.inputs_state`) and AirPods' separate microphone is opened as that card instead of
+  refused; a card that disappears (judged by UID after a quiet second) closes the inputs, keeps a running take and resets the
+  choice. Pure units: `Shared/OBJInputCardPolicy.h`, `Shared/AudioMenuModel.swift`, `Shared/TreePickerPopover.swift` (the sidechain
+  picker and the audio menu share it). **Traps**: JUCE hands PACKED active channels and Tracktion indexes by packed position (an
+  aggregate with J > 0 describes its outputs over the packed range); `OBJEngineCore.mm` is MRC (blocks stored in C++ need
+  `Block_copy`, dispatch objects `dispatch_release`: one crash came from there); **anything that touches a real card goes under
+  `tools/audio_state_guard.py run -- CMD`**, which restores rates, defaults, preferences and `Settings.xml`. Verified with no screen: Debug builds
+  after each step; `scenario_input_device.py` 60 OK, `scenario_input_device_real.py` 20 OK (BlackHole 16ch + the MacBook microphone,
+  under the guard), `scenario_inputs_split_device.py` 29, `scenario_inputs.py` 85, `scenario_record.py` 544, `test_input_card_policy`,
+  `test_aggregate_device`, `test_coreaudio_probe` 27, `test_tree_picker_model`, `test_audio_menu_model` 27. **Not seen, not heard**:
+  every pixel of the menu section and of the Inputs tab; a signal through the aggregate (microphone permission), the latency, real
+  AirPods in either direction, the output card disappearing under an aggregate. Checklist for the user: AirPods, a USB interface, a
+  card unplugged mid-take, a rate mismatch, a Bluetooth switch, a project reopened with the choice remembered.
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged

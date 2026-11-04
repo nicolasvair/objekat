@@ -101,6 +101,10 @@ source, not a translation.
 | horloge d'enregistrement | recording clock | reloj de grabación | the time the recording's files and MIDI notes are written in: anchored at the press, one second per second, NEVER rebased by a loop edit (engine patch `0050`) |
 | séquence MIDI | MIDI sequence | secuencia MIDI | what a MIDI input played during a whole capture made through a loop, stored once and never edited (`MidiSequence`, format 37); the takes look through it |
 | fenêtre d'une prise | take window | ventana de la toma | the part of its sequence a MIDI take holds as its own notes: the notes that begin in `[offsetBeats, offsetBeats + length)`; it resolves again when the take's edges move |
+| carte d'entrée | input card | tarjeta de entrada | the sound card the recording inputs are taken from; the output card's own unless another one is chosen in the audio menu (`audio.set_input_device`, a CoreAudio UID) |
+| Même carte que la sortie | Same card as the output | Misma tarjeta que la salida | the first row of the audio menu's « Input » section: the default, the inputs are the output card's own |
+| agrégat privé | private aggregate | agregado privado | the CoreAudio device the engine builds, invisible to the user and to every list, to open an input card that is not the output card as ONE device (input first, output as the clock); the output card's name is what is shown |
+| micro Bluetooth (bascule) | Bluetooth microphone (switch) | micrófono Bluetooth (cambio) | opening a headset's microphone flips it from music to the call profile; the engine waits for the system to settle (`stabilising`) before it builds the aggregate |
 
 ## What does not get translated
 

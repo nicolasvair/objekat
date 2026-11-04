@@ -1117,6 +1117,49 @@ the journal. A region under 250 ms is ignored (the last valid bounds are kept) a
 enters the undo (it did not before, and a recording that undid a loop would be incoherent). The relay is a hook on the model
 (`loopRelay`), not a SwiftUI `.onChange`, because the headless mode has no view.
 
+## An input card other than the output card (November 2026, no engine patch, lot D)
+
+Branch `main`, nine commits (steps 0-8; `8815a3c5` is step 0). What follows is WHY.
+
+### Decision: ONE private aggregate, built by us — never JUCE's combiner
+
+JUCE can already aggregate an input and an output device (`AudioIODeviceCombiner`), and that is what crashed with AirPods: the switch to the
+call profile makes CoreAudio retire and republish both devices while the combiner's own thread is inside the opening. Choosing an input card
+therefore never reaches it. The engine creates a PRIVATE aggregate (`Shared/OBJAggregateDevice.h`) — the input card FIRST, so the input
+window is `[0, N)` and the output starts at the input card's own output channel count `J`; the output card is the master clock, the input
+card drift-compensated — and hands JUCE ONE CoreAudio device. Probed on real cards before anything was built
+(`tools/audio_aggregate_probe.m`, `tools/probe_aggregate_real_cards.py`: 11 properties verified, 900 s with no glitch; NOT proven: the
+signal through it, the latency — the microphone permission is the user's). Consequence accepted: JUCE hands the callback PACKED active
+channels and Tracktion indexes by packed position, so an aggregate with `J > 0` describes its outputs over the packed range.
+
+### Decision: the aggregate has no name, anywhere
+
+Every surface says the OUTPUT card's name (lists, `audio.status`, the title bar, the channel names), `Settings.xml` is filtered at
+`OBJPropertyStorage::setXmlProperty` (a launch must never find a device that exists only while the app runs), and a recording's card
+signature carries the REAL UIDs. It is created PRIVATE (not published to other applications) and destroyed on every exit path.
+
+### Decision: the output decides the frequency; the input follows or is refused
+
+Same doctrine as the project's sample-rate policy: the card the user listens on decides. The input card is asked to align (a CoreAudio
+nominal rate is the card's for every application — the cost the output's own change already has) or the choice is refused with a message
+naming both rates. Never a silent resampling, never the output following the microphone. Pure, `objDecideInputRate`.
+
+### Decision: a Bluetooth microphone is a state machine, and absence is judged by UID after a quiet second
+
+Opening a headset's microphone provokes CoreAudio into retiring and republishing its devices in bursts: an aggregate built during that
+holds devices about to vanish. `OBJBluetoothInputMachine` (closed, stabilising, open, failed: 1 s of calm, 6 s cap) waits, the engine
+provoking the switch with a throw-away IOProc. For the same reason a card is "gone" only when its UID is missing from a list that has
+been stable for a second (`OBJAbsenceJudge`); a card that leaves during a recording ends it with the take KEPT, one notification, and
+the choice goes back to the output card's own. Nothing switches back when it returns: the user chose once, the machine does not guess.
+Both pure, in `Shared/OBJInputCardPolicy.h`, driven by a fake clock in `tools/test_input_card_policy.cpp`.
+
+### Decision: the choice is a UID, remembered by the menu and never by a script
+
+`pref.inputDevice` (`AudioInputDevice`) holds the user's choice; the API's `audio.set_input_device` never writes it, as for the output
+(`AudioOutputDevice`) — a script must not change what the next launch does. `--virtual-audio` never becomes the remembered choice either.
+The menu is the shared `TreePickerPopover` (a native `Menu` closes on every click and one sets a card, then a rate, then a buffer), its
+rows pure (`Shared/AudioMenuModel.swift`). The title bar says nothing of the input card: it carries the device in use, the input is not.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation
