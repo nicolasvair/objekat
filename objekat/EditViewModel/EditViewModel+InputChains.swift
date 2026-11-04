@@ -514,6 +514,20 @@ extension EditViewModel {
         return nil
     }
 
+    /// Sets the LISTENING level of a MIDI input in dB (the synoptic's gain range): an ObjGain after its instrument and its
+    /// effects. Hearing only; the engine owns it, it is not saved. nil on success, otherwise why not.
+    func setMidiInputMonitorGain(_ device: MidiInputInfo, db: Double) -> String? {
+        guard let engine else { return "no engine" }
+        let range = GainStageValues.gainRange
+        let clamped = min(max(Float(db), range.lowerBound), range.upperBound)
+        return engine.setMidiInputMonitorGain(clamped, device: device.id)
+    }
+
+    /// The listening level of a MIDI input in dB (0 until one was set).
+    func midiInputMonitorGain(_ device: MidiInputInfo) -> Double {
+        Double(engine?.midiInputMonitorGainDevice(device.id) ?? 0)
+    }
+
     // MARK: Inheritance (a recording zone born from an input — E11)
 
     /// What a NEW zone takes from the input it is dropped from: a copy of the input's FX (audio), or of its instrument and

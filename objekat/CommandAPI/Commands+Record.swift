@@ -240,13 +240,22 @@ extension CommandRegistry {
                  listening moves: a recording is taken BEFORE it, the file is the same whatever it is. \
                  `invalid_state` when the inputs are closed or the input does not exist. Not saved, and \
                  forgotten when the inputs close or the input stops existing. Answers like `input.list` \
-                 (`monitor_gain_db`).
+                 (`monitor_gain_db`). With `midi` (a MIDI input id) instead of `first`: the listening level of a MIDI \
+                 input, an ObjGain after its instrument and its effects; answers like `input.list.midi_inputs`.
                  """,
-                 params: [ParamSpec("first", "int", "First channel, 0-based."),
+                 params: [ParamSpec("first", "int", required: false, "First channel, 0-based."),
                           ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of `first`."),
                           ParamSpec("db", "number", "The level in dB.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            if let midi = try p.optionalString("midi") {
+                let device = try Self.requireMidiDevice(midi, in: vm)
+                if let why = vm.setMidiInputMonitorGain(device, db: try p.double("db")) {
+                    throw CommandError(code: .invalid_state, message: why)
+                }
+                return Self.midiInputsPayload(vm)
+            }
             let ref = try Self.inputRef(p)
             if let why = vm.setInputMonitorGain(ref, db: try p.double("db")) {
                 throw CommandError(code: .invalid_state, message: why)

@@ -410,6 +410,40 @@ def e9(c, level, fxp, instp, dev):
     check("M10 an instrument moves from a GROUP to a clip (the source is read by host)",
           r["placed"] is True and inst_of(clip2) == ["DLSMusicDevice"] and inst_of(gid) == [], r)
 
+    # M12: the LISTENING level of a MIDI input (inputs panel, step 7): an ObjGain after the instrument and its FX
+    c.send("project.new")
+    c.send("input.set_instrument", {"midi": dev, **instp})
+    mh = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)["host_id"]
+    c.send("input.monitor", {"midi": dev, "on": True})
+    c.send("midi.virtual.send", {"events": [{"kind": "on", "note": 48, "velocity": 100}, {"kind": "off", "note": 48, "delay_ms": 300}]})
+    time.sleep(2.0)
+    v0 = play60()
+    check("M12 0 dB: the note is heard (%.3f)" % v0, v0 > 0.02, v0)
+    out = c.send("input.set_monitor_gain", {"midi": dev, "db": -24})
+    row = next(d for d in out["midi_inputs"] if d["id"] == dev)
+    check("M12 input.set_monitor_gain {midi}: monitor_gain_db in input.list.midi_inputs", row["monitor_gain_db"] == -24, row)
+    v1 = play60()
+    check("M12 -24 dB: the note is far quieter (%.4f << %.3f)" % (v1, v0), v1 < 0.3 * v0, (v1, v0))
+    c.send("plugin.add", {"host": mh, **LPF})
+    time.sleep(1.0)
+    v2 = play60()
+    check("M12 an FX added BEHIND the instrument stays in front of the gain (%.4f)" % v2, v2 < 0.3 * v0, (v2, v0))
+    c.send("input.set_monitor_gain", {"midi": dev, "db": 0})
+    v3 = play60()
+    check("M12 back to 0 dB (%.3f)" % v3, v3 > 0.8 * v0, (v3, v0))
+    c.send("input.monitor", {"midi": dev, "on": False})
+    c.send("input.host", {"midi": dev, "open": False})
+    out = c.send("input.set_monitor_gain", {"midi": dev, "db": -24})
+    check("M12 set while the chain is unmounted: held", next(d for d in out["midi_inputs"] if d["id"] == dev)["monitor_gain_db"] == -24)
+    c.send("input.monitor", {"midi": dev, "on": True})
+    time.sleep(1.0)
+    v4 = play60()
+    check("M12 ... and applied when the chain is mounted again (%.4f)" % v4, v4 < 0.3 * v0, (v4, v0))
+    c.send("input.set_monitor_gain", {"midi": dev, "db": 0})
+    c.send("input.monitor", {"midi": dev, "on": False})
+    r = refused_cmd(c, "input.set_monitor_gain", midi="nope", db=3)
+    check("M12 an unknown MIDI input: not_found", r == "not_found", r)
+
     # M11: drops ON the rectangles (inputs panel, step 6): the host of the input is the target of `plugin.drop`
     c.send("project.new")
     c.send("input.enable")
@@ -516,16 +550,23 @@ def e11(c, instp, dev):
     check("H4 the zone holds ONE copy, with an id of its own", len(copy) == 1 and copy[0]["id"] != pid, copy)
     cid = copy[0]["id"]
     check("H4 ... mounted on the zone", loaded(cid))
+    time.sleep(1.5)                           # (the state restore of a fresh instance lands on its own time)
     ck, cv = cutoff(cid)
     check("H4 ... with the input's setting (%.4f ~ %.4f)" % (cv or -1, set_value or -1), cv is not None and abs(cv - set_value) < 0.002, (cv, set_value))
     check("H4 ... and the input's chain is unchanged", [p["id"] for p in lst(host)["plugins"]] == [pid])
 
     # H2: each side on its own
     c.send("plugin.set_param", {"plugin": cid, "index": ck, "value": 0.9})
-    time.sleep(0.3)
+    for _ in range(20):                       # the AU takes the value on its own time
+        time.sleep(0.25)
+        if abs(cutoff(cid)[1] - 0.9) < 0.01:
+            break
     check("H2 the zone's copy moved, the input's FX did not", abs(cutoff(cid)[1] - 0.9) < 0.01 and abs(cutoff(pid)[1] - set_value) < 0.002, (cutoff(cid), cutoff(pid)))
     c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.2})
-    time.sleep(0.3)
+    for _ in range(20):
+        time.sleep(0.25)
+        if abs(cutoff(pid)[1] - 0.2) < 0.01:
+            break
     check("H2 the input's FX moved, the zone's copy did not", abs(cutoff(pid)[1] - 0.2) < 0.01 and abs(cutoff(cid)[1] - 0.9) < 0.01, (cutoff(cid), cutoff(pid)))
 
     # H3: a zone from a bare input inherits nothing; dropped on again by an input WITH FX, an ENTIRELY EMPTY group

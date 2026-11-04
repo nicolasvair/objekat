@@ -88,7 +88,10 @@ struct MidiInputsSection: View {
                 _ = viewModel.setMidiInputMonitor(d, on: !on)
                 tick()
             },
-            gain: { EmptyView() },
+            gain: {
+                InputMonitorGainBox(value: viewModel.midiInputMonitorGain(d), heard: on,
+                                    onChange: { _ = viewModel.setMidiInputMonitorGain(d, db: $0); tick() })
+            },
             extra: {
                 if d.isComputerKeyboard { ComputerKeyboardRowControls(viewModel: viewModel) }
             },

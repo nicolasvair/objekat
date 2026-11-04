@@ -101,6 +101,33 @@ struct InputStrip<Gain: View, Extra: View, Meter: View>: View {
     }
 }
 
+/// The listening level of an input, in dB, on its rectangle: the synoptic's gain box (drag, ⇧ fine, arrows, typing,
+/// double-click = 0 dB). Hearing only — it does not touch what is recorded. Greyed and inert while the input is not heard.
+/// Shared by the card's inputs and the MIDI ones.
+struct InputMonitorGainBox: View {
+    let value: Double
+    let heard: Bool
+    let onChange: (Double) -> Void
+
+    /// The most a DRAG may raise the level above where it started (a typed value is only held to the box's range).
+    private static let riseLimit: Double = 6
+    private static let range = Double(GainStageValues.gainRange.lowerBound)...Double(GainStageValues.gainRange.upperBound)
+
+    var body: some View {
+        DragValueBox(value: value,
+                     format: { $0 == 0 ? "0 dB" : String(format: "%+.0f dB", $0) },
+                     range: Self.range,
+                     pointsPerStep: 6, snap: true, width: 44,
+                     keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
+                     dragRiseLimit: Self.riseLimit,
+                     help: L("inputs.monitorGain.help"),
+                     onChange: onChange,
+                     onReset: { onChange(0) })
+            .opacity(heard ? 1 : 0.4)
+            .disabled(!heard)
+    }
+}
+
 /// The rectangle of a chain whose input is not there now (a smaller card, a pair taken apart, a MIDI device unplugged):
 /// kept, greyed, with what it carries — nothing to hear, to drag or to drop on.
 struct DormantInputStrip: View {

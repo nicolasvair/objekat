@@ -1095,6 +1095,11 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// Hears (or stops hearing) a MIDI input through the instrument of its host. nil on success, otherwise why not (no
 /// host with an instrument on that device). Not saved.
 - (NSString* _Nullable)setMidiInputMonitor:(BOOL)on device:(NSString* _Nonnull)deviceID;
+/// The LISTENING level of a MIDI input, in dB: an ObjGain at the end of its host's hidden track, after the instrument and
+/// the effects behind it. Hearing only; held by the engine, not saved, applied when the host is mounted. nil on success.
+- (NSString* _Nullable)setMidiInputMonitorGain:(float)db device:(NSString* _Nonnull)deviceID;
+/// The listening level of a MIDI input in dB (0 until one was set).
+- (float)midiInputMonitorGainDevice:(NSString* _Nonnull)deviceID;
 /// The MIDI devices heard through an input chain (ids).
 - (NSArray<NSString*>* _Nonnull)midiInputMonitors;
 /// The COMPUTER KEYBOARD's MIDI input (« Computer Keyboard », a Tracktion virtual device created once at startup

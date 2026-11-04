@@ -136,6 +136,7 @@ extension CommandRegistry {
                                 "heard": .bool(heard.contains(d.id) && chain?.instrument != nil),
                                 "instrument": .stringOrNull(chain?.instrument?.name),
                                 "fx_count": .int(EditViewModel.flattenLeaves(chain?.plugins ?? []).count),
+                                "monitor_gain_db": .number(vm.midiInputMonitorGain(d)),
                                 "host_id": .stringOrNull(chain?.hostID.uuidString)])
             }),
             "zones": .array(zones),

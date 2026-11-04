@@ -2011,6 +2011,10 @@ struct OBJExportLoadScope {
     std::map<std::string, std::pair<int, int>>                _audioInputHosts;
     std::map<std::string, OBJMidiInputTrack>                  _midiInputTracks;
     std::set<std::string>                                     _monitoredMidiInputs;
+    // The LISTENING level of a MIDI input (dB, by device id; the engine owns it, it is not saved) and the ObjGain that
+    // carries it at the end of the host's hidden track (by host id) — the audio inputs' counterpart.
+    std::map<std::string, float>                              _midiMonitorGains;
+    std::map<std::string, te::Plugin::Ptr>                    _midiListenGain;
     std::map<std::string, std::unique_ptr<OBJMidiActivity>>   _midiActivity;
     std::unique_ptr<OBJMidiDevicesWatcher>                    _midiWatcher;
     std::map<std::string, double>                             _midiAdjustBeforeRecord;
@@ -2957,6 +2961,7 @@ static void objCensusContainer(te::ContainerClip& cc, int depth, OBJContainerCen
     _audioInputHosts.clear();
     _midiInputTracks.clear();
     _monitoredMidiInputs.clear();
+    _midiListenGain.clear();
     _childOwnerMap.clear();
     _containerClipMap.clear();
     _groupBoundsMap.clear();
@@ -3833,6 +3838,10 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
         if (auto p = inList(it->second)) return p;
     if (_masterAnchorGain && _edit && &pl == &_edit->getMasterPluginList())
         if (auto p = inList(_masterAnchorGain)) return p;
+    // A MIDI input host: the same, the listening ObjGain laid by syncMidiInputMonitors (remembered by identity: the user's own
+    // gain stages are ObjGains too).
+    if (auto it = _midiListenGain.find(key); it != _midiListenGain.end())
+        if (auto p = inList(it->second)) return p;
     // An audio input host: the chain ends in front of the LISTENING gain (an ObjGain laid by syncInputMonitors).
     if (_audioInputHosts.count(key))
         if (auto* g = pl.findFirstPluginOfType<te::ObjGainPlugin>()) return inList(te::Plugin::Ptr(g));
@@ -11585,6 +11594,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (midi) {
         [self removeInstrumentForObjectID:hostID];
         _objectChainMap.erase(host);                          // the FX compiled behind the instrument (their keys are gone)
+        _midiListenGain.erase(host);                          // its track goes; the level stays for the next mount
         auto entry = _midiInputTracks[host];
         _midiInputTracks.erase(host);
         _edit->getTransport().ensureContextAllocated();
@@ -11619,6 +11629,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         auto* track = dynamic_cast<te::AudioTrack*>(te::findTrackForID(*_edit, entry.track));
         auto device = [self midiDeviceForID:entry.deviceID];
         if (!track || !device) continue;
+        [self syncMidiListenGainOfHost:kv.first track:*track deviceID:entry.deviceID];
         auto* in = epc ? epc->getInputFor(device.get()) : nullptr;
         if (!in) continue;
         const bool heard = _monitoredMidiInputs.count(entry.deviceID) > 0 && _instrumentMap.count(kv.first) > 0
@@ -11633,6 +11644,35 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
         }
     }
     [self syncPluginMeters];
+}
+
+// The listening level of a MIDI input: an ObjGain at the END of the host's hidden track (after the instrument and the FX
+// behind it — a true dB gain, like an audio input's). Laid when the level leaves 0 dB, kept afterwards; the user's chain is
+// compiled in front of it (@see userSegmentEndAnchorForKey:in:).
+- (void)syncMidiListenGainOfHost:(const std::string&)host track:(te::AudioTrack&)track deviceID:(const std::string&)device {
+    const float db = _midiMonitorGains.count(device) ? _midiMonitorGains[device] : 0.0f;
+    te::Plugin::Ptr gain;
+    if (auto it = _midiListenGain.find(host); it != _midiListenGain.end() && track.pluginList.indexOf(it->second.get()) >= 0)
+        gain = it->second;
+    if (!gain && db != 0.0f) {
+        gain = insertObjGain(track.pluginList);
+        _midiListenGain[host] = gain;
+    }
+    if (auto* g = dynamic_cast<te::ObjGainPlugin*>(gain.get())) g->setGainDb(db);
+}
+
+- (NSString* _Nullable)setMidiInputMonitorGain:(float)db device:(NSString*)deviceID {
+    if (!_edit || deviceID.length == 0) return @"no such MIDI input";
+    const std::string device([deviceID UTF8String]);
+    if (![self midiDeviceForID:device]) return @"no such MIDI input";
+    _midiMonitorGains[device] = db;
+    [self syncMidiInputMonitors];
+    return nil;
+}
+
+- (float)midiInputMonitorGainDevice:(NSString*)deviceID {
+    const auto it = _midiMonitorGains.find(std::string([deviceID UTF8String]));
+    return it == _midiMonitorGains.end() ? 0.0f : it->second;
 }
 
 - (NSString* _Nullable)setMidiInputMonitor:(BOOL)on device:(NSString*)deviceID {

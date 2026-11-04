@@ -280,26 +280,10 @@ struct InputsPanelView: View {
         }
     }
 
-    /// The most a DRAG may raise the listening level above where it started (a typed value is only held
-    /// to the box's range).
-    private static let monitorRiseLimit: Double = 6
-    private static let gainRange = Double(GainStageValues.gainRange.lowerBound)...Double(GainStageValues.gainRange.upperBound)
-
-    /// The listening level of the input, in dB: the synoptic's gain box (drag, ⇧ fine, arrows, typing,
-    /// double-click = 0 dB). Hearing only — it does not touch what is recorded. Greyed and inert while the
-    /// input is not heard.
+    /// The listening level of the input, in dB (@see InputMonitorGainBox).
     private func monitorGainBox(_ ref: InputRef, heard: Bool) -> some View {
-        DragValueBox(value: viewModel.inputMonitorGain(ref),
-                     format: { $0 == 0 ? "0 dB" : String(format: "%+.0f dB", $0) },
-                     range: Self.gainRange,
-                     pointsPerStep: 6, snap: true, width: 44,
-                     keyStep: 1, fineKeyStep: FineAdjust.dbFineStep, coarseKeyStep: FineAdjust.dbBigStep,
-                     dragRiseLimit: Self.monitorRiseLimit,
-                     help: L("inputs.monitorGain.help"),
-                     onChange: { _ = viewModel.setInputMonitorGain(ref, db: $0); tick() },
-                     onReset: { _ = viewModel.setInputMonitorGain(ref, db: 0); tick() })
-            .opacity(heard ? 1 : 0.4)
-            .disabled(!heard)
+        InputMonitorGainBox(value: viewModel.inputMonitorGain(ref), heard: heard,
+                            onChange: { _ = viewModel.setInputMonitorGain(ref, db: $0); tick() })
     }
 
     /// The right-click menu: it acts on the selection when the row belongs to it, else on the row alone.
