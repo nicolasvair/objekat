@@ -1072,6 +1072,51 @@ is read first of all so no early exit can hang a note. Cost accepted: with the m
 ⇧ is the LOCKED one) and `l` is the loop button or ⌘L; no keyboard shortcut turns the mode on, because the letters are what it
 takes.
 
+## Recording through a loop (November 2026, engine patch 0050, session format 37)
+
+Plan, decisions and the step-by-step record: `docs/plan_enregistrement_audio.md` §6. What follows is WHY.
+
+### Decision: the recording has its own clock, and the loop is not allowed to touch it
+
+A recording is a file (or a MIDI capture) written against a time axis. Stock Tracktion writes it against the play head's
+UNLOOPED clock and rebases that clock whenever the loop changes, so a loop switched on under a recording either ended it or
+shifted everything after the change, and a punch-in during a play that was already looping got the unlooped clock N laps ahead of
+the looped position it was told (a file entirely silent for the length of the press). The patch gives the recording a clock of
+its own: armed at the press, anchored by the AUDIO thread at the first block played from then on (to the head's looped position),
+then one sample per sample of the reference stream, whatever the loop does. What the head did is a JOURNAL of
+`(clock, timeline)` pairs, one per discontinuity, written in the process callback into a lock-free fifo and drained on the message
+thread. The file, the MIDI stamps and the journal are in one domain, so "what was recorded where" is arithmetic on the journal and
+never a measurement. The punch-in defect is therefore fixed de facto by the clock and by one more line (a take no longer starts at
+the loop's start); there is no dedicated punch-in fix.
+
+### Decision: one file, many takes — the takes differ by `sourceOffset`, never by cutting
+
+An audio recording through a loop is still one continuous file per input. Each pass that crosses a zone's window becomes a clip with
+its own `sourceOffset` on that one file. Nothing is cut, nothing is renamed, and the arithmetic is the same as the linear take's
+(`RecordLoopPlanner` is `RecordTakePlanner` with one segment per pass; with one segment it IS `RecordTakePlanner`, asserted).
+The group is never extended: the window is the zone, and the loop is independent of it.
+
+### Decision: MIDI gets the same shape — one immutable sequence, a window per take
+
+The MIDI counterpart of "one file" is ONE sequence of the whole capture (`MidiSequence`, kept in `EditViewModel.midiSequences`, outside
+the undo, written only while a clip names it). A take is an ordinary `.midiClip` holding only the notes of its window plus a
+`MidiSequenceRef {id, offsetBeats}`. The window resolves again ONLY when the clip's edges move (`applyTrim`, `updateDuration`), which
+is what an audio clip's edges do to its file. The alternative — every take owning all the capture's notes with handles — multiplies the
+notes by the number of passes; the alternative of cutting the notes per pass loses what an edge pulled out should reveal.
+**The first edit of the notes detaches the take** (the `midiNotes` setter): a take that was edited is the user's own and must never
+change because another take is trimmed. A reference also carries a transient `signature` of the notes it resolved to
+(`SoundObject.liveMidiSequence`), so any site that rebuilds notes without knowing about sequences (a delete of a time range, a heal,
+a bake) degrades to a classic clip by itself instead of resolving a stale window; the signature is not written, it is recomputed at the
+load. Only the two cut sites of `Cut` keep an exact offset (the right half looks through the same sequence from `offset + cut`).
+
+### Decision: the loop under a recording is applied at once, except the ruler's bound drag
+
+A loop edit made during a recording used to stop it. It now goes to the engine immediately (⌘L, the loop button, the API), with the
+exception of dragging a bound on the ruler, applied on RELEASE: a drag produces one value per mouse move, and each would put a jump into
+the journal. A region under 250 ms is ignored (the last valid bounds are kept) and a loop shorter than that records linearly. The loop never
+enters the undo (it did not before, and a recording that undid a loop would be incoherent). The relay is a hook on the model
+(`loopRelay`), not a SwiftUI `.onChange`, because the headless mode has no view.
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

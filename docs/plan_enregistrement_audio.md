@@ -251,3 +251,95 @@ complète, build 0 nouveau warning, i18n FR/EN/ES.
 Conséquences intégrées : capture de l'appui rec à l'arrêt (punch range Tracktion non utilisé),
 recadrage pur dans `RecordTakePlanner`, objet tirable dans la matière ; le container borné coupe
 nativement ce qui déborde. Coût : fichiers plus longs que la zone (assumé).
+
+## 6. Rec en boucle (2026-11-03/04, patch moteur `0050`, format de session 37) — AUDIO ET MIDI
+
+Enregistrer AVEC la boucle de lecture active : la tête saute en arrière à chaque tour, et ce que la carte (ou le clavier MIDI)
+joue pendant tout ça reste UN fichier continu par entrée (UNE séquence par capture MIDI). Chaque tour est une PASSE ; chaque
+zone armée reçoit UNE prise par passe qui croise sa fenêtre. Réalisé en étapes E0-E8, un commit chacune, sur `main`, rien poussé
+(le patch `0050` est sur la branche locale du sous-module `objekat-record-loop-0050`, au-dessus de `objekat-group-midi-0049`).
+
+### 6.1 Décisions (utilisateur)
+
+* Boucle et zone sont indépendantes. Une prise par zone armée et par passe. Un seul fichier par entrée ; les prises diffèrent par
+  leur `sourceOffset` ; pas de `_take_N`, aucune coupe de fichier.
+* La plus récente prise en haut ; les plus anciennes descendent d'autant de lanes qu'il y a de prises (`Plan.shiftBy`).
+* Mode « mute » : seule la DERNIÈRE passe qui croise la fenêtre reste audible (même partielle) ; mode « add » : tout audible.
+  La règle « croise » ne change pas. Une passe partielle à l'arrêt est gardée ; seul un segment de 0 échantillon est jeté.
+* Boucle d'au moins 250 ms, sinon rec linéaire. Pas de maximum de prises. Pas d'écoute du overdub.
+* On n'étend JAMAIS le groupe : la fenêtre ne change pas ; le rec linéaire est inchangé. Une zone que la boucle ne traverse pas
+  applique la règle hors-fenêtre (un objet sur la dernière passe, à sa vraie place sous le voile, rien de muté, mutes de l'appui rendus).
+* Boucle vivante sous le rec : bornes déplacées -> le prochain saut suit ; boucle coupée -> la tête continue tout droit ; boucle
+  activée -> elle boucle à la fin de la région si la tête est avant ; région < 250 ms ignorée (dernières bornes valides gardées) ;
+  glisser d'une borne de la règle appliqué au moteur au RELÂCHEMENT, alors que ⌘L, le bouton boucle et l'API s'appliquent tout
+  de suite ; mutes repris quand la boucle fait rejoindre une zone à la tête, dans le même point d'undo.
+* UN ⌘Z pour tout ; la boucle n'entre jamais dans l'undo.
+* MIDI : une séquence partagée immuable `EditViewModel.midiSequences[UUID]` avec toutes les notes de la capture ; chaque prise est
+  un `.midiClip` normal avec `midiSequence: {id, offsetBeats}` dont les `notes` ne tiennent que sa fenêtre ; la fenêtre se
+  résout seulement à `applyTrim` / `updateDuration` ; une prise éditée se détache en clip classique (copie à la première
+  édition, jamais propagée) ; un rec en une passe ne crée aucune séquence ; orphelines retirées à l'écriture ; format 37, champ
+  optionnel, pas de migration.
+
+### 6.2 Moteur (patch `0050`, `engine-patches/3.5/0050-...`)
+
+* **Horloge d'enregistrement monotone** : ancrée par le thread audio au premier bloc joué à la position BOUCLÉE de la tête, puis un
+  échantillon par échantillon de référence, jamais rebasée par un changement de boucle. Tant qu'elle est armée sans être ancrée,
+  `getUnloopedEditTimeOfNextBlock` et `globalStreamTimeToEditTimeUnlooped` rendent la position bouclée (sinon le premier bloc
+  prend l'horloge « unlooped » stock, N tours plus loin).
+* **Journal des passes** `(clock, timeline)` à chaque discontinuité, écrit dans `NodePlaybackContext::process` (fifo sans verrou,
+  vidée par le tick du transport). Le fichier d'échantillon f est à `origine + f` sur l'horloge ; les notes MIDI sont estampillées
+  dans le même domaine.
+* Drapeau `EngineBehaviour::recordsThroughLoop()` : faux au stock, vrai chez objekat sauf `OBJ_REC_STOCK=1` (comparaison A/B).
+  Sous le drapeau : `isLooping=false` aux arrêts des enregistreurs wave et MIDI ; `getDefaultRecordingParameters` ne force plus le
+  début de la prise au début de la boucle ; un changement de boucle s'applique de suite (`applyLoopToPlayHeadNow`) au lieu d'arrêter
+  l'enregistrement ; `PlayHead::setLoopRangeRollingIn`.
+* Défauts du stock PROUVÉS (E0, `tools/scenario_record_loop_proof.py`) : (1) un punch-in pendant une lecture déjà en boucle donne un
+  fichier de 2,000 s ENTIÈREMENT silencieux pour 1,5 s d'appui (le recorder reçoit la position bouclée de l'appui mais l'horloge
+  « unlooped » de la tête) ; (2) activer la boucle pendant le rec TERMINE l'enregistrement. L'horloge monotone corrige les deux de fait : pas de
+  correction dédiée du punch-in. Journal = rendu à l'échantillon près (décalage 0) ; l'horloge n'est jamais rebasée.
+* Non-régression du calage (impulsion de la carte virtuelle, loopback) : passée après E1 puis après E5.
+
+### 6.3 App
+
+* `RecordLoopPlanner` (pur, `tools/test_record_loop_planner.swift` 96 assertions) : segments d'un fichier depuis le journal
+  (premier étirement prolongé jusqu'au début du fichier, dernier jusqu'à sa fin), prises par passe, mutes à l'appui conscients de
+  la boucle (`reachableRange`), équivalent à `RecordTakePlanner.plan` pour une seule passe.
+* `ObjekatSession` garde la boucle sous le rec, plancher de 250 ms, relais par le modèle (`EditViewModel.loopRelay`, qui remplace
+  les `.onChange` de ContentView, absents en headless) ; glisser de borne appliqué au relâchement (`onLoopRegionDragEnded`).
+* `completeRecording` : N prises audio par zone, UN point d'undo, `RecordTakeReport` (`pass`, `passes`, `partial`, `audible`).
+* **Séquence MIDI** (`SoundObject/MidiSequenceWindow.swift`, `tools/test_midi_sequence_window.swift` 56 assertions) :
+  - une prise = les notes de la séquence qui COMMENCENT dans `[offsetBeats, offsetBeats + longueur)`, rebasées sur le clip. Une note
+    commencée avant la fenêtre n'y est pas (pas de poignée négative sur une prise de boucle, contrairement au rec linéaire) ;
+  - **signature** (transitoire, jamais écrite, recalculée au chargement) : une référence n'est vivante que tant que les notes du
+    clip sont celles qu'elle a résolues (`SoundObject.liveMidiSequence`). Tout site qui reconstruit des notes sans connaître les
+    séquences dégrade donc de lui-même en clip classique, à la porte suivante qui regarde (trim, écriture) ;
+  - détachement explicite : le setter de `midiNotes` (toute édition de notes) ; hors projet (`CrossProjectImport`), Bake, GroupHeal
+    (3 sites), Clipboard (suppression d'une plage, 3 sites) ; `derivedCopy` garde la référence pour une copie qui tient les MÊMES
+    notes (coller, dupliquer) ;
+  - exacts : les deux sites de coupe de `Cut` (clip enfant d'un groupe, clip de premier niveau) — la moitié droite regarde la
+    séquence à partir de `offset + coupe`, la gauche garde son offset si aucune note n'a été raccourcie par la coupe ;
+  - ids de notes déterministes : XOR de l'id du clip et de celui de la note de la séquence (stables entre deux résolutions,
+    jamais partagés entre deux prises) ;
+  - `ProjectDocument.midiSequences` (optionnel, seules les séquences que nomme encore un clip vivant sont écrites), `SessionSchema` 37.
+* `MidiTakePlanner.notes` UNE fois sur toute la capture (pédale de sustain repliée une fois), fenêtre par passe (`midiLoopTakes`).
+* Affichage / API : le bloc rouge repart du début de la passe en cours (`OBJEngineCore.recordPassNow`), `rec.status` dit `lap` et
+  `pass_start`, `last_takes` dit `pass`, `passes`, `partial`, `audible`, `object.get` dit `midi_sequence`.
+
+### 6.4 Tests
+
+`tools/test_record_loop_planner.swift` (96), `test_record_take_planner.swift` (56), `test_midi_sequence_window.swift` (56),
+`test_record_progress.swift` (17) ; `tools/scenario_record_loop_proof.py` (E0, P1-P6, A/B stock) ; `tools/scenario_record_loop_midi.py`
+(M1-M5, 40 assertions : partition des notes, mute, undo unique, fenêtre aux bords, détachement, format 37, orphelines, rec linéaire).
+**Non vu, non entendu** : le bloc rouge qui repart à l'écran, l'écoute des prises mutes/audibles, une vraie carte (calage sur BlackHole), le
+glisser de borne de la règle sous la main.
+
+### 6.5 Écarts au plan
+
+* E5b : la **signature** (garde-fou transitoire, absent du plan) ; le détachement explicite ne couvre que les sites listés en 6.3, les
+  autres dégradent par la signature ; l'exactitude de `offsetBeats` n'est tenue qu'aux deux sites de coupe de `Cut` (ailleurs : clip classique) ;
+  une prise de boucle n'a pas de poignées de notes négatives (fenêtre = notes qui commencent dedans).
+* E6 : une passe qui croise la fenêtre mais où rien n'a été joué reçoit quand même une prise (vide) ; seule une capture sans AUCUNE note ne
+  donne aucune prise (comme le rec linéaire). Un rec MIDI à une seule passe garde le chemin d'avant (une prise avec poignées, pas de séquence).
+* E7 : `OBJEngineCore.recordJournalNow` (il construisait tout le journal à chaque image) est remplacé par `recordPassNow` (début de la passe et
+  nombre de tours) ; `lap` / `pass_start` vont dans `rec.status` ; le bloc rouge ne montre que la passe en cours.
+* Les scénarios existants qui lisaient « format 36 » (21 assertions, 15 fichiers) lisent 37.

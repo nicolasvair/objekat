@@ -2911,7 +2911,7 @@ What has landed since mid-August, in order:
   every bypass path goes through it, or a click would wake a passive FX); consolidating an empty clip or a sub-group
   under a host is refused; `derivedCopy` has `instruments: []` by default, so every group copy site passes
   `copiedInstruments(of:)`. Patch `0049` fixes the sticky mute (`wasMute`), the held note at a window's end and the MIDI
-  timestamps after sub-blocks; the next free patch number is `0050`. (2) **An input carries a chain** (`InputChains`:
+  timestamps after sub-blocks; the next free patch number was `0050` (taken, see the loop recording entry: the next one is `0051`). (2) **An input carries a chain** (`InputChains`:
   FX for a card input, one instrument for a MIDI input; `ProjectDocument.inputChains`, OPTIONAL key of format 36, in
   the undo, parked with a tab; `EditViewModel+InputChains`). The chain colours what is HEARD: the recording is taken
   from the device before the hidden track, so it is identical with or without. The chain is addressed by a stable
@@ -3053,6 +3053,30 @@ a second one elsewhere. The most exposed points:
 - Sends that are refused (another stem, a scheduling loop between two groups, a group to an aux it
   contains) stay in the model, silent, shown inactive with their reason. Nothing is deleted by a scope
   change; only a send whose aux was deleted is purged (with its automation, in the same undo point).
+
+- **Recording through a loop, audio and MIDI (3-4 November 2026, branch `main`, engine patch `0050` LOCAL, session format 37,
+  nothing pushed).** Commits E1..E8 (`7928b677` is E1); plan, decisions and deviations: `docs/plan_enregistrement_audio.md` §6;
+  decisions: `architecture_decisions.md`; API: `command_api.md` (`rec.status`, `rec.stop`, "MIDI takes through a loop").
+  The loop is KEPT under a recording: the input stays ONE file (or one MIDI sequence), each pass that crosses a zone's window
+  becomes one take, the newest on the top lane (`RecordLoopPlanner`, pure, `tools/test_record_loop_planner.swift`). **The engine
+  patch gives a recording a clock of its own** (monotone, anchored by the audio thread at the first block, never rebased by a loop
+  edit) and a journal `(clock, timeline)` of the head's jumps (`OBJEngineCore.lastRecordJournal`, live: `recordPassNow`); the
+  behaviour flag `recordsThroughLoop()` is true except with `OBJ_REC_STOCK=1` (A/B against stock). The submodule branch
+  `objekat-record-loop-0050` (`10e6401b937`, on `objekat-group-midi-0049` `f0648743dc2`) is NOT published, and `main`'s gitlink
+  points at it: publishing is a push the user must validate. **The next free patch number is `0051`.** The punch-in defect of the
+  stock (a file all silent for the length of the press when playing in a loop) is fixed by the clock alone: there is no dedicated fix.
+  **MIDI**: one immutable `MidiSequence` per capture (`EditViewModel.midiSequences`, outside the undo, written only while a clip names
+  it), a take = a `.midiClip` with `midiSequence {id, offsetBeats}` whose notes are its WINDOW (the notes that BEGIN in it); the window
+  resolves again in `applyTrim` / `updateDuration` only. TRAP, worth knowing before touching MIDI notes: **a reference is alive only
+  while `signature(notes)` still matches** (`SoundObject.liveMidiSequence`, transient, recomputed at load), so a site that rebuilds notes
+  without knowing about sequences degrades to a classic clip, and **the `midiNotes` setter detaches** (every edit goes through it). Exact
+  offsets are kept at the two cut sites of `EditViewModel+Cut` only. Loop edits under a recording go to the engine at once, except the
+  ruler's bound drag (on release); a region under 250 ms is ignored; the relay is `EditViewModel.loopRelay`, not a SwiftUI `.onChange`.
+  Verified with no screen: Debug builds, `test_record_loop_planner` 96, `test_record_take_planner` 56, `test_midi_sequence_window` 56,
+  `scenario_record_loop_proof.py` 29 OK (stock vs new, journal = render to the sample), `scenario_record_loop_midi.py` 40 OK, the
+  calibration non-regression after E1 and E5. `tools/scenario_*.py` that read "format 36" now read 37. **Not seen, not heard**: the red
+  block restarting at each lap on screen, the ruler bound drag, a real card and a real MIDI keyboard through a loop, and the whole
+  test campaign (the `test` agent's).
 
 ### A parked project
 

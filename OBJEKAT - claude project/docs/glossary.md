@@ -95,6 +95,12 @@ source, not a translation.
 | clavier ordinateur | Computer Keyboard | teclado del ordenador | the MIDI input fed by the computer's letter keys (Ableton's way): always listed, second after "All MIDI Ins"; its MODE (keys = notes) is a button of the transport bar and of its row, with no shortcut |
 | octave du clavier | keyboard octave | octava del teclado | the base MIDI note under the `q` key, named like the piano roll (60 = C4); `w` down, `x` up |
 | hôte d'entrée | input host | anfitrión de entrada | the stable id (uuid) an input's chain is addressed by, as a stem's is: `plugin.*` and the signal view take it as their host |
+| rec en boucle | loop recording | grabación en bucle | recording while the playback loop is on: the head jumps back at every lap, the input is still ONE continuous file (or one MIDI sequence), and the zone gets one take per pass |
+| passe | pass | pasada | one stretch of a recording through a loop over which the timeline advanced one second per second of file; the engine journals them (`OBJEngineCore.lastRecordJournal`) and `RecordLoopPlanner` turns them into takes |
+| tour | lap | vuelta | one jump of the head back to the loop's start during a recording (`rec.status.lap`); the passes so far are `lap + 1` |
+| horloge d'enregistrement | recording clock | reloj de grabación | the time the recording's files and MIDI notes are written in: anchored at the press, one second per second, NEVER rebased by a loop edit (engine patch `0050`) |
+| séquence MIDI | MIDI sequence | secuencia MIDI | what a MIDI input played during a whole capture made through a loop, stored once and never edited (`MidiSequence`, format 37); the takes look through it |
+| fenêtre d'une prise | take window | ventana de la toma | the part of its sequence a MIDI take holds as its own notes: the notes that begin in `[offsetBeats, offsetBeats + length)`; it resolves again when the take's edges move |
 
 ## What does not get translated
 

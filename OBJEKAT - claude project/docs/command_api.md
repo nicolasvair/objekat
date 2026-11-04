@@ -2469,6 +2469,13 @@ and `details.reason` (`audioChild`, `auxChild`, `childWithInstrument`, `consolid
 `insideInstrumentGroup`). An empty clip is muted natively (`object.get`: `engine_midi_muted`), and `instrument_host` /
 `instrument_state` say who plays it; its FX are compiled but disabled on the engine side. Consolidating an empty clip or a
 sub-group under a host is refused (`consolidatedChild`).
+**MIDI takes through a loop (session format 37).** `object.get` of a MIDI clip says `midi_sequence {id, offset_beats}` when the clip is a
+TAKE of a recording made through a loop and has not been edited since: the clip's `notes` are only its WINDOW of the shared
+sequence (the sequence's notes that BEGIN in `[offset_beats, offset_beats + length)`, rebased on the clip), and `object.trim` /
+`object.resize` resolve that window again — pulling an edge out reveals the capture's notes there, pushing it back hides them. The first
+edit of the notes (`midi.add_note`, `midi.update_note`, `midi.delete_notes`, `midi.transpose`, the piano roll) drops the field: the clip is a
+classic one from then on. The field is absent for every other clip. In the file: `midiSequences` (the sequences a clip still names) and
+`midiSequence {id, offsetBeats}` on the takes.
 * `rec.assign {group, first?, count?}` — gives a group its input, or takes it away when `first` is
   absent (which disarms it). `invalid_state` for a group that cannot record, and while a recording is
   under way. One undo point.
@@ -2490,7 +2497,10 @@ sub-group under a host is refused (`consolidatedChild`).
   `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
   recording, the red block the timeline draws for each zone: `{group, lane, start, end}` — `lane` the
   display lane the take will land on, the zone's own row when it is closed; `start`..`end` the part of the
-  zone's window between the press and the playhead; a zone the head has not reached is absent) and
+  zone's window between the press and the playhead; a zone the head has not reached is absent; recording THROUGH
+  a loop the block restarts at the start of the current pass), `lap` (recording through a loop: how many times the head has
+  jumped back since the press, 0 otherwise — the passes so far are `lap + 1`), `pass_start` (where the pass that runs began on
+  the timeline, null when not recording or the recording clock is not anchored yet) and
   `last_takes` (the takes of the last recording, below).
 * `rec.start {seconds?}` — the transport's record button. Stopped: plays AND records from the cursor (or
   from `seconds`); playing: punches in at the current position (the graph is not rebuilt). It records the
@@ -2511,7 +2521,17 @@ sub-group under a host is refused (`consolidatedChild`).
   cross the window are MUTED whole (already at the press, see `rec.start`; `muted` lists them). A take that
   does not cross the window is created anyway over the whole capture and mutes nothing (`outside_window`;
   the mutes of the press are given back). ONE undo point for the press and the stop together. `last_takes`:
-  `{group, object, path, start, duration, source_offset, lane, outside_window, muted}`.
+  `{group, object, path, start, duration, source_offset, lane, outside_window, muted, source, notes, pass, passes,
+  partial, audible}` (`source` "audio" / "midi"; `notes` the notes of a MIDI take, `[]` for audio).
+  **Through a loop** (engine patch `0050`; the loop is kept under the recording; the public API has no door onto the loop, the DEBUG-only
+  `debug.transport_loop` is what the scenarios use, and a loop edit made while recording is applied to the engine at once): the file stays ONE per input, and the zone receives ONE take per pass that crosses its window
+  (`pass` 0 = the first, `passes` how many there were, `partial` the pass the stop cut short — kept —, `audible`
+  false for the takes laid down muted: in "mute" mode only the LAST crossing pass is heard, in "add" mode all are).
+  The takes differ by `source_offset` only (no `_take_N`, nothing is cut); the newest is on the top lane and every
+  older child goes down one lane per take. A zone the loop never crosses keeps the out-of-window rule (ONE take over the last pass,
+  `outside_window`, nothing muted). A loop shorter than 250 ms counts for none (linear recording). The group's window never
+  grows. **MIDI**: the takes of a MIDI zone look through ONE shared sequence (below, `midi_sequence`); a recording in one pass makes none.
+  ONE undo takes every take away; the loop is never in the undo.
   `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
   the application quitting, end it the same way: the files are kept and the takes land in the project.
   Calibration (virtual card, loopback): the impulse comes back to the SAMPLE (error 0, +-1 accepted in the
@@ -2523,7 +2543,11 @@ asserts the zones against the virtual card; `tools/test_record_take_planner.swif
 `tools/test_record_file_naming.swift` assert the take planning and the file names;
 `tools/scenario_record.py` records for real on the virtual card (file, header, content, handles, mute at the
 press, red block, lane order, one undo, punch-in, calibration, card change during recording);
-`tools/test_record_progress.swift` asserts the red block's span and lane; `tools/scenario_record_multi_drop.py`
+`tools/test_record_progress.swift` asserts the red block's span and lane;
+`tools/scenario_record_loop_proof.py` (proofs of the loop recording against the stock engine: journal, punch-in, rebase, MIDI cost),
+`tools/scenario_record_loop_midi.py` (MIDI takes through a loop: partition of the notes, mutes, one undo, the window following the
+edges, detachment on edit, format 37, orphan sequences), `tools/test_record_loop_planner.swift` and
+`tools/test_midi_sequence_window.swift` assert the planners alone; `tools/scenario_record_multi_drop.py`
 asserts the drop of several inputs.
 The keyboard shortcut ⌘⌥R (provisional) is the record button; ⌘R stays "rename".
 
