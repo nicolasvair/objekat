@@ -42,141 +42,94 @@ final class AudioDeviceWatcher {
 
 // MARK: - The 'audio settings' menu
 //
-// Gathers the current device's three settings under a single icon: audio device, sample rate,
-// latency/buffer size. Each group is a Picker → rendered as a native submenu with a tick on the
-// current value. The content is built lazily when the menu opens, so the lists (supplied by the
-// engine) always reflect the real state — including devices freshly plugged in, re-enumerated
-// on every click.
+// Gathers the current device's settings under a single icon: audio device, sample rate, buffer size.
+// It is a transient popover on the shared tree picker (`Shared/TreePickerPopover.swift`), not a native
+// `Menu`: a menu closes on every click and cannot say WHY a row is disabled, and one sets a card, then
+// a rate, then a buffer in one go. What is listed and ticked is `AudioMenuModel`'s (pure, asserted
+// alone); this view only reads the facts and applies a click.
+//
+// Everything the rows say is READ through observation, inside the popover's own body: the engine's
+// snapshot (`AudioDeviceStatus`, what is really open) and the CoreAudio watcher's generation (a card
+// plugged or unplugged). So the popover stays open and re-ticks itself when the engine has answered —
+// the lists (supplied by the engine) always reflect the real state, freshly plugged devices included.
 
 struct AudioSettingsMenu: View {
     @Bindable var viewModel: EditViewModel
-
-    /// The list of audio devices, re-enumerated on appearance, on hovering the icon (so just
-    /// before the click that opens the menu) and on every change CoreAudio reports.
-    @State private var devices: [String] = []
+    @State private var shown = false
 
     var body: some View {
-        Menu {
-            if !devices.isEmpty {
-                Picker(L("audio.menu.device"), selection: deviceBinding) {
-                    ForEach(devices, id: \.self) { Text($0).tag($0) }
-                }
-            }
-
-            let rates = (viewModel.engine?.availableSampleRates() ?? []).map { $0.doubleValue }
-            if !rates.isEmpty {
-                Picker(L("audio.menu.sampleRate"), selection: sampleRateBinding) {
-                    ForEach(rates, id: \.self) { Text(Self.formatRate($0)).tag($0) }
-                }
-                // What the engine did about the card's own rate, ONLY when it did something:
-                // the card ran at a rate we cannot use. A plain line, not an item one can pick.
-                if let note = Self.rateDecisionNote(AudioDeviceStatus.shared.snapshot) {
-                    Text(note)
-                }
-            }
-
-            let buffers = Self.usefulBufferSizes(
-                (viewModel.engine?.availableBufferSizes() ?? []).map { $0.intValue },
-                current: viewModel.engine.map { Int($0.currentBufferSize()) } ?? 0)
-            if !buffers.isEmpty {
-                let sr = viewModel.engine?.currentSampleRate() ?? 0
-                Picker(L("audio.menu.buffer"), selection: bufferBinding) {
-                    ForEach(buffers, id: \.self) { Text(Self.formatBuffer($0, sampleRate: sr)).tag($0) }
-                }
-            }
-        } label: {
+        Button { shown.toggle() } label: {
             Image(systemName: "wrench.and.screwdriver")
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.borderless)
         .frame(width: 26)
         .help(L("audio.menu.help"))
-        .onAppear(perform: reloadDevices)
-        // The hover necessarily comes before the click that opens the menu: the list is therefore
-        // fresh by the time it shows, even if CoreAudio reported nothing (SwiftUI gives no hook
-        // for 'the menu is opening').
-        .onHover { inside in if inside { reloadDevices() } }
-        // A device plugged in or out: the list updates on its own.
-        .onChange(of: AudioDeviceWatcher.shared.generation) { _, _ in reloadDevices() }
+        .popover(isPresented: $shown, arrowEdge: .bottom) {
+            TreePickerPopover(sections: { Self.sections(engine: viewModel.engine) },
+                              closesOnChoose: false, minWidth: 260,
+                              onChoose: { choose($0) },
+                              dismiss: { shown = false })
+        }
     }
 
-    private func reloadDevices() {
-        let fresh = (viewModel.engine?.availableOutputDevices() as? [String]) ?? []
-        if fresh != devices { devices = fresh }
+    // MARK: The rows (read through observation)
+
+    /// Evaluated in the popover's `body`: the two reads below (`AudioDeviceWatcher.generation` and the
+    /// snapshot) are what redraw it when a card comes or goes or when the engine has changed something.
+    @MainActor
+    static func sections(engine: OBJEngineCore?) -> [TreePickerSection] {
+        _ = AudioDeviceWatcher.shared.generation
+        let snap = AudioDeviceStatus.shared.snapshot
+        let state = AudioMenuState(
+            outputDevices: (engine?.availableOutputDevices() as? [String]) ?? [],
+            // Ticks the device the engine ACTUALLY has open: the SAME snapshot the window's subtitle
+            // and `audio.status` read, never `AudioOutputDevice.shared` (the WISH). After an unplug,
+            // JUCE falls back to another device and keeps it even once the original is replugged
+            // (@see plan_titlebar_audio_device.md); `AudioOutputDevice.shared.name` is the fallback
+            // only before any change message has landed (`snapshot.name == nil`, or `--no-audio`).
+            currentOutput: snap.name ?? AudioOutputDevice.shared.name,
+            sampleRates: (engine?.availableSampleRates() ?? []).map { $0.doubleValue },
+            currentSampleRate: snap.sampleRate,
+            sampleRateNote: rateDecisionNote(snap),
+            bufferSizes: (engine?.availableBufferSizes() ?? []).map { $0.intValue },
+            currentBufferSize: snap.bufferSize)
+        return AudioMenuModel.sections(state, labels: AudioMenuLabels(
+            output: L("audio.menu.device"), sampleRate: L("audio.menu.sampleRate"),
+            buffer: L("audio.menu.buffer"), noOutputDevice: L("audio.menu.noDevice")))
     }
 
-    // MARK: Bindings (read = the engine's truth, write = apply and restart if needed)
+    // MARK: A click (apply and restart if needed)
 
-    private var deviceBinding: Binding<String> {
-        // Ticks the device the engine ACTUALLY has open — read from `AudioDeviceStatus`, the
-        // SAME snapshot the window's subtitle and `audio.status` read, never
-        // `AudioOutputDevice.shared` (the WISH). After an unplug, JUCE falls back to another
-        // device and keeps it even once the original is replugged (@see
-        // plan_titlebar_audio_device.md, the adjacent defect it flags): ticking the requested
-        // name there would show a choice that is not what plays, the very thing the title bar
-        // exists to stop happening. `AudioOutputDevice.shared.name` is the fallback only before
-        // any change message has ever landed (`snapshot.name == nil`, or `--no-audio`).
-        Binding(get: {
-                    AudioDeviceStatus.shared.snapshot.name ?? AudioOutputDevice.shared.name
-                },
-                set: { name in
-                    // `--virtual-audio` is a test fixture: it must not become the remembered choice.
-                    if !OBJEngineCore.isVirtualAudio() {
-                        AudioOutputDevice.shared.name = name   // publishes and persists (previews aligned)
-                    }
-                    viewModel.engine?.setOutputDevice(name)    // applies to the engine
-                })
-    }
-
-    private var sampleRateBinding: Binding<Double> {
-        Binding(get: { viewModel.engine?.currentSampleRate() ?? 0 },
-                set: { viewModel.engine?.setSampleRate($0) })
-    }
-
-    private var bufferBinding: Binding<Int> {
-        Binding(get: { viewModel.engine.map { Int($0.currentBufferSize()) } ?? 0 },
-                set: { viewModel.engine?.setBufferSize($0) })
-    }
-
-    // MARK: Buffer sizes
-
-    /// The sizes kept in the menu: the usual powers of 2. CoreAudio exposes plenty of others
-    /// (14, 96, 176…) which serve no purpose and drown the list. The CURRENT value is always
-    /// kept, even outside the list, so that the Picker ticks a row.
-    static let standardBufferSizes: [Int] = [32, 64, 128, 256, 512, 1024, 2048]
-
-    static func usefulBufferSizes(_ available: [Int], current: Int) -> [Int] {
-        var kept = available.filter { standardBufferSizes.contains($0) }
-        // An exotic device exposing no power of 2: we keep its list as it is rather than
-        // present an empty menu.
-        if kept.isEmpty { kept = available }
-        if current > 0, !kept.contains(current) { kept.append(current) }
-        return kept.sorted()
+    private func choose(_ id: String) {
+        switch AudioMenuModel.action(forID: id) {
+        case .output(let name):
+            // `--virtual-audio` is a test fixture: it must not become the remembered choice.
+            if !OBJEngineCore.isVirtualAudio() {
+                AudioOutputDevice.shared.name = name   // publishes and persists (previews aligned)
+            }
+            viewModel.engine?.setOutputDevice(name)    // applies to the engine
+        case .sampleRate(let hz):
+            viewModel.engine?.setSampleRate(hz)
+        case .buffer(let frames):
+            viewModel.engine?.setBufferSize(frames)
+        case nil:
+            break
+        }
     }
 
     // MARK: Formatting
 
-    /// The sentence under the sample-rate picker when the policy changed (or could not change) the
-    /// card's rate — `nil` for `adopt` and `unknown`, which say nothing.
+    /// The sentence under the sample-rate rows when the policy changed (or could not change) the
+    /// card's rate: `nil` for `adopt` and `unknown`, which say nothing.
     static func rateDecisionNote(_ s: AudioDeviceSnapshot) -> String? {
         switch s.rateDecision {
         case .fallback:
-            return L("audio.menu.sampleRate.fallback", formatRate(s.deviceRateBeforeDecision),
-                     formatRate(s.sampleRate))
+            return L("audio.menu.sampleRate.fallback", AudioMenuModel.formatRate(s.deviceRateBeforeDecision),
+                     AudioMenuModel.formatRate(s.sampleRate))
         case .outOfRangeKept:
-            return L("audio.menu.sampleRate.outOfRange", formatRate(s.deviceRateBeforeDecision))
+            return L("audio.menu.sampleRate.outOfRange", AudioMenuModel.formatRate(s.deviceRateBeforeDecision))
         case .adopt, .unknown:
             return nil
         }
-    }
-
-    static func formatRate(_ hz: Double) -> String {
-        let k = hz / 1000
-        return k == k.rounded() ? "\(Int(k)) kHz" : String(format: "%.1f kHz", k)
-    }
-
-    static func formatBuffer(_ frames: Int, sampleRate: Double) -> String {
-        guard sampleRate > 0 else { return "\(frames)" }
-        let ms = Double(frames) / sampleRate * 1000
-        return String(format: "%d — %.1f ms", frames, ms)
     }
 }

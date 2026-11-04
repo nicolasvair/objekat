@@ -347,6 +347,29 @@
         }
       }
     },
+    "audio.menu.noDevice": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No audio device available"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ninguna tarjeta de sonido disponible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune carte son disponible"
+          }
+        }
+      }
+    },
     "audio.menu.sampleRate": {
       "extractionState": "manual",
       "localizations": {
