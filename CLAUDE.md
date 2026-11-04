@@ -3101,7 +3101,7 @@ a second one elsewhere. The most exposed points:
   card unplugged mid-take, a rate mismatch, a Bluetooth switch, a project reopened with the choice remembered.
 
 - **The feedback of 4 November 2026 — ten requests, eleven lots, one commit each** (branch `claude/retours-2026-11-04`, NOT on
-  `main`, nothing pushed, no engine patch — the next is still `0051`, no session-format change; **written on a Linux machine:
+  `main`, pushed to origin, not merged, no engine patch — the next is still `0051`, no session-format change; **written on a Linux machine:
   NOTHING COMPILED, NOTHING RUN, NOTHING SEEN** — only `xcstrings.py check`/`orphans` and `py_compile` on the scenarios, and every
   edited region re-read as a compiler would). Plan, decisions and what each lot owes the eye: `docs/plan_retours_2026-11-04.md`;
   decisions: `architecture_decisions.md` ("The feedback of 4 November 2026"); API: `command_api.md`.
