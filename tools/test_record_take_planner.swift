@@ -9,8 +9,8 @@
 // turns out not to replace).
 //
 //     swiftc -parse-as-library \
-//         ../objekat/SoundObject/RecordTakePlanner.swift test_record_take_planner.swift \
-//         -o /tmp/trtp && /tmp/trtp
+//         ../objekat/SoundObject/RecordTakePlanner.swift ../objekat/SoundObject/RecordLoopPlanner.swift \
+//         test_record_take_planner.swift -o /tmp/trtp && /tmp/trtp
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
 
@@ -172,6 +172,16 @@ enum Run {
             let audible = z.filter { !$0.isMuted }.map(\.id)
             check("\(mode ? "mute" : "add"): audible = \(mode ? "the newest only" : "all three")",
                   Set(audible) == (mode ? [a3] : [a1, a2, a3]))
+        }
+
+        // ── A linear recording is a loop recording of ONE pass (`RecordLoopPlanner`, tools/test_record_loop_planner.swift) ──
+        for (o, l) in [(5.0, 30.0), (14.0, 30.0), (0.0, 17.0), (30.0, 4.0)] {
+            let lin = plan(10, 20, [child(8, 14, lane: 0)], origin: o, length: l)
+            let lp = RecordLoopPlanner.plan(windowStart: 10, windowEnd: 20, children: [child(8, 14, lane: 0)],
+                                            segments: [.init(fileStart: 0, length: l, timelineStart: o)])
+            check("one pass of the loop planner = the linear plan (origin \(o))",
+                  lp.takes.count == 1 && near(lp.takes[0].start, lin.take.start) && near(lp.takes[0].duration, lin.take.duration)
+                  && near(lp.takes[0].sourceOffset, lin.take.sourceOffset) && lp.takes[0].outsideWindow == lin.take.outsideWindow)
         }
 
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
