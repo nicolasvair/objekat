@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 
 /// The « MIDI inputs » section of the Inputs tab (rec3-midi): ABOVE the card's inputs, in the same RECTANGLES
 /// (@see InputStrip) — the keys glyph where the card's have their number, the name with the badges of its effects, the
-/// speaker and under them a bar that lights with the velocity of the notes played (the plugin cards' bar, 0...127 linear). A
+/// speaker and, under the name, its meter (`MidiActivityMeter`): a few pixels of blue while notes arrive and, once the input
+/// has an instrument heard through the speaker, the instrument's OUTPUT as a level bar under that mark. A
 /// MIDI input needs no sound card: the section is there whether or not the audio inputs are open. "All MIDI Ins" comes first.
 ///
 /// A rectangle is dragged onto the timeline to make a MIDI recording zone, or onto a group to give it this input
@@ -27,13 +28,22 @@ struct MidiInputsSection: View {
     /// The list this section lives in takes the keyboard when a row is clicked.
     var focusList: () -> Void = {}
 
-    /// Smoothed bar position 0...1 of each device.
-    @State private var levels: [String: Float] = [:]
+    /// Ticks left on the blue activity mark of each device: a note lights it for `activityTicks` polls (~280 ms), so a
+    /// single short note is still seen.
+    @State private var activity: [String: Int] = [:]
+    /// Smoothed 0...1 level of the instrument each device is heard through (absent: no instrument, or not heard).
+    @State private var instrumentLevels: [String: Float] = [:]
+    /// The instruments the engine was asked to measure (so the request is renewed only when they change).
+    @State private var meteredInstruments: [UUID] = []
     /// The devices heard through their instrument (the engine owns it; read on the poll).
     @State private var heard: Set<String> = []
     /// The rectangle a plugin drag is hovering over.
     @State private var dropTarget: RecordSource? = nil
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
+    /// 4 polls of 0.07 s.
+    private static let activityTicks = 4
+    /// The engine's measuring owner of this section (@see EditViewModel.setMidiInstrumentMetering).
+    private static let meterOwner = "inputs.midi"
 
     private var rows: [MidiInputInfo] { viewModel.midiInputs }
     private var selection: Set<String> {
@@ -69,6 +79,13 @@ struct MidiInputsSection: View {
         }
         .onReceive(poll) { _ in tick() }
         .onAppear { viewModel.refreshMidiInputs() }
+        .onDisappear {
+            // Nothing is measured for a panel nobody looks at.
+            if !meteredInstruments.isEmpty {
+                viewModel.setMidiInstrumentMetering(owner: Self.meterOwner, ids: [])
+                meteredInstruments = []
+            }
+        }
     }
 
     private func row(_ d: MidiInputInfo) -> some View {
@@ -101,7 +118,10 @@ struct MidiInputsSection: View {
                 InputMonitorGainBox(value: viewModel.midiInputMonitorGain(d), heard: on,
                                     onChange: { _ = viewModel.setMidiInputMonitorGain(d, db: $0); tick() })
             },
-            meter: { VULevelBar(level: Double(levels[d.id] ?? 0), height: 3) }
+            meter: {
+                MidiActivityMeter(activity: (activity[d.id] ?? 0) > 0,
+                                  level: instrumentLevels[d.id].map(Double.init))
+            }
         )
         .onDrag { InputDragSession.shared.begin(sources: viewModel.draggedSources(startingFrom: .midi(d.ref))) }
         .onTapGesture {
@@ -148,15 +168,30 @@ struct MidiInputsSection: View {
     private func tick() {
         let nowHeard = viewModel.heardMidiDeviceIDs
         if nowHeard != heard { heard = nowHeard }
+
+        // The blue mark: a note-on lights it for a few polls, then it falls back (the engine's read clears its peak).
         let seen = viewModel.midiActivity()
-        var next = levels
+        var nextActivity: [String: Int] = [:]
         for d in rows {
-            let raw = Float(seen[d.id] ?? 0) / 127
-            next[d.id] = VUBallistics.smoothed(previous: next[d.id] ?? 0, raw: raw)
+            if (seen[d.id] ?? 0) > 0 { nextActivity[d.id] = Self.activityTicks }
+            else if let left = activity[d.id], left > 1 { nextActivity[d.id] = left - 1 }
         }
-        // A device that left the list leaves the map.
-        for id in next.keys where !rows.contains(where: { $0.id == id }) { next[id] = nil }
-        if next != levels { levels = next }
+        if nextActivity != activity { activity = nextActivity }
+
+        // The instrument's output, for the rows heard through one. The engine measures only what it was asked to.
+        let instruments = viewModel.midiInputInstruments()
+        let ids = instruments.map { $0.instrument }
+        if ids != meteredInstruments {
+            viewModel.setMidiInstrumentMetering(owner: Self.meterOwner, ids: ids)
+            meteredInstruments = ids
+        }
+        var nextLevels: [String: Float] = [:]
+        for d in rows {
+            guard let raw = viewModel.midiInstrumentLevel(of: d, heard: nowHeard.contains(d.id)) else { continue }
+            nextLevels[d.id] = VUBallistics.smoothed(previous: instrumentLevels[d.id] ?? 0, raw: Float(raw))
+        }
+        if nextLevels != instrumentLevels { instrumentLevels = nextLevels }
+
         let listed = Set(rows.map(\.id))
         if !selection.isSubset(of: listed) { selection = selection.intersection(listed) }
     }

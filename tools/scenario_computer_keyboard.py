@@ -13,6 +13,7 @@ Keys are PHYSICAL keyCodes (AZERTY home row: q=0 d=2 g=5 ... w=6 octave down, x=
      outside the undo
   C  a zone made by rec.drop, a take with the right pitches (one undo), "All MIDI Ins" receives nothing
   D  listening: instrument + input.monitor -> RMS above the threshold; no monitor -> silence (armed is not hearing)
+  D2 the instrument's output on the row's meter: > 0 while the transport is stopped and the input is heard; none unheard
   E  octave change with a note held (the note-off is the pitch fixed at the press), allNotesOff (mode off, tab switch)
   F  save / reopen: the zone finds its source again, the mode is not in the file
   G  Settings.xml has no trace of the device
@@ -339,6 +340,36 @@ try:
         heard = master_level(c)
         check("monitored: a held note is HEARD (%.3f)" % heard, heard > 0.05, heard)
         key(c, Q, False)
+
+        # ── D2 (L10) ---------------------------------------------------------------------------------
+        section("D2  the instrument's level on the MIDI row's meter (the transport is STOPPED)")
+
+        def instrument_level(cc):
+            row_ = next((e for e in cc.send("input.levels.midi_activity")["instrument_levels"] if e["id"] == CK), None)
+            return row_ and row_["instrument_level"]
+
+        check("the transport is stopped for this section", not c.send("transport.state")["playing"])
+        instrument_level(c)         # the first call registers the measure
+        key(c, Q, True)
+        peak = 0.0
+        for _ in range(20):
+            time.sleep(0.05)
+            v = instrument_level(c)
+            peak = max(peak, v or 0.0)
+        check("monitor on, a held note: instrument_level > 0 while stopped (%.3f)" % peak, peak > 0.0, peak)
+        key(c, Q, False)
+        act = {a["id"]: a for a in c.send("input.levels.midi_activity")["activity"]}
+        check("an activity entry carries instrument_level (number or null)",
+              all(("instrument_level" in a) for a in act.values()), act)
+        c.send("input.monitor", {"midi": CK, "on": False})
+        time.sleep(0.4)
+        instrument_level(c)
+        key(c, Q, True)
+        time.sleep(0.5)
+        off = instrument_level(c)
+        key(c, Q, False)
+        check("monitor off: instrument_level is null or 0 (%s)" % off, off is None or off == 0, off)
+        c.send("input.monitor", {"midi": CK, "on": True})
 
         # ── E ----------------------------------------------------------------------------------------
         section("E  octave change with a note held, allNotesOff")

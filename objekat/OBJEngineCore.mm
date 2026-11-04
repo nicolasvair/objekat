@@ -10779,7 +10779,8 @@ static void objDumpPluginList(te::PluginList& pl,
 
 // Niveau (0..1) à la SORTIE d'un plugin, même échelle que les stems (max(L,R) en dB, -60..0 → 0..1).
 // 0 quand : la clé n'est pas enregistrée, le plugin n'existe plus, appartient à la chaîne d'un autre
-// hôte (id dupliqué), est désactivé / bypassé (rien n'est mesuré), ou que le transport est arrêté.
+// hôte (id dupliqué), est désactivé / bypassé (rien n'est mesuré), ou que le transport est arrêté
+// (sauf sur la piste cachée d'une ENTRÉE écoutée : elle vit à l'arrêt).
 // La lecture VIDE le Client (getAndClear) : un cache de 15 ms par clé évite que deux vues qui
 // interrogent la même clé ne se volent les crêtes.
 - (float)audioLevelForPluginKey:(NSString*)pluginKey forObjectID:(NSString*)uuid {
@@ -10805,7 +10806,16 @@ static void objDumpPluginList(te::PluginList& pl,
     const float dB = std::max(rec.client->getAndClearAudioLevel(0).dB,
                               rec.client->getAndClearAudioLevel(1).dB);
     float v = std::max(0.0f, std::min(1.0f, (dB + 60.0f) / 66.0f));   // -60..+6 dBFS, @see VUScale.swift
-    if (!pit->second->isEnabled() || ![self isCurrentlyPlaying]) v = 0.0f;
+    // The transport stopped means silence — except on an INPUT host's hidden track (a MIDI input heard through its
+    // instrument, a card input monitored): it is live while the transport is stopped, that is the point of monitoring.
+    // The host is the one the caller names (`uuid`); an instrument has no `_pluginOwnerHost` entry (it is not part of the
+    // compiled series), so the owner map cannot be the test.
+    BOOL live = [self isCurrentlyPlaying];
+    if (!live && uuid) {
+        const std::string hostKey([uuid UTF8String]);
+        live = _midiInputTracks.count(hostKey) > 0 || _audioInputHosts.count(hostKey) > 0;
+    }
+    if (!pit->second->isEnabled() || !live) v = 0.0f;
     rec.lastReadMs = now;
     rec.lastValue  = v;
     return v;

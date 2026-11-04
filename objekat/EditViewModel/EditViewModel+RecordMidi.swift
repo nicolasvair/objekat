@@ -94,6 +94,31 @@ extension EditViewModel {
         (engine?.midiInputActivity() ?? [:]).mapValues { $0.intValue }
     }
 
+    // MARK: The instrument's output on a MIDI input's meter (L10)
+
+    /// The instrument of each listed MIDI input that has one: (device id, chain host, instrument id), in list order.
+    func midiInputInstruments() -> [(device: String, host: UUID, instrument: UUID)] {
+        midiInputs.compactMap { d in
+            guard let key = midiChainKey(for: d), let chain = inputChains.midi[key], let inst = chain.instrument else { return nil }
+            return (device: d.id, host: chain.hostID, instrument: inst.id)
+        }
+    }
+
+    /// Asks the engine to measure the instruments of the MIDI inputs for `owner` (a view, or a script's read); an
+    /// empty `ids` withdraws it. The engine measures the UNION of the owners' lists and keys the read on the plugin
+    /// id, so one owner covers every host.
+    func setMidiInstrumentMetering(owner: String, ids: [UUID]) {
+        engine?.setMeteredPluginKeys(ids.map(\.uuidString), forOwner: owner)
+    }
+
+    /// The level (0...1 on `VUScale`) at the output of the instrument `device` is heard through; nil when it has no
+    /// instrument or is not heard (nothing flows through the chain then). Reading EMPTIES the engine's peak hold.
+    func midiInstrumentLevel(of device: MidiInputInfo, heard: Bool) -> Double? {
+        guard heard, let key = midiChainKey(for: device), let chain = inputChains.midi[key],
+              let inst = chain.instrument else { return nil }
+        return pluginAudioLevel(objectID: chain.hostID, pluginID: inst.id)
+    }
+
     /// What a drag that starts on `row` carries: when the row is part of the selection, every selected input
     /// (the MIDI ones first, in the order of the list, then the card's by channel); otherwise the row alone.
     /// The two lists share one gesture, so a selection holding both kinds is dragged whole.
