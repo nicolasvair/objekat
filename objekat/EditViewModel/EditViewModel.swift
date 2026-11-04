@@ -368,6 +368,19 @@ final class EditViewModel {
     }
     /// The stem whose name is being typed in its popover (⌘R), if any. Vanishes with the popover.
     var renamingStemID: UUID? = nil
+    /// The input (audio or MIDI) whose popup is open in the Inputs tab: the synoptic of its chain, like a stem's. Held by
+    /// the model so that ⌘R and `input.strip` know it. Its `didSet` is the one door that holds the input's chain MOUNTED
+    /// while the popup is open and lets it go when it closes (@see `syncOpenInputStripHost`), and takes the name field
+    /// of a closed popup with it. Closed by a new project, a tab switch and the panel disappearing.
+    var openInputStrip: RecordSource? = nil {
+        didSet {
+            guard openInputStrip != oldValue else { return }
+            if case .audio(let ref)? = oldValue, renamingInput == ref { renamingInput = nil }
+            syncOpenInputStripHost()
+        }
+    }
+    /// The host `openInputStrip` holds open (so that the next change knows what to let go of).
+    @ObservationIgnored var openInputStripHost: UUID? = nil
     var activeTool: ActiveTool = .toolSelection
     var isToolPermanent: Bool = true
     var heldToolKeyCode: UInt16? = nil

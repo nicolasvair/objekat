@@ -193,6 +193,73 @@ extension CommandRegistry {
                             "instrument": .stringOrNull(vm.inputInstrument(host)?.name)])
         }
 
+        register("input.strip",
+                 summary: """
+                 The RECTANGLES of the Inputs tab and their popup (docs/plan_groupes_midi.md). With `first` (+ `count`) \
+                 or `midi` (an input id from `input.list.midi_inputs`) and `open` true (the default), opens that input's \
+                 popup, as a click on its rectangle does: the chain is held mounted for as long as it is open, and a \
+                 popup already open elsewhere closes. `open: false` closes it. With no input: only reads. Answers \
+                 `open` (the open popup's input, or null), `host_id`, `mounted`, and `strips`: every rectangle the \
+                 tab shows [{kind, first/count or id, name, selected, open, badges}]. `badges` are the sound list's \
+                 (fx, fxLink, sidechainReception): a lone instrument has none. `invalid_state` for a card input the \
+                 tab does not list (the card's inputs are closed). Not saved, outside the undo.
+                 """,
+                 params: [ParamSpec("first", "int", required: false, "First channel of a card input, 0-based."),
+                          ParamSpec("count", "int", required: false, "1 (mono, default) or 2 (stereo pair)."),
+                          ParamSpec("midi", "string", required: false, "A MIDI input id, instead of `first`."),
+                          ParamSpec("open", "bool", required: false, "Open (default true) or close its popup.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let asked: RecordSource?
+            if let midi = try p.optionalString("midi") {
+                asked = .midi(try Self.requireMidiDevice(midi, in: vm).ref)
+            } else if try p.optionalInt("first") != nil {
+                let ref = try Self.inputRef(p)
+                guard vm.visibleRecordInputs.contains(ref) else {
+                    throw CommandError(code: .invalid_state, message: "input \(ref.first)/\(ref.count) is not listed")
+                }
+                asked = .audio(ref)
+            } else {
+                asked = nil
+            }
+            if let asked {
+                if try p.bool("open", or: true) {
+                    vm.openInputStrip = asked
+                } else if vm.openInputStrip == asked {
+                    vm.openInputStrip = nil
+                }
+            }
+            @MainActor func name(_ s: RecordSource) -> String {
+                switch s {
+                case .audio(let r): return vm.inputName(r)
+                case .midi(let r): return MidiInputResolver.resolve(r, in: vm.midiInputs)?.displayName ?? r.name
+                }
+            }
+            @MainActor func describe(_ s: RecordSource) -> [String: JSONValue] {
+                var o: [String: JSONValue] = ["name": .string(name(s))]
+                switch s {
+                case .audio(let r):
+                    o["kind"] = .string("audio"); o["first"] = .int(r.first); o["count"] = .int(r.count)
+                    o["selected"] = .bool(vm.selectedRecordInputs.contains(r))
+                case .midi(let r):
+                    o["kind"] = .string("midi"); o["id"] = .string(r.id)
+                    o["selected"] = .bool(vm.selectedMidiInputs.contains(r.id))
+                }
+                o["open"] = .bool(vm.openInputStrip == s)
+                o["badges"] = .array(vm.inputStripBadges(s).map { .string(String(describing: $0)) })
+                return o
+            }
+            let strips: [RecordSource] = vm.midiInputs.map { .midi($0.ref) }
+                + (vm.visibleRecordInputs.filter(\.isStereo) + vm.visibleRecordInputs.filter { !$0.isStereo }).map { .audio($0) }
+            var out: [String: JSONValue] = [
+                "strips": .array(strips.map { .object(describe($0)) }),
+                "open": vm.openInputStrip.map { .object(describe($0)) } ?? .null,
+                "host_id": .stringOrNull(vm.openInputStripHost?.uuidString),
+            ]
+            out["mounted"] = .bool(vm.openInputStripHost.map { vm.mountedInputHosts.contains($0) } ?? false)
+            return .object(out)
+        }
+
         register("input.set_instrument",
                  summary: """
                  Puts a virtual instrument on a MIDI input (`midi`, an input id), replacing any: it plays the notes of \

@@ -330,6 +330,38 @@ def e9(c, level, fxp, instp, dev):
     row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
     check("M8 undo x2: back to no instrument", row["instrument"] is None, row)
 
+    # M9: the rectangles and their popup (inputs panel, step 4): `input.strip`
+    def strip(kind, **match):
+        for r in c.send("input.strip")["strips"]:
+            if r["kind"] == kind and all(r.get(k) == v for k, v in match.items()):
+                return r
+        return None
+    check("M9 the MIDI device and the card input each have a rectangle",
+          strip("midi", id=dev) is not None and strip("audio", first=0, count=1) is not None)
+    check("M9 no popup open at first", c.send("input.strip")["open"] is None)
+    r = c.send("input.strip", {"midi": dev})
+    check("M9 opening a MIDI popup holds its chain mounted", r["open"]["id"] == dev and r["mounted"] and r["host_id"], r)
+    mh9 = r["host_id"]
+    c.send("instrument.set", {"id": mh9, **instp})
+    check("M9 a LONE instrument has no badge", strip("midi", id=dev)["badges"] == [], strip("midi", id=dev))
+    fx9 = c.send("plugin.add", {"host": mh9, **LPF})["plugin"]["id"]
+    check("M9 instrument + FX: the fx badge", strip("midi", id=dev)["badges"] == ["fx"], strip("midi", id=dev))
+    rt = c.send("debug.rename_shortcut")
+    check("M9 popup of a MIDI input open: R renames nothing", rt["target"] == "none", rt)
+    r = c.send("input.strip", {"first": 0})
+    check("M9 opening another popup closes the first one, and lets its chain go",
+          r["open"]["kind"] == "audio" and r["host_id"] != mh9
+          and not c.send("input.host", {"midi": dev, "open": False})["mounted"], r)
+    rt = c.send("debug.rename_shortcut")
+    check("M9 popup of a card input open: R renames THAT input", rt["target"] == "input" and rt["first"] == 0, rt)
+    check("M9 ... in the popup (the rectangle is not in rename)", c.send("input.strip")["open"]["open"] is True)
+    c.send("input.strip", {"first": 0, "open": False})
+    check("M9 closing it", c.send("input.strip")["open"] is None)
+    c.send("project.new")
+    c.send("input.strip", {"first": 0})
+    c.send("project.new")
+    check("M9 a new project closes the popup", c.send("input.strip")["open"] is None)
+
 
 def e11(c, instp, dev):
     LPF = {"identifier": "aufx,lpas,appl"}

@@ -6,8 +6,10 @@ import Combine
 /// Closed at launch — a button opens them (opening is what makes macOS ask for the microphone and
 /// switches AirPods to the call profile, so nothing here does it on its own). Then two sections, « Stereo
 /// inputs » ABOVE « Mono inputs » (a pair does not take its monos away; an empty section is not shown),
-/// one row per input: its number, an editable name, the monitor button and the listening level, and under
-/// them the level meter (one bar for a mono, two thin ones, L and R, for a pair).
+/// one RECTANGLE per input, a stem's strip (@see InputStrip): its number, its name with the badges of its effects, the
+/// monitor button and the listening level, and under them the level meter (one bar for a mono, two thin ones, L and R,
+/// for a pair). A click selects it and opens its popup, the synoptic of its effects (⌘ / ⇧ only select);
+/// ⌘R renames it (in the popup's header while it is open, else in the rectangle).
 ///
 /// The selection is the lists' own (@see ListClickSelection): a click selects the row alone, ⌘ adds or
 /// removes it, ⇧ extends a contiguous range, ⌘A takes every row, ↑ / ↓ move it and ⇧↑ / ⇧↓ extend it — the
@@ -57,6 +59,8 @@ struct InputsPanelView: View {
             KeyboardClaim.shared.inputsSelectAll = { selection = ListClickSelection.all(ordered: orderedRows) }
         }
         .onDisappear {
+            // The popup is another window: it does not outlive the panel that holds its rectangle.
+            viewModel.openInputStrip = nil
             KeyboardClaim.shared.release(.inputs)
             KeyboardClaim.shared.inputsSelectAll = nil
         }
@@ -98,7 +102,9 @@ struct InputsPanelView: View {
         let monos = monoRows, pairs = stereoRows
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 0) {
+                // A VStack and not a LazyVStack: a rectangle that is not built cannot anchor its popup (`input.strip`,
+                // a popup opened by a script) nor take a drop; a card has a few dozen inputs at most.
+                VStack(spacing: 0) {
                     // The MIDI inputs ABOVE the card's (@see MidiInputsSection).
                     MidiInputsSection(viewModel: viewModel, focusList: { listFocused = true })
                     if !pairs.isEmpty {
@@ -150,25 +156,11 @@ struct InputsPanelView: View {
 
     private func absentRow(key: String, count: Int) -> some View {
         let name = InputChains.inputRef(forKey: key).map { viewModel.inputName($0) } ?? key
-        return HStack(spacing: InputRowStyle.controlSpacing) {
-            Text(verbatim: key)
-                .font(InputRowStyle.numberFont)
-                .foregroundStyle(.tertiary)
-                .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
-            Text(verbatim: name)
-                .font(InputRowStyle.nameFont)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(verbatim: "FX \(count)")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
-        }
-        .inputRowChrome(isSelected: false)
-        .opacity(0.45)
-        .help(L("inputs.dormant.help"))
-        .contextMenu {
-            Button(L("inputs.fx.removeAll")) { viewModel.clearAudioInputChain(key: key) }
-        }
+        return DormantInputStrip(glyph: .number(key), name: name, detail: "FX \(count)")
+            .padding(.horizontal, InputRowStyle.horizontalPadding).padding(.vertical, InputRowStyle.stripSpacing / 2)
+            .contextMenu {
+                Button(L("inputs.fx.removeAll")) { viewModel.clearAudioInputChain(key: key) }
+            }
     }
 
     /// A section's title: the zones' (the synoptic's) small grey semibold.
@@ -213,51 +205,33 @@ struct InputsPanelView: View {
     }
 
     private func row(_ ref: InputRef) -> some View {
-        let isSelected = selection.contains(ref)
+        let source = RecordSource.audio(ref)
+        let isOpen = viewModel.openInputStrip == source
         let heard = monitored.contains(ref)
-        return VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
-            HStack(spacing: InputRowStyle.controlSpacing) {
-                Text(verbatim: ref.key)
-                    .font(InputRowStyle.numberFont)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
-                if viewModel.renamingInput == ref {
-                    // Leaving commits what was typed, Esc cancels (@see MarkerRenameField).
-                    MarkerRenameField(initial: viewModel.inputName(ref),
-                                      font: InputRowStyle.nameFont,
-                                      commitsOnFocusLoss: true) { value in
-                        if let value { viewModel.renameInput(ref, to: value) }
-                        if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
-                    }
-                } else {
-                    // No gesture of its own: the row's click selects (⌘ / ⇧ included); ⌘R renames the one
-                    // selected row while this list holds the keyboard (@see RenameShortcutRoute).
-                    Text(viewModel.inputName(ref))
-                        .font(InputRowStyle.nameFont)
-                        .lineLimit(1)
-                        .help(L("inputs.rename.help"))
-                }
-                Spacer(minLength: 4)
-                InputFXButton(viewModel: viewModel, ref: ref)
-                Button {
-                    _ = viewModel.setInputMonitor(ref, on: !heard)
-                    tick()
-                } label: {
-                    Image(systemName: heard ? "speaker.wave.2.fill" : "speaker.slash")
-                        .font(.system(size: 11))
-                        .frame(width: 18)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(heard ? Color.accentColor : Color.secondary)
-                .help(L("inputs.monitor.help"))
-                monitorGainBox(ref, heard: heard)
-            }
-            vuBars(ref)
-                .padding(.leading, InputRowStyle.meterLeading)
-        }
-        .inputRowChrome(isSelected: isSelected)
-        .contentShape(Rectangle())
-        // The row is dragged onto the timeline to make a recording zone, or onto a group to give it
+        return InputStrip(
+            glyph: .number(ref.key),
+            name: viewModel.inputName(ref),
+            // ⌘R on a rectangle whose popup is closed; with the popup open the field is its header's.
+            isRenaming: viewModel.renamingInput == ref && !isOpen,
+            onRename: { value in
+                if let value { viewModel.renameInput(ref, to: value) }
+                if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
+            },
+            badges: viewModel.inputStripBadges(source),
+            isSelected: selection.contains(ref),
+            isOpen: isOpen,
+            heard: heard,
+            listenHelp: L("inputs.monitor.help"),
+            nameHelp: L("inputs.rename.help"),
+            onListen: {
+                _ = viewModel.setInputMonitor(ref, on: !heard)
+                tick()
+            },
+            gain: { monitorGainBox(ref, heard: heard) },
+            extra: { EmptyView() },
+            meter: { vuBars(ref) }
+        )
+        // The rectangle is dragged onto the timeline to make a recording zone, or onto a group to give it
         // this input (@see RecordZonePlanner, InputDragSession).
         .onDrag { InputDragSession.shared.begin(sources: viewModel.draggedSources(startingFrom: .audio(ref))) }
         .onTapGesture {
@@ -267,30 +241,30 @@ struct InputsPanelView: View {
             let flags = NSEvent.modifierFlags
             if !flags.contains(.command) && !flags.contains(.shift) { viewModel.selectedMidiInputs = [] }
             select(ref)
+            viewModel.applyInputStripClick(source, shift: flags.contains(.shift), command: flags.contains(.command))
         }
         .contextMenu { contextMenu(for: ref) }
+        .popover(isPresented: Binding(
+            get: { viewModel.openInputStrip == source },
+            set: { if !$0 && viewModel.openInputStrip == source { viewModel.openInputStrip = nil } }
+        ), arrowEdge: .trailing) {
+            InputStripPopup(viewModel: viewModel, source: source)
+        }
+        .padding(.horizontal, InputRowStyle.horizontalPadding).padding(.vertical, InputRowStyle.stripSpacing / 2)
         .id(ref)
     }
 
-    /// The input's level, on the row's second line, starting under the name and 40 % of the PANEL wide
-    /// (@see InputRowStyle): one bar for a mono, two thin ones (left over right) for a pair — the plugin
-    /// cards' bar, on the same scale (red past 0 dBFS).
+    /// The input's level, under its name (@see InputRowStyle): one bar for a mono, two thin ones (left over right) for a
+    /// pair — the plugin cards' bar, on the same scale (red past 0 dBFS).
     @ViewBuilder
     private func vuBars(_ ref: InputRef) -> some View {
-        Group {
-            if ref.isStereo {
-                VStack(spacing: 1) {
-                    VULevelBar(level: Double(channelLevel(ref.first)))
-                    VULevelBar(level: Double(channelLevel(ref.first + 1)))
-                }
-            } else {
-                VULevelBar(level: Double(channelLevel(ref.first)), height: 3)
+        if ref.isStereo {
+            VStack(spacing: 1) {
+                VULevelBar(level: Double(channelLevel(ref.first)))
+                VULevelBar(level: Double(channelLevel(ref.first + 1)))
             }
-        }
-        .frame(height: 5)
-        // The panel is the scroll view's container: 40 % of ITS width, whatever the row's padding.
-        .containerRelativeFrame(.horizontal, alignment: .leading) { length, _ in
-            length * InputRowStyle.meterWidthFraction
+        } else {
+            VULevelBar(level: Double(channelLevel(ref.first)), height: 3)
         }
     }
 

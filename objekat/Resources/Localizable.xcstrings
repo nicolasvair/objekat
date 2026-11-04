@@ -7733,12 +7733,6 @@
     "groupInstrument.refused.audioChild": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un son ne peut pas y entrer."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7750,18 +7744,18 @@
             "state": "translated",
             "value": "Un grupo que lleva un instrumento solo recibe clips MIDI vacíos: un sonido no puede entrar."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un son ne peut pas y entrer."
+          }
         }
       }
     },
     "groupInstrument.refused.audioInput": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Une entrée audio ne peut pas être branchée sur un groupe qui porte un instrument, ni sous lui."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7773,18 +7767,18 @@
             "state": "translated",
             "value": "No se puede conectar una entrada de audio a un grupo que lleva un instrumento, ni debajo de uno."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Une entrée audio ne peut pas être branchée sur un groupe qui porte un instrument, ni sous lui."
+          }
         }
       }
     },
     "groupInstrument.refused.auxChild": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un objet aux ne peut pas y entrer."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7796,18 +7790,18 @@
             "state": "translated",
             "value": "Un grupo que lleva un instrumento solo recibe clips MIDI vacíos: un objeto aux no puede entrar."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe qui porte un instrument ne reçoit que des clips MIDI vides : un objet aux ne peut pas y entrer."
+          }
         }
       }
     },
     "groupInstrument.refused.childWithInstrument": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un groupe n'a qu'un instrument par chaîne : ce clip ou ce groupe porte déjà le sien, ou un groupe au-dessus a le sien."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7819,18 +7813,18 @@
             "state": "translated",
             "value": "Una cadena solo tiene un instrumento: este clip o grupo ya lleva el suyo, o un grupo por encima tiene uno."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un groupe n'a qu'un instrument par chaîne : ce clip ou ce groupe porte déjà le sien, ou un groupe au-dessus a le sien."
+          }
         }
       }
     },
     "groupInstrument.refused.consolidatedChild": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un objet consolidé ne peut pas entrer dans un groupe qui porte un instrument."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7842,18 +7836,18 @@
             "state": "translated",
             "value": "Un objeto consolidado no puede entrar en un grupo que lleva un instrumento."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un objet consolidé ne peut pas entrer dans un groupe qui porte un instrument."
+          }
         }
       }
     },
     "groupInstrument.refused.insideInstrumentGroup": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ce groupe est déjà sous un groupe qui porte un instrument : il n'en a qu'un par chaîne."
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7865,18 +7859,18 @@
             "state": "translated",
             "value": "Este grupo ya está bajo un grupo que lleva un instrumento: una cadena solo tiene uno."
           }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce groupe est déjà sous un groupe qui porte un instrument : il n'en a qu'un par chaîne."
+          }
         }
       }
     },
     "groupInstrument.refused.title": {
       "extractionState": "manual",
       "localizations": {
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Geste refusé"
-          }
-        },
         "en": {
           "stringUnit": {
             "state": "translated",
@@ -7887,6 +7881,12 @@
           "stringUnit": {
             "state": "translated",
             "value": "Gesto rechazado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geste refusé"
           }
         }
       }
@@ -9800,29 +9800,6 @@
         }
       }
     },
-    "inputs.fx.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Effects on this input — heard through them, never recorded with them"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Efectos de esta entrada: se escuchan, nunca se graban"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Effets de cette entrée — entendus, jamais enregistrés"
-          }
-        }
-      }
-    },
     "inputs.fx.note": {
       "extractionState": "manual",
       "localizations": {
@@ -9865,121 +9842,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Retirer les effets"
-          }
-        }
-      }
-    },
-    "inputs.instrument.change": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Change instrument…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cambiar de instrumento…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Changer d'instrument…"
-          }
-        }
-      }
-    },
-    "inputs.instrument.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrument that plays this MIDI input (click: edit, right-click: change or remove)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrumento que toca esta entrada MIDI (clic: editar, clic derecho: cambiar o quitar)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrument qui joue cette entrée MIDI (clic : éditer, clic droit : changer ou retirer)"
-          }
-        }
-      }
-    },
-    "inputs.instrument.none": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrument"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrumento"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Instrument"
-          }
-        }
-      }
-    },
-    "inputs.instrument.pick": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose an instrument…"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Elegir un instrumento…"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choisir un instrument…"
-          }
-        }
-      }
-    },
-    "inputs.instrument.pick.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choose the instrument that plays this MIDI input"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Elegir el instrumento que toca esta entrada MIDI"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Choisir l'instrument qui joue cette entrée MIDI"
           }
         }
       }

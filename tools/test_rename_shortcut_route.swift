@@ -80,6 +80,19 @@ enum RenameShortcutRouteTest {
     check("Inputs do NOT hold the keyboard, one row, nothing else: none",
           go(S(inputsHoldKeyboard: false, selectedInputs: [4])) == .none)
 
+    // 3b: an input's popup
+    check("audio input popup open: that input, whatever the selection",
+          go(S(inputPopupOpen: true, openInput: 7, selectedInputs: [4], selectedObject: obj)) == .input(7))
+    check("MIDI input popup open: none (no name of its own), the object is left alone",
+          go(S(inputPopupOpen: true, openInput: nil, selectedObject: obj)) == .none)
+    check("stem popover beats an input popup", go(S(openStem: stem, mainStem: main, inputPopupOpen: true, openInput: 7)) == .stem(stem))
+    check("a bin of the open popup's chain beats the input",
+          go(S(fxLink: bin, fxLinkHost: host, inputPopupOpen: true, openInput: 7, openInputHost: host)) == .fxLink(bin))
+    check("a bin left in another chain, behind the input popup: the input",
+          go(S(fxLink: bin, fxLinkHost: obj, inputPopupOpen: true, openInput: 7, openInputHost: host)) == .input(7))
+    check("popup closed, rectangle selected, list holds the keyboard: the selected input",
+          go(S(inputPopupOpen: false, inputsHoldKeyboard: true, selectedInputs: [4])) == .input(4))
+
     // Sanity: a bin without a host does not make the Main's popover rename it
     check("popover open, bin with no known host: the stem",
           go(S(fxLink: bin, fxLinkHost: nil, openStem: stem, mainStem: main)) == .stem(stem))

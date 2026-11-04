@@ -84,33 +84,11 @@ enum ObjectFeatureBadges {
     /// of the current model, computed once per model change. O(the object's own plugins): it never
     /// looks at another object, nor into a group's children.
     static func badges(for object: SoundObject, sidechainSources: Set<UUID>) -> [FeatureBadge] {
-        var fx = false
-        var link = false
-        var reception = false
-
-        /// `trunk`: the object's own chain (the only root FX is read from).
-        /// `inBin`: below an FX link bin's block.
-        func walk(_ chain: [ObjectPlugin], trunk: Bool, inBin: Bool) {
-            for p in chain {
-                if p.isChainMarker { continue }                  // the place of a send, not a plugin
-                if let rack = p.rack {
-                    for voice in rack.voices { walk(voice, trunk: trunk, inBin: inBin) }
-                    continue
-                }
-                if let block = p.fxBlock {
-                    if trunk { link = true }
-                    walk(block.plugins, trunk: trunk, inBin: true)
-                    continue
-                }
-                // A leaf.
-                if p.sidechain != nil { reception = true }
-                guard trunk, !inBin else { continue }
-                if !p.isGainStage { fx = true }
-            }
-        }
-        walk(object.plugins, trunk: true, inBin: false)
-        walk(object.instruments, trunk: false, inBin: false)
-        for send in object.sends { walk(send.plugins, trunk: false, inBin: false) }
+        var flags = ChainFlags()
+        walk(object.plugins, trunk: true, inBin: false, into: &flags)
+        walk(object.instruments, trunk: false, inBin: false, into: &flags)
+        for send in object.sends { walk(send.plugins, trunk: false, inBin: false, into: &flags) }
+        let fx = flags.fx, link = flags.link, reception = flags.reception
 
         var out: [FeatureBadge] = []
         if fx { out.append(.fx) }
@@ -119,6 +97,47 @@ enum ObjectFeatureBadges {
         if sidechainSources.contains(object.id) { out.append(.sidechainSend) }
         if reception { out.append(.sidechainReception) }
         if object.automation.contains(where: { !$0.points.isEmpty }) { out.append(.automation) }
+        return out
+    }
+
+    /// What a walk of a plugin chain found: the three badges a CHAIN can carry by itself (the others read the object).
+    private struct ChainFlags {
+        var fx = false
+        var link = false
+        var reception = false
+    }
+
+    /// `trunk`: the chain is the owner's own trunk (the only root FX is read from). `inBin`: below an FX link bin's block.
+    private static func walk(_ chain: [ObjectPlugin], trunk: Bool, inBin: Bool, into flags: inout ChainFlags) {
+        for p in chain {
+            if p.isChainMarker { continue }                  // the place of a send, not a plugin
+            if let rack = p.rack {
+                for voice in rack.voices { walk(voice, trunk: trunk, inBin: inBin, into: &flags) }
+                continue
+            }
+            if let block = p.fxBlock {
+                if trunk { flags.link = true }
+                walk(block.plugins, trunk: trunk, inBin: true, into: &flags)
+                continue
+            }
+            // A leaf.
+            if p.sidechain != nil { flags.reception = true }
+            guard trunk, !inBin else { continue }
+            if !p.isGainStage { flags.fx = true }
+        }
+    }
+
+    /// The badges of an INPUT's chain (a card input's FX, or a MIDI input's instrument then FX): the same walk as an
+    /// object's trunk, the same rules (gain stages are not FX, a bin is the link), and nothing else — an input has no sends
+    /// and no automation, and is nobody's key. The instruments are not FX: a lone instrument has no badge.
+    static func badges(forInputChain plugins: [ObjectPlugin], instruments: [ObjectPlugin] = []) -> [FeatureBadge] {
+        var flags = ChainFlags()
+        walk(plugins, trunk: true, inBin: false, into: &flags)
+        walk(instruments, trunk: false, inBin: false, into: &flags)
+        var out: [FeatureBadge] = []
+        if flags.fx { out.append(.fx) }
+        if flags.link { out.append(.fxLink) }
+        if flags.reception { out.append(.sidechainReception) }
         return out
     }
 

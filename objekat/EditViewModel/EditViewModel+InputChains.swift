@@ -156,6 +156,49 @@ extension EditViewModel {
         syncInputChains()
     }
 
+    // MARK: The popup of an input's rectangle
+
+    /// The host of the strip `source` stands for, made (empty) if it had none; nil for a MIDI input that is not listed.
+    private func inputStripHost(_ source: RecordSource) -> UUID? {
+        switch source {
+        case .audio(let ref):
+            return ensureAudioInputHost(ref)
+        case .midi(let ref):
+            return MidiInputResolver.resolve(ref, in: midiInputs).map { ensureMidiInputHost($0) }
+        }
+    }
+
+    /// Runs on every change of `openInputStrip`: the chain behind the popup that closes is let go (unmounted unless it is
+    /// heard), the one behind the popup that opens is held mounted for as long as it is open. The one door — a click, a
+    /// script (`input.strip`), a tab switch and the panel's disappearance all come through the property.
+    func syncOpenInputStripHost() {
+        let wanted = openInputStrip.flatMap { inputStripHost($0) }
+        if let old = openInputStripHost, old != wanted { closeInputHost(old) }
+        openInputStripHost = wanted
+        if let wanted { openInputHost(wanted) }
+    }
+
+    /// A click on an input's rectangle: opens its popup, closes it, or leaves it (@see InputStripClick).
+    func applyInputStripClick(_ source: RecordSource, shift: Bool, command: Bool) {
+        openInputStrip = InputStripClick.popupAfter(
+            open: openInputStrip, clicked: source,
+            action: InputStripClick.popupAction(shift: shift, command: command))
+    }
+
+    /// The badges an input's rectangle carries after its name (@see ObjectFeatureBadges): the FX of a card input; the
+    /// instrument's FX of a MIDI input (a lone instrument has none).
+    func inputStripBadges(_ source: RecordSource) -> [FeatureBadge] {
+        switch source {
+        case .audio(let ref):
+            return ObjectFeatureBadges.badges(forInputChain: inputChains.audio[ref.key]?.plugins ?? [])
+        case .midi(let ref):
+            guard let device = MidiInputResolver.resolve(ref, in: midiInputs),
+                  let chain = midiChainKey(for: device).flatMap({ inputChains.midi[$0] }) else { return [] }
+            return ObjectFeatureBadges.badges(forInputChain: chain.plugins,
+                                              instruments: chain.instrument.map { [$0] } ?? [])
+        }
+    }
+
     // MARK: Mounting
 
     /// Brings the engine in line with what is wanted: mounts the chains that are heard or open, unmounts the others,

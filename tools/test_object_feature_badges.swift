@@ -6,6 +6,7 @@
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
 //         ../objekat/SoundObject/RecordInputs.swift \
+//         ../objekat/SoundObject/InputChains.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \
@@ -242,6 +243,23 @@ enum ObjectFeatureBadgesTest {
         check("map: a stem's key makes its source an object's badge",
               ObjectFeatureBadges.badgeMap(items: [plain], stems: [stem(plugins: [plugin(key: plain.id)])])[plain.id]
                 == [.sidechainSend])
+
+        // MARK: - An input's chain (the inputs panel)
+
+        func chainBadges(_ plugins: [ObjectPlugin], _ instruments: [ObjectPlugin] = []) -> [FeatureBadge] {
+            ObjectFeatureBadges.badges(forInputChain: plugins, instruments: instruments)
+        }
+        check("input: an empty chain carries nothing", chainBadges([]).isEmpty)
+        check("input: a LONE instrument has no badge", chainBadges([], [builtIn("dls")]).isEmpty)
+        check("input: one FX → FX", chainBadges([plugin()]) == [.fx])
+        check("input: instrument + FX → FX only", chainBadges([plugin()], [builtIn("dls")]) == [.fx])
+        check("input: a gain stage is not FX", chainBadges([gain()]).isEmpty)
+        let inLink = UUID()
+        check("input: a bin → link, and what is in it is not FX",
+              chainBadges([block(linkID: inLink, instances: [plugin(linkGroupID: inLink)])]) == [.fxLink])
+        check("input: a keyed FX → reception too", chainBadges([plugin(key: UUID())]) == [.fx, .sidechainReception])
+        check("input: the same answer as an object's trunk",
+              chainBadges([plugin(), gain()]) == badges(clip(plugins: [plugin(), gain()])))
 
         print("")
         if fails.isEmpty {

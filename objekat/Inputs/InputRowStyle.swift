@@ -1,45 +1,25 @@
 import SwiftUI
 
-/// The look of a row of the Inputs tab, in one place: the lists' own (the sound list's, the Finder's) — a
-/// quiet row, a thin line under each, a faint accent for the selection — a little taller than the object
-/// list's because a level meter lives on a second line. The constants and the chrome are shared so that a
-/// sibling list (the MIDI inputs, later) wears exactly the same rows.
+/// The measures of the Inputs tab's content, in one place: the input rectangles (@see InputStrip, `StripStyle` for their
+/// look) and the greyed rows of the chains whose input is not there. The rectangles are the stems' strips; what is shared
+/// here is the number column (so that the name starts at the same x on every one — « 13-14 » is the longest key a 16-channel
+/// card makes) and the fonts.
 enum InputRowStyle {
+    /// The list's margin: the rectangles sit this far from the panel's edges.
     static let horizontalPadding: CGFloat = 8
-    static let verticalPadding: CGFloat = 6
-    /// Between the row's controls line and its meter line.
-    static let lineSpacing: CGFloat = 4
-    static let minHeight: CGFloat = 34
+    /// Between two rectangles.
+    static let stripSpacing: CGFloat = 4
+    /// Between the controls line and the meter line inside a rectangle.
+    static let lineSpacing: CGFloat = 3
     /// Between the controls of the first line.
-    static let controlSpacing: CGFloat = 8
-    /// The input's number: a fixed column, so that the name — and the meter under it — start at the same x
-    /// on every row (« 13-14 » is the longest key a 16-channel card makes).
-    static let numberWidth: CGFloat = 32
-
-    /// The meter's width, as a fraction of the PANEL's width (not the row's).
-    static let meterWidthFraction: CGFloat = 0.4
-    /// The meter starts under the name: after the number and the gap.
+    static let controlSpacing: CGFloat = 6
+    /// The input's number (or the keys glyph): a fixed column.
+    static let numberWidth: CGFloat = 30
+    /// Where the second line starts: under the name.
     static var meterLeading: CGFloat { numberWidth + controlSpacing }
 
     /// The name: the lists' size, regular weight.
     static let nameFont: Font = .system(size: 11)
     /// The number: small, monospaced, quiet.
     static let numberFont: Font = .system(size: 10, design: .monospaced)
-
-    /// The selected row's ground: the accent, faint.
-    static let selectionFill = Color.accentColor.opacity(0.12)
-}
-
-extension View {
-    /// The row's chrome: its padding, its minimum height, the selection ground, and the line under it.
-    func inputRowChrome(isSelected: Bool) -> some View {
-        VStack(spacing: 0) {
-            self
-                .padding(.horizontal, InputRowStyle.horizontalPadding)
-                .padding(.vertical, InputRowStyle.verticalPadding)
-                .frame(minHeight: InputRowStyle.minHeight)
-                .background(isSelected ? InputRowStyle.selectionFill : Color.clear)
-            Divider()
-        }
-    }
 }

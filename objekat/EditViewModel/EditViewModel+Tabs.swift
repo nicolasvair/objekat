@@ -204,6 +204,7 @@ extension EditViewModel {
         selectedMidiInputs = []
         openStemPopoverID = nil
         renamingStemID = nil
+        openInputStrip = nil
     }
 
     func clearObjectBoundTransientState() {

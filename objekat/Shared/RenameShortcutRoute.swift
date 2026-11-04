@@ -14,10 +14,12 @@ import Foundation
 //     that selection lives in THAT stem's chain (the popover is another window: a selection left in an
 //     object's chain, behind it, is not what the hand is looking at);
 //  2. the stem whose popover is open — the Main has no name of its own, so the answer is « nothing »;
-//  3. the Inputs list, when it holds the keyboard (@see KeyboardClaim, `.inputs`): exactly ONE selected row is
+//  3. the input whose popup is open (the rectangle's popup, @see InputStrip): an AUDIO input is renamed in the popup's
+//     header, a MIDI input has no name of its own — the answer is « nothing », like the Main's;
+//  4. the Inputs list, when it holds the keyboard (@see KeyboardClaim, `.inputs`): exactly ONE selected row is
 //     renamed; none or several: nothing, WITHOUT falling back on the timeline's object;
-//  4. the one selected object of the timeline;
-//  5. the one selected marker / region / comment.
+//  5. the one selected object of the timeline;
+//  6. the one selected marker / region / comment.
 
 enum RenameShortcutRoute {
 
@@ -43,6 +45,12 @@ enum RenameShortcutRoute {
         var openStem: UUID? = nil
         /// The Main's id: its popover has nothing to rename.
         var mainStem: UUID? = nil
+        /// An input's popup is open (an audio or a MIDI one).
+        var inputPopupOpen: Bool = false
+        /// The audio input whose popup is open; nil for a MIDI one (nothing to rename) or no popup.
+        var openInput: Input? = nil
+        /// The host of the open input popup (its chain's id): a bin selected in THAT chain is the popup's own.
+        var openInputHost: UUID? = nil
         /// `KeyboardClaim.owner == .inputs`.
         var inputsHoldKeyboard: Bool = false
         var selectedInputs: [Input] = []
@@ -57,12 +65,17 @@ enum RenameShortcutRoute {
             if let stem = s.openStem {
                 if s.fxLinkHost == stem { return .fxLink(link) }
                 // Another host's selection, behind the popover: not what ⌘R is aimed at; the popover is.
+            } else if s.inputPopupOpen {
+                if s.fxLinkHost != nil && s.fxLinkHost == s.openInputHost { return .fxLink(link) }
             } else {
                 return .fxLink(link)
             }
         }
         if let stem = s.openStem {
             return stem == s.mainStem ? .none : .stem(stem)
+        }
+        if s.inputPopupOpen {
+            return s.openInput.map { .input($0) } ?? .none
         }
         if s.inputsHoldKeyboard {
             return s.selectedInputs.count == 1 ? .input(s.selectedInputs[0]) : .none

@@ -461,24 +461,13 @@ private struct StemStripButton: View {
     private var tint: Color { stem.color }
 
     /// The horizontal margin of the strip's content. The VU dot therefore touches that edge.
-    private static let hPadding: CGFloat = 7
+    private static let hPadding: CGFloat = StripStyle.hPadding
     /// The clip LED deliberately overflows the VU dot: an alert has to be seen.
     private static let clipDotDiameter: CGFloat = 11
 
     /// The VU dot's legend — the thresholds are those of `StemVuDot.color`. The same for the Main
     /// and for the other buses: it is the same scale, and the same LED to acknowledge.
     private static var vuScaleHelp: String { L("stem.vu.scaleHelp") }
-
-    // Pulled out of `body`: a border that used to be computed inline, folding a drag-reorder
-    // state into an already three-way ternary, pushed the type-checker over its time budget.
-    private var borderColor: Color {
-        if isBeingDragged || isDropTarget || isOpen { return Color.accentColor }
-        return tint.opacity(0.55)
-    }
-    private var borderWidth: CGFloat {
-        if isBeingDragged || isDropTarget { return 2 }
-        return isOpen ? 1.5 : 1
-    }
 
     @ViewBuilder
     private var nameRow: some View {
@@ -516,14 +505,7 @@ private struct StemStripButton: View {
     var body: some View {
         nameRow
             .opacity(stem.muted ? 0.5 : 1)
-            .padding(.horizontal, Self.hPadding).padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6)
-                // Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same
-                // level of translucency on a dark background, the colour no longer collapses towards
-                // black and stays recognisable as the same hue as in the timeline.
-                .fill(tint.opacity(isOpen ? 0.55 : 0.30)))
-            .overlay(RoundedRectangle(cornerRadius: 6)
-                .strokeBorder(borderColor, lineWidth: borderWidth))
+            .stripChrome(tint: tint, isOpen: isOpen, isDropTarget: isDropTarget, isBeingDragged: isBeingDragged)
             .opacity(isBeingDragged ? 0.6 : 1)
             .contentShape(Rectangle())
             .onTapGesture(perform: action)
