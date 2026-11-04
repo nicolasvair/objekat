@@ -2922,9 +2922,8 @@ What has landed since mid-August, in order:
   `editorDidClose(plugin:)`); unmounting captures the live states into the model first. Trap: the engine's Edit outlives
   the project, so `_monitoredMidiInputs` survives `project.new` — `setInputChains` (the load door, also called by a new
   project) switches every MIDI monitor off. Render clones are stripped of the hidden tracks
-  (`stripHiddenTracksFromRenderCopy:`). UI: `Inputs/InputFXButton.swift` (the « FX » popover on a card row and the
-  instrument button of a MIDI row), `Inspector/Synoptic/PluginPickerSheet.swift` (picker extracted from the synoptic),
-  greyed rows for absent inputs. (3) **A zone CREATED from an input inherits a COPY** (`inheritedChain(for:)`,
+  (`stripHiddenTracksFromRenderCopy:`). UI (replaced by the strips of 3 November 2026, see below): `Inspector/Synoptic/PluginPickerSheet.swift` (picker extracted from the synoptic),
+  greyed strips for absent inputs. (3) **A zone CREATED from an input inherits a COPY** (`inheritedChain(for:)`,
   `dropRecordSources` `.create`; `rec.drop` answers `inherited`); `.assign` never touches a zone. Tests:
   `tools/scenario_input_chains.py` (80: engine I1-I6, model M1-M6, inheritance H1-H6),
   `tools/test_input_chains_codable.swift` 12, `scenario_group_instrument_doors.py` 87, `scenario_group_ui.py` 17,
@@ -2935,6 +2934,21 @@ What has landed since mid-August, in order:
   window kept alive by `holdInputHost` while its popover closes. The engine commit `f0648743dc2` (branch
   `objekat-group-midi-0049`, patch `engine-patches/3.5/0049-...`) is NOT published on the fork and `main`'s gitlink
   points at it: publishing is a push the user must validate.
+  **Inputs panel as rectangles (3 November 2026, lot A, `main`, no engine patch, format 36 unchanged, nothing pushed).**
+  Commits `924fc866`..`ad7ceded` + docs; record in `docs/plan_groupes_midi.md` ("Lot A"). (1) A MIDI input's chain is
+  [instrument, FX]: `MidiInputChain.plugins` (optional key), same compile, `fx_count`. (2) Every input is a STRIP like a
+  stem's (`Shared/StripStyle.swift`, `Inputs/InputStrip.swift`, `InputStripClick` pure): a click opens ONE popup
+  (`openInputStrip`, closed with the tab or the panel) with the synoptic of its chain, the chain held mounted meanwhile;
+  `input.strip`. `InputFXButton` is gone; `InputsPanelView.enableBar` stays (lot D). (3) **Drop rule**: a chain is COPIED only
+  when an input is dragged and dropped (new zone, or a group ENTIRELY empty: `RecordDropInheritance`,
+  `giveInheritedChain`); recording and the synoptic's source menu copy nothing. (4) **Instrument drag** out of the popup: move
+  by default, ⌥ copy, moving cuts the input's listening (`takeInstrumentOffInput`); refused on a stem, an audio clip/group,
+  an audio input; `instrumentRefusal(on:)` is the SILENT read for cursors, `refusesInstrument(on:)` the loud one. (5) Drops of
+  plugins on a strip: `Shared/PluginStripDropDelegate.swift` (shared with the stems; `inputHostDropRefusal`: recording, absent
+  input, FX link bin). (6) MIDI listening level: an ObjGain after the chain remembered by identity (`_midiListenGain`),
+  `input.set_monitor_gain {midi}`, not saved. Tests: `scenario_input_chains.py` 146, `test_input_strip_click` 9,
+  `test_object_feature_badges` 62, `test_rename_shortcut_route` 31. **Not seen on screen**: every pixel of the strips, the popup and
+  the drags.
   **Inputs on AirPods are refused, not opened** (29 October 2026, lot D). AirPods are TWO CoreAudio devices with
   one name (speaker = output only, microphone = input only); `openAudioInputs` named the output's name as the
   input, JUCE built an `AudioIODeviceCombiner`, the switch to the call profile made CoreAudio republish both

@@ -2376,8 +2376,9 @@ undo). These are the doors of the drop, the assignment, the arming and the recor
 * `input.selection` — the selected inputs, in the tab's order (stereo first). Read-only.
 
 **Input chains (FX on a card input, an instrument on a MIDI input).** An input can carry a chain of its own: FX for a
-card input (`inputChains.audio`, keyed like the names, "3" or "1-2"), ONE instrument for a MIDI input
-(`inputChains.midi`, by device id, found again by name when the id changes). They belong to the PROJECT (optional key of
+card input (`inputChains.audio`, keyed like the names, "3" or "1-2"), ONE instrument for a MIDI input,
+plus the audio FX BEHIND it (`inputChains.midi`, by device id, found again by name when the id changes; the FX list is the
+optional key `plugins` of a MIDI chain, no format bump: a chain saved without it opens with none). They belong to the PROJECT (optional key of
 format 36, in the undo, parked and restored with a tab) and colour what is HEARD of the input: **a recording is taken
 from the device, before any chain** — the file is the same with or without them. A chain is addressed by a `host_id`
 (a uuid, stable as long as the chain exists), so `plugin.list` / `plugin.add` / `plugin.remove` / `plugin.set_param`... take
@@ -2390,23 +2391,45 @@ dormant.
   chain is not written to the file). `open: true` (the default) mounts it and holds it mounted; `open: false` lets it go
   (unmounted again unless the input is heard; the plugin states are kept). Answers `{host_id, kind: "audio" | "midi",
   mounted, live, plugins, instrument}`. `plugin.add` or any `plugin.*` edit on an audio host opens it too, and it stays open until
-  `input.host {open: false}`. A MIDI host has no FX list: `plugin.list` shows its `instruments`, and the instrument is set
-  with `input.set_instrument`. `plugin.list` of an input host carries `is_input_host`.
-* `input.set_instrument {midi, identifier|name, format?}` — puts an instrument on a MIDI input (replacing any). `bad_params`
+  `input.host {open: false}`. A MIDI host carries the instrument AND the FX behind it (order [instrument, FX], proved by measure):
+  `plugin.list` shows its `instruments` and its FX, the instrument is set with `input.set_instrument` or dropped
+  (`plugin.drop`), the FX go through `plugin.add` / `plugin.drop` like any host's. `fx_count` is in the answer. `plugin.list` of an input host carries `is_input_host`.
+* `input.set_instrument {midi, identifier|name, format?}` — puts an instrument on a MIDI input (replacing any; the FX behind it stay). `bad_params`
   for a plugin that is not an instrument. One undo point. Answers `midi_inputs` like `input.list.midi_inputs`.
-* `input.remove_instrument {midi}` — takes it off; the input stops being heard. One undo point, none without one.
+* `input.remove_instrument {midi}` — takes it off; the input stops being heard (its FX stay in the chain). One undo point, none without one.
 * `input.monitor {midi, on}` — hears a MIDI input through its instrument (the card form is above). `invalid_state` without
   an instrument. Not saved, not in the undo; ends with a new project or an opening.
 * `input.list` — `record_inputs[]` gain `host_id` (null without a chain) and `fx_count`. `input.list.midi_inputs` —
   `{midi_inputs, zones, dormant_chains}`: `midi_inputs[]` is `{id, name, virtual, enabled, computer_keyboard, heard, instrument,
   host_id}` per device (`computer_keyboard` is true for the computer keyboard's input, listed second after "All MIDI Ins";
-  `instrument` is the plugin's name or null; `heard` is true only while monitored AND an instrument is there),
+  `instrument` is the plugin's name or null; `heard` is true only while monitored AND an instrument is there; `fx_count` the
+  FX behind it; `monitor_gain_db` its listening level),
   `zones` the MIDI recording zones, `dormant_chains` the chains whose device is not there (`host_id`, `midi_input`,
   `instrument`).
-* `rec.drop` — a zone CREATED from an input that carries FX (card input) or an instrument (MIDI input) starts with an
-  independent copy of it: new ids, the live state (the model's when the chain is not mounted), no parameter link, a FX link
-  bin flattened to its plugins. The answer says so in `inherited` `{fx, instrument}`; absent when nothing was taken. A zone that
-  already exists (`outcome: "assign"`) is never touched. The input itself is unchanged.
+* `rec.drop` — **the drop rule (3 November 2026)**: a chain is COPIED only by the gesture of dragging an input and dropping
+  it, never by recording and never by the synoptic's source menu. A zone CREATED from an input that carries FX (card input) or
+  an instrument and the FX behind it (MIDI input) starts with an independent copy of it: new ids, the live state (the model's
+  when the chain is not mounted), no parameter link, a FX link bin flattened to its plugins. An EXISTING group that is
+  ENTIRELY empty (no child, no instrument, no FX, no send) takes the copy too (`outcome: "assign"`, the source is set AND the
+  chain copied); a group that holds anything keeps its chain and only its source changes. `assign_source` (the menu) copies
+  nothing. The answer says so in `inherited` `{fx, instrument}`; absent when nothing was taken. The input itself is unchanged.
+  The copy is worked out before the undo point, so a re-drop of the same source on a still-empty group copies again.
+* `input.strip {first, count?|midi, open?}` — the RECTANGLES of the Inputs tab and their popup. With an input and `open` true
+  (default) opens that input's popup as a click on its rectangle does (the chain is held mounted while it is open, a popup
+  open elsewhere closes); `open: false` closes it; no input: only reads. Answers `open` (the open popup's input or null),
+  `host_id`, `mounted` and `strips` `[{kind, first/count or id, name, selected, open, badges}]` (`badges` are the sound
+  list's: fx, fxLink, sidechainReception; a lone instrument has none). `invalid_state` for a card input the tab does not
+  list. Not saved, outside the undo.
+* **Dragging an instrument (3 November 2026).** `plugin.drop` / `plugin.drop_at` with an instrument from a MIDI input's host:
+  it MOVES by default and COPIES with `mode: copy` (⌥). It goes to a MIDI clip, a group the rule allows (`GroupInstrumentRule`),
+  or another MIDI input (it replaces that one's instrument, its FX stay). Moving it off an input also cuts that input's
+  listening (`takeInstrumentOffInput`). Refused: onto a stem / bus, an audio clip, an audio group, an audio input, the same
+  host; and always `an input's chain does not change during a recording`, `this input is not on the card now`, `this MIDI
+  input is not here now`. Drops of plugins on an input's rectangle go through the same door (`PluginStripDropDelegate`, shared
+  by the stems and the inputs, which refuses an input being dragged); `dry_run` and `outcome` carry the reason.
+* `input.set_monitor_gain {midi, db}` — the same listening level for a MIDI input: an ObjGain after its instrument and its
+  FX (the "listening" gain is remembered by identity, the user's gain stages are ObjGains too). −24…+24 dB, hearing only,
+  NOT saved. `monitor_gain_db` in `input.list.midi_inputs`.
 * `debug.input_host {op, ...}` (DEBUG builds) drives the ENGINE's input chains directly (register / unregister / live /
   add_plugin / set_instrument / remove_instrument / level reads), without the model, the undo or the file — it is what
   `tools/scenario_input_chains.py` uses for the engine-level cases. `debug.transport_loop {start, end, enabled?}`

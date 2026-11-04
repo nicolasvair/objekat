@@ -1028,11 +1028,29 @@ reinstantiates them.
 The engine's Edit outlives the project, so session state it holds (which MIDI inputs are heard) is cleared by the
 load door (`setInputChains`), not left to the next project.
 
-### Decision: a zone created from an input inherits a COPY; an existing zone is never touched
+### Decision: a chain is COPIED by the drag-and-drop of an input, nowhere else
 
-Dropping an input on empty room makes a zone with an independent copy of the input's FX or instrument (new ids, live state
-or the model's, no parameter link, a FX link bin flattened). Dropping it on an existing zone only assigns the source.
+Dropping an input on empty room makes a zone with an independent copy of the input's FX or instrument and the FX behind it
+(new ids, live state or the model's, no parameter link, a FX link bin flattened). Dropping it on an existing group copies
+only when the group is ENTIRELY empty (no child, no instrument, no FX, no send: `RecordDropInheritance`, pure); a group that
+holds anything keeps its chain and only its source changes. Choosing the source in the synoptic's menu copies nothing, and
+recording never does. One function (`giveInheritedChain`) serves both cases, worked out before the undo point.
 Changing one side afterwards leaves the other alone: the input is the model of a setup, the zone is a take of it.
+
+### Decision: a MIDI input's chain is [instrument, FX]; no engine patch
+
+The FX behind an instrument are `MidiInputChain.plugins` (optional key of format 36, read leniently), mounted by the same
+compile after the instrument; the order was proved by measure (scenario M7) so no patch was needed. The instrument is read by
+HOST (`chainPlugins` / the instrument slot), so the synoptic, the editors and the drop doors see an input like a stem.
+Moving the instrument off an input cuts its listening. The MIDI listening level is an ObjGain after the chain, remembered by
+identity, not saved.
+
+### Decision: inputs are rectangles like the stems, one popup at a time
+
+The Inputs tab draws every input as a strip sharing `StripStyle` with the stem strips; the old « FX » button and instrument
+button are gone. A click opens a popup (`openInputStrip`, one at a time, closed with the tab) holding the synoptic of the
+chain; the open chain is held mounted (lazy mounting is unchanged). `PluginStripDropDelegate` is the one drop delegate of the
+stems and the inputs. `InputsPanelView.enableBar` is kept (lot D).
 
 ### Decision: the computer keyboard is a real MIDI input, created once; the MODE only decides who feeds it
 

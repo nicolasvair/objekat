@@ -296,6 +296,20 @@ Test : `scenario_group_instrument_doors.py` (D1-D16).
 - API : `rec.drop` répond `inherited` {fx, instrument} pour une zone créée qui a pris quelque chose (`EditViewModel.lastDropInheritance`, remis à zéro à chaque dépôt, lu par la commande) ; absent sinon.
 - Tests : `scenario_input_chains.py` H1-H6 (80 assertions en tout), plus `scenario_record_multi_drop` (43) et `scenario_record_zones` (85) relancés puisque le chemin `rec.drop` a changé : verts.
 
+### Lot A (2026-11-03) : panneau Entrées en rectangles
+
+Sept commits sur `main`, rien poussé, pas de patch moteur, format 36 inchangé (`inputChains.midi.plugins` est une clé optionnelle). Ils REMPLACENT l'interface décrite en E10 (bouton « FX », bouton d'instrument) :
+
+- `924fc866` (1) FX derrière l'instrument d'une entrée MIDI : `MidiInputChain.plugins`, ordre [instrument, FX] prouvé par mesure (M7), `fx_count`.
+- `c8634f03` (2) emplacement d'instrument lu par hôte, le synoptique le montre.
+- `7255300a` (3) règle du dépôt : on copie la chaîne seulement en glissant-déposant (zone neuve, ou groupe ENTIÈREMENT vide) ; jamais à l'enregistrement ni par le menu de source (`RecordDropInheritance`, `giveInheritedChain`).
+- `a7019e8a` (4) rectangles : `Shared/StripStyle.swift`, `Inputs/InputStrip.swift` (+ `InputStripClick`, pur), popup à synoptique 300 x 360, `openInputStrip` ; `InputFXButton` supprimé, `enableBar` gardé ; commande `input.strip`.
+- `874c49c2` (5) glisser l'instrument hors du popup : déplace par défaut, ⌥ copie ; déplacer coupe l'écoute ; refusé sur stem / groupe audio / clip audio (`instrumentRefusal(on:)` silencieux).
+- `2da39282` (6) dépôts sur les rectangles : `PluginStripDropDelegate` partagé avec les stems, refus (enregistrement, entrée absente, bac FX link, instrument sur audio).
+- `ad7ceded` (7) niveau d'écoute d'une entrée MIDI : ObjGain après la chaîne (`syncMidiListenGainOfHost`), `input.set_monitor_gain {midi}`, non sauvé. Commit à part, retirable seul.
+
+Tests : `scenario_input_chains.py` 146 (M7-M12, H1-H10), `test_input_strip_click` 9, `test_object_feature_badges` 62, `test_rename_shortcut_route` 31. **Non vu à l'écran** : aucun pixel des rectangles, du popup ni des glissers (headless seulement). Points antérieurs signalés, non corrigés : `widthFlow`, `plugin.toggle`.
+
 ### E12. Docs et clôture
 
 - `OBJEKAT - claude project/docs/command_api.md`, `glossary.md` (clip vide, instrument de groupe, chaîne d'entrée), `architecture_decisions.md`.
@@ -423,6 +437,7 @@ Note : `scenario_record` avait 1 échec lié à `Settings.xml` réécrit par une
 ## Reprise (état au 2026-10-30, à lire en premier dans une nouvelle session)
 
 - E0 à E12 FAITES et commitées en local sur `main` (`7f1a9640` à `335d766e`). RIEN n'est poussé.
+- Lot A (2026-11-03) : panneau Entrées en rectangles, `924fc866` à `ad7ceded` + docs, voir « Lot A » plus haut. Le lot D modifiera `InputsPanelView.enableBar`.
 - Le gitlink de `main` pointe sur `f0648743dc2` (patch 0049, branche locale `objekat-group-midi-0049` de
   `tracktion_engine/`), NON publié sur le fork. Pousser le fork et `main` attend l'accord de l'utilisateur.
 - Campagne de non-régression TERMINÉE le 2026-10-30 au soir sur la build de `335d766e`, verte : `scenario_record` 544,
