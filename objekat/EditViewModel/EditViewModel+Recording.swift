@@ -242,6 +242,8 @@ extension EditViewModel {
         recordingDoneSpans = [:]
         recordingSeenLaps = 0
         recordingPassStart = startTime
+        recordingLive = Dictionary(uniqueKeysWithValues: zones.map { ($0.id, RecordLiveCapture()) })
+        recordingLiveRevision = 0
         isRecording = true
         startRecordingTimer()
         return nil
@@ -296,9 +298,9 @@ extension EditViewModel {
 
     // MARK: The laps of a recording through a loop
 
-    /// The tick's period: a lap lasts at least `RecordLoopPlanner.minimumLoopLength` (250 ms), and the ghost it leaves
-    /// only has to appear within a few frames.
-    static let recordingTickInterval: TimeInterval = 0.1
+    /// The tick's period: 30 Hz. A lap lasts at least `RecordLoopPlanner.minimumLoopLength` (250 ms) and the ghost it leaves
+    /// only has to appear within a few frames; the picture of the take (notes, loudness) is what asks for the rate.
+    static let recordingTickInterval: TimeInterval = 1.0 / 30.0
 
     /// Starts the recording's tick (@see `recordingTick`). `.common`: it goes on while a menu is open or a mouse button is
     /// held. Stopped by `completeRecording`, the one door every recording ends through.
@@ -311,35 +313,104 @@ extension EditViewModel {
         recordingTimer = timer
     }
 
-    /// One reading of the engine's journal while a recording runs. When the head has jumped back (a lap), each finished
-    /// pass that crossed a zone's window pushes the zone's previous takes ONE more lane down and leaves a ghost of itself
-    /// on the lane it will have at the stop (@see `RecordProgress`): the final layout, built as it grows. Only the zones
-    /// `beginRecording` already pushed down are touched — the undo point that covers them is that one; a zone the head could
-    /// not reach at the press, or with nothing to push, is left alone. The model changes are not undo points (undo is
-    /// refused while recording) and `completeRecording` moves the children by the DIFFERENCE with what it finds, so a lap
-    /// this tick missed costs a lane that is wrong for a moment and never at the end.
+    /// The device a zone listens to, for the live capture (nil: an audio zone, or a MIDI input that is not there).
+    private func liveMidiDevice(of zone: RecordingZone) -> String? {
+        guard case .midi(let ref) = zone.source else { return nil }
+        return resolvedMidiInput(ref)?.id
+    }
+
+    /// One reading of the engine while a recording runs, in two parts.
+    ///
+    /// THE LAPS. When the head has jumped back (a lap), each finished pass that crossed a zone's window pushes the zone's
+    /// previous takes ONE more lane down and leaves a ghost of itself on the lane it will have at the stop (@see
+    /// `RecordProgress`): the final layout, built as it grows. Only the zones `beginRecording` already pushed down are
+    /// touched — the undo point that covers them is that one; a zone the head could not reach at the press, or with
+    /// nothing to push, is left alone. The model changes are not undo points (undo is refused while recording) and
+    /// `completeRecording` moves the children by the DIFFERENCE with what it finds, so a lap this tick missed costs a
+    /// lane that is wrong for a moment and never at the end.
+    ///
+    /// THE PICTURE (L11). The notes played since the last tick and the loudness of the audio inputs are drained from the
+    /// engine and handed to each zone's `RecordLiveCapture`, dated from the head. A drain that straddles a lap is split
+    /// around the jump (the notes played before it belong to the pass that ended). The capture of a pass that left a ghost
+    /// goes with it (`newPass(keep: true)`), the others are forgotten. None of it reaches the recording.
     func recordingTick() {
-        guard isRecording, let pass = engine?.recordPassNow(),
-              let laps = pass["laps"]?.intValue, let currentStart = pass["start"]?.doubleValue else { return }
-        defer { recordingPassStart = currentStart }
-        guard laps > recordingSeenLaps else { return }
-        // The pass that just ended began at the last tick's pass start; the ones after it (several laps in one tick)
-        // began at the loop's start, which is where the current pass began.
-        let loopEnd = loopRegion?.upperBound
-        for lap in recordingSeenLaps..<laps {
-            let began = lap == recordingSeenLaps ? (recordingPassStart ?? currentStart) : currentStart
-            guard let ended = loopEnd, ended > began else { continue }
-            for zone in recordingZones where recordingMuteLog.laneShiftByZone[zone.id] != nil {
-                guard let group = find(id: zone.id), case .group = group.kind else { continue }
-                let window = recordWindow(of: group)
-                guard let span = RecordProgress.span(recordStart: began, head: ended,
-                                                     windowStart: window.start, windowEnd: window.end) else { continue }
-                shiftChildLanes(of: zone.id, by: 1)
-                recordingMuteLog.laneShiftByZone[zone.id, default: 0] += 1
-                recordingDoneSpans[zone.id, default: []].append(span)
+        guard isRecording, let engine else { return }
+        let head = engine.currentPlaybackPosition()
+
+        var eventsByDevice: [String: [RecordLiveCapture.Event]] = [:]
+        for (device, list) in engine.drainLiveRecordMidi() {
+            eventsByDevice[device] = list.map {
+                RecordLiveCapture.Event(pitch: $0["pitch"]?.intValue ?? 0, velocity: $0["velocity"]?.intValue ?? 0,
+                                        on: $0["on"]?.boolValue ?? false,
+                                        ageSeconds: ($0["age_ms"]?.doubleValue ?? 0) / 1000)
             }
         }
-        recordingSeenLaps = laps
+        let peaks = engine.audioInputRecordPeaksDb().map { $0.floatValue }
+
+        if let pass = engine.recordPassNow(),
+           let laps = pass["laps"]?.intValue, let currentStart = pass["start"]?.doubleValue {
+            if laps > recordingSeenLaps {
+                // The pass that just ended began at the last tick's pass start; the ones after it (several laps in one tick)
+                // began at the loop's start, which is where the current pass began.
+                let loopEnd = loopRegion?.upperBound
+                if let ended = loopEnd {
+                    // What was played before the jump belongs to the pass that ended; dated from the loop's end.
+                    let sinceJump = max(0, head - currentStart)
+                    for (device, events) in eventsByDevice {
+                        let (before, after) = RecordLiveCapture.split(events: events, sinceJump: sinceJump)
+                        eventsByDevice[device] = after
+                        guard !before.isEmpty else { continue }
+                        for z in recordingZones where liveMidiDevice(of: z) == device {
+                            recordingLive[z.id]?.ingest(events: before, head: ended)
+                        }
+                    }
+                }
+                for lap in recordingSeenLaps..<laps {
+                    let began = lap == recordingSeenLaps ? (recordingPassStart ?? currentStart) : currentStart
+                    for zone in recordingZones {
+                        var kept = false
+                        if let ended = loopEnd, ended > began,
+                           recordingMuteLog.laneShiftByZone[zone.id] != nil,
+                           let group = find(id: zone.id), case .group = group.kind {
+                            let window = recordWindow(of: group)
+                            if let span = RecordProgress.span(recordStart: began, head: ended,
+                                                              windowStart: window.start, windowEnd: window.end) {
+                                shiftChildLanes(of: zone.id, by: 1)
+                                recordingMuteLog.laneShiftByZone[zone.id, default: 0] += 1
+                                recordingDoneSpans[zone.id, default: []].append(span)
+                                kept = true
+                            }
+                        }
+                        // The ghost keeps what its pass drew; a pass with no ghost is forgotten.
+                        recordingLive[zone.id]?.newPass(at: loopEnd, keep: kept)
+                    }
+                }
+                recordingSeenLaps = laps
+            }
+            recordingPassStart = currentStart
+        }
+
+        for zone in recordingZones {
+            switch zone.source {
+            case .midi:
+                guard let device = liveMidiDevice(of: zone), let events = eventsByDevice[device], !events.isEmpty else { continue }
+                recordingLive[zone.id]?.ingest(events: events, head: head)
+            case .audio(let ref):
+                // A stereo input is as loud as its louder channel.
+                let hi = min(peaks.count, ref.first + ref.count)
+                guard ref.first >= 0, ref.first < hi, let loudest = peaks[ref.first..<hi].max() else { continue }
+                recordingLive[zone.id]?.ingest(peakDb: loudest, head: head)
+            }
+        }
+        recordingLiveRevision &+= 1
+    }
+
+    /// What a red block draws inside itself: the pass it stands for — the capture of the pass in progress for the current
+    /// block, the finished one for a ghost (`pass` is its index among the ghosts). nil when there is nothing to show.
+    func recordLivePass(for block: RecordProgressBlock) -> RecordLiveCapture.Pass? {
+        guard let capture = recordingLive[block.group] else { return nil }
+        if block.current { return capture.current }
+        return block.pass < capture.done.count ? capture.done[block.pass] : nil
     }
 
     // MARK: Drawing the take in progress
@@ -404,6 +475,7 @@ extension EditViewModel {
         recordingTimer?.invalidate()
         recordingTimer = nil
         recordingDoneSpans = [:]
+        recordingLive = [:]
         recordingSeenLaps = 0
         recordingPassStart = nil
         isRecording = false

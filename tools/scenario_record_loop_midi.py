@@ -123,6 +123,9 @@ try:
         check("rec.status says the lap while it loops", mid.get("lap", 0) >= 1, mid.get("lap"))
         check("the red block grows from the START OF THE PASS (the loop's start), never past the loop's end",
               len(pr) == 1 and abs(pr[0]["start"] - 1.0) < 0.05 and pr[0]["end"] <= 2.0 + 0.05 and pr[0]["end"] > pr[0]["start"], pr)
+        # L11: the block counts what it draws inside itself — the notes played in the pass that runs, no loudness points.
+        check("live picture: the block counts the notes played in the pass in progress (and no peak: a MIDI zone)",
+              len(pr) == 1 and pr[0]["live_notes"] > 0 and pr[0]["live_peaks"] == 0, pr)
         takes = sorted(st["last_takes"], key=lambda t: t["pass"])
         passes = takes[0]["passes"] if takes else 0
         print("       %d take(s), %d pass(es): %s" % (len(takes), passes, [(t["pass"], len(t["notes"]), t["audible"]) for t in takes]))
@@ -255,6 +258,11 @@ try:
         o3 = obj(c.send("object.get", {"id": t3[0]["object"]}))
         check("it names no sequence", "midi_sequence" not in o3, o3.get("midi_sequence"))
         check("rec.status in a linear recording: lap 0", st3["mid"].get("lap") == 0, st3["mid"].get("lap"))
+        pr3 = st3["mid"]["progress"]
+        check("live picture in a linear recording: notes counted while it runs",
+              len(pr3) == 1 and pr3[0]["live_notes"] > 0, pr3)
+        check("... and the take it gives is whole all the same (the picture does not touch the recording)",
+              len(t3[0]["notes"]) == N, len(t3[0]["notes"]))
         c.send("project.save")
         check("and the file writes none", not json.load(open(path)).get("midiSequences"))
 finally:

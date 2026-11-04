@@ -1428,11 +1428,14 @@ struct OBJLatencyWatcher : public juce::Timer {
 struct OBJInputMeter : public juce::AudioIODeviceCallback {
     static constexpr int kMax = 64;
     std::array<std::atomic<float>, kMax> peak;
+    // A SEPARATE accumulator for the picture of a take being recorded (L11): reading it clears only itself, so it never
+    // steals the peaks the Inputs tab's meters read from `peak`.
+    std::array<std::atomic<float>, kMax> recPeak;
     std::array<int, kMax>                map {};
     std::atomic<int>                     numActive { 0 };
     std::atomic<int>                     numDeviceChannels { 0 };
 
-    OBJInputMeter() { for (auto& p : peak) p.store(0.0f); }
+    OBJInputMeter() { for (auto& p : peak) p.store(0.0f); for (auto& p : recPeak) p.store(0.0f); }
 
     void audioDeviceAboutToStart(juce::AudioIODevice* d) override {
         int n = 0;
@@ -1442,6 +1445,7 @@ struct OBJInputMeter : public juce::AudioIODeviceCallback {
         numActive.store(n);
         numDeviceChannels.store(std::min(kMax, objInputWindowCount(*d)));
         for (auto& p : peak) p.store(0.0f);
+        for (auto& p : recPeak) p.store(0.0f);
     }
 
     void audioDeviceStopped() override {}
@@ -1457,6 +1461,8 @@ struct OBJInputMeter : public juce::AudioIODeviceCallback {
             const float m = std::max(std::abs(r.getStart()), std::abs(r.getEnd()));
             auto& p = peak[(size_t) map[(size_t) i]];
             if (m > p.load(std::memory_order_relaxed)) p.store(m, std::memory_order_relaxed);
+            auto& rp = recPeak[(size_t) map[(size_t) i]];
+            if (m > rp.load(std::memory_order_relaxed)) rp.store(m, std::memory_order_relaxed);
         }
     }
 };
@@ -1545,21 +1551,70 @@ struct OBJMidiInputTrack {
     std::string       deviceID;
 };
 
+// A note event kept for the red block of a recording in progress (L11, docs/plan_retours_2026-11-04.md).
+struct OBJLiveMidiEvent {
+    uint8_t pitch    = 0;
+    uint8_t velocity = 0;
+    bool    on       = false;
+    double  ms       = 0.0;      // juce::Time::getMillisecondCounterHiRes() when it arrived
+};
+
 // The loudest note-on velocity on a MIDI input since the last read. The device is held so that the keyboard
 // state this listens to outlives the listener.
+//
+// While a recording is under way (`capturing`) it also keeps the note events, for the picture of the take being
+// made — a fixed ring of 1024, emptied by `drain` on the main thread. The listener runs on whatever thread delivered
+// the message (CoreMIDI's, the main thread for the computer keyboard, several for "All MIDI Ins"): it never blocks —
+// the lock is only TRIED, and an event that finds it busy or the ring full is dropped (a picture, not the recording,
+// which Tracktion makes by its own road). Nothing is allocated here.
 struct OBJMidiActivity : public juce::MidiKeyboardState::Listener {
+    static constexpr size_t kLiveRing = 1024;
+
     std::shared_ptr<te::MidiInputDevice> device;
     std::atomic<int> peak { 0 };
+    std::atomic<bool> capturing { false };
+    juce::SpinLock lock;                                  // guards `ring` and `ringCount`
+    std::array<OBJLiveMidiEvent, kLiveRing> ring {};
+    size_t ringCount = 0;
+
     explicit OBJMidiActivity(std::shared_ptr<te::MidiInputDevice> d) : device(std::move(d)) {
         device->keyboardState.addListener(this);
     }
     ~OBJMidiActivity() override { device->keyboardState.removeListener(this); }
-    void handleNoteOn(juce::MidiKeyboardState*, int, int, float velocity) override {
+
+    void push(int pitch, int velocity, bool on) {
+        if (!capturing.load(std::memory_order_relaxed)) return;
+        const juce::SpinLock::ScopedTryLockType guard(lock);
+        if (!guard.isLocked() || ringCount >= kLiveRing) return;
+        ring[ringCount++] = { (uint8_t) juce::jlimit(0, 127, pitch), (uint8_t) juce::jlimit(0, 127, velocity), on,
+                              juce::Time::getMillisecondCounterHiRes() };
+    }
+
+    // Main thread: the events since the last drain, oldest first.
+    void drain(std::vector<OBJLiveMidiEvent>& out) {
+        const juce::SpinLock::ScopedLockType guard(lock);
+        out.assign(ring.begin(), ring.begin() + (std::ptrdiff_t) ringCount);
+        ringCount = 0;
+    }
+
+    // Main thread: starts (or stops) keeping events; either way the ring starts empty.
+    void setCapturing(bool on) {
+        {
+            const juce::SpinLock::ScopedLockType guard(lock);
+            ringCount = 0;
+        }
+        capturing.store(on, std::memory_order_relaxed);
+    }
+
+    void handleNoteOn(juce::MidiKeyboardState*, int, int note, float velocity) override {
         const int v = std::max(1, (int) std::lround(velocity * 127.0f));
         int cur = peak.load();
         while (v > cur && !peak.compare_exchange_weak(cur, v)) {}
+        push(note, v, true);
     }
-    void handleNoteOff(juce::MidiKeyboardState*, int, int, float) override {}
+    void handleNoteOff(juce::MidiKeyboardState*, int, int note, float velocity) override {
+        push(note, (int) std::lround(velocity * 127.0f), false);
+    }
 };
 
 // Tells the engine the list of MIDI devices changed (plugged, unplugged, enabled): the device manager
@@ -12007,6 +12062,19 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
     return result;
 }
 
+// The peak of each DEVICE input channel since the last call, for the picture of a take being recorded (L11) — read off
+// its own accumulator (`recPeak`), so the Inputs tab's meters keep theirs. Cleared by the read. Main thread.
+- (NSArray<NSNumber*>*)audioInputRecordPeaksDb {
+    NSMutableArray* result = [NSMutableArray array];
+    if (_inputMeter == nullptr || ![self audioInputsOpen]) return result;
+    const int n = _inputMeter->numDeviceChannels.load();
+    for (int c = 0; c < n; ++c) {
+        const float p = _inputMeter->recPeak[(size_t) c].exchange(0.0f);
+        [result addObject:@(p > 1.0e-6f ? std::max(-120.0, 20.0 * std::log10((double) p)) : -120.0)];
+    }
+    return result;
+}
+
 - (void)setAudioInputStereoPairs:(NSArray<NSNumber*>*)firstChannels {
     std::vector<int> pairs;
     for (NSNumber* n in firstChannels) pairs.push_back(n.intValue);
@@ -12584,6 +12652,11 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
     auto& transport = _edit->getTransport();
     transport.addListener(_recordListener.get());
     _recordingActive = true;
+    // The picture of the take (L11): the MIDI devices this recording listens to keep their note events from now on.
+    // The recording itself does not depend on it.
+    for (auto& mz : midiZones)
+        if (auto it = _midiActivity.find(mz.second); it != _midiActivity.end()) it->second->setCapturing(true);
+    if (!files.empty()) [self audioInputRecordPeaksDb];     // the first read starts from silence, not from before the press
     _recordCardSignature = objRecordCardSignature(_engine->getDeviceManager().deviceManager);
     NSLog(@"[REC] +%.1f ms press: %d input(s), playing=%d pos=%.6f card=%s", objRecMs(), (int) armed.size(),
           (int) transport.isPlaying(), transport.getPosition().inSeconds(), _recordCardSignature.toRawUTF8());
@@ -12626,6 +12699,7 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
 - (void)finishRecording {
     if (!_recordingActive) return;
     _recordingActive = false;
+    for (auto& kv : _midiActivity) kv.second->setCapturing(false);     // L11: nothing is kept outside a recording
     auto listener = std::move(_recordListener);
     if (_edit && listener) _edit->getTransport().removeListener(listener.get());
 
@@ -12765,6 +12839,27 @@ static double objBtNow() { return [NSProcessInfo processInfo].systemUptime; }
     for (auto& kv : _midiActivity) {
         const int v = kv.second->peak.exchange(0);
         if (v > 0) result[[NSString stringWithUTF8String:kv.first.c_str()]] = @(v);
+    }
+    return result;
+}
+
+// The note events of the MIDI devices a recording listens to, since the last drain (L11): per device id, oldest first,
+// each `{pitch, velocity, on, age_ms}` — the age is counted at THIS call, so that the receiver dates them from its own
+// clock. Empty unless a recording is running (the listeners keep nothing otherwise). Main thread; the producers only
+// ever try the lock (@see OBJMidiActivity), so a drain cannot make a MIDI thread wait.
+- (NSDictionary<NSString*, NSArray<NSDictionary<NSString*, NSNumber*>*>*>*)drainLiveRecordMidi {
+    NSMutableDictionary* result = [NSMutableDictionary dictionary];
+    std::vector<OBJLiveMidiEvent> events;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    for (auto& kv : _midiActivity) {
+        if (!kv.second->capturing.load(std::memory_order_relaxed)) continue;
+        kv.second->drain(events);
+        if (events.empty()) continue;
+        NSMutableArray* list = [NSMutableArray arrayWithCapacity:events.size()];
+        for (const auto& e : events)
+            [list addObject:@{ @"pitch": @((int) e.pitch), @"velocity": @((int) e.velocity), @"on": @(e.on),
+                               @"age_ms": @(std::max(0.0, now - e.ms)) }];
+        result[[NSString stringWithUTF8String:kv.first.c_str()]] = list;
     }
     return result;
 }

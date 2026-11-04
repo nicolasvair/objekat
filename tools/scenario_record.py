@@ -427,6 +427,13 @@ try:
         wait_pos(c, 5.6)
         pr = c.send("rec.status")["progress"]
         check("... bounded to the window's end (5 s)", len(pr) == 1 and near(pr[0]["end"], 5, 1e-6), pr)
+        # L11: the block draws the loudness of the input while it records (a simplified picture, 30 Hz).
+        check("live picture: loudness points are counted, no notes (an audio zone)",
+              len(pr) == 1 and pr[0]["live_peaks"] > 0 and pr[0]["live_notes"] == 0, pr)
+        n_before = pr[0]["live_peaks"]
+        time.sleep(0.4)
+        pr = c.send("rec.status")["progress"]
+        check("... and the count grows with the recording", len(pr) == 1 and pr[0]["live_peaks"] > n_before, (n_before, pr))
         r = c.send("rec.stop")
         t2 = r["last_takes"][0]
         check("rec.stop: no block any more, no start", c.send("rec.status")["progress"] == []

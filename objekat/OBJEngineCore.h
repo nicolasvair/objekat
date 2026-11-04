@@ -1032,6 +1032,10 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// Peak of each DEVICE input channel since the last call, in dB (floor -120), then cleared.
 /// Empty while the inputs are closed.
 - (NSArray<NSNumber*>* _Nonnull)audioInputPeaksDb;
+/// Like `audioInputPeaksDb` but read off an accumulator of its own, so that it never takes the peaks the Inputs tab's
+/// meters read: the loudness of each DEVICE input channel since the last call, in dB (floor -120), cleared by the read.
+/// The picture of a take being recorded polls it (L11). Empty while the inputs are closed.
+- (NSArray<NSNumber*>* _Nonnull)audioInputRecordPeaksDb;
 /// Declares which neighbouring channels are one stereo input: the FIRST channel of each pair
 /// (0 = channels 1+2). Overlapping pairs (1+2 and 2+3) coexist. Re-describes the inputs at once.
 - (void)setAudioInputStereoPairs:(NSArray<NSNumber*>* _Nonnull)firstChannels;
@@ -1099,6 +1103,11 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 /// The loudest note-on velocity (0...127) seen on each device since the last read, by device id, only for
 /// the devices that played something. Reading clears.
 - (NSDictionary<NSString*, NSNumber*>* _Nonnull)midiInputActivity;
+/// The note events of the MIDI devices a recording listens to, since the last call, for the picture of the take being
+/// made (L11): per device id, oldest first, each `{pitch, velocity (0...127), on (0/1), age_ms}`, the age counted at the
+/// moment of this call. Reading empties them. Empty unless a recording runs: the engine keeps nothing otherwise, and
+/// drops an event rather than make a MIDI thread wait (a picture, not the recording). Main thread.
+- (NSDictionary<NSString*, NSArray<NSDictionary<NSString*, NSNumber*>*>*>* _Nonnull)drainLiveRecordMidi;
 /// Called on the main thread after the list of MIDI devices changed (a device plugged, unplugged, enabled).
 /// Carries nothing: the receiver re-reads `-midiInputDevices`.
 @property (nonatomic, copy, nullable) void (^onMidiDevicesChanged)(void);
