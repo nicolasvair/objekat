@@ -171,7 +171,8 @@ extension EditViewModel {
     ///    ⌥ = the target joins and the source keeps its own; refused if the target already holds the
     ///    bin, if it is the source itself (⌥ on the same host), or aimed inside another block (a bin
     ///    does not hold a bin);
-    ///  • an INSTRUMENT: its slot, on another MIDI object, nothing = move, ⌥ = copy.
+    ///  • an INSTRUMENT: its slot, on another MIDI clip or on a group the instrument rule accepts (E5), nothing = move,
+    ///    ⌥ = copy; the source is an object's slot or a MIDI input's.
     func pluginDropOutcome(_ payload: PluginDragPayload, toHost targetID: UUID,
                            at site: PluginDropSite = .hostEnd,
                            flags: NSEvent.ModifierFlags) -> PluginDropOutcome {
@@ -192,8 +193,13 @@ extension EditViewModel {
         // AN INSTRUMENT lives in its object's slot, not in a chain.
         if isInstrument(payload.pluginID, of: sourceID) {
             guard case .hostEnd = site else { return .refuse("an instrument only goes to an object's instrument slot") }
-            guard find(id: targetID)?.isMIDI == true else { return .refuse("the target is not a MIDI object") }
             guard sourceID != targetID else { return .refuse("source and target are the same object") }
+            // A MIDI clip or a group takes it (a bus, an audio clip, an input of the card do not); the group rule
+            // is asked as a SILENT read, so that the cursor says what the drop will do before the hand lets go.
+            guard let target = find(id: targetID), target.isMIDI || target.isGroup else {
+                return .refuse("the target has no instrument slot")
+            }
+            if let why = instrumentRefusal(on: targetID) { return .refuse(Self.refusalText(why)) }
             return alt ? .copy : .move
         }
         guard let sourceChain = chainPlugins(sourceID) else { return .refuse("unknown source host") }

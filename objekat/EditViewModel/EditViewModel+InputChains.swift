@@ -456,6 +456,13 @@ extension EditViewModel {
     func removeInputInstrument(chainKey key: String) {
         guard let was = inputChains.midi[key], was.instrument != nil else { return }
         pushUndo()
+        takeInstrumentOffInput(chainKey: key)
+    }
+
+    /// `removeInputInstrument` without its undo point (a move of the instrument to elsewhere pushes its own): the input
+    /// stops being heard — nothing plays its notes any more — and the FX keep their live states.
+    func takeInstrumentOffInput(chainKey key: String) {
+        guard let was = inputChains.midi[key], was.instrument != nil else { return }
         let host = was.hostID
         engine?.setMidiInputMonitor(false, device: resolvedMidiInput(was.input)?.id ?? was.input.id)
         if mountedInputHosts.contains(host) { unmountInputHost(host, capture: true) }   // the FX keep their live states

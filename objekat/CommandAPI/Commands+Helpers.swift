@@ -239,7 +239,8 @@ extension CommandAdapters {
         guard let chain = vm.chainPlugins(hostID) else {
             throw CommandError(code: .not_found, message: "unknown host: \(hostID.uuidString)")
         }
-        for id in ids where EditViewModel.findBlock(id, in: chain) == nil {
+        // (an INSTRUMENT is dragged like a card, from its slot: an object's or a MIDI input's)
+        for id in ids where EditViewModel.findBlock(id, in: chain) == nil && !vm.isInstrument(id, of: hostID) {
             try requirePlugin(id, on: hostID, in: vm)
         }
         return ids

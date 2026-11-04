@@ -516,17 +516,19 @@ extension EditViewModel {
         return false
     }
 
-    /// Dragging a MIDI clip's instrument onto another MIDI clip: it takes the place of
-    /// the target's instrument (an object hosts only one, @see setInstrument). `copy` (⌥)
-    /// leaves the original in place, otherwise the source ends up with no instrument — the same
-    /// convention as `copyPlugin` / `movePlugin` for the FX chain. The instance's current state
-    /// is captured along the way: the target sounds as the source sounded.
-    /// No effect if the target is not a MIDI clip (nothing else has an instrument slot).
+    /// Dragging an instrument onto another instrument slot — a MIDI clip's, a group's (E5), a MIDI input's — takes the place of
+    /// the target's instrument (a slot holds only one, @see setInstrument). The SOURCE is read by host: an object's slot or a
+    /// MIDI input's (its popup in the Inputs tab). `copy` (⌥) leaves the original in place, otherwise the source ends up with no
+    /// instrument — the same convention as `copyPlugin` / `movePlugin` for the FX chain; a MIDI input that loses its instrument
+    /// stops being heard (nothing plays it any more). The instance's current state is captured along the way: the target
+    /// sounds as the source sounded.
+    /// No effect if the target takes none (the group rule is asked before the undo point; `pluginDropOutcome` already told
+    /// the cursor).
     func transferInstrument(sourceObjectID: UUID, pluginID: UUID, targetObjectID: UUID,
                             copy: Bool) {
         guard let engine,
-              let inst = find(id: sourceObjectID)?.instruments.first(where: { $0.id == pluginID }),
-              find(id: targetObjectID)?.isMIDI == true,
+              let inst = chainInstrument(sourceObjectID), inst.id == pluginID,
+              let target = find(id: targetObjectID), target.isMIDI || target.isGroup,
               sourceObjectID != targetObjectID else { return }
         if refusesInstrument(on: targetObjectID) { return }
         let live = engine.getPluginStateXML(pluginID.uuidString)
@@ -548,8 +550,12 @@ extension EditViewModel {
                                   monoFold: inst.monoFold).withTrims(of: inst)
         pushUndo()
         if !copy {
-            update(id: sourceObjectID) { $0.instruments = [] }
-            engine.removeInstrument(forObjectID: sourceObjectID.uuidString)
+            if let chainKey = inputChains.midiKey(ofHost: sourceObjectID) {
+                takeInstrumentOffInput(chainKey: chainKey)
+            } else {
+                update(id: sourceObjectID) { $0.instruments = [] }
+                engine.removeInstrument(forObjectID: sourceObjectID.uuidString)
+            }
         }
         update(id: targetObjectID) { $0.instruments = [placed] }
         // syncInstruments creates the engine instance: the link can only arm AFTER

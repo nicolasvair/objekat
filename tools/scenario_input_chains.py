@@ -362,6 +362,54 @@ def e9(c, level, fxp, instp, dev):
     c.send("project.new")
     check("M9 a new project closes the popup", c.send("input.strip")["open"] is None)
 
+    # M10: dragging the instrument OUT of a MIDI input's popup (inputs panel, step 5): `plugin.drop` from the input's host.
+    c.send("project.new")
+    mh = c.send("input.host", {"midi": dev, "open": False})["host_id"]
+    c.send("instrument.set", {"id": mh, **instp})
+    ip = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    clip = c.send("midi.create_clip", {"start": 0, "end": 2, "lane": 2})["id"]
+    stem = c.send("stem.list")["main"]
+    def row10():
+        return next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    def inst_of(h):
+        return [i["name"] for i in c.send("plugin.list", {"host": h})["instruments"]]
+    r = c.send("plugin.drop", {"from": mh, "plugin": ip, "to": stem})
+    check("M10 an instrument dropped on a stem is refused (the cursor says so before release)",
+          r["refused"] is True and r["placed"] is False, r)
+    zone = c.send("rec.drop", {"first": 0, "count": 1, "lane": 5, "time": 2})["group"]
+    r = c.send("plugin.drop", {"from": mh, "plugin": ip, "to": zone})
+    check("M10 ... on an audio group (a recording zone) too", r["refused"] is True and r["placed"] is False, r)
+    check("M10 ... and nothing moved", row10()["instrument"] == "DLSMusicDevice" and inst_of(zone) == [])
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("plugin.drop", {"from": mh, "plugin": ip, "to": clip, "mode": "copy"})
+    check("M10 copy (⌥) onto a MIDI clip: the clip has it, the input keeps it, one undo point",
+          r["placed"] is True and inst_of(clip) == ["DLSMusicDevice"] and row10()["instrument"] == "DLSMusicDevice"
+          and c.send("perf.census")["undo_depth"] == depth + 1, r)
+    c.send("edit.undo", {})
+    check("M10 undo of the copy: the clip has none again", inst_of(clip) == [] and row10()["instrument"] == "DLSMusicDevice")
+    c.send("input.monitor", {"midi": dev, "on": True})
+    check("M10 the input is heard through its instrument", row10()["heard"] is True, row10())
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("plugin.drop", {"from": mh, "plugin": ip, "to": clip})
+    check("M10 move onto a MIDI clip: the clip has it, the input has none", r["placed"] is True
+          and inst_of(clip) == ["DLSMusicDevice"] and row10()["instrument"] is None, r)
+    check("M10 ... and it is no longer heard (nothing plays its notes)", row10()["heard"] is False, row10())
+    check("M10 ... one undo point", c.send("perf.census")["undo_depth"] == depth + 1)
+    c.send("edit.undo", {})
+    check("M10 undo of the move: the input has its instrument back, the clip none",
+          row10()["instrument"] == "DLSMusicDevice" and inst_of(clip) == [])
+    # to a group (eligible: it holds a MIDI clip only)
+    gid = c.send("group.create", {"ids": [clip]})["id"]
+    ip = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    r = c.send("plugin.drop", {"from": mh, "plugin": ip, "to": gid, "mode": "copy"})
+    check("M10 copy onto a group that holds MIDI only: the group carries the instrument",
+          r["placed"] is True and inst_of(gid) == ["DLSMusicDevice"], r)
+    gip = c.send("plugin.list", {"host": gid})["instruments"][0]["id"]
+    clip2 = c.send("midi.create_clip", {"start": 4, "end": 6, "lane": 8})["id"]
+    r = c.send("plugin.drop", {"from": gid, "plugin": gip, "to": clip2})
+    check("M10 an instrument moves from a GROUP to a clip (the source is read by host)",
+          r["placed"] is True and inst_of(clip2) == ["DLSMusicDevice"] and inst_of(gid) == [], r)
+
 
 def e11(c, instp, dev):
     LPF = {"identifier": "aufx,lpas,appl"}

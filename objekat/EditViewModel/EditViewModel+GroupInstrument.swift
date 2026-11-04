@@ -62,18 +62,25 @@ extension EditViewModel {
         return false
     }
 
-    /// Would putting an instrument on `objectID` (a group, or a MIDI clip) break the rule?
+    /// Would putting an instrument on `objectID` (a group, or a MIDI clip) break the rule? Refuses (and says so) if it would.
     func refusesInstrument(on objectID: UUID) -> Bool {
-        guard let object = find(id: objectID) else { return false }
+        refuseGroupInstrument(instrumentRefusal(on: objectID))
+    }
+
+    /// The same question as a SILENT read (nothing is announced, nothing recorded): the cursor of a drag asks it on every
+    /// mouse movement, the door asks the loud one (`refusesInstrument`) when it acts. nil = an instrument can go there —
+    /// or the object is not one that takes any (a bus, an audio clip: `pluginDropOutcome` refuses those on its own).
+    func instrumentRefusal(on objectID: UUID) -> GroupInstrumentRefusal? {
+        guard let object = find(id: objectID) else { return nil }
         let ancestors = ancestorChain(of: objectID)
         if object.isGroup {
-            return refuseGroupInstrument(GroupInstrumentRule.refusal(puttingInstrumentOn: object, ancestors: ancestors))
+            return GroupInstrumentRule.refusal(puttingInstrumentOn: object, ancestors: ancestors)
         }
         // A MIDI clip below an instrument group would be a second instrument on the same chain.
         if object.isMIDI, ancestors.contains(where: { $0.isGroup && !$0.instruments.isEmpty }) {
-            return refuseGroupInstrument(.childWithInstrument)
+            return .childWithInstrument
         }
-        return false
+        return nil
     }
 
     /// Would an AUDIO recording source on the zone `groupID` break the rule?
