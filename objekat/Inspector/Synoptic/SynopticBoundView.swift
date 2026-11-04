@@ -371,6 +371,20 @@ struct SynopticBoundView: View {
                     viewModel.toggleInstrumentEnabled(objectID: objectID, pluginID: id)
                 }
             },
+            // The slot takes an INSTRUMENT dropped on it, from another object's slot or a MIDI input's (the
+            // same resolver as the timeline and the strips, so the cursor and the drop agree). An FX is refused.
+            instrumentSlotDropOutcome: { flags in
+                guard let p = PluginDragSession.shared.current else { return nil }
+                guard viewModel.isInstrument(p.pluginID, of: p.sourceObjectID) else {
+                    return .refuse("the instrument slot takes an instrument")
+                }
+                return viewModel.pluginDropOutcome(p, toHost: objectID, at: .hostEnd, flags: flags)
+            },
+            onInstrumentSlotDrop: { p, flags in
+                guard viewModel.isInstrument(p.pluginID, of: p.sourceObjectID) else { return }
+                // Mounts an input's chain for the edit if need be; one undo point.
+                viewModel.acceptPluginDrop(p, on: objectID, modifiers: flags)
+            },
             onSetSpeed: { viewModel.updateSpeed(id: objectID, ratio: $0) },
             onSetBaseBPM: { bpm in viewModel.edit { viewModel.updateBaseBPM(id: objectID, bpm: bpm) } },
             onToggleReverse: {

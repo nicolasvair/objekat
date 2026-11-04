@@ -87,6 +87,11 @@ struct SynopticView: View {
     /// The wire under the pointer that has a channel menu of its own (@see hoveredChannelWire): read by the
     /// canvas' right click. Nothing is written over it (request of 20 October 2026: the tooltip hid everything).
     @State private var hoveredWire: HoveredWire? = nil
+    /// An instrument is being held over the (empty) instrument slot: its dashed border turns accent.
+    @State private var instrumentSlotTargeted = false
+    /// This slot's key for the band at the bottom of the timeline (@see PluginDropHint): one per view, since an
+    /// object's signal view and an input's popup can both be open.
+    @State private var instrumentSlotHintID = UUID()
 
     private enum HoveredWire: Equatable {
         /// A STEREO cable: the cable point it belongs to, and its menu (the choice in force, the choices
@@ -823,6 +828,10 @@ struct SynopticView: View {
                         // clip in the timeline, the instrument takes the instrument slot there
                         // (⌥ = a copy) — @see EditViewModel.transferInstrument.
                         dragProvider: actions.dragProvider.map { f in { f(inst.id) } },
+                        // An instrument let go on the filled slot takes the place of this one (the card's
+                        // own drop layer: a drop on a drag source's ancestor is not delivered).
+                        dropOutcome: { actions.instrumentSlotDropOutcome?($0) ?? nil },
+                        onDropPlugin: instrumentSlotRefusal == nil ? actions.onInstrumentSlotDrop : nil,
                         width: slot.width
                     )
                     .frame(width: slot.width, height: slot.height)
@@ -839,8 +848,10 @@ struct SynopticView: View {
                         .foregroundStyle(.secondary)
                         .frame(width: slot.width, height: slot.height)
                         .background(RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder((instrumentWarning && !closed ? Color.orange : Color.secondary).opacity(0.5),
-                                          style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                            .strokeBorder(instrumentSlotTargeted
+                                            ? Color.accentColor
+                                            : (instrumentWarning && !closed ? Color.orange : Color.secondary).opacity(0.5),
+                                          style: StrokeStyle(lineWidth: instrumentSlotTargeted ? 2 : 1, dash: [3, 3])))
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -848,6 +859,15 @@ struct SynopticView: View {
                     .opacity(closed ? 0.4 : 1)
                     .help(instrumentSlotRefusal
                           ?? (instrumentWarning ? L("synoptic.input.instrument.warning") : L("synoptic.addInstrument")))
+                    // An instrument dropped on the empty slot (laid BEFORE `.position`, which would otherwise
+                    // widen the target to the whole zone). A closed slot (the group rule) accepts nothing: with
+                    // no type to accept, no drop is ever offered to it.
+                    .onDrop(of: closed ? [] : [UTType.plainText],
+                            delegate: PluginDropDelegate(
+                                isTargeted: $instrumentSlotTargeted,
+                                hintKey: "instrumentSlot:\(instrumentSlotHintID.uuidString)",
+                                outcome: { actions.instrumentSlotDropOutcome?($0) ?? nil },
+                                onDrop: { payload, flags in actions.onInstrumentSlotDrop?(payload, flags) }))
                     .position(x: slot.midX, y: slot.midY)
                 }
             }

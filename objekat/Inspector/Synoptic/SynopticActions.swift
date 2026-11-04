@@ -100,6 +100,12 @@ struct SynopticActions {
     // Bypassing the instrument — an action separate from `onToggleBypass`: the instrument does
     // not live in the model's FX chain but in `instruments` (@see toggleInstrumentEnabled).
     var onToggleInstrumentBypass: (() -> Void)? = nil
+    /// What a release on the INSTRUMENT SLOT (empty or filled) would do with the drag in flight, for the cursor
+    /// and the band: an instrument moves or copies in, anything else is refused. nil = no drag in flight to answer
+    /// for (or the slot does not receive: the demo).
+    var instrumentSlotDropOutcome: ((_ flags: NSEvent.ModifierFlags) -> PluginDropOutcome?)? = nil
+    /// An instrument let go on the slot: the host's instrument takes it (⌥ = a copy). nil = the slot does not receive.
+    var onInstrumentSlotDrop: ((_ payload: PluginDragPayload, _ flags: NSEvent.ModifierFlags) -> Void)? = nil
 
     // The 'audio file' zone (an audio clip): speed / semitones / bpm.
     var onSetSpeed: ((Double) -> Void)? = nil          // the new speed ratio
