@@ -6,7 +6,8 @@ import Foundation
 // one 32-bit float WAV per input in `<project>/samples/rec/` (named by `RecordFileNaming`), shared by every
 // zone armed on that input. When the recording ends — however it ends — each armed zone gets one take, a
 // child of the group (`RecordTakePlanner` decides where, how long, on which lane, and which previous
-// children are muted), all of it in ONE undo point.
+// children are muted), all of it in ONE undo point — except a recording through a loop, which leaves one
+// point PER PASS (`completeRecording`, `RecordLoopPlanner.passSteps`).
 //
 // The take lands on the TOP lane of the group's takes and the previous ones go down by one lane (the
 // newest on top), in whatever take mode the zone has.
@@ -276,8 +277,14 @@ extension EditViewModel {
     // MARK: Finishing
 
     /// The engine says the recording is over, with the files it wrote. Each frozen zone that is still a
-    /// recordable group gets its take — one undo point for the lot (the one `beginRecording` pushed for
+    /// recordable group gets its take(s) — one undo point for the lot (the one `beginRecording` pushed for
     /// the mutes, when there was one), none if nothing was recorded: then the mutes are given back.
+    ///
+    /// Recorded THROUGH a loop (several passes crossing a window) the takes are laid down PASS BY PASS, one undo
+    /// point per pass (`RecordLoopPlanner.passSteps`): ⌘Z takes the last pass away and leaves the zone as it was when
+    /// that pass was the last one — the previous take on top again, and audible in "mute" mode — and the next ⌘Z does
+    /// the same with the pass before. The file (or the MIDI sequence) stays whatever the undo, so the takes that
+    /// remain can still be pulled out into it. A recording with one pass (every linear recording) stays ONE point.
     func completeRecording(files: [RecordedFile], midi: [RecordedMidi] = [],
                            journal: [RecordLoopPlanner.JournalPoint] = []) {
         guard isRecording else { return }
@@ -291,6 +298,8 @@ extension EditViewModel {
         // The point of the start is still ours as long as the stack has not gone back under it.
         var pushed = log.undoDepthAfterPush.map { undoStack.count >= $0 } ?? false
 
+        // PHASE 1 — what each zone receives, computed from the model as it is NOW; nothing is applied yet.
+        var work: [ZoneTakes] = []
         for zone in zones {
             let early = log.mutedByZone[zone.id] ?? []
             let file = zone.ref.flatMap { r in files.first(where: { $0.ref == r }) }
@@ -306,8 +315,7 @@ extension EditViewModel {
 
             // What this zone receives: one or several takes (one per pass through a loop), each with the lane, the
             // audibility and the report that goes with it.
-            struct Made { let object: SoundObject; let take: RecordLoopPlanner.Take; var notes = 0 }
-            var madeTakes: [Made] = []
+            var madeTakes: [MadeTake] = []
             var muteIDs: [UUID] = [], unmuteIDs: [UUID] = [], shiftIDs: [UUID] = []
             var path = ""
             var passCount = 1
@@ -326,7 +334,7 @@ extension EditViewModel {
                                                     fileDuration: file.length, speedRatio: 1.0, isReversed: false))
                     o.fileSize = Self.fileSize(atPath: file.path)
                     o.isMuted = !t.audible
-                    madeTakes.append(Made(object: o, take: t))
+                    madeTakes.append(MadeTake(object: o, take: t))
                 }
                 muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
             } else if let capture,
@@ -341,7 +349,7 @@ extension EditViewModel {
                     passCount = segments.count
                     newSequence = made.sequence
                     for (o, t) in zip(made.objects, plan.takes) {
-                        madeTakes.append(Made(object: o, take: t, notes: o.midiNotes.count))
+                        madeTakes.append(MadeTake(object: o, take: t, notes: o.midiNotes.count))
                     }
                     muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
                 }
@@ -357,7 +365,7 @@ extension EditViewModel {
                     let t = RecordLoopPlanner.Take(start: plan.take.start, duration: plan.take.duration,
                                                    sourceOffset: plan.take.sourceOffset, lane: plan.take.lane,
                                                    outsideWindow: plan.take.outsideWindow, audible: true, pass: 0)
-                    madeTakes.append(Made(object: m, take: t, notes: n))
+                    madeTakes.append(MadeTake(object: m, take: t, notes: n))
                     muteIDs = plan.mutedIDs; unmuteIDs = plan.unmuteIDs; shiftIDs = plan.shiftIDs
                 }
             }
@@ -365,21 +373,39 @@ extension EditViewModel {
                 if !early.isEmpty { setMuted(early, false) }
                 continue
             }
-            if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
-            if let seq = newSequence { midiSequences[seq.id] = seq }   // immutable, outside the undo
-            setMuted(muteIDs.filter { id in !early.contains(id) }, true)   // those muted at the start are
-            setMuted(unmuteIDs, false)
-            // The newest on top: the previous takes go down by one lane per take, the takes take the top lanes.
-            let down = madeTakes.count
-            updateMany(Set(shiftIDs)) { $0.lane += down }
-            for m in madeTakes {                      // oldest first: the newest is the last one added
-                addChild(m.object, toGroupID: zone.id)
-                reports.append(RecordTakeReport(group: zone.id, object: m.object.id, path: path,
+            work.append(ZoneTakes(zoneID: zone.id, mode: zone.mode, early: early, takes: madeTakes,
+                                  muteIDs: muteIDs, unmuteIDs: unmuteIDs, shiftIDs: shiftIDs, path: path,
+                                  passCount: passCount, newSequence: newSequence,
+                                  baseLane: RecordTakePlanner.takeLane(children: kids)))
+        }
+
+        // PHASE 2 — applying them. One point for the whole recording, unless a zone got several takes (a loop) and
+        // none of them lies outside its window: then one point per pass.
+        let byPasses = work.contains { $0.takes.count > 1 } && !work.contains { $0.takes.contains { $0.take.outsideWindow } }
+        if !byPasses {
+            for w in work {
+                if !pushed { pushUndo(); pushed = true }   // BEFORE the first change
+                if let seq = w.newSequence { midiSequences[seq.id] = seq }   // immutable, outside the undo
+                setMuted(w.muteIDs.filter { id in !w.early.contains(id) }, true)   // those muted at the start are
+                setMuted(w.unmuteIDs, false)
+                // The newest on top: the previous takes go down by one lane per take, the takes take the top lanes.
+                let down = w.takes.count
+                updateMany(Set(w.shiftIDs)) { $0.lane += down }
+                for m in w.takes {                    // oldest first: the newest is the last one added
+                    addChild(m.object, toGroupID: w.zoneID)
+                }
+            }
+        } else {
+            layDownByPasses(work, alreadyPushed: pushed)
+        }
+        for w in work {
+            for m in w.takes {
+                reports.append(RecordTakeReport(group: w.zoneID, object: m.object.id, path: w.path,
                                                 start: m.take.start, duration: m.take.duration,
                                                 sourceOffset: m.take.sourceOffset, lane: m.take.lane,
-                                                outsideWindow: m.take.outsideWindow, muted: muteIDs,
-                                                notes: m.notes, pass: m.take.pass, passes: passCount,
-                                                partial: passCount > 1 && m.take.pass == passCount - 1,
+                                                outsideWindow: m.take.outsideWindow, muted: w.muteIDs,
+                                                notes: m.notes, pass: m.take.pass, passes: w.passCount,
+                                                partial: w.passCount > 1 && m.take.pass == w.passCount - 1,
                                                 audible: m.take.audible))
             }
         }
@@ -392,4 +418,84 @@ extension EditViewModel {
         syncArmedInputs()
         syncMidiZones()
     }
+
+    /// Lays the takes of a recording through a loop down one STEP at a time (`RecordLoopPlanner.passSteps`), a
+    /// point of the undo stack between two steps. After step `s` a zone holds the takes of the passes up to the
+    /// step's last one, in the layout `prefixLayout` gives (the newest on the top lane, in "mute" the newest only
+    /// audible, the zone's previous children pushed down by as many lanes as takes); the next step moves what is
+    /// already there (lanes, audibility) and adds its own takes. The final state is the plan's, to the lane.
+    ///
+    /// The lanes are never re-read from the model between two steps: each zone's progress is counted here
+    /// (`placed`), and the deltas computed from the layouts alone.
+    private func layDownByPasses(_ work: [ZoneTakes], alreadyPushed: Bool) {
+        var pushed = alreadyPushed
+        let steps = RecordLoopPlanner.passSteps(passes: work.flatMap { $0.takes.map { $0.take.pass } })
+        var placed: [UUID: Int] = [:]                  // how many takes of each zone are in the model
+        for (si, step) in steps.enumerated() {
+            guard let cutoff = step.max() else { continue }
+            // The point holds the state of the step before (or, for the first step, the one of the start).
+            if si == 0 { if !pushed { pushUndo(); pushed = true } } else { pushUndo() }
+            for w in work {
+                let count = w.takes.filter { $0.take.pass <= cutoff }.count    // the passes ascend: a prefix
+                let prior = placed[w.zoneID] ?? 0
+                guard count > prior else { continue }
+                if prior == 0 {
+                    if let seq = w.newSequence { midiSequences[seq.id] = seq }   // immutable, outside the undo
+                    setMuted(w.muteIDs.filter { id in !w.early.contains(id) }, true)
+                    setMuted(w.unmuteIDs, false)
+                }
+                let was = RecordLoopPlanner.prefixLayout(takeCount: prior, baseLane: w.baseLane,
+                                                         mutesPrevious: w.mode.mutesPrevious)
+                let now = RecordLoopPlanner.prefixLayout(takeCount: count, baseLane: w.baseLane,
+                                                         mutesPrevious: w.mode.mutesPrevious)
+                // The takes already there move down / change audibility with the new one on top…
+                var newLanes: [UUID: Int] = [:]
+                for n in 0..<prior {
+                    let id = w.takes[n].object.id
+                    if was[n].lane != now[n].lane { newLanes[id] = now[n].lane }
+                    if was[n].audible != now[n].audible { setMuted([id], !now[n].audible) }
+                }
+                if !newLanes.isEmpty {
+                    updateMany(Set(newLanes.keys)) { if let l = newLanes[$0.id] { $0.lane = l } }
+                }
+                // …so do the zone's previous children…
+                let down = count - prior
+                updateMany(Set(w.shiftIDs)) { $0.lane += down }
+                // …and the step's own takes arrive, oldest first.
+                for n in prior..<count {
+                    var o = w.takes[n].object
+                    o.lane = now[n].lane
+                    o.isMuted = !now[n].audible
+                    addChild(o, toGroupID: w.zoneID)
+                }
+                placed[w.zoneID] = count
+            }
+        }
+    }
+}
+
+/// A take a finished recording is going to add to a zone: the object, what the planner decided for it, and the
+/// number of notes of a MIDI one.
+private struct MadeTake {
+    let object: SoundObject
+    let take: RecordLoopPlanner.Take
+    var notes = 0
+}
+
+/// What one zone receives from a finished recording, computed before anything is applied (@see
+/// `EditViewModel.completeRecording`). `takes` are oldest first; `baseLane` is the zone's top lane BEFORE any
+/// change (the planner's reference for every layout).
+private struct ZoneTakes {
+    let zoneID: UUID
+    let mode: RecordTakeMode
+    /// The children `beginRecording` muted for this zone.
+    let early: [UUID]
+    let takes: [MadeTake]
+    let muteIDs: [UUID]
+    let unmuteIDs: [UUID]
+    let shiftIDs: [UUID]
+    let path: String
+    let passCount: Int
+    let newSequence: MidiSequence?
+    let baseLane: Int
 }

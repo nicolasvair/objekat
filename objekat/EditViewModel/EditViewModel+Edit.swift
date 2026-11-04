@@ -177,7 +177,7 @@ extension EditViewModel {
     @discardableResult
     func resolveMidiSequenceWindow(of obj: inout SoundObject, startShiftBeats: Double) -> Bool {
         guard obj.midiSequence != nil else { return false }
-        guard case .midiClip(let notes, let lengthBeats) = obj.kind,
+        guard case .midiClip(let notes, _) = obj.kind,
               let ref = obj.midiSequence,
               let hit = MidiSequenceWindow.resolved(ref: ref, current: notes, sequence: midiSequences[ref.id],
                                                     shiftedByBeats: startShiftBeats,
@@ -186,9 +186,27 @@ extension EditViewModel {
             obj.midiSequence = nil      // an edited clip, or a sequence that is gone: a classic clip from here on
             return false
         }
-        obj.kind = .midiClip(notes: hit.notes, lengthBeats: max(0.01, lengthBeats - startShiftBeats))
+        // The clip's length follows its window, the creation rule (@see `midiLoopTakes`): a stretch to the right
+        // used to leave the old length behind. Nothing on the engine side reads it (`syncMidiNotes` pushes notes).
+        obj.kind = .midiClip(notes: hit.notes, lengthBeats: max(1.0, beatsFromSeconds(obj.duration)))
         obj.midiSequence = hit.ref
         return true
+    }
+
+    /// What a MIDI take would show if the trim / resize gesture under way ended now: the notes of its window on the
+    /// sequence, resolved for the start moved by `startShiftSeconds` (positive = in) and the new `duration`. A READ —
+    /// the model, the undo and the engine are untouched — so the block can draw the matter an edge reveals while
+    /// the hand is still dragging it, instead of the old notes until the release. The notes come rebased on the new
+    /// start (the caller draws them with no offset). nil when the clip is not a live take (a classic clip keeps
+    /// the notes it has; a reference whose notes were edited since is dead, @see `SoundObject.liveMidiSequence`).
+    func previewMidiWindowNotes(of obj: SoundObject, startShiftSeconds: Double, duration: Double) -> [MidiNote]? {
+        guard let ref = obj.liveMidiSequence, case .midiClip(let notes, _) = obj.kind,
+              let hit = MidiSequenceWindow.resolved(ref: ref, current: notes, sequence: midiSequences[ref.id],
+                                                    shiftedByBeats: beatsFromSeconds(startShiftSeconds),
+                                                    lengthBeats: beatsFromSeconds(max(0.01, duration)),
+                                                    clipID: obj.id)
+        else { return nil }
+        return hit.notes
     }
 
     func updateDuration(id: UUID, duration: Double) {

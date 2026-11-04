@@ -343,9 +343,14 @@ def run(stock):
                     # one continuous file: the takes' file positions chain through the loop (offset_k = k-th pass's file start)
                     offs = [t["source_offset"] for t in sorted(tk, key=lambda t: t["pass"])]
                     check("file offsets increase pass after pass", all(b > a for a, b in zip(offs, offs[1:])), offs)
-                check("rec.stop is ONE undo point", c.send("perf.census")["undo_depth"] == d0 + 1)
+                steps = min(len(tk), 16)
+                check("rec.stop leaves ONE undo point per pass (%d)" % steps, c.send("perf.census")["undo_depth"] == d0 + steps,
+                      (c.send("perf.census")["undo_depth"], d0, steps))
                 c.send("edit.undo")
-                check("one undo takes every take away", kids(c, z) == [])
+                check("one undo takes the last pass away only", len(kids(c, z)) == len(tk) - 1, len(kids(c, z)))
+                for _ in range(steps - 1):
+                    c.send("edit.undo")
+                check("one undo per pass takes every take away", kids(c, z) == [])
                 c.send("debug.transport_loop", {"enabled": False})
 
                 # ── P2 -------------------------------------------------------------------------------

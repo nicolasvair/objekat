@@ -2819,6 +2819,7 @@ struct TimelineView: View {
             previewOffset:    previewOffset(for: object),
             previewResizeDX:  previewResizeDX(for: object),
             previewTrimDX:    previewTrimDX(for: object),
+            previewMidiNotes: previewMidiNotes(for: object),
             previewFadeIn:    previewFadeIn(for: object),
             previewFadeOut:   previewFadeOut(for: object),
             previewFadeInCurve:  previewFadeCurveIn(for: object),
@@ -3561,12 +3562,24 @@ struct TimelineView: View {
                         // No waveform: the notes, in the stem's colour whatever the block's own
                         // colour, bounded to the viewport's columns and rows.
                         guard rect.maxY >= rows.y0, rect.minY <= rows.y1 else { continue }
+                        // A take of a recording through a loop under an edge's gesture draws the window it is
+                        // going to have (already rebased on the new start: no offset); any other clip its own notes.
+                        var shownNotes = item.midiNotes
+                        var notesOffset = -blockLook.trimDX
+                        if item.midiSequence != nil,
+                           blockLook.trimDX != 0 || blockLook.duration != item.duration,
+                           let window = viewModel.previewMidiWindowNotes(
+                                of: item, startShiftSeconds: blockLook.trimDX / pixelsPerSecond,
+                                duration: blockLook.duration) {
+                            shownNotes = window
+                            notesOffset = 0
+                        }
                         MidiNotesDrawing.append(
-                            to: &midiFills, origin: CGPoint(x: x, y: y), notes: item.midiNotes,
+                            to: &midiFills, origin: CGPoint(x: x, y: y), notes: shownNotes,
                             secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
                             // A left trim reveals, it does not move the notes (as the rich view's
                             // `xOffset: -previewTrimDX`).
-                            xOffset: -blockLook.trimDX,
+                            xOffset: notesOffset,
                             size: CGSize(width: w, height: blockHeight),
                             loopRange: blockLook.loopRange,
                             visibleX: (Double(cullScrollX) - x - 1)...(Double(cullScrollX) + Double(cullViewportWidth) - x + 1),

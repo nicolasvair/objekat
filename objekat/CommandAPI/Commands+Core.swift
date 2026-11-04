@@ -1029,6 +1029,10 @@ extension CommandRegistry {
 
         register("edit.undo", summary: "Undoes the last gesture.", undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            // The recording counts on the stack not moving under it (@see EditViewModel+Recording).
+            guard !vm.isRecording else {
+                throw CommandError(code: .invalid_state, message: "a recording is under way: nothing is undone until it ends")
+            }
             guard vm.canUndo else {
                 throw CommandError(code: .invalid_state, message: "nothing to undo")
             }
@@ -1038,6 +1042,10 @@ extension CommandRegistry {
 
         register("edit.redo", summary: "Redoes the undone gesture.", undo: .handled) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            // The recording counts on the stack not moving under it (@see EditViewModel+Recording).
+            guard !vm.isRecording else {
+                throw CommandError(code: .invalid_state, message: "a recording is under way: nothing is undone until it ends")
+            }
             guard vm.canRedo else {
                 throw CommandError(code: .invalid_state, message: "nothing to redo")
             }

@@ -155,10 +155,16 @@ try:
               all(obj(o).get("engine_midi_muted") == (not t["audible"]) for o, t in zip(objs, takes)),
               [(obj(o).get("engine_midi_muted"), t["audible"]) for o, t in zip(objs, takes)])
 
+        # One undo step PER PASS (L8): the last pass goes first, as many undos as passes (16 at most) empty the zone.
+        steps = min(len(takes), 16)
         c.send("edit.undo")
-        check("ONE undo takes the whole recording away", len(kids(c, gid)) == 0, len(kids(c, gid)))
-        c.send("edit.redo")
-        check("one redo brings every take back", len(kids(c, gid)) == len(takes), len(kids(c, gid)))
+        check("ONE undo takes the LAST pass away only", len(kids(c, gid)) == len(takes) - 1, len(kids(c, gid)))
+        for _ in range(steps - 1):
+            c.send("edit.undo")
+        check("one undo per pass takes the whole recording away", len(kids(c, gid)) == 0, len(kids(c, gid)))
+        for _ in range(steps):
+            c.send("edit.redo")
+        check("as many redos bring every take back", len(kids(c, gid)) == len(takes), len(kids(c, gid)))
 
         # ---------------------------------------------------------------- M2
         section("M2 the window follows the edges")

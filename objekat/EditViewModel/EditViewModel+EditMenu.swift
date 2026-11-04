@@ -25,8 +25,10 @@ extension EditViewModel {
 
     /// ⌘Z / ⇧⌘Z. An open consolidated object: ⌘Z cancels the opening (a clean rollback of the preview
     /// machinery plus popping the session), like Esc — the generic ⌘Z would restore the items without
-    /// undoing the session.
+    /// undoing the session. While a recording runs the stack is not ours to move: the recording's own
+    /// bookkeeping (@see `RecordingMuteLog.undoDepthAfterPush`) counts on it, so ⌘Z only beeps.
     func performUndoShortcut(redo: Bool) {
+        guard !isRecording else { NSSound.beep(); return }
         if !redo, isEditingConsolidate { cancelConsolidateEdit() }
         else if redo { self.redo() }
         else { undo() }

@@ -2543,7 +2543,12 @@ classic one from then on. The field is absent for every other clip. In the file:
   older child goes down one lane per take. A zone the loop never crosses keeps the out-of-window rule (ONE take over the last pass,
   `outside_window`, nothing muted). A loop shorter than 250 ms counts for none (linear recording). The group's window never
   grows. **MIDI**: the takes of a MIDI zone look through ONE shared sequence (below, `midi_sequence`); a recording in one pass makes none.
-  ONE undo takes every take away; the loop is never in the undo.
+  **One undo point PER PASS** (a pass that gave at least one take, across every zone; 16 at most, the earliest merge into the
+  first): `edit.undo` takes the LAST pass away only and leaves the zone as it was when the pass before was the last one (that pass
+  on the top lane, audible again in "mute" mode); the next one does the same with the pass before; the file / the MIDI sequence
+  stays, so the remaining takes can still be pulled out into it. A recording with one pass (or a zone whose take lies outside its
+  window) is ONE point. The loop is never in the undo. **`edit.undo` and `edit.redo` answer `invalid_state` while a recording is
+  under way** (the recording counts on the stack not moving; ⌘Z only beeps).
   `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
   the application quitting, end it the same way: the files are kept and the takes land in the project.
   Calibration (virtual card, loopback): the impulse comes back to the SAMPLE (error 0, +-1 accepted in the
@@ -2557,7 +2562,8 @@ asserts the zones against the virtual card; `tools/test_record_take_planner.swif
 press, red block, lane order, one undo, punch-in, calibration, card change during recording);
 `tools/test_record_progress.swift` asserts the red block's span and lane;
 `tools/scenario_record_loop_proof.py` (proofs of the loop recording against the stock engine: journal, punch-in, rebase, MIDI cost),
-`tools/scenario_record_loop_midi.py` (MIDI takes through a loop: partition of the notes, mutes, one undo, the window following the
+`tools/scenario_record_loop_undo.py` (one undo per pass, audio and MIDI, "mute" and "add", no undo while recording),
+`tools/scenario_record_loop_midi.py` (MIDI takes through a loop: partition of the notes, mutes, one undo per pass, the window following the
 edges, detachment on edit, format 37, orphan sequences), `tools/test_record_loop_planner.swift` and
 `tools/test_midi_sequence_window.swift` assert the planners alone; `tools/scenario_record_multi_drop.py`
 asserts the drop of several inputs.

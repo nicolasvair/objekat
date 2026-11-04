@@ -214,6 +214,51 @@ enum Run {
             check("timeline(forClock:) — no journal", near(L.timeline(forClock: 2.5, journal: []), 2.5))
         }
 
+        // ── One undo step per pass ───────────────────────────────────────────────────────────────────────────
+        do {
+            check("steps: no pass, no step", L.passSteps(passes: []).isEmpty)
+            check("steps: one pass = one step", L.passSteps(passes: [0]) == [[0]])
+            check("steps: three passes = three steps", L.passSteps(passes: [0, 1, 2]) == [[0], [1], [2]])
+            check("steps: unsorted and repeated indices are sorted and deduplicated",
+                  L.passSteps(passes: [2, 0, 1, 1, 2]) == [[0], [1], [2]])
+            check("steps: a pass index that skipped (a zone the loop did not reach) keeps its own step",
+                  L.passSteps(passes: [1, 3]) == [[1], [3]])
+            let twenty = L.passSteps(passes: Array(0..<20))
+            check("steps: twenty passes cap at sixteen steps", twenty.count == 16)
+            check("steps: the earliest five merge into the first step", twenty[0] == [0, 1, 2, 3, 4])
+            check("steps: the others stay single", twenty.dropFirst().enumerated().allSatisfy { $0.element == [5 + $0.offset] })
+            check("steps: every pass is in exactly one step", twenty.flatMap { $0 } == Array(0..<20))
+            check("steps: exactly the cap stays single", L.passSteps(passes: Array(0..<16)).count == 16
+                  && L.passSteps(passes: Array(0..<16)).allSatisfy { $0.count == 1 })
+            check("steps: one over the cap merges two", L.passSteps(passes: Array(0..<17))[0] == [0, 1]
+                  && L.passSteps(passes: Array(0..<17)).count == 16)
+            check("steps: a custom cap", L.passSteps(passes: Array(0..<5), cap: 2) == [[0, 1, 2, 3], [4]])
+
+            check("layout: no take", L.prefixLayout(takeCount: 0, baseLane: 3, mutesPrevious: true).isEmpty)
+            // The prefix of k crossing passes is what `plan` makes of the first k segments, in both modes.
+            let kids = [child(8, 14, lane: 2), child(12, 30, lane: 3)]
+            let segs = passes(from: 5, loop: 10, 20, laps: 3, tail: 4)        // 5 passes, all crossing [10, 20]
+            for mode in [true, false] {
+                for k in 1...segs.count {
+                    let plan = L.plan(windowStart: 10, windowEnd: 20, children: kids, segments: Array(segs.prefix(k)),
+                                      mutesPrevious: mode)
+                    let layout = L.prefixLayout(takeCount: k, baseLane: RecordTakePlanner.takeLane(children: kids),
+                                                mutesPrevious: mode)
+                    check("layout k=\(k) mutes=\(mode): as many takes as the plan", plan.takes.count == layout.count)
+                    check("layout k=\(k) mutes=\(mode): the plan's lanes",
+                          zip(plan.takes, layout).allSatisfy { $0.lane == $1.lane })
+                    check("layout k=\(k) mutes=\(mode): the plan's audibility",
+                          zip(plan.takes, layout).allSatisfy { $0.audible == $1.audible })
+                    check("layout k=\(k) mutes=\(mode): the existing children go down by k", plan.shiftBy == k)
+                }
+            }
+            let two = L.prefixLayout(takeCount: 3, baseLane: 0, mutesPrevious: true)
+            check("layout: the newest on the base lane, the oldest lowest", two.map(\.lane) == [2, 1, 0])
+            check("layout: \"mute\" leaves the last one audible", two.map(\.audible) == [false, false, true])
+            check("layout: \"add\" leaves all audible",
+                  L.prefixLayout(takeCount: 3, baseLane: 0, mutesPrevious: false).allSatisfy(\.audible))
+        }
+
         print(fails.isEmpty ? "ALL PASS (\(total))" : "\(fails.count) FAILED of \(total)")
         exit(fails.isEmpty ? 0 : 1)
     }
