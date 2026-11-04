@@ -528,9 +528,12 @@ extension EditViewModel {
                             copy: Bool) {
         guard let engine,
               let inst = chainInstrument(sourceObjectID), inst.id == pluginID,
-              let target = find(id: targetObjectID), target.isMIDI || target.isGroup,
               sourceObjectID != targetObjectID else { return }
-        if refusesInstrument(on: targetObjectID) { return }
+        let targetInputKey = inputChains.midiKey(ofHost: targetObjectID)
+        if targetInputKey == nil {
+            guard let target = find(id: targetObjectID), target.isMIDI || target.isGroup else { return }
+            if refusesInstrument(on: targetObjectID) { return }
+        }
         let live = engine.getPluginStateXML(pluginID.uuidString)
         let stateXML = (live?.isEmpty == false) ? live : inst.stateXML
         // The link membership of the instance laid down, one per gesture:
@@ -557,10 +560,17 @@ extension EditViewModel {
                 engine.removeInstrument(forObjectID: sourceObjectID.uuidString)
             }
         }
-        update(id: targetObjectID) { $0.instruments = [placed] }
-        // syncInstruments creates the engine instance: the link can only arm AFTER
-        // (setPluginLinkGroup returns doing nothing if the key is not in the `_pluginMap`).
-        if let updated = find(id: targetObjectID) { syncInstruments(updated) }
+        if let key = targetInputKey {
+            // A MIDI input: the instrument replaces its own, the FX behind it stay (remounted behind the new one).
+            if mountedInputHosts.contains(targetObjectID) { unmountInputHost(targetObjectID, capture: true) }
+            inputChains.midi[key]?.instrument = placed
+            syncInputChains()
+        } else {
+            update(id: targetObjectID) { $0.instruments = [placed] }
+            // syncInstruments creates the engine instance: the link can only arm AFTER
+            // (setPluginLinkGroup returns doing nothing if the key is not in the `_pluginMap`).
+            if let updated = find(id: targetObjectID) { syncInstruments(updated) }
+        }
         if let gid {
             engine.setPluginLinkGroup(placed.id.uuidString, groupID: gid.uuidString)
         }

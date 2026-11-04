@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 /// The "Inputs" tab of the left panel: the sound card's recording inputs, as the project names them.
 ///
@@ -37,6 +38,8 @@ struct InputsPanelView: View {
         nonmutating set { viewModel.selectedRecordInputs = newValue }
     }
     @State private var failure: String? = nil
+    /// The rectangle a plugin drag is hovering over (one id: a drop has one target).
+    @State private var dropTarget: RecordSource? = nil
     @FocusState private var listFocused: Bool
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
@@ -220,6 +223,7 @@ struct InputsPanelView: View {
             badges: viewModel.inputStripBadges(source),
             isSelected: selection.contains(ref),
             isOpen: isOpen,
+            isDropTarget: dropTarget == source,
             heard: heard,
             listenHelp: L("inputs.monitor.help"),
             nameHelp: L("inputs.rename.help"),
@@ -244,6 +248,14 @@ struct InputsPanelView: View {
             viewModel.applyInputStripClick(source, shift: flags.contains(.shift), command: flags.contains(.command))
         }
         .contextMenu { contextMenu(for: ref) }
+        // An effect (or a whole chain's card) dropped on the rectangle joins the input's chain; the popup is not opened by
+        // it (@see PluginStripDropDelegate, EditViewModel.acceptPluginDrop).
+        .onDrop(of: [.plainText], delegate: PluginStripDropDelegate(
+            hintKey: "input:\(ref.key)", viewModel: viewModel,
+            host: { viewModel.ensureAudioInputHost(ref) },
+            onHover: { hovered in
+                if hovered { dropTarget = source } else if dropTarget == source { dropTarget = nil }
+            }))
         .popover(isPresented: Binding(
             get: { viewModel.openInputStrip == source },
             set: { if !$0 && viewModel.openInputStrip == source { viewModel.openInputStrip = nil } }

@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 /// The « MIDI inputs » section of the Inputs tab (rec3-midi): ABOVE the card's inputs, in the same RECTANGLES
 /// (@see InputStrip) — the keys glyph where the card's have their number, the name with the badges of its effects, the
@@ -29,6 +30,8 @@ struct MidiInputsSection: View {
     @State private var levels: [String: Float] = [:]
     /// The devices heard through their instrument (the engine owns it; read on the poll).
     @State private var heard: Set<String> = []
+    /// The rectangle a plugin drag is hovering over.
+    @State private var dropTarget: RecordSource? = nil
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
     private var rows: [MidiInputInfo] { viewModel.midiInputs }
@@ -77,6 +80,7 @@ struct MidiInputsSection: View {
             badges: viewModel.inputStripBadges(source),
             isSelected: selection.contains(d.id),
             isOpen: viewModel.openInputStrip == source,
+            isDropTarget: dropTarget == source,
             heard: on,
             canListen: hasInstrument,
             listenHelp: hasInstrument ? L("inputs.midiMonitor.help") : L("inputs.midiMonitor.none.help"),
@@ -102,6 +106,13 @@ struct MidiInputsSection: View {
             selection = next
             viewModel.applyInputStripClick(source, shift: flags.contains(.shift), command: flags.contains(.command))
         }
+        // An effect or an instrument dropped on the rectangle joins the chain (an instrument replaces the one it has).
+        .onDrop(of: [.plainText], delegate: PluginStripDropDelegate(
+            hintKey: "input:\(d.id)", viewModel: viewModel,
+            host: { viewModel.ensureMidiInputHost(d) },
+            onHover: { hovered in
+                if hovered { dropTarget = source } else if dropTarget == source { dropTarget = nil }
+            }))
         .popover(isPresented: Binding(
             get: { viewModel.openInputStrip == source },
             set: { if !$0 && viewModel.openInputStrip == source { viewModel.openInputStrip = nil } }

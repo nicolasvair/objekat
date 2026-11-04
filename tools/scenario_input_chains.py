@@ -410,6 +410,62 @@ def e9(c, level, fxp, instp, dev):
     check("M10 an instrument moves from a GROUP to a clip (the source is read by host)",
           r["placed"] is True and inst_of(clip2) == ["DLSMusicDevice"] and inst_of(gid) == [], r)
 
+    # M11: drops ON the rectangles (inputs panel, step 6): the host of the input is the target of `plugin.drop`
+    c.send("project.new")
+    c.send("input.enable")
+    ah = c.send("input.host", {"first": 0, "open": False})["host_id"]
+    mh = c.send("input.host", {"midi": dev, "open": False})["host_id"]
+    clip = c.send("midi.create_clip", {"start": 0, "end": 2, "lane": 0})["id"]
+    cfx = c.send("plugin.add", {"host": clip, **LPF})["plugin"]["id"]
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("plugin.drop", {"from": clip, "plugin": cfx, "to": ah, "mode": "copy"})
+    check("M11 an FX dropped (copy) on a card input's host joins its chain, one undo point",
+          r["placed"] is True and len(plist(ah)) == 1 and c.send("perf.census")["undo_depth"] == depth + 1, r)
+    placed = plist(ah)[0]["id"]
+    check("M11 ... the host was not held open: the chain is not left mounted", absent(placed))
+    check("M11 ... the source kept its own (a copy)", [p["id"] for p in plist(clip)] == [cfx])
+    r = c.send("plugin.drop", {"from": clip, "plugin": cfx, "to": mh})
+    check("M11 an FX dropped (move) on a MIDI input's host joins its chain, after the (absent) instrument",
+          r["placed"] is True and len(plist(mh)) == 1 and plist(clip) == [], r)
+    inst_clip = c.send("midi.create_clip", {"start": 4, "end": 6, "lane": 1})["id"]
+    c.send("instrument.set", {"id": inst_clip, **instp})
+    ic = c.send("plugin.list", {"host": inst_clip})["instruments"][0]["id"]
+    r = c.send("plugin.drop", {"from": inst_clip, "plugin": ic, "to": ah})
+    check("M11 an instrument on an AUDIO input is refused", r["refused"] is True and r["placed"] is False, r)
+    r = c.send("plugin.drop", {"from": inst_clip, "plugin": ic, "to": mh})
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M11 an instrument on a MIDI input is taken (move): the clip loses it, the FX stay behind it",
+          r["placed"] is True and row["instrument"] == "DLSMusicDevice" and row["fx_count"] == 1
+          and c.send("plugin.list", {"host": inst_clip})["instruments"] == [], r)
+    first = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    c.send("instrument.set", {"id": inst_clip, **instp})
+    ic = c.send("plugin.list", {"host": inst_clip})["instruments"][0]["id"]
+    r = c.send("plugin.drop", {"from": inst_clip, "plugin": ic, "to": mh, "mode": "copy"})
+    second = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
+    check("M11 ... a second one REPLACES the first (new id), the FX still there",
+          r["placed"] is True and second != first and row["fx_count"] == 1, (first, second))
+    # during a recording (a recording needs a saved project)
+    c.send("project.save_as", {"path": os.path.join(WORK, "m11", "p", "p.objekat.json")})
+    zone = c.send("rec.drop", {"first": 1, "count": 1, "lane": 6, "time": 2})["group"]
+    c.send("rec.arm", {"group": zone, "on": True})
+    c.send("transport.seek", {"seconds": 0})
+    c.send("rec.start")
+    r = c.send("plugin.drop_at", {"from": inst_clip, "plugin": ic, "host": ah, "mode": "copy", "dry_run": True})
+    c.send("rec.stop")
+    c.send("rec.arm", {"group": zone, "on": False})
+    time.sleep(1.0)
+    check("M11 nothing is dropped on an input during a recording", r["refused"] is True, r)
+    # an FX link bin
+    a2 = c.send("plugin.add", {"host": inst_clip, **LPF})["plugin"]["id"]
+    c.send("plugin.add", {"host": inst_clip, **LPF})
+    lk = c.send("fxlink.create", {"host": inst_clip, "plugins": [a2]})
+    blk = next((p["id"] for p in plist(inst_clip) if p.get("is_fx_block")), None)
+    check("M11 (an FX link bin was made to be dropped)", blk is not None, plist(inst_clip))
+    if blk is not None:
+        r = c.send("plugin.drop_at", {"from": inst_clip, "plugin": blk, "host": ah, "dry_run": True})
+        check("M11 an FX link bin on an input is refused", r["refused"] is True, r)
+
 
 def e11(c, instp, dev):
     LPF = {"identifier": "aufx,lpas,appl"}

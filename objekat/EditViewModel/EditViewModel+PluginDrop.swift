@@ -190,10 +190,20 @@ extension EditViewModel {
             }
         }
 
+        // An INPUT's chain (the Inputs tab's rectangles): nothing during a recording, nothing on an input that is not
+        // there now, no FX link bin; an audio input takes no instrument.
+        let targetInput = inputHostKind(targetID)
+        if targetInput != nil, let why = inputHostDropRefusal(targetID) { return .refuse(why) }
+
         // AN INSTRUMENT lives in its object's slot, not in a chain.
         if isInstrument(payload.pluginID, of: sourceID) {
             guard case .hostEnd = site else { return .refuse("an instrument only goes to an object's instrument slot") }
             guard sourceID != targetID else { return .refuse("source and target are the same object") }
+            // A MIDI input takes it, replacing the one it has (its FX stay behind); an audio input has no slot.
+            if let kind = targetInput {
+                guard case .midi = kind else { return .refuse("an audio input takes no instrument") }
+                return alt ? .copy : .move
+            }
             // A MIDI clip or a group takes it (a bus, an audio clip, an input of the card do not); the group rule
             // is asked as a SILENT read, so that the cursor says what the drop will do before the hand lets go.
             guard let target = find(id: targetID), target.isMIDI || target.isGroup else {
@@ -217,6 +227,7 @@ extension EditViewModel {
         // A WHOLE BLOCK, grabbed by its header.
         if let block = Self.findBlock(payload.pluginID, in: sourceChain), let fb = block.fxBlock {
             if targetIsSend { return .refuse(SendChain.Refusal.leavesOnly.rawValue) }     // no bin on a send
+            if targetInput != nil { return .refuse("an FX link does not go on an input") }
             guard payload.ids.count == 1 else { return .refuse("a block travels alone") }
             switch binSite {
             case .outside: break
@@ -295,6 +306,24 @@ extension EditViewModel {
         return alt ? .copy : .move
     }
 
+    /// Why nothing can be dropped on the input chain `hostID` right now — nil when something can (or when it is no input's).
+    /// The same words go to the cursor, the API's dry run and the drop itself.
+    func inputHostDropRefusal(_ hostID: UUID) -> String? {
+        guard let kind = inputHostKind(hostID) else { return nil }
+        if isRecording { return "an input's chain does not change during a recording" }
+        switch kind {
+        case .audio(let key):
+            guard let ref = InputChains.inputRef(forKey: key), visibleRecordInputs.contains(ref) else {
+                return "this input is not on the card now"
+            }
+        case .midi(let id):
+            guard let chain = inputChains.midi[id], resolvedMidiInput(chain.input) != nil else {
+                return "this MIDI input is not here now"
+            }
+        }
+        return nil
+    }
+
     /// `.refuse(chainFull)` if `adding` more plugins do not fit in the send's mini-chain `hostID`
     /// names; nil for any other host, or when they fit.
     private func sendCapacity(_ adding: Int, _ hostID: UUID) -> PluginDropOutcome? {
@@ -309,7 +338,11 @@ extension EditViewModel {
     @discardableResult
     func acceptPluginDrop(_ payload: PluginDragPayload, on targetID: UUID,
                           modifiers flags: NSEvent.ModifierFlags) -> Bool {
-        performPluginDrop(payload, on: targetID, at: .hostEnd, modifiers: flags)
+        // A drop on an input's rectangle whose chain was not held mounted: the chain is mounted for the edit (the compile
+        // does it and leaves it in `openInputHosts`) and let go again, the plugins' live states captured.
+        let wasOpen = openInputHosts.contains(targetID)
+        defer { if isInputHost(targetID), !wasOpen { closeInputHost(targetID) } }
+        return performPluginDrop(payload, on: targetID, at: .hostEnd, modifiers: flags)
     }
 
     /// Resolves the drop (@see pluginDropOutcome) and carries out what it answers: ONE undo point for
@@ -359,7 +392,9 @@ extension EditViewModel {
             // given up rather than left pointing at nothing — and with it the keyboard goes back to
             // the timeline.
             if mode == .move, !placed.isEmpty {
-                if wasSelection {
+                // (a drop on an input's rectangle whose popup is closed shows nothing to select in)
+                let targetShown = !isInputHost(targetID) || openInputStripHost == targetID
+                if wasSelection && targetShown {
                     setPluginSelection(Set(placed), host: targetID)
                 } else if selectedPluginHostID == payload.sourceObjectID {
                     clearPluginSelection()

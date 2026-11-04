@@ -156,8 +156,9 @@ struct StemStripsToolbarView: View {
                 // (nothing = move, ⌥ = an independent copy) stopped
                 // at the objects, and a chain built on an object could not be carried up onto a
                 // bus. What happens on arrival is `acceptPluginDrop`, the timeline's own door.
-                .onDrop(of: [.plainText], delegate: StemStripDropDelegate(
-                    stemID: stem.id, viewModel: viewModel,
+                .onDrop(of: [.plainText], delegate: PluginStripDropDelegate(
+                    hintKey: "strip:\(stem.id.uuidString)", viewModel: viewModel,
+                    host: { stem.id },
                     onHover: { hovered in
                         // Written unconditionally rather than cleared on leaving: the strips are
                         // side by side, and macOS sends the new strip's `dropEntered` BEFORE the
@@ -336,89 +337,6 @@ private nonisolated struct StemBarOverflow: Equatable, Sendable {
         let offset = geometry.contentOffset.x
         leading = offset > 0.5
         trailing = offset + geometry.containerSize.width < geometry.contentSize.width - 0.5
-    }
-}
-
-// MARK: - Dropping a plugin card on a bus's strip
-//
-// A `DropDelegate` and not the convenience `.onDrop(of:isTargeted:perform:)`, for the one reason
-// that convenience cannot do: it is `dropUpdated` — called again on every movement — that says
-// what the CURSOR shows, and the convenience form answers `.copy` to everything. So a strip
-// badged a '+' on a move, where the timeline shows none, and the same gesture read differently
-// depending on where the hand was taking it. The rule itself is shared, not copied:
-// `PluginDrop.operation`.
-//
-// What it refuses is as important as what it takes: a Finder drag also carries text beside its
-// file URL, and a toolbar that lit up under a WAV would promise something it cannot do.
-
-private struct StemStripDropDelegate: DropDelegate {
-    let stemID: UUID
-    let viewModel: EditViewModel
-    /// Whether a plugin drag is hovering over this strip.
-    let onHover: (Bool) -> Void
-
-    private func carriesPlugin(_ info: DropInfo) -> Bool {
-        info.itemProviders(for: [.plainText]).contains(where: PluginDrop.carries)
-    }
-
-    func validateDrop(info: DropInfo) -> Bool { carriesPlugin(info) }
-
-    /// The band at the bottom of the timeline (@see PluginDropHint), under this strip's own key.
-    private var hintKey: String { "strip:\(stemID.uuidString)" }
-
-    /// What a release here would do with the drag in flight (@see EditViewModel.pluginDropOutcome);
-    /// nil when there is none to read (the legacy reading then holds).
-    private func outcome() -> PluginDropOutcome? {
-        // A send card never goes to a stem's strip (a stem does not send): "a send stays on its object".
-        if SendDragSession.shared.current != nil { return .sendRefused(.refusedElsewhere) }
-        guard let payload = PluginDragSession.shared.current else { return nil }
-        return viewModel.pluginDropOutcome(payload, toHost: stemID, at: .hostEnd, flags: NSEvent.modifierFlags)
-    }
-
-    /// Lights the strip and speaks on the band when the release would DO something; withdraws both,
-    /// and shows the refusing cursor, when it would not.
-    private func present(_ info: DropInfo) -> DropProposal {
-        guard let o = outcome() else {
-            onHover(true)
-            PluginDropHint.shared.present(hintKey, context: .host)
-            return DropProposal(operation: PluginDrop.operation(for: NSEvent.modifierFlags))
-        }
-        guard let ctx = o.hintContext() else {
-            onHover(false)
-            PluginDropHint.shared.leave(hintKey)
-            return DropProposal(operation: .forbidden)
-        }
-        onHover(true)
-        PluginDropHint.shared.present(hintKey, context: ctx)
-        return DropProposal(operation: o.operation)
-    }
-
-    func dropEntered(info: DropInfo) {
-        guard carriesPlugin(info) else { onHover(true); return }
-        _ = present(info)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard carriesPlugin(info) else {
-            onHover(false)
-            PluginDropHint.shared.leave(hintKey)
-            return DropProposal(operation: .forbidden)
-        }
-        return present(info)
-    }
-
-    func dropExited(info: DropInfo) {
-        onHover(false)
-        PluginDropHint.shared.leave(hintKey)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        onHover(false)
-        PluginDropHint.shared.leave(hintKey)
-        guard let provider = info.itemProviders(for: [.plainText]).first(where: PluginDrop.carries)
-        else { return false }
-        PluginDrop.receive(provider, in: viewModel) { stemID }
-        return true
     }
 }
 
