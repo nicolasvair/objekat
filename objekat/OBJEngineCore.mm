@@ -7,6 +7,7 @@
 #import <AppKit/AppKit.h>   // notifications d'activation de l'app (éditeurs suivant le focus)
 #import <AudioUnit/AudioUnit.h>
 #include <chrono>
+#include <mutex>
 #include <thread>
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
@@ -27,6 +28,7 @@
 #include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
 #include "OBJVirtualAudioDevice.h"        // --virtual-audio: a paced test card with synthetic inputs
 #include "Shared/OBJCoreAudioProbe.h"     // does the output device own its inputs? (AirPods = no)
+#include "Shared/OBJAggregateDevice.h"     // a private aggregate for an input card other than the output card
 #include <unordered_map>
 #include <unordered_set>
 #include <set>
@@ -107,6 +109,47 @@ struct OBJRenderPluginFilter {
         ~ExportScope() { active = false; exportMode = false; allowedClips.clear(); }
     };
 };
+
+// The private AGGREGATE the engine holds while the inputs are taken from a card other than the output
+// card (@see Shared/OBJAggregateDevice.h). From JUCE's side it is ONE CoreAudio device with both sides,
+// named `objaggregate::makeName`; from everyone else's it does not exist: its name never reaches a
+// list, an answer, the window or Settings.xml, and what is shown and kept is the REAL output card.
+// A function-local static behind a mutex: the property storage reads it from whatever thread saves.
+struct OBJAggState {
+    std::mutex  mutex;
+    bool        live = false;      // an aggregate is the open device
+    std::string name;              // the aggregate's own name (kept after it is gone: a late save may still carry it)
+    std::string outputName;        // the REAL output card's name: what the user chose, what Settings.xml keeps
+    std::string outputUID, inputUID;
+    int         inputCount = 0;    // the input window's width (N): the engine sees the card's inputs and no others
+};
+static OBJAggState& objAgg() { static OBJAggState s; return s; }
+
+static bool objIsAggregateName(const juce::String& n) { return objaggregate::isOurs(n.toStdString()); }
+
+/// The output card's name as the USER knows it: the setup's own, unless the setup names our aggregate.
+static juce::String objRealOutputName(const juce::AudioDeviceManager::AudioDeviceSetup& setup) {
+    if (!objIsAggregateName(setup.outputDeviceName)) return setup.outputDeviceName;
+    std::lock_guard<std::mutex> lock(objAgg().mutex);
+    return juce::String(objAgg().outputName);
+}
+
+/// How many input channels the engine sees on a device: all of them, except on the aggregate, where
+/// the input card's own window (the output card's inputs sit after it and are never addressed).
+static int objInputWindowCount(juce::AudioIODevice& d) {
+    const int n = d.getInputChannelNames().size();
+    if (!objIsAggregateName(d.getName())) return n;
+    std::lock_guard<std::mutex> lock(objAgg().mutex);
+    return std::min(n, objAgg().inputCount);
+}
+
+/// The name of the card a device stands for: its own, unless it is our aggregate (then the real output card).
+static juce::String objRealDeviceName(juce::AudioIODevice& d) {
+    juce::String n = d.getName();
+    if (!objIsAggregateName(n)) return n;
+    std::lock_guard<std::mutex> lock(objAgg().mutex);
+    return juce::String(objAgg().outputName);
+}
 
 // Stockage des réglages moteur (Settings.xml) : celui de Tracktion, à UNE différence près — il ne
 // RELIT jamais la fréquence d'échantillonnage mémorisée de la carte son.
@@ -209,6 +252,17 @@ struct OBJPropertyStorage : public te::PropertyStorage {
         if (setting == te::SettingID::audio_device_setup) {
             juce::XmlElement copy(xml);
             stripInputs(copy);
+            // Our private aggregate is the open device while the inputs come from another card: it must
+            // never reach the file (the next launch would look for a device that is gone). The file keeps
+            // the REAL output card, and the channel mask of the aggregate's window (which is not the real
+            // card's) goes with it: the next launch takes that card's default channels.
+            if (objIsAggregateName(copy.getStringAttribute("audioOutputDeviceName"))) {
+                std::string real;
+                { std::lock_guard<std::mutex> lock(objAgg().mutex); real = objAgg().outputName; }
+                if (real.empty()) copy.removeAttribute("audioOutputDeviceName");
+                else copy.setAttribute("audioOutputDeviceName", juce::String(real));
+                copy.removeAttribute("audioDeviceOutChans");
+            }
             te::PropertyStorage::setXmlProperty(setting, copy);
             return;
         }
@@ -376,7 +430,14 @@ static int objThreadPoolStrategyFromEnv() {
 static juce::String objAudioBindingSignature(juce::AudioDeviceManager& jdm) {
     auto* dev = jdm.getCurrentAudioDevice();
     if (dev == nullptr || !dev->isOpen()) return {};
-    return dev->getTypeName() + "|" + dev->getName() + "|" + juce::String(dev->getCurrentSampleRate())
+    // The aggregate is named by the process and a serial: a signature carrying that name would change at
+    // every rebuild, and stop a recording for nothing. It carries what the aggregate is MADE of instead.
+    juce::String name = dev->getName();
+    if (objIsAggregateName(name)) {
+        std::lock_guard<std::mutex> lock(objAgg().mutex);
+        name = juce::String("aggregate[in=") + objAgg().inputUID + ",out=" + objAgg().outputUID + "]";
+    }
+    return dev->getTypeName() + "|" + name + "|" + juce::String(dev->getCurrentSampleRate())
          + "|" + juce::String(dev->getCurrentBufferSizeSamples());
 }
 
@@ -503,9 +564,14 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     {
         descs.clear();
 
+        // The aggregate: the inputs are the input card's window (it starts at 0), the outputs are the
+        // output card's, and JUCE hands the callback only the ACTIVE output channels, packed — so the
+        // outputs are described over that packed range, from 0, whatever the window's offset.
+        const bool aggregate = objIsAggregateName(device.getName());
+
         if (isInput)
         {
-            const int numIn = device.getInputChannelNames().size();
+            const int numIn = objInputWindowCount(device);
             const auto active = device.getActiveInputChannels();
             std::vector<bool> open((size_t) std::max(0, numIn));
             for (int i = 0; i < numIn; ++i) open[(size_t) i] = active[i];
@@ -516,7 +582,8 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
             return;
         }
 
-        const int numChannels = device.getOutputChannelNames().size();
+        const int numChannels = aggregate ? device.getActiveOutputChannels().countNumberOfSetBits()
+                                          : device.getOutputChannelNames().size();
 
         for (int i = 0; i < numChannels; ++i) {
             const bool canBeStereo = i + 1 < numChannels;
@@ -1371,7 +1438,7 @@ struct OBJInputMeter : public juce::AudioIODeviceCallback {
         for (int c = act.findNextSetBit(0); c >= 0 && n < kMax; c = act.findNextSetBit(c + 1))
             if (c < kMax) map[(size_t) n++] = c;
         numActive.store(n);
-        numDeviceChannels.store(std::min(kMax, d->getInputChannelNames().size()));
+        numDeviceChannels.store(std::min(kMax, objInputWindowCount(*d)));
         for (auto& p : peak) p.store(0.0f);
     }
 
@@ -2262,6 +2329,13 @@ struct OBJExportLoadScope {
     // and the only thing that existed before. Only a CHOICE, remembered while the inputs are closed;
     // opening them is what uses it (@see -setInputDevice:, -openAudioInputs).
     NSString*                                             _inputDeviceUID;
+
+    // The private aggregate held while the inputs come from a card other than the output card
+    // (@see -openAggregateInputs). `_aggregateRealSetup` is the setup as it was on the REAL output card
+    // just before: leaving the aggregate puts it back, channel mask included.
+    objaggregate::Live                                    _aggregate;
+    int                                                   _aggregateSerial;
+    juce::AudioDeviceManager::AudioDeviceSetup            _aggregateRealSetup;
 
     // Barre de progression au chargement de projet : posé par -beginBulkLoad, détruit par
     // -endBulkLoad. Tant qu'il vit, l'Edit n'alloue aucun nouveau graphe de lecture — chaque
@@ -11004,8 +11078,10 @@ static void objDumpPluginList(te::PluginList& pl,
         // après le lancement n'apparaît jamais (elle ne surgissait que parce que changer de
         // device force JUCE à re-scanner de son côté).
         type->scanForDevices();
-        for (auto& name : type->getDeviceNames(false))
+        for (auto& name : type->getDeviceNames(false)) {
+            if (objIsAggregateName(name)) continue;       // our private aggregate is nobody's card
             [result addObject:[NSString stringWithUTF8String:name.toRawUTF8()]];
+        }
     }
     return result;
 }
@@ -11013,7 +11089,7 @@ static void objDumpPluginList(te::PluginList& pl,
 - (NSString*)currentOutputDeviceName {
     auto& dm = _engine->getDeviceManager().deviceManager;
     if (auto* dev = dm.getCurrentAudioDevice()) {
-        juce::String n = dev->getName();   // local nommé (piège toRawUTF8 sur temporaire)
+        juce::String n = objRealDeviceName(*dev);   // local nommé (piège toRawUTF8 sur temporaire)
         return [NSString stringWithUTF8String:n.toRawUTF8()];
     }
     return nil;
@@ -11064,12 +11140,18 @@ static void objDumpPluginList(te::PluginList& pl,
 
 - (void)setOutputDevice:(NSString*)name {
     NSLog(@"[OBJ] setOutputDevice: %@", name);
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    const juce::String newName = juce::String::fromUTF8([name UTF8String]);
+    // Same card while the aggregate is the open device: nothing to do (and never write the real
+    // name over the aggregate's in the setup — that would reopen the card alone, inputs lost).
+    if (_aggregate && dm.getCurrentAudioDevice() != nullptr && objRealOutputName(dm.getAudioDeviceSetup()) == newName) return;
     BOOL wasPlaying = [self isCurrentlyPlaying];
     [self stop];
+    // Another card: the aggregate is built on the old one, so it goes first (JUCE back on the real
+    // card BEFORE the aggregate is destroyed under it).
+    if (_aggregate) [self leaveAggregate];
 
-    auto& dm = _engine->getDeviceManager().deviceManager;
     auto setup = dm.getAudioDeviceSetup();
-    const juce::String newName = juce::String::fromUTF8([name UTF8String]);
     // Même carte : on ne touche à rien (le setup reste identique, JUCE ne rouvre pas) — c'est le
     // cas du rappel du choix mémorisé à l'apparition de la fenêtre.
     const bool sameDevice = dm.getCurrentAudioDevice() != nullptr && setup.outputDeviceName == newName;
@@ -11188,7 +11270,7 @@ NSString* const OBJInputsSeparateDeviceReason =
 static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 {
     auto* type = dm.getCurrentDeviceTypeObject();
-    const juce::String outName = dm.getAudioDeviceSetup().outputDeviceName;
+    const juce::String outName = objRealOutputName(dm.getAudioDeviceSetup());
     if (type == nullptr || outName.isEmpty()) return false;
     if (!type->getDeviceNames(true).contains(outName)) return false;     // no input of that name at all
 
@@ -11212,7 +11294,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     if (dev == nullptr || !dev->isOpen()) return s;                 // --no-audio, ouverture ratée
     const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
     if (outs == 0) return s;                                        // device entrée seule
-    juce::String n = dev->getName(), t = dev->getTypeName();        // locaux nommés (piège toRawUTF8)
+    juce::String n = objRealDeviceName(*dev), t = dev->getTypeName();   // locaux nommés (piège toRawUTF8)
     s.deviceName = [NSString stringWithUTF8String:n.toRawUTF8()];
     s.deviceType = [NSString stringWithUTF8String:t.toRawUTF8()];
     s.sampleRate = dev->getCurrentSampleRate();
@@ -11277,7 +11359,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 - (std::string)outputCardUID {
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* type = dm.getCurrentDeviceTypeObject();
-    const juce::String outName = dm.getAudioDeviceSetup().outputDeviceName;
+    const juce::String outName = objRealOutputName(dm.getAudioDeviceSetup());
     if (type == nullptr || outName.isEmpty()) return {};
     if (type->getTypeName() == objvirtual::cardName()) return objvirtual::cardName();
     if (type->getTypeName() != "CoreAudio") return {};
@@ -11310,7 +11392,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     }
     if (type->getTypeName() != "CoreAudio") return result;
     for (const auto& d : objcoreaudio::listDevices()) {
-        if (d.inputChannels <= 0 || d.uid.empty()) continue;
+        if (d.inputChannels <= 0 || d.uid.empty() || objaggregate::isOurs(d.name)) continue;
         [result addObject:@{ @"uid": @(d.uid.c_str()), @"name": @(d.name.c_str()),
                              @"channels": @(d.inputChannels),
                              @"same_as_output": @(!outUID.empty() && d.uid == outUID) }];
@@ -11419,6 +11501,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     auto& dm = _engine->getDeviceManager().deviceManager;
     auto* type = dm.getCurrentDeviceTypeObject();
     if (type == nullptr) return @"no audio device is open";
+    if (type->getTypeName() == "CoreAudio") return [self openAggregateInputs];
     if (type->getTypeName() != objvirtual::cardName())
         return @"an input card different from the output card is not available on this card type";
 
@@ -11454,6 +11537,126 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     return failure;
 }
 
+/// The inputs of a REAL card other than the output card: one private aggregate of both, opened as ONE
+/// CoreAudio device (so JUCE builds no combiner — the output is the master clock and the input
+/// is drift-compensated against it). The input card is listed first, so its channels are the aggregate's
+/// first (window [0, N)); the output card's channels follow, at [J, J+M).
+- (NSString* _Nullable)openAggregateInputs {
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    auto* type = dm.getCurrentDeviceTypeObject();
+    auto* cur  = dm.getCurrentAudioDevice();
+    if (type == nullptr || cur == nullptr || !cur->isOpen()) return @"no audio device is open";
+
+    const std::string outUID = [self outputCardUID];
+    if (outUID.empty()) return @"the output card cannot be identified";
+    const std::string inUID = std::string([_inputDeviceUID UTF8String]);
+    objaggregate::Card outCard, inCard;
+    if (!objaggregate::describe(outUID, outCard)) return @"the output card is not available";
+    if (!objaggregate::describe(inUID, inCard))   return @"this input card is not available";
+    if (inCard.inputChannels <= 0) return @"this input card has no input channels";
+    if (outCard.outputChannels <= 0) return @"the output card has no output channels";
+    const objaggregate::Window win = objaggregate::window(outCard, inCard);
+
+    const auto before = dm.getAudioDeviceSetup();     // the REAL setup, put back on any failure
+    NSLog(@"[OBJ] openAggregateInputs : in %s (%d), out %s (%d, window from %d)", inCard.name.c_str(), win.inCount,
+          outCard.name.c_str(), win.outCount, win.outFirst);
+    const BOOL wasPlaying = [self isCurrentlyPlaying];
+    [self stop];
+
+    std::string error;
+    objaggregate::Live live = objaggregate::create(outCard, inCard, ++_aggregateSerial, error);
+    if (!live) {
+        NSLog(@"[OBJ] ERROR aggregate: %s", error.c_str());
+        return [NSString stringWithUTF8String:error.c_str()];
+    }
+    type->scanForDevices();
+    // The aggregate must be listed under its name, on both sides, or JUCE would answer "No such device"
+    // with the output already deleted.
+    const juce::String aggName(live.name);
+    if (!type->getDeviceNames(false).contains(aggName) || !type->getDeviceNames(true).contains(aggName)) {
+        objaggregate::destroy(live);
+        NSLog(@"[OBJ] ERROR aggregate: not listed by the audio system");
+        return @"the aggregate device is not listed by the audio system";
+    }
+
+    // The state the property storage and the readers need, BEFORE JUCE saves the new setup.
+    {
+        std::lock_guard<std::mutex> lock(objAgg().mutex);
+        objAgg().live = true;
+        objAgg().name = live.name;
+        objAgg().outputName = objRealOutputName(before).toStdString();
+        objAgg().outputUID = outUID;
+        objAgg().inputUID = inUID;
+        objAgg().inputCount = win.inCount;
+    }
+    _aggregate = live;
+    _aggregateRealSetup = before;
+
+    // The output channels: the same COUNT as on the real card, shifted to the window.
+    juce::BigInteger outMask;
+    const juce::BigInteger realOut = cur->getActiveOutputChannels();
+    for (int i = 0; i < win.outCount; ++i)
+        if (realOut[i]) outMask.setBit(win.outFirst + i);
+    if (outMask.isZero()) outMask.setRange(win.outFirst, std::min(2, win.outCount), true);
+
+    auto setup = before;
+    setup.outputDeviceName = aggName;
+    setup.inputDeviceName  = aggName;
+    setup.useDefaultOutputChannels = false;
+    setup.outputChannels = outMask;
+    setup.useDefaultInputChannels = false;
+    setup.inputChannels.clear();
+    setup.inputChannels.setRange(win.inFirst, win.inCount, true);
+    setup.sampleRate = cur->getCurrentSampleRate();      // the output card's: the aggregate follows its master
+
+    auto err = dm.setAudioDeviceSetup(setup, true);
+    NSString* failure = nil;
+    if (!err.isEmpty()) failure = [NSString stringWithUTF8String:err.toRawUTF8()];
+    else {
+        // The anti-combiner guard: what is open must be ONE CoreAudio device, our aggregate, with the
+        // input window we asked for. Anything else is a combiner (or nothing) — back out.
+        auto* d = dm.getCurrentAudioDevice();
+        if (d == nullptr || !d->isOpen() || d->getTypeName() != "CoreAudio" || d->getName() != aggName
+            || d->getActiveInputChannels().countNumberOfSetBits() != win.inCount)
+            failure = @"the audio system did not open the input card as expected";
+    }
+    if (failure != nil) {
+        NSLog(@"[OBJ] ERROR opening the aggregate inputs: %@", failure);
+        [self leaveAggregateWithSetup:before];
+    } else {
+        [self ensureInputMeter];
+    }
+    if (wasPlaying) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
+        });
+    }
+    return failure;
+}
+
+/// Back to the real output card, inputs closed, then the aggregate destroyed — in THAT order: JUCE
+/// must have let go of the aggregate before it disappears under it.
+- (void)leaveAggregate { [self leaveAggregateWithSetup:_aggregateRealSetup]; }
+
+- (void)leaveAggregateWithSetup:(juce::AudioDeviceManager::AudioDeviceSetup)real {
+    if (!_aggregate) return;
+    auto& dm = _engine->getDeviceManager().deviceManager;
+    [self releaseInputMeter];
+    auto setup = real;
+    setup.inputDeviceName = {};
+    setup.inputChannels.clear();
+    setup.useDefaultInputChannels = false;
+    // Real card, its own channel mask — the aggregate's is not meaningful on it.
+    auto err = dm.setAudioDeviceSetup(setup, true);
+    if (!err.isEmpty()) NSLog(@"[OBJ] ERROR leaving the aggregate: %s", err.toRawUTF8());
+    objaggregate::destroy(_aggregate);
+    {
+        std::lock_guard<std::mutex> lock(objAgg().mutex);
+        objAgg().live = false;           // `name` stays: a late save may still carry it
+        objAgg().inputCount = 0;
+    }
+}
+
 - (void)closeAudioInputs {
     [self stopRecordingIfActive];
     [self releaseInputMeter];
@@ -11461,6 +11664,18 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     _inputMonitorGains.clear();
     _armedInputs.clear();
     [self syncInputMonitors];
+    if (_aggregate) {
+        NSLog(@"[OBJ] closeAudioInputs (aggregate)");
+        const BOOL wasPlayingAgg = [self isCurrentlyPlaying];
+        [self stop];
+        [self leaveAggregate];
+        if (wasPlayingAgg) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                dispatch_async(dispatch_get_main_queue(), ^{ [self play]; });
+            });
+        }
+        return;
+    }
     if (![self audioInputsOpen]) return;
     NSLog(@"[OBJ] closeAudioInputs");
     const BOOL wasPlaying = [self isCurrentlyPlaying];
@@ -11483,7 +11698,10 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
     NSMutableArray* result = [NSMutableArray array];
     if (![self audioInputsOpen]) return result;
     auto* dev = _engine->getDeviceManager().deviceManager.getCurrentAudioDevice();
+    const int window = objInputWindowCount(*dev);
+    int i = 0;
     for (auto& n : dev->getInputChannelNames()) {
+        if (i++ >= window) break;       // on the aggregate: the input card's channels, not the output card's
         juce::String name = n;      // named local (toRawUTF8 trap)
         [result addObject:[NSString stringWithUTF8String:name.toRawUTF8()]];
     }
@@ -11533,7 +11751,7 @@ static bool objOutputInputsAreSeparate(juce::AudioDeviceManager& dm)
 - (NSArray<NSNumber*>*)audioInputStereoPairs {
     NSMutableArray* result = [NSMutableArray array];
     auto* dev = _engine->getDeviceManager().deviceManager.getCurrentAudioDevice();
-    const int n = dev != nullptr ? dev->getInputChannelNames().size() : 0;
+    const int n = dev != nullptr ? objInputWindowCount(*dev) : 0;
     const auto& requested = static_cast<OBJEngineBehaviour&>(_engine->getEngineBehaviour()).inputPairs;
     for (int first : objinput::validPairs(n, requested)) [result addObject:@(first)];
     return result;
