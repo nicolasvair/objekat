@@ -419,6 +419,19 @@ try:
         check("a note held at the stop is CLOSED (a take with one note of positive length)",
               th is not None and len(th["notes"]) == 1 and th["notes"][0]["length_beats"] > 0, th)
         c.send("midi.virtual.send", {"events": [{"kind": "off", "note": 55}]})
+        # L9: the previous takes are pushed one lane down while the take is made, and put back when nothing comes out of it
+        before = [(k["id"], k["lane"]) for k in kids(c, z3)]
+        c.send("transport.seek", {"seconds": 33})
+        d_empty = undo_depth(c)
+        c.send("rec.start")
+        time.sleep(0.4)
+        during = [(k["id"], k["lane"]) for k in kids(c, z3)]
+        check("L9: during a recording the previous takes are one lane down (the top lane is left empty)",
+              during == [(i, l + 1) for i, l in before], (before, during))
+        r = c.send("rec.stop")
+        after = [(k["id"], k["lane"]) for k in kids(c, z3)]
+        check("L9: no note, no take: every lane is back where it was", r["last_takes"] == [] and after == before, (before, after))
+        check("L9: ... and the point pushed for the shift is dropped", undo_depth(c) == d_empty, (d_empty, undo_depth(c)))
         # sustain: note 0.3 s, the pedal is held 1.5 s -> the note lasts ~1.5 s
         c.send("transport.seek", {"seconds": 35})
         c.send("rec.start")

@@ -74,11 +74,14 @@ struct RecordingProgressOverlay: View {
     var body: some View {
         let blocks = viewModel.recordProgressBlocks(head: position())
         ZStack(alignment: .topLeading) {
-            ForEach(blocks, id: \.group) { b in
+            ForEach(blocks) { b in
+                // The pass being recorded, and — through a loop — the ghost of each finished one under it: the same red,
+                // fainter, with a dashed edge (it is not a take yet, it is the place one will take).
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(RecordZoneIcon.red.opacity(0.30))
+                    .fill(RecordZoneIcon.red.opacity(b.current ? 0.30 : 0.15))
                     .overlay(RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(RecordZoneIcon.red.opacity(0.75), lineWidth: 1))
+                        .strokeBorder(RecordZoneIcon.red.opacity(b.current ? 0.75 : 0.40),
+                                      style: StrokeStyle(lineWidth: 1, dash: b.current ? [] : [3, 2])))
                     .frame(width: max(1, (b.end - b.start) * pixelsPerSecond), height: blockHeight)
                     .offset(x: b.start * pixelsPerSecond, y: rulerHeight + Double(b.displayLane) * laneStep)
             }

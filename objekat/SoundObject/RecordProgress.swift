@@ -12,9 +12,15 @@ import Foundation
 //     CURRENT pass (`OBJEngineCore.recordPassNow`) in place of the press, the block growing again from the
 //     loop's start — one block per zone, on the lane its newest take will land on;
 //   - ON WHICH LANE: the one the take will land on, the TOP lane of the zone's takes — the lane
-//     `RecordTakePlanner.takeLane` gives (the previous takes go down by one at the stop) — and not the
-//     zone's own row. Nothing of the zone lies above that lane, so no row held open by a child pushes it.
-//     A zone that is not open shows none of its children: there the block stays on the zone's own row.
+//     `RecordTakePlanner.takeLane` gives — and not the zone's own row. Nothing of the zone lies above that lane,
+//     so no row held open by a child pushes it. A zone that is not open shows none of its children: there the
+//     block stays on the zone's own row. Since the press the previous takes are ALREADY one lane down (and one
+//     more for every finished pass of a loop), so that this top lane is empty while the take is made: the caller
+//     reads the lane from the children with that shift taken off;
+//   - THE GHOSTS: through a loop, each finished pass that crossed the window leaves its span behind, on the lane
+//     it will have at the stop — the final layout, built as it grows: with `L` passes finished, the current one
+//     is on the top lane, pass `i` on `top + L - i` (`ghostLane`). A ghost is drawn only on a row the open zone
+//     reserves (`isReserved`): a zone with nothing to push down shows the current pass alone.
 //
 // A plain Foundation unit with no model behind it, compiled and asserted alone
 // (tools/test_record_progress.swift).
@@ -45,4 +51,12 @@ enum RecordProgress {
     static func displayLane(groupDisplayLane: Int, opensInline: Bool, takeLane: Int) -> Int {
         opensInline ? groupDisplayLane + 1 + takeLane : groupDisplayLane
     }
+
+    /// The lane (the zone's own numbering) of the ghost of finished pass `pass` (0 = the first that crossed the window),
+    /// when `finished` passes are done and the current one sits on `top`.
+    static func ghostLane(top: Int, finished: Int, pass: Int) -> Int { top + finished - pass }
+
+    /// True when the zone reserves a row for `lane` (`SoundObject.childLaneCount` rows from its first): a ghost on a
+    /// lane the open zone does not hold would hang over the next object.
+    static func isReserved(lane: Int, reservedRows: Int) -> Bool { lane >= 0 && lane < reservedRows }
 }

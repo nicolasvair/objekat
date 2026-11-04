@@ -655,7 +655,8 @@ extension CommandRegistry {
                         "pass_start": vm.isRecording ? (vm.engine?.recordPassNow()?["start"]?.doubleValue).map { .number($0) } ?? .null : .null,
                         "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b in
                             .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
-                                     "start": .number(b.start), "end": .number(b.end)])
+                                     "start": .number(b.start), "end": .number(b.end),
+                                     "current": .bool(b.current), "pass": .int(b.pass)])
                         }),
                         "last_takes": .array(vm.lastRecordingTakes.map { t in
                             .object(["group": .string(t.group.uuidString), "object": .string(t.object.uuidString),

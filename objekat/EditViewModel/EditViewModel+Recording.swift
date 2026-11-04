@@ -19,6 +19,12 @@ import Foundation
 // `SoundObject.recordTakeMode`) nothing is muted: the older takes stay audible. The mode is read at the
 // press and kept in `RecordingZone`, so changing it during a recording only counts for the next one.
 //
+// While the take is made, the zone's PREVIOUS children are already one lane down (and one more for every finished
+// pass of a loop): the lane the take will land on is empty and the timeline can show the take there, with a ghost of
+// each finished pass under it. The shift is real, in the model, inside the same undo point as the mutes, and
+// `completeRecording` takes it into account (it reads the lanes with the shift off, and moves the children by the
+// difference); a recording that gives nothing gives it back.
+//
 // What lives here is the session's side of that: which zones a recording was started for (frozen at the
 // press — arming may move meanwhile), and the model work at the start and at the end. The engine side is
 // `OBJEngineCore.startRecordingInputs:` / `onRecordingFinished`; the transport side is `ObjekatSession`.
@@ -67,17 +73,28 @@ struct RecordTakeReport: Equatable {
 }
 
 /// The block the timeline draws for a zone while it records (@see RecordProgress).
-struct RecordProgressBlock: Equatable {
+/// The current pass is `current`; through a loop each finished pass that crossed the window leaves a GHOST (`current`
+/// false), `pass` being its index among the passes that crossed (for the current block: the lap the head is on).
+struct RecordProgressBlock: Equatable, Identifiable {
     let group: UUID
     let displayLane: Int
     let start: Double
     let end: Double
+    var current = true
+    var pass = 0
+
+    /// One zone shows several blocks through a loop: the current one and its ghosts.
+    var id: String { current ? "\(group.uuidString)-now" : "\(group.uuidString)-\(pass)" }
 }
 
 /// What `beginRecording` did to the model, so that `completeRecording` can finish or undo it: the previous
-/// takes muted per zone, and the undo stack's depth right after the point pushed for them.
+/// takes muted per zone, the lanes they were pushed down by, and the undo stack's depth right after the point pushed
+/// for them.
 struct RecordingMuteLog: Equatable {
     var mutedByZone: [UUID: [UUID]] = [:]
+    /// How many lanes the previous children of each zone are pushed down by right now: 1 from the press (the zones the
+    /// head can reach with something to push), one more for every finished pass of a loop that crossed the window.
+    var laneShiftByZone: [UUID: Int] = [:]
     var undoDepthAfterPush: Int? = nil
     var wasDirty = false
 }
@@ -86,9 +103,12 @@ extension EditViewModel {
 
     // MARK: What the planners read
 
-    private func takePlannerChildren(_ children: [SoundObject]) -> [RecordTakePlanner.Child] {
+    /// `laneShift`: the lanes the children are pushed down by during a recording (@see `RecordingMuteLog.laneShiftByZone`),
+    /// taken off so that the planners see the zone as it was at the press.
+    private func takePlannerChildren(_ children: [SoundObject], laneShift: Int = 0) -> [RecordTakePlanner.Child] {
         children.map {
-            .init(id: $0.id, start: $0.startTime, end: $0.startTime + $0.duration, lane: $0.lane, isMuted: $0.isMuted)
+            .init(id: $0.id, start: $0.startTime, end: $0.startTime + $0.duration, lane: $0.lane - laneShift,
+                  isMuted: $0.isMuted)
         }
     }
 
@@ -183,11 +203,21 @@ extension EditViewModel {
             inputs.append(["midi": device.id, "zone": zone.id.uuidString])
         }
 
-        // The previous takes are muted now: ONE undo point, pushed before the first change.
+        // The previous takes are pushed down a lane and muted now: ONE undo point, pushed before the first change.
         var log = RecordingMuteLog(wasDirty: isDirty)
+        let reach = RecordLoopPlanner.reachableRange(startPosition: startTime,
+                                                     loop: loopModeEnabled ? loopRegion : nil)
         for zone in zones {
             guard let group = find(id: zone.id), case .group(let children, _) = group.kind else { continue }
             let window = recordWindow(of: group)
+            // The head is going to walk through the window: the take will land on the top lane, which is left empty
+            // from now on (lanes inside a group are model-only: no engine call). A zone with nothing to push, or that
+            // the head cannot reach, keeps its lanes (and a lap never moves them either: no point to put them back from).
+            if !children.isEmpty, reach.lowerBound < window.end, reach.upperBound > window.start {
+                if log.undoDepthAfterPush == nil { pushUndo(); log.undoDepthAfterPush = undoStack.count }
+                updateMany(Set(children.map(\.id))) { $0.lane += 1 }
+                log.laneShiftByZone[zone.id] = 1
+            }
             // The loop (when on) is going to bring the head back through the window: a press beyond it is no reason to
             // leave the previous takes audible.
             let ids = RecordLoopPlanner.mutesAtStart(windowStart: window.start, windowEnd: window.end,
@@ -209,7 +239,11 @@ extension EditViewModel {
         recordingStartTime = startTime
         recordingMuteLog = log
         lastRecordingTakes = []
+        recordingDoneSpans = [:]
+        recordingSeenLaps = 0
+        recordingPassStart = startTime
         isRecording = true
+        startRecordingTimer()
         return nil
     }
 
@@ -243,34 +277,111 @@ extension EditViewModel {
         }
     }
 
-    /// Undoes what `beginRecording` muted, and drops its undo point when nothing else was pushed on top.
+    /// Moves the direct children of a zone by `delta` lanes (model only). The zone's CURRENT children: nothing is
+    /// added to a zone while it records but the takes, which come after.
+    private func shiftChildLanes(of zoneID: UUID, by delta: Int) {
+        guard delta != 0, let group = find(id: zoneID), case .group(let children, _) = group.kind else { return }
+        updateMany(Set(children.map(\.id))) { $0.lane += delta }
+    }
+
+    /// Undoes what `beginRecording` muted and pushed down, and drops its undo point when nothing else was pushed on top.
     private func giveBackMutes(_ log: RecordingMuteLog) {
         for ids in log.mutedByZone.values { setMuted(ids, false) }
+        for (zoneID, shift) in log.laneShiftByZone { shiftChildLanes(of: zoneID, by: -shift) }
         if let depth = log.undoDepthAfterPush, undoStack.count == depth {
             undoStack.removeLast()
             isDirty = log.wasDirty
         }
     }
 
+    // MARK: The laps of a recording through a loop
+
+    /// The tick's period: a lap lasts at least `RecordLoopPlanner.minimumLoopLength` (250 ms), and the ghost it leaves
+    /// only has to appear within a few frames.
+    static let recordingTickInterval: TimeInterval = 0.1
+
+    /// Starts the recording's tick (@see `recordingTick`). `.common`: it goes on while a menu is open or a mouse button is
+    /// held. Stopped by `completeRecording`, the one door every recording ends through.
+    private func startRecordingTimer() {
+        recordingTimer?.invalidate()
+        let timer = Timer(timeInterval: Self.recordingTickInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.recordingTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        recordingTimer = timer
+    }
+
+    /// One reading of the engine's journal while a recording runs. When the head has jumped back (a lap), each finished
+    /// pass that crossed a zone's window pushes the zone's previous takes ONE more lane down and leaves a ghost of itself
+    /// on the lane it will have at the stop (@see `RecordProgress`): the final layout, built as it grows. Only the zones
+    /// `beginRecording` already pushed down are touched — the undo point that covers them is that one; a zone the head could
+    /// not reach at the press, or with nothing to push, is left alone. The model changes are not undo points (undo is
+    /// refused while recording) and `completeRecording` moves the children by the DIFFERENCE with what it finds, so a lap
+    /// this tick missed costs a lane that is wrong for a moment and never at the end.
+    func recordingTick() {
+        guard isRecording, let pass = engine?.recordPassNow(),
+              let laps = pass["laps"]?.intValue, let currentStart = pass["start"]?.doubleValue else { return }
+        defer { recordingPassStart = currentStart }
+        guard laps > recordingSeenLaps else { return }
+        // The pass that just ended began at the last tick's pass start; the ones after it (several laps in one tick)
+        // began at the loop's start, which is where the current pass began.
+        let loopEnd = loopRegion?.upperBound
+        for lap in recordingSeenLaps..<laps {
+            let began = lap == recordingSeenLaps ? (recordingPassStart ?? currentStart) : currentStart
+            guard let ended = loopEnd, ended > began else { continue }
+            for zone in recordingZones where recordingMuteLog.laneShiftByZone[zone.id] != nil {
+                guard let group = find(id: zone.id), case .group = group.kind else { continue }
+                let window = recordWindow(of: group)
+                guard let span = RecordProgress.span(recordStart: began, head: ended,
+                                                     windowStart: window.start, windowEnd: window.end) else { continue }
+                shiftChildLanes(of: zone.id, by: 1)
+                recordingMuteLog.laneShiftByZone[zone.id, default: 0] += 1
+                recordingDoneSpans[zone.id, default: []].append(span)
+            }
+        }
+        recordingSeenLaps = laps
+    }
+
     // MARK: Drawing the take in progress
 
-    /// The red blocks of the zones being recorded, with the playhead at `head`: one per zone, on the lane
-    /// its take will land on, from the press to the head, inside the zone's window. Empty when not
-    /// recording. The overlay and `rec.status` both read this.
+    /// The red blocks of the zones being recorded, with the playhead at `head`: per zone the CURRENT pass, from the press
+    /// (or the start of the pass) to the head, inside the zone's window, on the top lane of the zone — which is empty, the
+    /// previous takes being pushed down since the press — and, through a loop, a ghost for each finished pass that
+    /// crossed the window, on the lane it will have at the stop (the ghosts only on an open zone, and only on rows it
+    /// reserves). Empty when not recording. The overlay and `rec.status` both read this.
     func recordProgressBlocks(head: Double) -> [RecordProgressBlock] {
         guard isRecording, let pressed = recordingStartTime else { return [] }
         // Through a loop the head goes back: the block grows from where the CURRENT pass began (the press while
         // the clock is not anchored yet, or when nothing looped).
-        let from = engine?.recordPassNow()?["start"]?.doubleValue ?? pressed
-        return recordingZones.compactMap { zone in
-            guard let e = laneEntry(forID: zone.id), case .group(let children, _) = e.item.kind else { return nil }
+        let now = engine?.recordPassNow()
+        let from = now?["start"]?.doubleValue ?? pressed
+        let lap = now?["laps"]?.intValue ?? 0
+        return recordingZones.flatMap { zone -> [RecordProgressBlock] in
+            guard let e = laneEntry(forID: zone.id), case .group(let children, _) = e.item.kind else { return [] }
             let window = recordWindow(of: e.item)
-            guard let span = RecordProgress.span(recordStart: from, head: head,
-                                                 windowStart: window.start, windowEnd: window.end) else { return nil }
-            let lane = RecordProgress.displayLane(
-                groupDisplayLane: e.displayLane, opensInline: e.item.showsChildrenInline,
-                takeLane: RecordTakePlanner.takeLane(children: takePlannerChildren(children)))
-            return RecordProgressBlock(group: zone.id, displayLane: lane, start: span.start, end: span.end)
+            let shift = recordingMuteLog.laneShiftByZone[zone.id] ?? 0
+            let top = RecordTakePlanner.takeLane(children: takePlannerChildren(children, laneShift: shift))
+            let opens = e.item.showsChildrenInline
+            var out: [RecordProgressBlock] = []
+            let done = recordingDoneSpans[zone.id] ?? []
+            if opens {
+                for (i, s) in done.enumerated() {
+                    let lane = RecordProgress.ghostLane(top: top, finished: done.count, pass: i)
+                    guard RecordProgress.isReserved(lane: lane, reservedRows: e.item.childLaneCount) else { continue }
+                    out.append(RecordProgressBlock(
+                        group: zone.id,
+                        displayLane: RecordProgress.displayLane(groupDisplayLane: e.displayLane, opensInline: true,
+                                                                takeLane: lane),
+                        start: s.start, end: s.end, current: false, pass: i))
+                }
+            }
+            if let span = RecordProgress.span(recordStart: from, head: head,
+                                              windowStart: window.start, windowEnd: window.end) {
+                let lane = RecordProgress.displayLane(groupDisplayLane: e.displayLane, opensInline: opens, takeLane: top)
+                out.append(RecordProgressBlock(group: zone.id, displayLane: lane, start: span.start, end: span.end,
+                                               current: true, pass: lap))
+            }
+            return out
         }
     }
 
@@ -290,6 +401,11 @@ extension EditViewModel {
         guard isRecording else { return }
         let zones = recordingZones
         let log = recordingMuteLog
+        recordingTimer?.invalidate()
+        recordingTimer = nil
+        recordingDoneSpans = [:]
+        recordingSeenLaps = 0
+        recordingPassStart = nil
         isRecording = false
         recordingZones = []
         recordingStartTime = nil
@@ -302,16 +418,18 @@ extension EditViewModel {
         var work: [ZoneTakes] = []
         for zone in zones {
             let early = log.mutedByZone[zone.id] ?? []
+            let shift = log.laneShiftByZone[zone.id] ?? 0     // the previous children are this far down (L9)
             let file = zone.ref.flatMap { r in files.first(where: { $0.ref == r }) }
             let capture = midi.first(where: { $0.zone == zone.id })
             guard file != nil || capture != nil,
                   let group = find(id: zone.id), case .group(let children, _) = group.kind else {
-                // No take for this zone: what was muted for it is heard again.
+                // No take for this zone: what was muted for it is heard again, and its children go back up.
                 if !early.isEmpty { setMuted(early, false) }
+                shiftChildLanes(of: zone.id, by: -shift)
                 continue
             }
             let window = recordWindow(of: group)
-            let kids = takePlannerChildren(children)
+            let kids = takePlannerChildren(children, laneShift: shift)
 
             // What this zone receives: one or several takes (one per pass through a loop), each with the lane, the
             // audibility and the report that goes with it.
@@ -371,12 +489,13 @@ extension EditViewModel {
             }
             if madeTakes.isEmpty {
                 if !early.isEmpty { setMuted(early, false) }
+                shiftChildLanes(of: zone.id, by: -shift)
                 continue
             }
             work.append(ZoneTakes(zoneID: zone.id, mode: zone.mode, early: early, takes: madeTakes,
                                   muteIDs: muteIDs, unmuteIDs: unmuteIDs, shiftIDs: shiftIDs, path: path,
                                   passCount: passCount, newSequence: newSequence,
-                                  baseLane: RecordTakePlanner.takeLane(children: kids)))
+                                  baseLane: RecordTakePlanner.takeLane(children: kids), laneShift: shift))
         }
 
         // PHASE 2 — applying them. One point for the whole recording, unless a zone got several takes (a loop) and
@@ -389,8 +508,9 @@ extension EditViewModel {
                 setMuted(w.muteIDs.filter { id in !w.early.contains(id) }, true)   // those muted at the start are
                 setMuted(w.unmuteIDs, false)
                 // The newest on top: the previous takes go down by one lane per take, the takes take the top lanes.
-                let down = w.takes.count
-                updateMany(Set(w.shiftIDs)) { $0.lane += down }
+                // They are already `laneShift` lanes down (the press and the laps): only the difference is left.
+                let down = w.takes.count - w.laneShift
+                if down != 0 { updateMany(Set(w.shiftIDs)) { $0.lane += down } }
                 for m in w.takes {                    // oldest first: the newest is the last one added
                     addChild(m.object, toGroupID: w.zoneID)
                 }
@@ -431,6 +551,7 @@ extension EditViewModel {
         var pushed = alreadyPushed
         let steps = RecordLoopPlanner.passSteps(passes: work.flatMap { $0.takes.map { $0.take.pass } })
         var placed: [UUID: Int] = [:]                  // how many takes of each zone are in the model
+        var childShift: [UUID: Int] = [:]              // how far down each zone's previous children are
         for (si, step) in steps.enumerated() {
             guard let cutoff = step.max() else { continue }
             // The point holds the state of the step before (or, for the first step, the one of the start).
@@ -458,9 +579,10 @@ extension EditViewModel {
                 if !newLanes.isEmpty {
                     updateMany(Set(newLanes.keys)) { if let l = newLanes[$0.id] { $0.lane = l } }
                 }
-                // …so do the zone's previous children…
-                let down = count - prior
-                updateMany(Set(w.shiftIDs)) { $0.lane += down }
+                // …so do the zone's previous children (already `laneShift` lanes down since the press)…
+                let down = count - (childShift[w.zoneID] ?? w.laneShift)
+                if down != 0 { updateMany(Set(w.shiftIDs)) { $0.lane += down } }
+                childShift[w.zoneID] = count
                 // …and the step's own takes arrive, oldest first.
                 for n in prior..<count {
                     var o = w.takes[n].object
@@ -498,4 +620,6 @@ private struct ZoneTakes {
     let passCount: Int
     let newSequence: MidiSequence?
     let baseLane: Int
+    /// How many lanes the previous children were pushed down by while the recording ran.
+    let laneShift: Int
 }

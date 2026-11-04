@@ -353,6 +353,66 @@ def run(stock):
                 check("one undo per pass takes every take away", kids(c, z) == [])
                 c.send("debug.transport_loop", {"enabled": False})
 
+                # ── P7 (L9) --------------------------------------------------------------------------
+                section("P7 [%s] a zone with a previous take: its lanes while it records are the final layout, built as it grows" % tag)
+                new_project(c, tmp, "p7")
+                z = make_zone(c, 0, 2.0, 4.5, 0)
+                c.send("rec.arm", {"group": z, "on": True})
+                c.send("debug.transport_loop", {"enabled": False})
+                c.send("transport.seek", {"seconds": 1.0})
+                c.send("rec.start")
+                wait_pos(c, 3.0)
+                first = c.send("rec.stop")["last_takes"]
+                check("a first, linear take", len(first) == 1, first)
+                old_id = first[0]["object"] if first else None
+                c.send("debug.transport_loop", {"start": 3.0, "end": 5.0, "enabled": True})
+                c.send("transport.seek", {"seconds": 1.0})
+                d0 = c.send("perf.census")["undo_depth"]
+                c.send("rec.start")
+                time.sleep(0.5)
+                lane_of = lambda: next(k["lane"] for k in kids(c, z) if k["id"] == old_id)
+                check("at the press the previous take is one lane down", lane_of() == 1, lane_of())
+                c.send("group.expand", {"id": z, "expanded": True})
+                pr = c.send("rec.status")["progress"]
+                check("... and the current block is alone on the (empty) top lane while nothing has looped",
+                      len(pr) == 1 and pr[0]["current"] is True, pr)
+                lap0 = c.send("rec.status")["lap"]
+                end = time.time() + 12
+                while time.time() < end and c.send("rec.status")["lap"] < lap0 + 2:
+                    time.sleep(0.05)
+                time.sleep(0.45)                                          # the tick (100 ms) has caught up
+                st = c.send("rec.status")
+                lap = st["lap"]
+                check("two laps later", lap >= lap0 + 2, (lap0, lap))
+                check("the previous take went down one lane per finished pass that crossed the window (1 + %d)" % lap,
+                      lane_of() == 1 + lap, (lane_of(), lap))
+                c.send("group.expand", {"id": z, "expanded": True})
+                ghosts = [b for b in c.send("rec.status")["progress"] if not b["current"]]
+                cur = [b for b in c.send("rec.status")["progress"] if b["current"]]
+                check("one ghost per finished pass, the current block on the top lane",
+                      len(ghosts) == lap and len(cur) <= 1, (lap, ghosts, cur))
+                if cur and ghosts:
+                    top = cur[0]["lane"]
+                    check("the ghosts are under it, the oldest pass the lowest", sorted((g["lane"] for g in ghosts), reverse=True)
+                          == [g["lane"] for g in sorted(ghosts, key=lambda g: g["pass"])]
+                          and all(g["lane"] > top for g in ghosts), (top, ghosts))
+                c.send("group.expand", {"id": z, "expanded": False})
+                r = c.send("rec.stop")
+                tk = sorted(r["last_takes"], key=lambda t: t["pass"])
+                ks = kids(c, z)
+                check("at the stop the previous take is exactly under the new ones (lane = %d takes)" % len(tk),
+                      len(ks) == len(tk) + 1 and [k["lane"] for k in ks] == list(range(len(tk) + 1)) and ks[-1]["id"] == old_id,
+                      [(k["lane"], k["id"] == old_id) for k in ks])
+                steps = min(len(tk), 16)
+                check("one undo point per pass, as ever", c.send("perf.census")["undo_depth"] == d0 + steps,
+                      (d0, c.send("perf.census")["undo_depth"], steps))
+                for _ in range(steps):
+                    c.send("edit.undo")
+                ks = kids(c, z)
+                check("every undo given: the previous take is back on lane 0, alone, as before the press",
+                      len(ks) == 1 and ks[0]["id"] == old_id and ks[0]["lane"] == 0, ks)
+                c.send("debug.transport_loop", {"enabled": False})
+
                 # ── P2 -------------------------------------------------------------------------------
                 section("P2 [%s] the journal against the render (noise, loopback, loop [3 s, 5 s] switched on by the tick)" % tag)
                 new_project(c, tmp, "p2")

@@ -2507,10 +2507,14 @@ classic one from then on. The field is absent for every other clip. In the file:
   armed AND still able to record), `can_record` (the transport's record button is live: something
   armed and a saved project), `project_saved`, `recording` (a recording is under way),
   `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
-  recording, the red block the timeline draws for each zone: `{group, lane, start, end}` — `lane` the
-  display lane the take will land on, the zone's own row when it is closed; `start`..`end` the part of the
-  zone's window between the press and the playhead; a zone the head has not reached is absent; recording THROUGH
-  a loop the block restarts at the start of the current pass), `lap` (recording through a loop: how many times the head has
+  recording, the red blocks the timeline draws: `{group, lane, start, end, current, pass}` — `lane` the
+  display lane the take will land on (the TOP lane of the zone, which is EMPTY while recording: since the press the zone's
+  previous children are one lane down, and one more for every finished pass of a loop, inside the undo point of the press;
+  the zone's own row when it is closed); `start`..`end` the part of the zone's window between the press and the playhead;
+  `current` true for the pass being recorded (`pass` = the lap the head is on), false for a GHOST: recording THROUGH a loop
+  each finished pass that crossed the window of an OPEN zone with something to push down leaves one, on the lane it will
+  have at the stop (pass `i` of `L` finished on top + `L` - `i`), only on rows the zone reserves; a zone the head has not
+  reached has no current block; the current block restarts at the start of each pass), `lap` (recording through a loop: how many times the head has
   jumped back since the press, 0 otherwise — the passes so far are `lap + 1`), `pass_start` (where the pass that runs began on
   the timeline, null when not recording or the recording clock is not anchored yet) and
   `last_takes` (the takes of the last recording, below).

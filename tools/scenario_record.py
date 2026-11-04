@@ -407,6 +407,8 @@ try:
         check("rec.start: the previous take is muted AT ONCE (during the recording)",
               len(ks) == 1 and ks[0]["id"] == t1["object"] and ks[0]["muted"] is True, ks)
         check("... in ONE undo point pushed by the press", undo_depth(c) == d1 + 1, (d1, undo_depth(c)))
+        check("... and pushed one lane DOWN, so that the lane of the take being made is empty (L9)",
+              ks[0]["lane"] == 1, ks)
         st = c.send("rec.status")
         check("rec.status: recording_start = the press (0 s)", near(st["recording_start"], 0, 0.05), st["recording_start"])
         check("... the head has not reached the window: no red block yet", st["progress"] == [], st["progress"])
@@ -434,6 +436,7 @@ try:
         check("... the press and the stop make ONE undo point", undo_depth(c) == d1 + 1, (d1, undo_depth(c)))
         ks = kids(c, zm)
         check("lanes 0 (audible, newest) then 1 (muted, older)", [k["muted"] for k in ks] == [False, True]
+              and [k["lane"] for k in ks] == [0, 1]
               and ks[0]["id"] == t2["object"] and ks[1]["id"] == t1["object"], ks)
         c.send("edit.undo")
         ks = kids(c, zm)
@@ -469,12 +472,15 @@ try:
         ks = kids(c, zm)
         check("press at 0, window at 1 s: the audible take is muted during the recording",
               [k["muted"] for k in ks] == [True, True] and undo_depth(c) == d3 + 1, (ks, d3, undo_depth(c)))
+        check("... both previous takes one lane down during it (L9)", [k["lane"] for k in ks] == [1, 2], ks)
         wait_pos(c, 0.7)
         t4 = c.send("rec.stop")["last_takes"]
         ks = kids(c, zm)
         check("stop at 0.7 s (before the window): the take is outside, the previous ones are audible again",
               len(t4) == 1 and t4[0]["outside_window"] is True and t4[0]["muted"] == []
               and [k["muted"] for k in ks] == [False, False, True] and ks[0]["id"] == t4[0]["object"], (t4, ks))
+        check("... lanes 0, 1, 2 at the stop: the shift of the press was the one the take needed (L9)",
+              [k["lane"] for k in ks] == [0, 1, 2], ks)
         check("... still ONE undo point, and undo brings the muted state back", undo_depth(c) == d3 + 1)
         c.send("edit.undo")
         ks = kids(c, zm)

@@ -1390,6 +1390,14 @@ final class EditViewModel {
     /// was muted at that moment (@see EditViewModel+Recording). The red block of a zone grows from it.
     var recordingStartTime: Double? = nil
     @ObservationIgnored var recordingMuteLog = RecordingMuteLog()
+    /// The recording in flight's 10 Hz tick (@see `recordingTick`): the laps of a recording through a loop, which push the
+    /// zone's previous takes one lane further down and leave a ghost of the pass behind. Session state, never saved.
+    @ObservationIgnored var recordingTimer: Timer? = nil
+    /// The finished passes of each zone that crossed its window, as spans of the timeline (the ghosts the overlay draws).
+    @ObservationIgnored var recordingDoneSpans: [UUID: [RecordProgress.Span]] = [:]
+    /// How many laps the tick has already handled, and where the pass that ran at the last tick began.
+    @ObservationIgnored var recordingSeenLaps = 0
+    @ObservationIgnored var recordingPassStart: Double? = nil
     var lastRecordingTakes: [RecordTakeReport] = []
     /// What releasing the input drag in flight HERE would do — the ghosts under the cursor (one per input
     /// carried, on consecutive lanes), written by the timeline's drop delegate and read by
