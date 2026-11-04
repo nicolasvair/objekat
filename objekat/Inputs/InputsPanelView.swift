@@ -229,7 +229,7 @@ struct InputsPanelView: View {
         let isOpen = viewModel.openInputStrip == source
         let heard = monitored.contains(ref)
         return InputStrip(
-            glyph: .number(ref.key),
+            tint: viewModel.mainStemColor,
             name: viewModel.inputName(ref),
             // ⌘R on a rectangle whose popup is closed; with the popup open the field is its header's.
             isRenaming: viewModel.renamingInput == ref && !isOpen,
@@ -248,8 +248,8 @@ struct InputsPanelView: View {
                 _ = viewModel.setInputMonitor(ref, on: !heard)
                 tick()
             },
+            leading: { InputStripGlyphView(glyph: .number(ref.key)) },
             gain: { monitorGainBox(ref, heard: heard) },
-            extra: { EmptyView() },
             meter: { vuBars(ref) }
         )
         // The rectangle is dragged onto the timeline to make a recording zone, or onto a group to give it

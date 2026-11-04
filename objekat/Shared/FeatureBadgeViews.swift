@@ -31,16 +31,27 @@ struct FeatureBadgeGlyphs: View {
 /// The NAME with its badges at its right — and the rule that drops them: the name keeps priority.
 /// When the name and the badges do not both fit whole in the room the row offers, the badges go and
 /// the name alone is shown (truncated as it always was). No badge: the name, untouched.
+/// `keepsBadges` turns the rule round: the NAME truncates and the badges always stay whole (the Inputs tab's
+/// strips, where the badge says what the input's chain does and is worth more than the end of a long name).
 struct NameWithFeatureBadges<Name: View>: View {
     let badges: [FeatureBadge]
     let size: CGFloat
     let color: Color
     var spacing: CGFloat = 3
+    var keepsBadges = false
     @ViewBuilder let name: () -> Name
 
     var body: some View {
         if badges.isEmpty {
             name()
+        } else if keepsBadges {
+            HStack(spacing: spacing) {
+                name()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                FeatureBadgeGlyphs(badges: badges, size: size, color: color)
+                    .layoutPriority(1)
+            }
         } else {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: spacing) {

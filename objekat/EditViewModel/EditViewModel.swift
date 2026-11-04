@@ -435,6 +435,8 @@ final class EditViewModel {
                                                  plan: BridgeScope.Plan)? = nil
 
     var mainStemID: UUID { stems.first?.id ?? UUID() }
+    /// The Main's colour (stems[0] is the Main): the tint of the Inputs tab's strips, which follows a change of it.
+    var mainStemColor: Color { stems.first?.color ?? ObjekatPalette.stem(0) }
 
     // MARK: - Solo at the clip level (see EditViewModel+Solo)
     //

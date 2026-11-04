@@ -10,7 +10,8 @@ enum StripStyle {
     /// The horizontal margin of the strip's content.
     static let hPadding: CGFloat = 7
     static let vPadding: CGFloat = 4
-    /// The input strips' tint: neutral, a stem's colour belongs to the stem.
+    /// The tint of a strip whose input is ABSENT (grey means gone). The live input strips take the Main's colour
+    /// (`EditViewModel.mainStemColor`).
     static let inputTint = Color.gray
 
     /// Aligned on the background opacity of the timeline blocks (SoundBlockView): at the same level of

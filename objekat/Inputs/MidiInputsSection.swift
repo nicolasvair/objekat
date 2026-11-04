@@ -19,8 +19,9 @@ import UniformTypeIdentifiers
 /// listening (the zone's capture track plays nothing), the zone's own instrument plays the takes the zone holds. A chain
 /// whose device is absent stays as a greyed rectangle, instrument kept.
 ///
-/// The « Computer Keyboard » rectangle (second, under « All MIDI Ins ») is one like the others, plus its own line of controls
-/// (`ComputerKeyboardRowControls`: the mode and the octave) — the mode is what feeds it, @see EditViewModel+ComputerKeyboard.
+/// The « Computer Keyboard » rectangle (second, under « All MIDI Ins ») is one like the others, but its leading column holds
+/// its own controls in place of the keys glyph (`ComputerKeyboardRowControls`: the mode button, the octave selector under it)
+/// — the mode is what feeds it, @see EditViewModel+ComputerKeyboard.
 struct MidiInputsSection: View {
     @Bindable var viewModel: EditViewModel
     /// The list this section lives in takes the keyboard when a row is clicked.
@@ -75,7 +76,7 @@ struct MidiInputsSection: View {
         let hasInstrument = viewModel.midiChainKey(for: d).flatMap { viewModel.inputChains.midi[$0]?.instrument } != nil
         let on = heard.contains(d.id)
         return InputStrip(
-            glyph: .keys,
+            tint: viewModel.mainStemColor,
             name: d.displayName,
             badges: viewModel.inputStripBadges(source),
             isSelected: selection.contains(d.id),
@@ -88,12 +89,17 @@ struct MidiInputsSection: View {
                 _ = viewModel.setMidiInputMonitor(d, on: !on)
                 tick()
             },
+            leading: {
+                // The computer keyboard's button and its octave selector take the place of the keys glyph.
+                if d.isComputerKeyboard {
+                    ComputerKeyboardRowControls(viewModel: viewModel)
+                } else {
+                    InputStripGlyphView(glyph: .keys)
+                }
+            },
             gain: {
                 InputMonitorGainBox(value: viewModel.midiInputMonitorGain(d), heard: on,
                                     onChange: { _ = viewModel.setMidiInputMonitorGain(d, db: $0); tick() })
-            },
-            extra: {
-                if d.isComputerKeyboard { ComputerKeyboardRowControls(viewModel: viewModel) }
             },
             meter: { VULevelBar(level: Double(levels[d.id] ?? 0), height: 3) }
         )
