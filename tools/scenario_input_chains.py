@@ -410,6 +410,36 @@ def e9(c, level, fxp, instp, dev):
     check("M10 an instrument moves from a GROUP to a clip (the source is read by host)",
           r["placed"] is True and inst_of(clip2) == ["DLSMusicDevice"] and inst_of(gid) == [], r)
 
+    # M13 (feedback 2026-11-04, L7): the INSTRUMENT SLOT of a signal view takes a dropped instrument. The slot asks
+    # `pluginDropOutcome(at: .hostEnd)`, which `plugin.drop_at` without `series` asks too: the dry run is what the
+    # cursor says, the drop is what the release does. From a MIDI input's popup toward a MIDI group's slot.
+    clip3 = c.send("midi.create_clip", {"start": 8, "end": 10, "lane": 11})["id"]
+    g3 = c.send("group.create", {"ids": [clip3]})["id"]
+    ip3 = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    r = c.send("plugin.drop_at", {"from": mh, "plugin": ip3, "host": g3, "dry_run": True})
+    check("M13 dry run onto a MIDI group's slot: a move, nothing placed",
+          r["outcome"] == "move" and r["refused"] is False and r["placed"] is False and inst_of(g3) == [], r)
+    r = c.send("plugin.drop_at", {"from": mh, "plugin": ip3, "host": g3, "mode": "copy", "dry_run": True})
+    check("M13 dry run with the option: a copy", r["outcome"] == "copy" and r["refused"] is False, r)
+    depth = c.send("perf.census")["undo_depth"]
+    r = c.send("plugin.drop_at", {"from": mh, "plugin": ip3, "host": g3, "mode": "copy"})
+    check("M13 the copy is laid on the group's slot, the input keeps its own, one undo point",
+          r["placed"] is True and inst_of(g3) == ["DLSMusicDevice"] and row10()["instrument"] == "DLSMusicDevice"
+          and c.send("perf.census")["undo_depth"] == depth + 1, r)
+    c.send("edit.undo", {})
+    check("M13 undo: the group has none again, the input still has its own",
+          inst_of(g3) == [] and row10()["instrument"] == "DLSMusicDevice")
+    ip3 = c.send("plugin.list", {"host": mh})["instruments"][0]["id"]
+    r = c.send("plugin.drop_at", {"from": mh, "plugin": ip3, "host": g3})
+    check("M13 the move empties the input's slot", r["placed"] is True and inst_of(g3) == ["DLSMusicDevice"]
+          and row10()["instrument"] is None, r)
+    c.send("edit.undo", {})
+    check("M13 undo of the move gives the instrument back to the input",
+          inst_of(g3) == [] and row10()["instrument"] == "DLSMusicDevice")
+    # An instrument let go on its own object's slot is refused (the cursor says so before the release).
+    r = c.send("plugin.drop_at", {"from": mh, "plugin": ip3, "host": mh, "dry_run": True})
+    check("M13 dropped on its own slot: refused", r["refused"] is True, r)
+
     # M12: the LISTENING level of a MIDI input (inputs panel, step 7): an ObjGain after the instrument and its FX
     c.send("project.new")
     c.send("input.set_instrument", {"midi": dev, **instp})

@@ -127,6 +127,10 @@ extension CommandRegistry {
                         "octave": .int(vm.computerKeyboardOctave),
                         "octave_name": .string(vm.computerKeyboardOctaveName),
                         "held": .array(held),
-                        "device_id": .stringOrNull(device?.id)])
+                        "device_id": .stringOrNull(device?.id),
+                        // The layout the keys are named after ("azerty" / "qwerty" / "qwertz", else null) and the
+                        // name shown (family title, else the layout's own name); both depend on the machine.
+                        "layout_family": .stringOrNull(KeyboardLayoutWatcher.shared.family?.rawValue),
+                        "layout_name": .stringOrNull(KeyboardLayoutWatcher.shared.name)])
     }
 }

@@ -1698,6 +1698,18 @@ extension TimelineView {
         return 0
     }
 
+    /// The notes a MIDI TAKE of a recording through a loop must draw while an edge is being pulled: the window it
+    /// is going to look through, resolved for the edges as they are NOW (@see `EditViewModel.previewMidiWindowNotes`).
+    /// nil — draw `object.midiNotes` as usual — when no edge moves or the clip is a classic one. The notes come
+    /// rebased on the new start, so the caller draws them with NO offset (a classic clip's `-trimDX`).
+    func previewMidiNotes(for object: SoundObject) -> [MidiNote]? {
+        guard object.isMIDI, object.midiSequence != nil else { return nil }
+        let dLeft = previewTrimDX(for: object), dRight = previewResizeDX(for: object)
+        guard dLeft != 0 || dRight != 0 else { return nil }
+        return viewModel.previewMidiWindowNotes(of: object, startShiftSeconds: dLeft / pixelsPerSecond,
+                                                duration: object.duration + (dRight - dLeft) / pixelsPerSecond)
+    }
+
     func previewFadeIn(for object: SoundObject) -> Double? {
         if let s = crossfadeShadowObject(object.id) { return s.fadeIn }
         if let sp = spillPlan(for: object.id) { return sp.isLeft ? nil : sp.plan.width }

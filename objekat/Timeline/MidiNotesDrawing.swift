@@ -116,9 +116,17 @@ enum MidiNotesDrawing {
             if n.pitch > maxPitch { maxPitch = n.pitch }
         }
         guard minPitch <= maxPitch else { return nil }
+        return layout(pitchRange: minPitch...maxPitch, size: size)
+    }
+
+    /// The layout of a pitch range chosen by the CALLER, for a block that holds several clips' notes
+    /// (a group's composite: one scale for all its MIDI children, so two takes of one zone read
+    /// against the same rows). The same margins and `minSpan` as `layout(notes:…)`, which delegates
+    /// here once it has measured its own notes.
+    static func layout(pitchRange: ClosedRange<Int>, size: CGSize) -> Layout {
         // A self-adjusting pitch range plus a 1 semitone margin at the top and at the bottom.
-        let lo = minPitch - 1
-        let hi = maxPitch + 1
+        let lo = pitchRange.lowerBound - 1
+        let hi = pitchRange.upperBound + 1
         let span = max(minSpan, hi - lo)
         let top = hi + (span - (hi - lo)) / 2          // re-centres if the span was widened
         // The vertical margin = 10% of the clip's height at the top AND at the bottom; the notes
@@ -138,12 +146,24 @@ enum MidiNotesDrawing {
                                              _ emit: (CGRect, Int) -> Void) {
         guard let lay = layout(notes: notes, secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
                                xOffset: xOffset, size: size, loopRange: loopRange) else { return }
+        forEachNote(notes: notes, layout: lay, secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
+                    xOffset: xOffset, size: size, loopRange: loopRange, visibleX: visibleX, emit)
+    }
+
+    /// The same, over a layout the caller already holds (@see `layout(pitchRange:size:)`): the
+    /// notes are placed on `layout`'s rows whatever pitches `notes` itself spans.
+    static func forEachNote<N: MidiNoteLike>(notes: [N], layout lay: Layout,
+                                             secPerBeat: Double, pixelsPerSecond: Double,
+                                             xOffset: Double = 0, size: CGSize,
+                                             loopRange: (start: Double, end: Double)? = nil,
+                                             visibleX: ClosedRange<Double>? = nil,
+                                             _ emit: (CGRect, Int) -> Void) {
+        guard secPerBeat > 0, size.width > 0 else { return }
         let f = Frame(secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
                       xOffset: xOffset, width: size.width, loopRange: loopRange)
         let h = lay.noteH
         for n in notes {
             let base = f.baseX(n.startBeat)
-            guard f.plays(base: base) else { continue }
             let w = max(1.5, n.lengthBeats * f.pxPerBeat)
             let y = lay.marginY + Double(lay.top - n.pitch) * lay.rowH
 
@@ -155,10 +175,17 @@ enum MidiNotesDrawing {
             }
             guard let periodPx = f.periodPx else { put(base); continue }
             // The repeats that can reach the window: x_k = base + k·P, wanted in [lower − w, upper].
-            var k0 = 0, k1 = f.maxK
+            // They are counted from the FIRST repeat that lands inside the block, not from k = 0:
+            // a group's composite lays a clip at an offset that can be far left of the block (an
+            // infinite bus's band starts at the viewport's edge), where every repeat before
+            // `kFirst` falls off the left edge and a count from 0 would stop before reaching the
+            // block. With `base >= 0` (a block's own notes) `kFirst` is 0 and nothing changes.
+            let kFirst = base >= 0 ? 0 : Int((-base / periodPx).rounded(.up))
+            guard base + Double(kFirst) * periodPx < size.width else { continue }   // no repeat lands inside
+            var k0 = kFirst, k1 = kFirst + f.maxK
             if let v = visibleX {
-                k0 = max(0, Int(((v.lowerBound - w - base) / periodPx).rounded(.down)))
-                k1 = min(f.maxK, Int(((v.upperBound - base) / periodPx).rounded(.up)))
+                k0 = max(kFirst, Int(((v.lowerBound - w - base) / periodPx).rounded(.down)))
+                k1 = min(k1, Int(((v.upperBound - base) / periodPx).rounded(.up)))
             }
             guard k0 <= k1 else { continue }
             for k in k0...k1 { put(base + Double(k) * periodPx) }

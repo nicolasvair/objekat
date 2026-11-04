@@ -2164,6 +2164,29 @@
         }
       }
     },
+    "cheatsheet.record.escDisarm": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Disarm every recording zone"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Desarmar todas las zonas de grabación"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désarmer toutes les zones d'enregistrement"
+          }
+        }
+      }
+    },
     "cheatsheet.redo": {
       "extractionState": "manual",
       "localizations": {
@@ -10059,19 +10082,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octave down (w key)"
+            "value": "Octave down (%@ key)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octava más grave (tecla w)"
+            "value": "Octava más grave (tecla %@)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octave plus bas (touche w)"
+            "value": "Octave plus bas (touche %@)"
           }
         }
       }
@@ -10082,19 +10105,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octave up (x key)"
+            "value": "Octave up (%@ key)"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octava más aguda (tecla x)"
+            "value": "Octava más aguda (tecla %@)"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Octave plus haut (touche x)"
+            "value": "Octave plus haut (touche %@)"
           }
         }
       }
@@ -10105,19 +10128,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The keyboard's letters play notes on this input (q z s e d f t g y h u j k o l p m; w / x: octave). Letter shortcuts go through ⇧ + letter while it is on."
+            "value": "The keys play notes on this input (%1$@; %2$@ / %3$@: octave). Letter shortcuts go through ⇧ + letter while it is on."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Las letras del teclado tocan notas en esta entrada (q z s e d f t g y h u j k o l p m; w / x: octava). Los atajos de letra pasan por ⇧ + letra mientras está encendido."
+            "value": "Las teclas tocan notas en esta entrada (%1$@; %2$@ / %3$@: octava). Los atajos de letra pasan por ⇧ + letra mientras está encendido."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Les lettres du clavier jouent des notes sur cette entrée (q z s e d f t g y h u j k o l p m ; w / x : octave). Les raccourcis à lettre passent par ⇧ + lettre tant qu'il est allumé."
+            "value": "Les touches jouent des notes sur cette entrée (%1$@ ; %2$@ / %3$@ : octave). Les raccourcis à lettre passent par ⇧ + lettre tant qu'il est allumé."
           }
         }
       }
@@ -12855,6 +12878,29 @@
           "stringUnit": {
             "state": "translated",
             "value": "Clavier ordinateur"
+          }
+        }
+      }
+    },
+    "midi.computer_keyboard.layout": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ keyboard"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teclado %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clavier %@"
           }
         }
       }
@@ -22423,29 +22469,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Time"
-          }
-        }
-      }
-    },
-    "transport.keyboard.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Computer keyboard — when lit, the letter keys play notes on the “Computer Keyboard” input (w / x: octave). Letter shortcuts then go through ⇧ + letter (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); the loop stays on its button or ⌘L."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Teclado del ordenador — encendido, las letras tocan notas en la entrada «Teclado del ordenador» (w / x: octava). Los atajos de letra pasan entonces por ⇧ + letra (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); el bucle sigue en su botón o con ⌘L."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clavier ordinateur — allumé, les lettres jouent des notes sur l'entrée « Clavier ordinateur » (w / x : octave). Les raccourcis à lettre passent alors par ⇧ + lettre (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M) ; la boucle reste sur son bouton ou ⌘L."
           }
         }
       }

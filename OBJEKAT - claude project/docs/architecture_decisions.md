@@ -1160,6 +1160,50 @@ Both pure, in `Shared/OBJInputCardPolicy.h`, driven by a fake clock in `tools/te
 The menu is the shared `TreePickerPopover` (a native `Menu` closes on every click and one sets a card, then a rate, then a buffer), its
 rows pure (`Shared/AudioMenuModel.swift`). The title bar says nothing of the input card: it carries the device in use, the input is not.
 
+## The feedback of 4 November 2026 (lots L1-L11, no engine patch; plan: `docs/plan_retours_2026-11-04.md`)
+
+### Decision: the audio menu is a tree whose branches open INLINE, one at a time
+
+The wrench's menu was a flat list of always-open sections, one long column with many cards. The shared `TreePickerPopover` (the
+sidechain picker's) gains BRANCHES: a row that only opens and closes its children and is never chosen, showing the current value
+at its right (`TreePickerNode.branch(…, detail:, startsOpen:, children:)`), with an accordion (`TreePickerModel.toggled`) and the
+choice not to open the branches that hold a ticked row (`opensCheckedBranches: false`, which the sidechain never passes, so it is
+unchanged). Four folded lines: output, input, sample rate, buffer. Not cascading flyouts: a popover is ONE window, child popovers
+would need hover timing and close on focus changes, and inline keeps the scroll and the row style. A choice keeps the popover and
+its branch open, which is why the shared picker replaced the native `Menu`. A note (no card, rate not available) opens its branch.
+
+### Decision: during a recording, the zone's previous takes are REALLY one lane down
+
+The take being recorded needs an empty lane to be drawn on. A display-only offset would be a transient lane per zone inside
+`buildLaneEntries` and `childLaneCount`, read in 64 places; so the shift is a model change, made at the press inside the undo
+point `beginRecording` already pushes for the mutes (⌘Z after the stop takes it back with the rest; a recording with no take gives
+it back). Through a loop each finished pass that crossed the window pushes the takes one more lane down and leaves a GHOST of the
+pass, so the layout is the final one, built as it grows; a ghost shows only on a row the open zone reserves. The planners read the
+children with the shift taken off. Undo is refused while recording (the bookkeeping counts on the stack not moving).
+
+### Decision: a loop recording leaves one undo step per pass
+
+The file (or the MIDI sequence) is one for the whole recording and every take only names a window of it, so removing a pass's lane
+loses nothing: ⌘Z takes the LAST pass away and leaves the zone as it was when the pass before was the last one, the next ⌘Z the
+one before, and the remaining takes can still be trimmed into the rest. The undo stack holds 50 points: the passes beyond 16 merge
+into the first step (`RecordLoopPlanner.passSteps`). A recording with one pass stays ONE point.
+
+### Decision: the picture of the take in progress is simplified, and cannot touch the recording
+
+The red block shows what the take has drawn so far — the notes played (a MIDI zone), the loudness of the input (an audio zone).
+Not the file's waveform: the file is not readable until its header is rewritten, and a precise display is not worth a risk to the
+take. The engine keeps a fixed ring of note events per MIDI device while a recording runs (producers only TRY the lock and drop
+the event if it is busy, so a MIDI thread never waits) and a separate peak accumulator per input channel (reading it takes
+nothing from the Inputs tab's meters); the tick drains both at 30 Hz into a pure `RecordLiveCapture` per zone. A pass that leaves
+a ghost keeps its capture with it. If a tick is missed, a pixel is missing; the recording does not know the picture exists.
+
+### Decision: a MIDI input's meter says the notes in blue and, with an instrument, the instrument's output
+
+A MIDI input carries notes, not a level: without an instrument the row shows a few pixels of the keyboard button's blue while
+notes arrive (never a bar that fills); with one, the bar is the instrument's OUTPUT (before its FX and the listening gain) with
+the same mark above it. The engine's per-plugin level read 0 whenever the transport was stopped; an input's hidden track is live
+while it is stopped, so the condition is skipped for an input host (the host the caller names — an instrument has no owner entry).
+
 ## The phases to come — decisions to take
 
 *The three entries that stood here are settled and were removed on 2026-08-31: fades and automation

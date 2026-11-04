@@ -98,6 +98,13 @@ extension EditViewModel {
         return nil
     }
 
+    /// Esc: every zone goes back to "not armed". Also while recording — the take in progress runs on the zones
+    /// frozen at the press (`recordingZones`), so it finishes normally; only the NEXT take is affected. The `didSet` of
+    /// `armedGroupIDs` re-syncs the engine, and an already-empty set is not rewritten (the property is observed).
+    func disarmAllRecordZones() {
+        if !armedGroupIDs.isEmpty { armedGroupIDs = [] }
+    }
+
     /// The zones a click on the [ o ] of `clicked` acts on. A zone that is PART of the selection brings
     /// along the other selected zones that can take the change (an input on the card, a group that can
     /// record) — the others are passed over without a word; a zone outside the selection acts alone and

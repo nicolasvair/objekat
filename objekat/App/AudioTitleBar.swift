@@ -71,6 +71,7 @@ struct AudioSettingsMenu: View {
         .popover(isPresented: $shown, arrowEdge: .bottom) {
             TreePickerPopover(sections: { Self.sections(engine: viewModel.engine, inputError: inputError) },
                               closesOnChoose: false, minWidth: 260,
+                              accordion: true, opensCheckedBranches: false,
                               onChoose: { choose($0) },
                               dismiss: { shown = false })
         }

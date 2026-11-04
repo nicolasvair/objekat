@@ -39,6 +39,9 @@ struct SoundBlockView: View {
 
     let previewResizeDX: Double
     let previewTrimDX: Double
+    /// The notes a MIDI take draws while an edge is being pulled (its window on the shared sequence, resolved for
+    /// the new edges and already rebased on the new start). nil = the object's own notes.
+    var previewMidiNotes: [MidiNote]? = nil
     let previewFadeIn: Double?
     let previewFadeOut: Double?
     var previewFadeInCurve:  FadeCurve? = nil
@@ -174,9 +177,9 @@ struct SoundBlockView: View {
                     .allowsHitTesting(false)
             } else if object.isMIDI {
                 // A MIDI clip: no audio file → a small note preview (instead of the waveform).
-                MidiNotesPreview(notes: object.midiNotes, secPerBeat: secPerBeat,
+                MidiNotesPreview(notes: previewMidiNotes ?? object.midiNotes, secPerBeat: secPerBeat,
                                  pixelsPerSecond: pixelsPerSecond,
-                                 xOffset: -previewTrimDX, color: stemColor,
+                                 xOffset: previewMidiNotes == nil ? -previewTrimDX : 0, color: stemColor,
                                  isMuted: object.isMuted,
                                  loopRange: previewLoopRange)
                     .clipShape(RoundedRectangle(cornerRadius: cornerRadius))

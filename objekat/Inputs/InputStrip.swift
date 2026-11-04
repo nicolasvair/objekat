@@ -3,9 +3,10 @@ import SwiftUI
 // MARK: - An input's rectangle (docs/plan_groupes_midi.md, the inputs panel)
 //
 // Every input of the Inputs tab, audio or MIDI, is a rounded rectangle like a stem's strip in the toolbar (`StripStyle`
-// carries the look both share): its number (or the keys glyph), its name with the badges of what its chain does
-// (`ObjectFeatureBadges`, the sound list's own glyphs), the speaker that hears it, its listening level, and under them the
-// linear level meter. A click SELECTS it and opens its popup — the synoptic of its chain, instrument then effects for a
+// carries the look both share), tinted with the Main's colour: a leading column (its number, the keys glyph, or the computer
+// keyboard's button and octave), its name with the badges of what its chain does (`ObjectFeatureBadges`, the sound list's own
+// glyphs) and under the name the linear level meter, which stops there; the speaker that hears it and its listening level
+// sit at the right, centred on the two lines. A click SELECTS it and opens its popup — the synoptic of its chain, instrument then effects for a
 // MIDI input, the effects for a card's (`InputStripPopup`); ⌘ and ⇧ only select (@see InputStripClick).
 //
 // This file is the rectangle and its popup, and nothing more: the clicks, the drag, the drops and the poll are the
@@ -17,8 +18,9 @@ enum InputStripGlyph {
     case keys
 }
 
-struct InputStrip<Gain: View, Extra: View, Meter: View>: View {
-    let glyph: InputStripGlyph
+struct InputStrip<Leading: View, Gain: View, Meter: View>: View {
+    /// The Main's colour (`EditViewModel.mainStemColor`): the inputs are drawn like the bus they are heard on.
+    let tint: Color
     let name: String
     /// The name is a field (⌘R on a rectangle whose popup is closed).
     var isRenaming: Bool = false
@@ -34,44 +36,29 @@ struct InputStrip<Gain: View, Extra: View, Meter: View>: View {
     var listenHelp: String = ""
     var nameHelp: String = ""
     var onListen: () -> Void = {}
+    /// The leading column, `InputRowStyle.leadingWidth` wide: the number, the keys glyph, or the computer keyboard's
+    /// button with its octave selector.
+    @ViewBuilder let leading: () -> Leading
     @ViewBuilder let gain: () -> Gain
-    @ViewBuilder let extra: () -> Extra
     @ViewBuilder let meter: () -> Meter
 
     var body: some View {
-        VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
-            HStack(spacing: InputRowStyle.controlSpacing) {
-                glyphView
-                    .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
-                // The name keeps priority: the badges go when the two do not fit whole.
-                NameWithFeatureBadges(badges: badges, size: 9, color: Color.secondary) { nameView }
-                    .layoutPriority(1)
-                Spacer(minLength: 4)
-                listenButton
-                gain()
+        // The meter ends under the NAME: the speaker and the gain sit at the right, centred on the two lines.
+        HStack(alignment: .center, spacing: InputRowStyle.controlSpacing) {
+            leading()
+                .frame(width: InputRowStyle.leadingWidth, alignment: .center)
+            VStack(alignment: .leading, spacing: InputRowStyle.lineSpacing) {
+                // The badges stay whole, the name is what gives way.
+                NameWithFeatureBadges(badges: badges, size: 9, color: Color.secondary, keepsBadges: true) { nameView }
+                meter()
+                    .frame(height: 5)
             }
-            extra()
-                .padding(.leading, InputRowStyle.meterLeading)
-            meter()
-                .frame(height: 5)
-                .padding(.leading, InputRowStyle.meterLeading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            listenButton
+            gain()
         }
-        .stripChrome(tint: StripStyle.inputTint, isOpen: isOpen, isDropTarget: isDropTarget, isSelected: isSelected)
+        .stripChrome(tint: tint, isOpen: isOpen, isDropTarget: isDropTarget, isSelected: isSelected)
         .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
-    private var glyphView: some View {
-        switch glyph {
-        case .number(let key):
-            Text(verbatim: key)
-                .font(InputRowStyle.numberFont)
-                .foregroundStyle(.tertiary)
-        case .keys:
-            Image(systemName: ObjectKindIcon.recordMidiInput)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-        }
     }
 
     @ViewBuilder
@@ -90,14 +77,36 @@ struct InputStrip<Gain: View, Extra: View, Meter: View>: View {
     private var listenButton: some View {
         Button(action: onListen) {
             Image(systemName: heard ? "speaker.wave.2.fill" : "speaker.slash")
-                .font(.system(size: 11))
-                .frame(width: 18)
+                .font(.system(size: 15))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .foregroundStyle(heard ? Color.accentColor : Color.secondary)
         .opacity(canListen ? 1 : 0.4)
         .disabled(!canListen)
         .help(listenHelp)
+    }
+}
+
+/// What the leading column shows for an input that has no controls of its own: its number (a card input) or the keys
+/// glyph (a MIDI input). Shared by the live rectangle and the dormant one.
+struct InputStripGlyphView: View {
+    let glyph: InputStripGlyph
+    var style: HierarchicalShapeStyle = .secondary
+
+    var body: some View {
+        switch glyph {
+        case .number(let key):
+            Text(verbatim: key)
+                .font(InputRowStyle.numberFont)
+                .lineLimit(1)
+                .foregroundStyle(style)
+        case .keys:
+            Image(systemName: ObjectKindIcon.recordMidiInput)
+                .font(.system(size: 14))
+                .foregroundStyle(style)
+        }
     }
 }
 
@@ -137,14 +146,8 @@ struct DormantInputStrip: View {
 
     var body: some View {
         HStack(spacing: InputRowStyle.controlSpacing) {
-            Group {
-                switch glyph {
-                case .number(let key): Text(verbatim: key).font(InputRowStyle.numberFont)
-                case .keys: Image(systemName: ObjectKindIcon.recordMidiInput).font(.system(size: 10))
-                }
-            }
-            .foregroundStyle(.tertiary)
-            .frame(width: InputRowStyle.numberWidth, alignment: .trailing)
+            InputStripGlyphView(glyph: glyph, style: .tertiary)
+                .frame(width: InputRowStyle.leadingWidth, alignment: .center)
             Text(verbatim: name)
                 .font(InputRowStyle.nameFont)
                 .lineLimit(1)
@@ -189,7 +192,7 @@ struct InputStripPopup: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(StripStyle.inputTint.opacity(0.20))
+            .background(viewModel.mainStemColor.opacity(0.20))
             Divider()
             if let hostID {
                 SynopticBoundView(viewModel: viewModel, objectID: hostID, scrolls: true)

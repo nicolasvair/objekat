@@ -8,11 +8,13 @@ import SwiftUI
 /// could not do either: a submenu's title is not clickable on macOS, a menu closes on every click,
 /// and a disabled item cannot say WHY it is disabled.
 ///
-/// Three roles. A `choice` is a row one can pick; when it has `children` it carries a chevron that
+/// Four roles. A `choice` is a row one can pick; when it has `children` it carries a chevron that
 /// opens them (the chevron never chooses, the name does). A `header` is a caption, not choosable, whose
-/// children are always shown one level in. A `note` is one line of grey text, not choosable.
+/// children are always shown one level in. A `note` is one line of grey text, not choosable. A `branch`
+/// is a row that ONLY opens and closes its children (the whole row is the button), with the current
+/// value in grey at its right: the audio menu's Output / Input / Rate / Buffer.
 struct TreePickerNode: Identifiable, Equatable {
-    enum Role: Equatable { case choice, header, note }
+    enum Role: Equatable { case choice, header, note, branch }
 
     let id: String
     var name: String
@@ -23,6 +25,10 @@ struct TreePickerNode: Identifiable, Equatable {
     /// False = not choosable whatever the role (a `header` and a `note` are never choosable).
     var selectable: Bool = true
     var role: Role = .choice
+    /// A `branch`'s current value, in grey at the right of its name.
+    var detail: String? = nil
+    /// A `branch` that is open when the popover first appears, whatever is ticked under it.
+    var startsOpen: Bool = false
 
     static func header(_ id: String, _ name: String, children: [TreePickerNode] = []) -> TreePickerNode {
         TreePickerNode(id: id, name: name, children: children, selectable: false, role: .header)
@@ -30,6 +36,12 @@ struct TreePickerNode: Identifiable, Equatable {
 
     static func note(_ id: String, _ text: String) -> TreePickerNode {
         TreePickerNode(id: id, name: text, selectable: false, role: .note)
+    }
+
+    static func branch(_ id: String, _ name: String, detail: String?, startsOpen: Bool = false,
+                       children: [TreePickerNode]) -> TreePickerNode {
+        TreePickerNode(id: id, name: name, children: children, selectable: false, role: .branch,
+                       detail: detail, startsOpen: startsOpen)
     }
 
     /// Can a click on the name choose it?
@@ -61,14 +73,27 @@ struct TreePickerSection: Identifiable, Equatable {
 
 enum TreePickerModel {
     /// What is open when the popover first appears: every group that leads to a ticked row, and every
-    /// section that is `initiallyOpen` or holds one. Pure.
-    static func seed(_ sections: [TreePickerSection]) -> (nodes: Set<String>, sections: Set<String>) {
+    /// section that is `initiallyOpen` or holds one. A `branch` opens when it `startsOpen`, or — unless
+    /// `opensCheckedBranches` is false (the audio menu, which opens on folded lines) — when a ticked row is
+    /// under it. The groups inside a branch behave as anywhere else. Pure.
+    static func seed(_ sections: [TreePickerSection],
+                     opensCheckedBranches: Bool = true) -> (nodes: Set<String>, sections: Set<String>) {
         var nodes = Set<String>()
         var open = Set<String>()
         func walk(_ list: [TreePickerNode]) {
-            for n in list where n.containsChecked && !n.children.isEmpty {
-                nodes.insert(n.id)
-                walk(n.children)
+            for n in list {
+                switch n.role {
+                case .branch:
+                    if n.startsOpen || (opensCheckedBranches && n.containsChecked) { nodes.insert(n.id) }
+                    walk(n.children)
+                case .header:
+                    walk(n.children)
+                case .choice, .note:
+                    if n.containsChecked && !n.children.isEmpty {
+                        nodes.insert(n.id)
+                        walk(n.children)
+                    }
+                }
             }
         }
         for s in sections {
@@ -76,6 +101,19 @@ enum TreePickerModel {
             if s.initiallyOpen || s.nodes.contains(where: { $0.containsChecked }) { open.insert(s.id) }
         }
         return (nodes, open)
+    }
+
+    /// The open set after a click on the branch `id`: open becomes closed; closed becomes open and, with
+    /// `accordion`, closes the other `siblings` (only one line of a menu open at a time). Pure.
+    static func toggled(_ id: String, expanded: Set<String>, siblings: [String], accordion: Bool) -> Set<String> {
+        var result = expanded
+        if result.contains(id) {
+            result.remove(id)
+        } else {
+            result.insert(id)
+            if accordion { for other in siblings where other != id { result.remove(other) } }
+        }
+        return result
     }
 
     /// The width a row needs: indent, chevron, gap, padding, tick, gap, text, slack.
@@ -89,7 +127,9 @@ enum TreePickerModel {
         var widest: CGFloat = 0
         func walk(_ list: [TreePickerNode], _ depth: Int) {
             for n in list {
-                widest = max(widest, rowWidth(textWidth: measure(n.name), depth: depth))
+                // A branch also says its current value, a gap away from its name.
+                let text = measure(n.name) + (n.detail.map { 12 + measure($0) } ?? 0)
+                widest = max(widest, rowWidth(textWidth: text, depth: depth))
                 walk(n.children, depth + 1)
             }
         }
@@ -110,6 +150,10 @@ struct TreePickerPopover: View {
     /// (the audio menu, where one sets a card, then a rate, then a buffer).
     var closesOnChoose = true
     var minWidth: CGFloat = 280
+    /// True: opening a branch closes the other branches of its level (the audio menu).
+    var accordion = false
+    /// False: the branches start folded unless they `startsOpen`, even with a ticked row under them.
+    var opensCheckedBranches = true
     let onChoose: (String) -> Void
     let dismiss: () -> Void
 
@@ -148,7 +192,7 @@ struct TreePickerPopover: View {
     private func seed(_ list: [TreePickerSection]) {
         guard !seeded else { return }
         seeded = true
-        let s = TreePickerModel.seed(list)
+        let s = TreePickerModel.seed(list, opensCheckedBranches: opensCheckedBranches)
         expanded.formUnion(s.nodes)
         for section in list where section.title != nil && !section.initiallyOpen && s.sections.contains(section.id) {
             sectionOverrides[section.id] = true
@@ -189,6 +233,9 @@ struct TreePickerPopover: View {
                     noteLine(n.name, depth: depth)
                 case .choice:
                     row(n, depth: depth)
+                    if expanded.contains(n.id) { nodes(n.children, depth: depth + 1) }
+                case .branch:
+                    branchRow(n, depth: depth, siblings: list.filter { $0.role == .branch }.map(\.id))
                     if expanded.contains(n.id) { nodes(n.children, depth: depth + 1) }
                 }
             }
@@ -244,6 +291,33 @@ struct TreePickerPopover: View {
             .padding(.leading, CGFloat(depth) * 14 + 18)
             .padding(.trailing, 6)
             .padding(.vertical, 3)
+    }
+
+    /// A branch: ONE button over the whole row that opens and closes what is under it, never chooses.
+    private func branchRow(_ n: TreePickerNode, depth: Int, siblings: [String]) -> some View {
+        Button {
+            expanded = TreePickerModel.toggled(n.id, expanded: expanded, siblings: siblings, accordion: accordion)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: expanded.contains(n.id) ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 14)
+                Text(verbatim: n.name)
+                    .font(.system(size: 11, weight: .semibold))
+                Spacer(minLength: 8)
+                if let detail = n.detail {
+                    Text(verbatim: detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(TreePickerRowStyle())
+        .padding(.leading, CGFloat(depth) * 14)
     }
 
     private func row(_ n: TreePickerNode, depth: Int) -> some View {

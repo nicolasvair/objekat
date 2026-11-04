@@ -17,8 +17,9 @@ import AppKit
 //
 //  - `RecordingProgressOverlay`: the take being recorded — a translucent red block per zone, on the lane
 //    the take will land on, from the press to the playhead and inside the zone's window (@see
-//    RecordProgress). It reads the playhead through a closure, like `PlayheadLine`: the tick redraws this
-//    view and nothing else. Mounted only while recording.
+//    RecordProgress), with what the take has drawn so far inside it (notes, or loudness). It reads the
+//    playhead through a closure, like `PlayheadLine`: the tick redraws this view and nothing else. Mounted
+//    only while recording.
 
 // MARK: The ghost under an input being dragged
 
@@ -72,18 +73,106 @@ struct RecordingProgressOverlay: View {
     let blockHeight: Double
 
     var body: some View {
-        let blocks = viewModel.recordProgressBlocks(head: position())
+        // The picture inside the blocks moves with the recording's tick (30 Hz), not only with the playhead.
+        let _ = viewModel.recordingLiveRevision
+        let head = position()
+        let blocks = viewModel.recordProgressBlocks(head: head)
         ZStack(alignment: .topLeading) {
-            ForEach(blocks, id: \.group) { b in
+            ForEach(blocks) { b in
+                // The pass being recorded, and — through a loop — the ghost of each finished one under it: the same red,
+                // fainter, with a dashed edge (it is not a take yet, it is the place one will take). Inside each, what that
+                // pass drew so far: the notes played, or the loudness of the input (@see RecordLivePicture).
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(RecordZoneIcon.red.opacity(0.30))
+                    .fill(RecordZoneIcon.red.opacity(b.current ? 0.30 : 0.15))
                     .overlay(RoundedRectangle(cornerRadius: 3)
-                        .strokeBorder(RecordZoneIcon.red.opacity(0.75), lineWidth: 1))
+                        .strokeBorder(RecordZoneIcon.red.opacity(b.current ? 0.75 : 0.40),
+                                      style: StrokeStyle(lineWidth: 1, dash: b.current ? [] : [3, 2])))
+                    .overlay {
+                        RecordLivePicture(pass: viewModel.recordLivePass(for: b), blockStart: b.start, blockEnd: b.end,
+                                          head: head, pixelsPerSecond: pixelsPerSecond)
+                    }
                     .frame(width: max(1, (b.end - b.start) * pixelsPerSecond), height: blockHeight)
                     .offset(x: b.start * pixelsPerSecond, y: rulerHeight + Double(b.displayLane) * laneStep)
             }
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// What a recording block draws inside itself (L11): the notes played on a MIDI input, in red on the block's own pitch
+/// range (`MidiNotesDrawing`, the MIDI clips' geometry), or the loudness of an audio input as a symmetric envelope. A
+/// SIMPLIFIED picture — one point per tick of the recording, not the file's waveform. An open note runs to the head.
+private struct RecordLivePicture: View {
+    let pass: RecordLiveCapture.Pass?
+    let blockStart: Double
+    let blockEnd: Double
+    let head: Double
+    let pixelsPerSecond: Double
+
+    /// A live note in the shape `MidiNotesDrawing` reads: seconds as "beats" (`secPerBeat` 1) from the block's left edge.
+    private struct NoteBox: MidiNoteLike {
+        let pitch: Int
+        let startBeat: Double
+        let lengthBeats: Double
+        let velocity: Int
+    }
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard let pass, !pass.isEmpty, size.width > 0, size.height > 0 else { return }
+            Self.drawNotes(pass, in: &ctx, size: size, blockStart: blockStart, blockEnd: blockEnd, head: head,
+                           pixelsPerSecond: pixelsPerSecond)
+            Self.drawPeaks(pass, in: &ctx, size: size, blockStart: blockStart, blockEnd: blockEnd,
+                           pixelsPerSecond: pixelsPerSecond)
+        }
+    }
+
+    private static func drawNotes(_ pass: RecordLiveCapture.Pass, in ctx: inout GraphicsContext, size: CGSize,
+                                  blockStart: Double, blockEnd: Double, head: Double, pixelsPerSecond: Double) {
+        guard !pass.notes.isEmpty else { return }
+        // Cropped to the block: a note that began before it starts at its left edge, one that goes on past it stops at the
+        // right edge; one wholly outside is not drawn and does not weigh on the pitch range.
+        var shapes: [NoteBox] = []
+        for n in pass.notes {
+            let end = min(n.end ?? head, blockEnd)
+            let start = max(n.start, blockStart)
+            guard start <= blockEnd, end >= blockStart else { continue }
+            shapes.append(NoteBox(pitch: n.pitch, startBeat: start - blockStart, lengthBeats: max(0, end - start),
+                                velocity: n.velocity))
+        }
+        guard let lo = shapes.map(\.pitch).min(), let hi = shapes.map(\.pitch).max() else { return }
+        let layout = MidiNotesDrawing.layout(pitchRange: lo...hi, size: size)
+        var path = Path()
+        MidiNotesDrawing.forEachNote(notes: shapes, layout: layout, secPerBeat: 1, pixelsPerSecond: pixelsPerSecond,
+                                     size: size) { rect, _ in
+            path.addRoundedRect(in: rect, cornerSize: CGSize(width: min(2, rect.height / 2), height: min(2, rect.height / 2)))
+        }
+        ctx.fill(path, with: .color(RecordZoneIcon.red.opacity(0.9)))
+    }
+
+    private static func drawPeaks(_ pass: RecordLiveCapture.Pass, in ctx: inout GraphicsContext, size: CGSize,
+                                  blockStart: Double, blockEnd: Double, pixelsPerSecond: Double) {
+        guard !pass.peaks.isEmpty, blockEnd > blockStart else { return }
+        let indices = pass.peakIndices(in: blockStart...blockEnd)
+        guard !indices.isEmpty else { return }
+        let mid = size.height / 2
+        // 10^(dB/20) of the half-height, at least half a point each side so that silence still draws a hairline.
+        func half(_ db: Float) -> Double { min(mid, max(0.5, pow(10, Double(db) / 20) * mid)) }
+        func x(_ time: Double) -> Double { (time - blockStart) * pixelsPerSecond }
+        var path = Path()
+        if indices.count == 1 {
+            let p = pass.peaks[indices.lowerBound]
+            path.addRect(CGRect(x: x(p.time), y: mid - half(p.db), width: 1.5, height: 2 * half(p.db)))
+        } else {
+            let points = pass.peaks[indices]
+            for (i, p) in points.enumerated() {
+                let pt = CGPoint(x: x(p.time), y: mid - half(p.db))
+                if i == 0 { path.move(to: pt) } else { path.addLine(to: pt) }
+            }
+            for p in points.reversed() { path.addLine(to: CGPoint(x: x(p.time), y: mid + half(p.db))) }
+            path.closeSubpath()
+        }
+        ctx.fill(path, with: .color(RecordZoneIcon.red.opacity(0.85)))
     }
 }
 

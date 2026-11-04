@@ -6,7 +6,8 @@ import Foundation
 /// asserted alone (`tools/test_audio_menu_model.swift`).
 ///
 /// The rows are the shared tree picker's (`Shared/TreePickerPopover.swift`): a native `Menu` closes on
-/// every click, and one sets a card, then a rate, then a buffer in one go.
+/// every click, and one sets a card, then a rate, then a buffer in one go. They are BRANCHES that open
+/// inline, one at a time, so a long list of cards does not push the rest out of the popover.
 struct AudioMenuState: Equatable {
     /// The cards one can play on, in the engine's order.
     var outputDevices: [String] = []
@@ -77,44 +78,50 @@ enum AudioMenuModel {
 
     // MARK: The sections
 
+    /// ONE untitled section of branches, each saying its current value and opening on a click (the picker's
+    /// accordion): output card, input card, rate, buffer. The rows under a branch keep their ids, so
+    /// `action(forID:)` knows nothing of the branches — their own ids start with `branch.` and match no prefix.
     static func sections(_ state: AudioMenuState, labels: AudioMenuLabels) -> [TreePickerSection] {
-        var result: [TreePickerSection] = []
+        var branches: [TreePickerNode] = []
 
-        result.append(TreePickerSection(
-            id: "output", title: labels.output,
-            nodes: state.outputDevices.map {
-                TreePickerNode(id: outputID($0), name: $0, checked: $0 == state.currentOutput)
-            },
-            collapsible: false, emptyText: labels.noOutputDevice, dividerAfter: true))
+        var outputNodes = state.outputDevices.map {
+            TreePickerNode(id: outputID($0), name: $0, checked: $0 == state.currentOutput)
+        }
+        if outputNodes.isEmpty { outputNodes = [.note("output.none", labels.noOutputDevice)] }
+        branches.append(.branch("branch.output", labels.output,
+                                detail: state.currentOutput ?? labels.noOutputDevice, children: outputNodes))
 
         var inputNodes = [TreePickerNode(id: inputID(nil), name: labels.sameInputCard, checked: state.currentInput == nil)]
         inputNodes += state.inputCards.map {
             TreePickerNode(id: inputID($0.uid), name: $0.name, checked: $0.uid == state.currentInput)
         }
         if let note = state.inputNote { inputNodes.append(.note("input.note", note)) }
-        result.append(TreePickerSection(id: "input", title: labels.input, nodes: inputNodes,
-                                        collapsible: false, dividerAfter: true))
+        // The ticked card's name; a choice no card carries (the engine resets it) reads as the default.
+        let inputDetail = state.inputCards.first { $0.uid == state.currentInput }?.name ?? labels.sameInputCard
+        branches.append(.branch("branch.input", labels.input, detail: inputDetail,
+                                startsOpen: state.inputNote != nil, children: inputNodes))
 
         if !state.sampleRates.isEmpty {
             var nodes = state.sampleRates.map {
                 TreePickerNode(id: rateID($0), name: formatRate($0), checked: $0 == state.currentSampleRate)
             }
             if let note = state.sampleRateNote { nodes.append(.note("rate.note", note)) }
-            result.append(TreePickerSection(id: "rate", title: labels.sampleRate, nodes: nodes,
-                                            collapsible: false, dividerAfter: true))
+            branches.append(.branch("branch.rate", labels.sampleRate, detail: state.currentSampleRate > 0 ? formatRate(state.currentSampleRate) : nil,
+                                    startsOpen: state.sampleRateNote != nil, children: nodes))
         }
 
         let buffers = usefulBufferSizes(state.bufferSizes, current: state.currentBufferSize)
         if !buffers.isEmpty {
-            result.append(TreePickerSection(
-                id: "buffer", title: labels.buffer,
-                nodes: buffers.map {
+            branches.append(.branch(
+                "branch.buffer", labels.buffer,
+                detail: state.currentBufferSize > 0
+                    ? formatBuffer(state.currentBufferSize, sampleRate: state.currentSampleRate) : nil,
+                children: buffers.map {
                     TreePickerNode(id: bufferID($0), name: formatBuffer($0, sampleRate: state.currentSampleRate),
                                    checked: $0 == state.currentBufferSize)
-                },
-                collapsible: false))
+                }))
         }
-        return result
+        return [TreePickerSection(id: "audio", title: nil, nodes: branches, collapsible: false)]
     }
 
     // MARK: Buffer sizes

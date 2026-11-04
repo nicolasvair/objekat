@@ -26,6 +26,10 @@ import Foundation
 //     at its real position (under the zone's grey area, hence silent), nothing muted, and the previous takes
 //     muted at the press are given back. "Crossing" is judged on the REAL passes.
 //
+//   - the takes are laid down PASS BY PASS, one undo point each (`passSteps`, at most 16 — the earliest merge into the
+//     first), so that ⌘Z takes the last pass away and leaves the zone as it was when the pass before was the last one:
+//     `prefixLayout` is that state (`plan`'s lanes and audibility applied to the first k takes).
+//
 // With ONE segment this is exactly `RecordTakePlanner.plan` (asserted by the tests).
 //
 // A plain Foundation unit with no model behind it, compiled and asserted alone
@@ -129,6 +133,27 @@ enum RecordLoopPlanner {
         let reach = reachableRange(startPosition: startPosition, loop: loop)
         guard reach.lowerBound < windowEnd, reach.upperBound > windowStart else { return [] }
         return children.filter { !$0.isMuted && $0.start < windowEnd && $0.end > windowStart }.map(\.id)
+    }
+
+    // MARK: One undo step per pass
+
+    /// The undo steps a recording through a loop is laid down in: ⌘Z takes the LAST pass away, the next one the
+    /// pass before. `passes` are the indices (`Take.pass`) of the passes that gave at least one take, across every
+    /// zone. One step per pass, oldest first; above `cap` the earliest passes merge into the FIRST step, so that the
+    /// undo stack (50 entries) is not flushed by one recording.
+    static func passSteps(passes: [Int], cap: Int = 16) -> [[Int]] {
+        let sorted = Array(Set(passes)).sorted()
+        guard !sorted.isEmpty, cap > 0 else { return [] }
+        guard sorted.count > cap else { return sorted.map { [$0] } }
+        let merged = sorted.count - cap + 1
+        return [Array(sorted[0..<merged])] + sorted[merged...].map { [$0] }
+    }
+
+    /// What a zone looks like after the first `k` of its takes were laid down: the lane and the audibility of
+    /// each take, oldest first. These are `plan`'s own rules (the newest on the top lane; in "mute" the last one
+    /// only is audible) applied to a prefix — the state "stopped after pass k".
+    static func prefixLayout(takeCount k: Int, baseLane: Int, mutesPrevious: Bool) -> [(lane: Int, audible: Bool)] {
+        (0..<max(0, k)).map { n in (lane: baseLane + (k - 1 - n), audible: !mutesPrevious || n == k - 1) }
     }
 
     /// - Parameters:

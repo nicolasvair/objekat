@@ -47,6 +47,8 @@ struct InfiniteBusBandView: View {
     /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
     /// left out of the drawn gain of the bus and of its children.
     let offBins: Set<UUID>
+    /// Seconds per beat (60 / tempo), for the notes of the MIDI children the composite draws.
+    let secPerBeat: Double
     var isRenaming: Bool = false
     var onRename: (String?) -> Void = { _ in }
 
@@ -100,7 +102,8 @@ struct InfiniteBusBandView: View {
                     rootMod: rootMod,
                     rootMuted: item.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
-                    offBins: offBins
+                    offBins: offBins,
+                    secPerBeat: secPerBeat
                 )
                 .frame(width: bandWidth, height: blockHeight)
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))

@@ -47,6 +47,8 @@ struct GroupBlockView: View {
     /// The attached FX links switched off (@see EditViewModel.offFXLinkIDs): their gain stages are
     /// left out of the drawn gain of the group and of its children.
     let offBins: Set<UUID>
+    /// Seconds per beat (60 / tempo), for the notes of the MIDI children the composite draws.
+    let secPerBeat: Double
 
     let previewOffset: (dx: Double, dy: Double)?
     let previewResizeDX: Double
@@ -180,7 +182,8 @@ struct GroupBlockView: View {
                     rootMuted: group.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
                     loopRange: previewLoopRange,
-                    offBins: offBins
+                    offBins: offBins,
+                    secPerBeat: secPerBeat
                 )
                 // The same radius as the block (20): with 4, a child sitting at the very start of the group
                 // spilled out of the rounded corners — the composite bled out of the border on the left.

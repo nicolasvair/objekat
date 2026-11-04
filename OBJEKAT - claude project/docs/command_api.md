@@ -2453,15 +2453,19 @@ localised, its `id` is `vmidiin_<hash of the constant internal name>`, stable fr
 the timeline, recorded, given an instrument (`input.set_instrument`) and heard (`input.monitor`) like any other. It is NOT fed by
 "All MIDI Ins" and does not feed it. What is specific is the MODE: while it is on, the key monitor turns the letter keys into
 notes on that device (velocity 100, channel 1). The mode is a flag of the app — it never changes the engine's device list — off at
-launch, kept across tabs, not saved, not in the undo; there is deliberately no keyboard shortcut for it (a button in the transport
-bar and one on the input's row). Keys are read by PHYSICAL keyCode (AZERTY home row: `q` C, `z` C#, `s` D, `e` D#, `d` E, `f` F,
+launch, kept across tabs, not saved, not in the undo; there is deliberately no keyboard shortcut for it (a button on the input's row in the Inputs tab, none in the transport
+bar since 4 November 2026). Keys are read by PHYSICAL keyCode (AZERTY home row: `q` C, `z` C#, `s` D, `e` D#, `d` E, `f` F,
 `t` F#, `g` G, `y` G#, `h` A, `u` A#, `j` B, `k` C+1, `o` C#+1, `l` D+1, `p` D#+1, `m` E+1); `w` / `x` move the octave down / up
 (base MIDI note under `q`: 60 = "C4" at launch, 0…108 by 12). With any of ⌘ ⌃ ⌥ ⇧ held a key is not taken, so while the mode is on
 the tool keys are `⇧S ⇧F ⇧E ⇧P ⇧T ⇧M` and the loop is its button or `⌘L`. A plugin window in front is served AFTER the
 computer keyboard for these keys only (our text fields, a plugin editing text and the plugin browser win over it). The
 note-off is read from a table filled at the press, so an octave change never hangs a note; `allNotesOff` runs when ⌘ appears, the
 app resigns, the mode goes off, the monitor goes away and on a tab switch.
-* `midi.keyboard.status` — `{on, octave, octave_name, held: [{key_code, note}], device_id}`.
+* `midi.keyboard.status` — `{on, octave, octave_name, held: [{key_code, note}], device_id, layout_family, layout_name}`.
+  `layout_family` is `"azerty"`, `"qwerty"` or `"qwertz"` when the physical Q W E R T Y keys type one of them, else null; `layout_name`
+  is what the input is named after in the interface — the family's title, else the system's localized layout name, null when
+  neither is known. They depend on the machine (read by `KeyboardLayoutWatcher`, refreshed when the layout changes in the menu
+  bar) and are never part of a project. The input's internal name (`Computer Keyboard`) does not change.
 * `midi.keyboard.set {on}` — the mode (the transport button's twin). Off releases every note. Answers the status.
 * `midi.keyboard.octave {base | delta}` — exactly one: `base` the MIDI note under `q` (a multiple of 12, 0…108; `bad_params`
   otherwise), `delta` a number of octaves (clamped). Answers the status.
@@ -2471,6 +2475,15 @@ app resigns, the mode goes off, the monitor goes away and on a tab switch.
   `decision` (`note_on` + `note`, `note_off` + `note`, `octave` + `octave`, `swallow`, `pass_through`) with the status fields.
   `pass_through` is also the answer while the mode is off. The note reaches the device: `input.levels.midi_activity` shows
   velocity 100 on it.
+
+* `input.levels.midi_activity` — the meter of a MIDI input's row. `activity[]` is `{id, name, velocity, instrument_level}` for the
+  inputs that played a note since the PREVIOUS call (`velocity` the loudest note-on, 0…127; reading clears it);
+  `instrument_levels[]` is `{id, name, instrument_level}` for EVERY input that carries an instrument. `instrument_level` is the
+  level (0…1, the VU scale of the plugin cards) at the OUTPUT of the input's instrument — before its FX and the listening
+  gain — and is **0 while the input is not heard** (monitor off) or silent. It reads **while the transport is
+  stopped** too: an input's hidden track is live whatever the transport does (the cards of a signal view stay at 0 while it is
+  stopped, as before). The call asks the engine to measure those instruments (measuring owner `api.midi_activity`, kept), so the
+  FIRST call answers 0: poll. Reading empties the engine's peak hold.
 
 **Group instruments.** A GROUP can carry an instrument (`instrument.set` / `instrument.remove` accept any eligible group,
 beside a MIDI clip): it plays the notes of the EMPTY MIDI clips below it (a MIDI clip with no instrument of its own), a
@@ -2501,16 +2514,26 @@ classic one from then on. The field is absent for every other clip. In the file:
   new project or an opening. `invalid_state` when the group has no input, when its input is not on the
   card (or the inputs are closed) and for a group that cannot record. Several zones can be armed, on
   the same input too.
+* `rec.disarm_all` — no parameter: every recording zone becomes not armed (what Esc does in the timeline). Answers `rec.status`;
+  the same answer when nothing was armed. Allowed WHILE recording: the take in progress finishes normally (the zones it records
+  are frozen at the press), the next one starts with nothing armed. SESSION state, no undo point.
 * `rec.status` — `zones` (`id`, `name` — the input's name while the zone has no typed name —, `input`, `input_present`,
   `recordable`, `armed`, `input_prefix` — the input's name when the zone has a typed name, else null —,
   `take_mode`), `armed` (ids
   armed AND still able to record), `can_record` (the transport's record button is live: something
   armed and a saved project), `project_saved`, `recording` (a recording is under way),
   `recording_start` (the instant of the press on the timeline, null otherwise), `progress` (while
-  recording, the red block the timeline draws for each zone: `{group, lane, start, end}` — `lane` the
-  display lane the take will land on, the zone's own row when it is closed; `start`..`end` the part of the
-  zone's window between the press and the playhead; a zone the head has not reached is absent; recording THROUGH
-  a loop the block restarts at the start of the current pass), `lap` (recording through a loop: how many times the head has
+  recording, the red blocks the timeline draws: `{group, lane, start, end, current, pass}` — `lane` the
+  display lane the take will land on (the TOP lane of the zone, which is EMPTY while recording: since the press the zone's
+  previous children are one lane down, and one more for every finished pass of a loop, inside the undo point of the press;
+  the zone's own row when it is closed); `start`..`end` the part of the zone's window between the press and the playhead;
+  `current` true for the pass being recorded (`pass` = the lap the head is on), false for a GHOST: recording THROUGH a loop
+  each finished pass that crossed the window of an OPEN zone with something to push down leaves one, on the lane it will
+  have at the stop (pass `i` of `L` finished on top + `L` - `i`), only on rows the zone reserves; a zone the head has not
+  reached has no current block; the current block restarts at the start of each pass; `live_notes` / `live_peaks` count what the
+  block draws inside itself so far — the notes played on a MIDI input / the loudness points of an audio one, for the pass the
+  block stands for: a SIMPLIFIED picture at 30 Hz (the peak of each tick, not the file's waveform), never touching the recording),
+  `lap` (recording through a loop: how many times the head has
   jumped back since the press, 0 otherwise — the passes so far are `lap + 1`), `pass_start` (where the pass that runs began on
   the timeline, null when not recording or the recording clock is not anchored yet) and
   `last_takes` (the takes of the last recording, below).
@@ -2543,7 +2566,12 @@ classic one from then on. The field is absent for every other clip. In the file:
   older child goes down one lane per take. A zone the loop never crosses keeps the out-of-window rule (ONE take over the last pass,
   `outside_window`, nothing muted). A loop shorter than 250 ms counts for none (linear recording). The group's window never
   grows. **MIDI**: the takes of a MIDI zone look through ONE shared sequence (below, `midi_sequence`); a recording in one pass makes none.
-  ONE undo takes every take away; the loop is never in the undo.
+  **One undo point PER PASS** (a pass that gave at least one take, across every zone; 16 at most, the earliest merge into the
+  first): `edit.undo` takes the LAST pass away only and leaves the zone as it was when the pass before was the last one (that pass
+  on the top lane, audible again in "mute" mode); the next one does the same with the pass before; the file / the MIDI sequence
+  stays, so the remaining takes can still be pulled out into it. A recording with one pass (or a zone whose take lies outside its
+  window) is ONE point. The loop is never in the undo. **`edit.undo` and `edit.redo` answer `invalid_state` while a recording is
+  under way** (the recording counts on the stack not moving; ⌘Z only beeps).
   `invalid_state` when not recording. A change of the card (rate, buffer, device) during a recording, and
   the application quitting, end it the same way: the files are kept and the takes land in the project.
   Calibration (virtual card, loopback): the impulse comes back to the SAMPLE (error 0, +-1 accepted in the
@@ -2557,7 +2585,8 @@ asserts the zones against the virtual card; `tools/test_record_take_planner.swif
 press, red block, lane order, one undo, punch-in, calibration, card change during recording);
 `tools/test_record_progress.swift` asserts the red block's span and lane;
 `tools/scenario_record_loop_proof.py` (proofs of the loop recording against the stock engine: journal, punch-in, rebase, MIDI cost),
-`tools/scenario_record_loop_midi.py` (MIDI takes through a loop: partition of the notes, mutes, one undo, the window following the
+`tools/scenario_record_loop_undo.py` (one undo per pass, audio and MIDI, "mute" and "add", no undo while recording),
+`tools/scenario_record_loop_midi.py` (MIDI takes through a loop: partition of the notes, mutes, one undo per pass, the window following the
 edges, detachment on edit, format 37, orphan sequences), `tools/test_record_loop_planner.swift` and
 `tools/test_midi_sequence_window.swift` assert the planners alone; `tools/scenario_record_multi_drop.py`
 asserts the drop of several inputs.

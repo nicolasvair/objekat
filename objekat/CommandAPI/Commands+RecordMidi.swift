@@ -29,17 +29,40 @@ extension CommandRegistry {
         register("input.levels.midi_activity",
                  summary: """
                  The loudest note-on velocity (0...127) seen on each MIDI input since the PREVIOUS call, then \
-                 cleared — what the row's activity bar shows. Only the inputs that played something appear \
-                 (`activity`: {id, name, velocity}). Poll at the rate you want to see.
+                 cleared — what the row's blue activity mark shows. Only the inputs that played something appear \
+                 (`activity`: {id, name, velocity, instrument_level}). `instrument_levels` lists EVERY input that \
+                 carries an instrument: {id, name, instrument_level} — the level (0...1, the VU scale) at the \
+                 instrument's output, which is what the row's meter shows under the blue mark; 0 while the \
+                 input is not heard through it (monitor off) or silent. The call asks the engine to \
+                 measure those instruments (owner `api.midi_activity`, kept), so the FIRST call answers 0: poll. \
+                 Reading empties the engine's peak hold. Poll at the rate you want to see.
                  """,
                  undo: .none) { _ in
             let vm = try CommandContext.shared.requireViewModel()
+            let instruments = vm.midiInputInstruments()
+            vm.setMidiInstrumentMetering(owner: "api.midi_activity", ids: instruments.map { $0.instrument })
+            let heard = vm.heardMidiDeviceIDs
+            // One read per device, taken before anything is built from it.
+            var levels: [(id: String, name: String, level: Double?)] = []
+            for d in vm.midiInputs where instruments.contains(where: { $0.device == d.id }) {
+                levels.append((id: d.id, name: d.name, level: vm.midiInstrumentLevel(of: d, heard: heard.contains(d.id))))
+            }
+            func levelJSON(_ id: String) -> JSONValue {
+                guard let l = levels.first(where: { $0.id == id })?.level else { return .null }
+                return .number(l)
+            }
             let seen = vm.midiActivity()
-            return .object(["activity": .array(seen.sorted { $0.key < $1.key }.map { id, v in
-                .object(["id": .string(id),
-                         "name": .string(vm.midiInputs.first { $0.id == id }?.name ?? id),
-                         "velocity": .int(v)])
-            })])
+            return .object([
+                "activity": .array(seen.sorted { $0.key < $1.key }.map { id, v in
+                    .object(["id": .string(id),
+                             "name": .string(vm.midiInputs.first { $0.id == id }?.name ?? id),
+                             "velocity": .int(v),
+                             "instrument_level": levelJSON(id)])
+                }),
+                "instrument_levels": .array(levels.map { e in
+                    .object(["id": .string(e.id), "name": .string(e.name),
+                             "instrument_level": e.level.map { JSONValue.number($0) } ?? .null])
+                })])
         }
 
         register("midi.virtual.status",

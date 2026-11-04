@@ -332,7 +332,7 @@ enum GroupBlocksCanvas {
     static func drawComposites(into ctx: GraphicsContext, groups: [CanvasGroup], geo: Geometry,
                                waveformCache: WaveformCache, waveformDisplayDB: Double,
                                scrollOffsetX: CGFloat, viewportWidth: CGFloat,
-                               offBins: Set<UUID>) {
+                               offBins: Set<UUID>, secPerBeat: Double) {
         for g in groups {
             guard case .group(let children, _) = g.item.kind, !children.isEmpty else { continue }
             let rect = geo.rect(of: g)
@@ -359,7 +359,8 @@ enum GroupBlocksCanvas {
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange, offBins: offBins)
+                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange, offBins: offBins,
+                secPerBeat: secPerBeat)
         }
     }
 

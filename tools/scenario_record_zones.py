@@ -414,6 +414,22 @@ try:
         check("neither group nor groups is a bad call", refused(c, "rec.arm", on=True) is not None)
         c.send("rec.arm", {"group": a, "on": False})
 
+        # ── L: Esc disarms every zone (rec.disarm_all, the door Esc's key handler shares) ----------------
+        section("L  rec.disarm_all")
+        c.send("project.new")
+        c.send("input.enable")
+        a = drop(c, 0, 0, 0.0)["group"]
+        b = drop(c, 1, 1, 0.0)["group"]
+        r = c.send("rec.arm", {"groups": [a, b], "on": True})
+        check("two zones armed", sorted(r["armed"]) == sorted([a, b]), r)
+        d0 = undo_depth(c)
+        r = c.send("rec.disarm_all")
+        check("rec.disarm_all: nothing armed any more", r["armed"] == [], r)
+        check("... and rec.status agrees", c.send("rec.status")["armed"] == [])
+        check("... outside the undo", undo_depth(c) == d0)
+        r = c.send("rec.disarm_all")
+        check("a second call answers the same", r["armed"] == [], r)
+
     check("Settings.xml untouched by the whole run (hash)", digest() == before, "%s -> %s" % (before, digest()))
 finally:
     try:

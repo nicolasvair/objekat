@@ -479,6 +479,18 @@ extension CommandRegistry {
             return Self.recordStatusJSON(vm)
         }
 
+        register("rec.disarm_all",
+                 summary: """
+                 Disarms every recording zone at once, as Esc does in the timeline. Session state like `rec.arm`; \
+                 allowed while recording (the take in progress finishes, the next one starts with nothing armed). \
+                 Answers the same status as `rec.status`; a second call answers the same.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.disarmAllRecordZones()
+            return Self.recordStatusJSON(vm)
+        }
+
         register("rec.status",
                  summary: """
                  The recording zones. `zones`: every group with an input — `id`, `name`, `input` \
@@ -489,7 +501,10 @@ extension CommandRegistry {
                  `recording_start` the instant it was pressed at (null otherwise). `progress`: while recording, the \
                  red block of each zone as the timeline draws it — `group`, `lane` (the display lane the take \
                  will land on; the zone's own row if it is closed), `start`, `end` (press to playhead, inside the \
-                 zone's window; a zone the head has not reached is absent). `last_takes`: what the last recording \
+                 zone's window; a zone the head has not reached is absent); through a loop each finished pass that crossed \
+                 the window leaves a ghost block (`current` false, `pass` its index), and `live_notes` / `live_peaks` \
+                 count what the block draws inside itself so far — the notes played on a MIDI input, the loudness \
+                 points of an audio one (a simplified picture at 30 Hz, never the file). `last_takes`: what the last recording \
                  gave (see `rec.stop`).
                  """,
                  undo: .none) { _ in
@@ -641,9 +656,15 @@ extension CommandRegistry {
                         // press (the passes so far are lap + 1), and where the pass that runs began. 0 / null otherwise.
                         "lap": .int(vm.isRecording ? (vm.engine?.recordPassNow()?["laps"]?.intValue ?? 0) : 0),
                         "pass_start": vm.isRecording ? (vm.engine?.recordPassNow()?["start"]?.doubleValue).map { .number($0) } ?? .null : .null,
-                        "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b in
-                            .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
-                                     "start": .number(b.start), "end": .number(b.end)])
+                        "progress": .array(vm.recordProgressBlocks(head: vm.engine?.currentPlaybackPosition() ?? 0).map { b -> JSONValue in
+                            // `live_notes` / `live_peaks`: what the block draws inside itself (L11), the notes played / the
+                            // loudness points of that pass so far.
+                            let live = vm.recordLivePass(for: b)
+                            return .object(["group": .string(b.group.uuidString), "lane": .int(b.displayLane),
+                                     "start": .number(b.start), "end": .number(b.end),
+                                     "current": .bool(b.current), "pass": .int(b.pass),
+                                     "live_notes": .int(live?.notes.count ?? 0),
+                                     "live_peaks": .int(live?.peaks.count ?? 0)])
                         }),
                         "last_takes": .array(vm.lastRecordingTakes.map { t in
                             .object(["group": .string(t.group.uuidString), "object": .string(t.object.uuidString),

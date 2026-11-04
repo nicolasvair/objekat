@@ -28,6 +28,8 @@ struct GroupWaveformView: View {
     /// The attached FX links switched off: their gain stages do not count in the descendants' drawn
     /// gain (@see EditViewModel.offFXLinkIDs, GainStageDisplay).
     let offBins: Set<UUID>
+    /// Seconds per beat (60 / tempo): a MIDI child's notes are in beats.
+    let secPerBeat: Double
 
     var body: some View {
         Canvas { ctx, size in
@@ -36,7 +38,8 @@ struct GroupWaveformView: View {
                 groupStartTime: groupStartTime, pixelsPerSecond: pixelsPerSecond,
                 stemColor: stemColor, blockXPos: blockXPos, scrollOffsetX: scrollOffsetX,
                 viewportWidth: viewportWidth, rootMod: rootMod, rootMuted: rootMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: loopRange, offBins: offBins)
+                waveformDisplayDB: waveformDisplayDB, loopRange: loopRange, offBins: offBins,
+                secPerBeat: secPerBeat)
         }
         .allowsHitTesting(false)
     }
@@ -76,6 +79,16 @@ enum GroupWaveformDrawing {
         let winHi: Double
     }
 
+    /// One occurrence of a descendant MIDI clip, placed like a `ClipInstance` (same `shift`, same
+    /// window), but with no modifier: a MIDI take has no waveform to scale, and the note preview of
+    /// a block does not follow the fader either.
+    private struct MidiInstance {
+        let clip: SoundObject
+        let shift: Double
+        let winLo: Double
+        let winHi: Double
+    }
+
     /// Expands the descendants into instances recursively. Each ancestor group brings two things:
     /// its WINDOW — whatever overflows is cut by the container, on the engine side as here —
     /// and, if it loops, its REPEATS. That second point is what the composite ignored: only the
@@ -83,7 +96,9 @@ enum GroupWaveformDrawing {
     /// more than its first period, the waveform coming adrift from the sound at the very next
     /// repeat. The folding is the same as at the root and as on the engine side — the material at
     /// the IN point lands at the start of each period (@see refreshContainerSpanForKey:).
-    /// A MUTED descendant (a clip or a subgroup) is LEFT OUT of the parent's composite.
+    /// A MUTED descendant (a clip, a MIDI clip or a subgroup) is LEFT OUT of the parent's composite:
+    /// only what is heard is drawn. The MIDI clips go to their own list (`midi`), the budget of
+    /// `maxInstances` being shared by both.
     private static func expand(_ objs: [SoundObject],
                         groupStartTime: Double,
                         shift: Double,
@@ -91,11 +106,12 @@ enum GroupWaveformDrawing {
                         mods: [WaveformShaping.Modifier],
                         visible: (lo: Double, hi: Double),
                         offBins: Set<UUID>,
-                        into out: inout [ClipInstance]) {
+                        into out: inout [ClipInstance],
+                        midi: inout [MidiInstance]) {
         guard win.hi > win.lo else { return }
         for o in objs {
             if o.isMuted { continue }   // a muted child → nothing in the parent group
-            guard out.count < Self.maxInstances else { return }
+            guard out.count + midi.count < Self.maxInstances else { return }
             let start = o.startTime - groupStartTime + shift
             let lo = max(win.lo, start)
             let hi = min(win.hi, start + o.duration)
@@ -106,13 +122,15 @@ enum GroupWaveformDrawing {
             case .clip:
                 out.append(ClipInstance(clip: o, mods: mods + [modifier(for: o, offBins: offBins)],
                                         shift: shift, winLo: lo, winHi: hi))
-            case .aux, .midiClip:
-                continue   // an aux (receive only) / a MIDI clip (no precomputed wave)
+            case .midiClip:
+                midi.append(MidiInstance(clip: o, shift: shift, winLo: lo, winHi: hi))
+            case .aux:
+                continue   // an aux (receive only)
             case .group(let sub, _):
                 let subMods = mods + [modifier(for: o, offBins: offBins)]
                 guard let r = o.loopMarkerLocalRange, r.end - r.start > 0.02 else {
                     expand(sub, groupStartTime: groupStartTime, shift: shift, win: (lo, hi),
-                           mods: subMods, visible: visible, offBins: offBins, into: &out)
+                           mods: subMods, visible: visible, offBins: offBins, into: &out, midi: &midi)
                     continue
                 }
                 let period = r.end - r.start
@@ -120,12 +138,12 @@ enum GroupWaveformDrawing {
                 let from   = max(lo, visible.lo)
                 let until  = min(hi, visible.hi)
                 var k = max(0, Int(((from - start - origin) / period).rounded(.down)))
-                while start + origin + Double(k) * period < until, out.count < Self.maxInstances {
+                while start + origin + Double(k) * period < until, out.count + midi.count < Self.maxInstances {
                     expand(sub, groupStartTime: groupStartTime,
                            shift: shift + origin + Double(k) * period - r.start,
                            win: (max(lo, start + origin + Double(k) * period),
                                  min(hi, start + origin + Double(k + 1) * period)),
-                           mods: subMods, visible: visible, offBins: offBins, into: &out)
+                           mods: subMods, visible: visible, offBins: offBins, into: &out, midi: &midi)
                     k += 1
                 }
             }
@@ -155,7 +173,8 @@ enum GroupWaveformDrawing {
                      rootMuted: Bool,
                      waveformDisplayDB: Double,
                      loopRange: (start: Double, end: Double)?,
-                     offBins: Set<UUID>) {
+                     offBins: Set<UUID>,
+                     secPerBeat: Double) {
         let h = size.height
         let mid = h * 0.5
         // the block's edge = 0 dBFS; waveform zoom (display dB, without touching the sound).
@@ -204,6 +223,7 @@ enum GroupWaveformDrawing {
         let visible = (lo: Double(visStart) / pixelsPerSecond,
                        hi: Double(visEnd)   / pixelsPerSecond)
         var instances: [ClipInstance] = []
+        var midiInstances: [MidiInstance] = []
         for k in repeats {
             // The composite's offset for this repeat: the material at `loopStart` lands at the
             // start of period k.
@@ -214,7 +234,7 @@ enum GroupWaveformDrawing {
             let repHi = looping ? min(blockDuration, loopOrigin + Double(k + 1) * groupPeriod)
                                 : blockDuration
             expand(children, groupStartTime: groupStartTime, shift: shift, win: (repLo, repHi), mods: [rootMod],
-                   visible: visible, offBins: offBins, into: &instances)
+                   visible: visible, offBins: offBins, into: &instances, midi: &midiInstances)
         }
 
         for inst in instances {
@@ -300,6 +320,13 @@ enum GroupWaveformDrawing {
             }
         }
 
+        // The MIDI children's notes, over the waveforms, in the stem's colour (grey when the group
+        // itself is muted, as the waveform is).
+        drawMidiNotes(into: ctx, size: size, children: children, instances: midiInstances,
+                      groupStartTime: groupStartTime, pixelsPerSecond: pixelsPerSecond,
+                      secPerBeat: secPerBeat, visStart: visStart, visEnd: visEnd,
+                      color: rootMuted ? Color.gray : stemColor, muted: rootMuted)
+
         if looping {
             var markers = Path()
             for k in repeats {
@@ -313,6 +340,70 @@ enum GroupWaveformDrawing {
                       style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
         }
     
+    }
+
+    /// The pitch range of every MIDI clip the group's composite can show: the audible ones (a muted
+    /// clip or subgroup is left out, as `expand` leaves it out), at ANY distance from the screen. ONE
+    /// scale for the whole group — two takes of one zone read against the same rows — and measured
+    /// over what the group HOLDS and not over what is on screen, or the notes would breathe as one
+    /// scrolls (the rule `MidiNotesDrawing` states for a single clip's range).
+    private static func midiPitchRange(_ objs: [SoundObject]) -> ClosedRange<Int>? {
+        var lo = Int.max, hi = Int.min
+        func walk(_ list: [SoundObject]) {
+            for o in list where !o.isMuted {
+                switch o.kind {
+                case .midiClip(let notes, _):
+                    for n in notes {
+                        if n.pitch < lo { lo = n.pitch }
+                        if n.pitch > hi { hi = n.pitch }
+                    }
+                case .group(let sub, _): walk(sub)
+                case .clip, .aux: break
+                }
+            }
+        }
+        walk(objs)
+        return lo <= hi ? lo...hi : nil
+    }
+
+    /// Draws the MIDI instances' notes into `ctx` (the block's local coordinates). A note is drawn
+    /// where the engine would play it: its attack must fall in the instance's window (the clip's
+    /// bounds ∩ the containers' windows, repeats included), and its length is cut at the window's
+    /// end. The clip's own loop folds its pattern from the clip's left edge, as in its own block.
+    private static func drawMidiNotes(into ctx: GraphicsContext, size: CGSize, children: [SoundObject],
+                                      instances: [MidiInstance], groupStartTime: Double,
+                                      pixelsPerSecond: Double, secPerBeat: Double,
+                                      visStart: Int, visEnd: Int, color: Color, muted: Bool) {
+        guard !instances.isEmpty, secPerBeat > 0, pixelsPerSecond > 0,
+              let range = midiPitchRange(children) else { return }
+        let lay = MidiNotesDrawing.layout(pitchRange: range, size: size)
+        var batches: [MidiNotesDrawing.FillKey: Path] = [:]
+        for inst in instances {
+            let clip = inst.clip
+            let notes = clip.midiNotes
+            guard !notes.isEmpty else { continue }
+            let xOffset = (clip.startTime - groupStartTime + inst.shift) * pixelsPerSecond
+            let winLo = inst.winLo * pixelsPerSecond
+            let winHi = inst.winHi * pixelsPerSecond
+            var local: [Int: Path] = [:]
+            MidiNotesDrawing.forEachNote(
+                notes: notes, layout: lay, secPerBeat: secPerBeat, pixelsPerSecond: pixelsPerSecond,
+                xOffset: xOffset, size: size, loopRange: clip.loopMarkerLocalRange,
+                visibleX: Double(visStart)...Double(visEnd)) { rect, velocity in
+                // The attack must fall inside the window (a note whose attack is cut away is not
+                // played), and the body stops at the window's end.
+                guard rect.minX >= winLo - 0.001, rect.minX < winHi else { return }
+                let r = CGRect(x: rect.minX, y: rect.minY,
+                               width: min(rect.width, winHi - rect.minX), height: rect.height)
+                local[velocity, default: Path()].addRoundedRect(
+                    in: r, cornerSize: CGSize(width: min(2, r.height / 2), height: min(2, r.height / 2)))
+            }
+            for (velocity, path) in local {
+                batches[MidiNotesDrawing.FillKey(color: color, velocity: velocity, muted: muted, dim: false),
+                        default: Path()].addPath(path)
+            }
+        }
+        MidiNotesDrawing.fill(batches, into: ctx)
     }
 
     /// The group's own amplitude modifier (gain / fades), applied to the WHOLE composite. Built
