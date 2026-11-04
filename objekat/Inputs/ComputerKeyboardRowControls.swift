@@ -3,7 +3,8 @@ import SwiftUI
 /// The controls of the « Computer Keyboard » row of the Inputs tab: the mode (the keys play notes) and the octave they
 /// play in. A view of its own, kept apart from `MidiInputsSection.row` so that reshaping the rows (the inputs become
 /// rectangles) only has to say WHERE it goes, not what it holds. All the state is the view-model's
-/// (`computerKeyboardOn`, `computerKeyboardOctave`) — the transport bar's button reads and writes the same two.
+/// (`computerKeyboardOn`, `computerKeyboardOctave`); this row is now the only button that drives them (the transport bar
+/// has none since 4 November 2026), `midi.keyboard.set` being the machine's door.
 struct ComputerKeyboardRowControls: View {
     @Bindable var viewModel: EditViewModel
 

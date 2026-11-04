@@ -22427,29 +22427,6 @@
         }
       }
     },
-    "transport.keyboard.help": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Computer keyboard — when lit, the letter keys play notes on the “Computer Keyboard” input (w / x: octave). Letter shortcuts then go through ⇧ + letter (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); the loop stays on its button or ⌘L."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Teclado del ordenador — encendido, las letras tocan notas en la entrada «Teclado del ordenador» (w / x: octava). Los atajos de letra pasan entonces por ⇧ + letra (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M); el bucle sigue en su botón o con ⌘L."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Clavier ordinateur — allumé, les lettres jouent des notes sur l'entrée « Clavier ordinateur » (w / x : octave). Les raccourcis à lettre passent alors par ⇧ + lettre (⇧S, ⇧F, ⇧E, ⇧P, ⇧T, ⇧M) ; la boucle reste sur son bouton ou ⌘L."
-          }
-        }
-      }
-    },
     "transport.loop.help": {
       "extractionState": "manual",
       "localizations": {
