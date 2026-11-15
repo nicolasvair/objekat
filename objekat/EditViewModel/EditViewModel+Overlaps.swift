@@ -118,10 +118,21 @@ extension EditViewModel {
     }
 
     private func overlapOffset(_ ex: SoundObject, newStart: Double, newDuration: Double) -> Double {
-        WaveformShaping.retrimmedSourceOffset(ex.sourceOffset,
-                                              oldStart: ex.startTime, oldDuration: ex.duration,
-                                              newStart: newStart, newDuration: newDuration,
-                                              speedRatio: ex.speedRatio, isReversed: ex.isReversed)
+        overlapWindow(ex, newStart: newStart, newDuration: newDuration).sourceOffset
+    }
+
+    /// What a piece of `ex` that survived an overwrite is made of: its source offset and, for a
+    /// LOOPING clip, its IN/OUT bounds — the piece is the same pattern seen through another window,
+    /// so a moved LEFT edge re-anchors both (@see loopAnchoredRetrim). The right edge never touches a
+    /// forwards clip's offset, so a piece trimmed on the right keeps everything.
+    func overlapWindow(_ ex: SoundObject, newStart: Double, newDuration: Double)
+        -> (sourceOffset: Double, loopStart: Double?, loopEnd: Double?) {
+        leftEdgeRetrim(of: ex, to: newStart) {
+            WaveformShaping.retrimmedSourceOffset(ex.sourceOffset,
+                                                  oldStart: ex.startTime, oldDuration: ex.duration,
+                                                  newStart: newStart, newDuration: newDuration,
+                                                  speedRatio: ex.speedRatio, isReversed: ex.isReversed)
+        }
     }
 
     private func _resolveTopLevel(new: SoundObject) {
@@ -129,8 +140,11 @@ extension EditViewModel {
         let ne = ns + new.duration
         let minDur = 0.05
 
-        struct Trim { let id: UUID; let startTime: Double; let sourceOffset: Double; let duration: Double
-                      var holeLeftPiece = false }
+        struct Trim { let id: UUID; let startTime: Double
+                      let window: (sourceOffset: Double, loopStart: Double?, loopEnd: Double?)
+                      let duration: Double
+                      var holeLeftPiece = false
+                      var sourceOffset: Double { window.sourceOffset } }
         var toDelete: [UUID]           = []
         var toTrim:   [Trim]           = []
         var toAdd:    [SoundObject]    = []
@@ -158,18 +172,18 @@ extension EditViewModel {
             } else if ns <= es {
                 let d = ee - ne
                 if d < minDur { toDelete.append(ex.id) }
-                else { toTrim.append(Trim(id: ex.id, startTime: ne, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: d), duration: d)) }
+                else { toTrim.append(Trim(id: ex.id, startTime: ne, window: overlapWindow(ex, newStart: ne, newDuration: d), duration: d)) }
 
             } else if ne >= ee {
                 let d = ns - es
                 if d < minDur { toDelete.append(ex.id) }
-                else { toTrim.append(Trim(id: ex.id, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: d), duration: d)) }
+                else { toTrim.append(Trim(id: ex.id, startTime: es, window: overlapWindow(ex, newStart: es, newDuration: d), duration: d)) }
 
             } else {
                 let lDur = ns - es
                 let rDur = ee - ne
                 if lDur >= minDur {
-                    toTrim.append(Trim(id: ex.id, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur,
+                    toTrim.append(Trim(id: ex.id, startTime: es, window: overlapWindow(ex, newStart: es, newDuration: lDur), duration: lDur,
                                        holeLeftPiece: true))
                 } else {
                     toDelete.append(ex.id)
@@ -194,6 +208,9 @@ extension EditViewModel {
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))
+                    // A LOOPING clip's right piece: the same pattern through another window — the
+                    // IN/OUT bounds follow its new left edge with the offset (@see overlapWindow).
+                    if let w = loopAnchoredRetrim(ex, newStart: ne) { adopt(w, in: &toAdd[toAdd.count - 1]) }
                 }
             }
         }
@@ -216,6 +233,10 @@ extension EditViewModel {
             items[i].markers      = items[i].markers.shiftedInTime(by: -delta)
             items[i].startTime    = t.startTime
             items[i].sourceOffset = t.sourceOffset
+            if let ls = t.window.loopStart, let le = t.window.loopEnd, items[i].loopEnabled {
+                items[i].loopRangeStart = ls
+                items[i].loopRangeEnd   = le
+            }
             items[i].duration     = t.duration
             Self.clampFades(&items[i], clearFadeOut: t.holeLeftPiece)
             syncPosition(items[i])
@@ -238,8 +259,11 @@ extension EditViewModel {
         let ne = ns + child.duration
         let minDur = 0.05
 
-        struct Trim { let old: SoundObject; let startTime: Double; let sourceOffset: Double; let duration: Double
-                      var holeLeftPiece = false }
+        struct Trim { let old: SoundObject; let startTime: Double
+                      let window: (sourceOffset: Double, loopStart: Double?, loopEnd: Double?)
+                      let duration: Double
+                      var holeLeftPiece = false
+                      var sourceOffset: Double { window.sourceOffset } }
         var toDelete: [UUID]           = []
         var toTrim:   [Trim]           = []
         var toAdd:    [SoundObject]    = []
@@ -264,18 +288,18 @@ extension EditViewModel {
             } else if ns <= es {
                 let d = ee - ne
                 if d < minDur { toDelete.append(ex.id) }
-                else { toTrim.append(Trim(old: ex, startTime: ne, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: d), duration: d)) }
+                else { toTrim.append(Trim(old: ex, startTime: ne, window: overlapWindow(ex, newStart: ne, newDuration: d), duration: d)) }
 
             } else if ne >= ee {
                 let d = ns - es
                 if d < minDur { toDelete.append(ex.id) }
-                else { toTrim.append(Trim(old: ex, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: d), duration: d)) }
+                else { toTrim.append(Trim(old: ex, startTime: es, window: overlapWindow(ex, newStart: es, newDuration: d), duration: d)) }
 
             } else {
                 let lDur = ns - es
                 let rDur = ee - ne
                 if lDur >= minDur {
-                    toTrim.append(Trim(old: ex, startTime: es, sourceOffset: overlapOffset(ex, newStart: es, newDuration: lDur), duration: lDur,
+                    toTrim.append(Trim(old: ex, startTime: es, window: overlapWindow(ex, newStart: es, newDuration: lDur), duration: lDur,
                                        holeLeftPiece: true))
                 } else {
                     toDelete.append(ex.id)
@@ -298,6 +322,9 @@ extension EditViewModel {
                         kind: .clip(filePath: exFP, sourceOffset: overlapOffset(ex, newStart: ne, newDuration: rDur),
                                     fileDuration: exFD, speedRatio: exSR, isReversed: exRev)
                     ))
+                    // A LOOPING clip's right piece: the same pattern through another window — the
+                    // IN/OUT bounds follow its new left edge with the offset (@see overlapWindow).
+                    if let w = loopAnchoredRetrim(ex, newStart: ne) { adopt(w, in: &toAdd[toAdd.count - 1]) }
                 }
             }
         }
@@ -311,7 +338,14 @@ extension EditViewModel {
             selectedIDs.remove(uid)
         }
         for t in toTrim {
-            let loopBounds = clipLoopFileBounds(t.old)
+            // The piece AS TRIMMED: the loop bounds that go with its new offset, not the old ones.
+            var trimmedPiece = t.old
+            trimmedPiece.sourceOffset = t.sourceOffset
+            if let ls = t.window.loopStart, let le = t.window.loopEnd, t.old.loopEnabled {
+                trimmedPiece.loopRangeStart = ls
+                trimmedPiece.loopRangeEnd   = le
+            }
+            let loopBounds = clipLoopFileBounds(trimmedPiece)
             engine?.updatePosition(t.startTime, duration: t.duration,
                                    sourceOffset: t.sourceOffset, loopEnabled: t.old.loopEnabled,
                                    loopRangeStart: loopBounds.start, loopRangeEnd: loopBounds.end,
@@ -353,6 +387,10 @@ extension EditViewModel {
                     .shiftedInTime(by: -(t.startTime - current[i].startTime))
                 current[i].startTime    = t.startTime
                 current[i].sourceOffset = t.sourceOffset
+                if let ls = t.window.loopStart, let le = t.window.loopEnd, current[i].loopEnabled {
+                    current[i].loopRangeStart = ls
+                    current[i].loopRangeEnd   = le
+                }
                 current[i].duration     = t.duration
                 Self.clampFades(&current[i], clearFadeOut: t.holeLeftPiece)
             }

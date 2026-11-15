@@ -333,7 +333,7 @@ extension EditViewModel {
             lc.markers    = markL
             lc.sourceOffset = offsets.left
             // derivedCopy: sends/chain gains/consolidated link inherited.
-            let rc = child.derivedCopy(
+            var rc = child.derivedCopy(
                 startTime: splitTime, duration: childEnd - splitTime, lane: child.lane,
                 fadeIn: 0, fadeOut: child.fadeOut,
                 fadeInCurve: Self.freshCutCurve,
@@ -344,6 +344,9 @@ extension EditViewModel {
                 araSource: .some(copiedARASource(of: child)),
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev))
+            // A LOOPING clip: the right piece is the same pattern seen through another window — its
+            // offset AND its bounds follow the new edge (@see loopAnchoredRetrim).
+            if let w = loopAnchoredRetrim(child, newStart: splitTime) { adopt(w, in: &rc) }
             rightIDMap[child.id] = rc.id
             return (lc, rc)
 
@@ -586,7 +589,7 @@ extension EditViewModel {
             // (it stays an instance of the same definition). The left clip keeps the original
             // (its engine instances intact); the right-hand piece gets plugins cloned with
             // the state captured live, for a split identical in sound.
-            let rightObject = original.derivedCopy(
+            var rightObject = original.derivedCopy(
                 id: newID,
                 startTime: splitTime,
                 duration: original.duration - splitRel,
@@ -610,8 +613,15 @@ extension EditViewModel {
                     isReversed: isReversed
                 )
             )
+            // A LOOPING clip: the right half is the same pattern seen through another window — its
+            // offset AND its IN/OUT bounds follow the new left edge (@see loopAnchoredRetrim).
+            if let w = loopAnchoredRetrim(original, newStart: splitTime) { adopt(w, in: &rightObject) }
             items.append(rightObject)
             engine.updateFade(in: 0, fadeOut: rightFadeOut, forID: newID.uuidString)
+            // The engine split makes the right clip with NO loop and the left one with a flat offset
+            // (@see OBJEngineCore splitSoundObjectWithID:): both are laid again from the model.
+            pushLoopWindow(items[i])
+            pushLoopWindow(rightObject)
             // The right half is a FRESH engine clip (`splitSoundObject` makes it with `insertWaveClip`,
             // not through `engineAddClip`): its Melodyne source is set up from the archive its
             // `derivedCopy` carries, the left half keeping the live instance.
@@ -664,7 +674,7 @@ extension EditViewModel {
 
             let rightID = UUID()
             // derivedCopy: sends/chain gains/consolidated link inherited by the right half.
-            let rightChild = child.derivedCopy(
+            var rightChild = child.derivedCopy(
                 id: rightID,
                 startTime: splitTime,
                 duration: child.startTime + child.duration - splitTime,
@@ -679,6 +689,8 @@ extension EditViewModel {
                 kind: .clip(filePath: fp, sourceOffset: offsets.right,
                             fileDuration: fd, speedRatio: sr, isReversed: rev)
             )
+            // A LOOPING clip: same pattern, another window (@see loopAnchoredRetrim).
+            if let w = loopAnchoredRetrim(child, newStart: splitTime) { adopt(w, in: &rightChild) }
 
             guard engine.splitSoundObject(withID: id.uuidString,
                                           atTime: splitTime,
@@ -697,6 +709,8 @@ extension EditViewModel {
             // The fades of both fragments (splitSoundObject does not set them).
             engine.updateFade(in: leftChild.fadeIn, fadeOut: 0, forID: leftChild.id.uuidString)
             engine.updateFade(in: 0, fadeOut: rightChild.fadeOut, forID: rightChild.id.uuidString)
+            pushLoopWindow(leftChild)    // the engine split leaves no loop on the right, a flat offset on the left
+            pushLoopWindow(rightChild)
             if rightChild.araSource != nil { syncARASource(rightChild) }   // as in case 1
 
             if !rightChild.plugins.isEmpty { syncPlugins(rightChild) }

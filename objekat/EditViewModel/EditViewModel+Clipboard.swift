@@ -434,7 +434,7 @@ extension EditViewModel {
             case .clip(let fp, let so, let fd, let sr, let rev):
                 // The consolidated link is ALWAYS kept (even trimmed): any piece of an
                 // instance stays linked to its definition (consistent with the split).
-                fragments.append(entry.item.derivedCopy(
+                var frag = entry.item.derivedCopy(
                     startTime: fragStart, duration: fragEnd - fragStart,
                     lane: entry.displayLane,
                     fadeIn:  fragStart == s ? entry.item.fadeIn  : 0,
@@ -448,7 +448,16 @@ extension EditViewModel {
                     araSource: .some(copiedARASource(of: entry.item)),
                     kind: .clip(filePath: fp, sourceOffset: so + (fragStart - s) * sr,
                                 fileDuration: fd, speedRatio: sr, isReversed: rev)
-                ))
+                )
+                // A LOOPING clip's fragment is the same pattern seen through another window: the
+                // IN/OUT bounds follow the fragment's start with the offset (@see loopAnchoredRetrim).
+                // Read from the entry's ABSOLUTE start `s` (the frame `fragStart` lives in).
+                var whole = entry.item
+                whole.startTime = s
+                if fragStart != s, let w = loopAnchoredRetrim(whole, newStart: fragStart) {
+                    adopt(w, in: &frag)
+                }
+                fragments.append(frag)
 
             case .midiClip(let notes, _):
                 // A note-aware fragment (the same semantics as audio clips): the fragment
@@ -661,8 +670,12 @@ extension EditViewModel {
                     let fi = EditViewModel.fadeInAnchoredAtEnd(oldStart: s,
                                                                oldFadeIn: obj.fadeIn,
                                                                newStart: hi)
+                    // A LOOPING clip keeps its pattern anchored: the offset AND the IN/OUT bounds
+                    // follow the new left edge (@see loopAnchoredRetrim) — read before the start moves.
+                    let loopWindow = loopAnchoredRetrim(obj, newStart: obj.startTime + delta)
                     obj.startTime    += delta
-                    obj.sourceOffset += delta * obj.speedRatio  // timeline delta → source = delta×speed
+                    if let loopWindow { adopt(loopWindow, in: &obj) }
+                    else { obj.sourceOffset += delta * obj.speedRatio }  // timeline delta → source = delta×speed
                     obj.duration      = e - hi
                     obj.fadeIn        = fi
                     EditViewModel.clampFades(&obj)   // the mirror of the branch above
@@ -778,15 +791,18 @@ extension EditViewModel {
                     // overlaps cutHi: truncate the start at cutHi
                     let delta = cutHi - absStart
                     var c = child
+                    // A LOOPING clip keeps its pattern anchored: the offset AND the IN/OUT bounds follow
+                    // the new left edge (@see loopAnchoredRetrim); any other clip advances by delta × speed.
+                    if let w = loopAnchoredRetrim(child, newStart: cutHi) { adopt(w, in: &c) }
+                    else { c.sourceOffset += delta * sr }
                     c.startTime     = cutHi
-                    c.sourceOffset += delta * sr
                     c.duration      = absEnd - cutHi
                     c.fadeIn        = 0
                     c.automation    = child.automation.shiftedInTime(by: -delta)
                     c.markers       = child.markers.shiftedInTime(by: -delta)
                     let loopBounds = clipLoopFileBounds(c)
                     engine?.updatePosition(c.startTime, duration: c.duration,
-                                           sourceOffset: so + delta * sr, loopEnabled: c.loopEnabled,
+                                           sourceOffset: c.sourceOffset, loopEnabled: c.loopEnabled,
                                            loopRangeStart: loopBounds.start, loopRangeEnd: loopBounds.end,
                                            forID: c.id.uuidString)
                     engine?.updateFade(in: 0, fadeOut: c.fadeOut, forID: c.id.uuidString)
@@ -821,7 +837,7 @@ extension EditViewModel {
                     // link (a piece of an instance stays linked to its definition).
                     // The right half picks the cut up at `cutLo` AND THEN jumps the hole: its
                     // curves rebase on its real start, `cutHi`.
-                    let right = child.derivedCopy(
+                    var right = child.derivedCopy(
                         startTime: cutHi, duration: absEnd - cutHi, lane: child.lane,
                         fadeIn: 0, fadeOut: child.fadeOut,
                         fadeInCurve: Self.freshCutCurve,
@@ -833,6 +849,8 @@ extension EditViewModel {
                         kind: .clip(filePath: fp, sourceOffset: so + (cutHi - absStart) * sr,
                                     fileDuration: fd, speedRatio: sr, isReversed: rev)
                     )
+                    // A LOOPING clip's right half: the same pattern through another window.
+                    if let w = loopAnchoredRetrim(child, newStart: cutHi) { adopt(w, in: &right) }
                     engineAddClip(right)   // the clip is absolute on its track
                     engine?.assignObject(right.id.uuidString, toGroupFolder: groupID.uuidString)
                     syncSends(right)
