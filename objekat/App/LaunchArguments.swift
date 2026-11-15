@@ -66,4 +66,15 @@ nonisolated struct LaunchArguments: Sendable {
     /// Forces the interface language for THIS launch: `fr`, `en` or `es`. Without it, the app
     /// follows the system language. Nothing is persisted — @see `Localization.applyLaunchOverride`.
     var language: String? { value("language") }
+
+    // MARK: Journal de diagnostic (Shared/DiagLog.swift)
+
+    /// Allume le journal de diagnostic POUR CE LANCEMENT. En fenêtré il s'ajoute à la préférence ;
+    /// en `--headless` il en est la SEULE porte (la préférence d'un utilisateur ne doit pas faire
+    /// écrire ses journaux par une instance de test).
+    var diagLog: Bool { flag("diag-log") }
+    /// Dossier racine des journaux à la place de `~/Library/Logs/Objekat` (les tests, jamais le vrai).
+    var diagDir: String? { value("diag-dir") }
+    /// Taille de rotation d'un journal, en Mo (défaut 20) — pour éprouver la rotation sans écrire 20 Mo.
+    var diagMaxMB: Double? { value("diag-max-mb").flatMap(Double.init) }
 }

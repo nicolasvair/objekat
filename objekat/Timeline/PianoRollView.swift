@@ -13,7 +13,9 @@ import AppKit
 ///   clip), zoom +/- (the height per note). See `controlStrip`.
 /// - Local geometry: x=0 = the clip's start; time in beats at the current tempo.
 /// - Creating = a double click on the background; deleting = a double click on a note;
-///   the left/right handles = resize; ⌘+a vertical drag on the body = velocity (⇧ on top = fine);
+///   the left/right handles = resize (the whole SELECTION: every selected note takes the grabbed
+///   note's travel on the same edge, @see PianoRollResize); ⌘+a vertical drag on the body =
+///   velocity (⇧ on top = fine);
 ///   dragging the body = moving (pitch plus time).
 ///
 /// Gestures: a single (high-priority) `DragGesture` branching on the starting zone plus ⌘,
@@ -340,6 +342,22 @@ struct PianoRollView: View {
 
     private enum Zone { case left, right, body }
 
+    /// The snapshots of the notes a gesture affects, as spans in beats (@see PianoRollResize).
+    private func spans(of origs: [UUID: MidiNote]) -> [UUID: PianoRollResize.Span] {
+        origs.mapValues { PianoRollResize.Span(start: $0.startBeat, length: $0.lengthBeats) }
+    }
+
+    /// Writes the spans a resize computed, in ONE pass (one engine resync for the whole selection).
+    private func applyResize(_ result: [UUID: PianoRollResize.Span]) {
+        viewModel.updateMidiNotes(inObject: object.id) { notes in
+            for i in notes.indices {
+                guard let span = result[notes[i].id] else { continue }
+                notes[i].startBeat = span.start
+                notes[i].lengthBeats = span.length
+            }
+        }
+    }
+
     /// The width of a resize handle: proportional so as to stay grabbable on short notes, but
     /// bounded so that a body (for moving) is always left in the middle.
     private func handleW(_ noteWidth: Double) -> Double {
@@ -518,8 +536,9 @@ struct PianoRollView: View {
                 let isResize = (mode == .resizeL || mode == .resizeR)
 
                 // The note grabbed enters the selection if it was not in it. On a resize, ⌘ no longer
-                // means 'additive' (it serves the grid) — and in any case a resize only touches the
-                // note grabbed.
+                // means 'additive' (it serves the grid): grabbing a note outside the selection
+                // replaces it (so the resize is that note's alone), grabbing one inside keeps it
+                // (and the resize carries the whole selection).
                 if !selectedIDs.contains(hit.id) {
                     if (cmd && !isResize) || shift { viewModel.selectedMidiNoteIDs.insert(hit.id) }
                     else                           { viewModel.selectedMidiNoteIDs = [hit.id] }
@@ -541,9 +560,8 @@ struct PianoRollView: View {
                                         pitchAxis: cropOn ? usedPitches : [])
                     }
                 } else {
-                    // resize = the grabbed note alone; move/velocity = the whole selection.
-                    let affectedIDs: Set<UUID> = (mode == .resizeL || mode == .resizeR)
-                        ? [hit.id] : selectedIDs.union([hit.id])
+                    // Resize, move, velocity: the whole selection (the grabbed note included).
+                    let affectedIDs: Set<UUID> = selectedIDs.union([hit.id])
                     let origs = Dictionary(uniqueKeysWithValues:
                         object.midiNotes.filter { affectedIDs.contains($0.id) }.map { ($0.id, $0) })
                     drag = NoteDrag(grabbedID: hit.id, mode: mode, origs: origs, start: value.startLocation,
@@ -573,20 +591,21 @@ struct PianoRollView: View {
 
         switch d.mode {
         case .resizeR:
+            // The delta is computed on the grabbed note's snapped edge, then applied to every
+            // selected note (@see PianoRollResize); each keeps its own bounds.
             let endSec = object.startTime
                 + (grab.startBeat + grab.lengthBeats) * secPerBeat + dx / pixelsPerSecond
-            let newLen = max(minLenBeats, (snapAbs(endSec) - object.startTime) / secPerBeat - grab.startBeat)
-            viewModel.updateMidiNote(inObject: object.id, noteID: d.grabbedID) { $0.lengthBeats = newLen }
+            let newLen = (snapAbs(endSec) - object.startTime) / secPerBeat - grab.startBeat
+            applyResize(PianoRollResize.resizeEnd(spans(of: d.origs), grabbed: d.grabbedID,
+                                                  deltaBeats: newLen - grab.lengthBeats,
+                                                  minLen: minLenBeats))
 
         case .resizeL:
             let startSec = object.startTime + grab.startBeat * secPerBeat + dx / pixelsPerSecond
-            let newStart = max(0, (snapAbs(startSec) - object.startTime) / secPerBeat)
-            let origEnd  = grab.startBeat + grab.lengthBeats
-            let clampedStart = min(newStart, origEnd - minLenBeats)
-            viewModel.updateMidiNote(inObject: object.id, noteID: d.grabbedID) {
-                $0.startBeat = max(0, clampedStart)
-                $0.lengthBeats = max(minLenBeats, origEnd - max(0, clampedStart))
-            }
+            let newStart = (snapAbs(startSec) - object.startTime) / secPerBeat
+            applyResize(PianoRollResize.resizeStart(spans(of: d.origs), grabbed: d.grabbedID,
+                                                    deltaBeats: newStart - grab.startBeat,
+                                                    minLen: minLenBeats))
 
         case .moveBody:
             // A common delta computed on the grabbed note (snapped), applied to the whole selection.

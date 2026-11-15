@@ -355,7 +355,10 @@ extension EditViewModel {
         }
     }
 
-    /// Recursively removes (voices included) the plugins whose id is in `ids`.
+    /// Recursively removes (voices included) the plugins whose id is in `ids`. A choice of channel on a
+    /// cable (a pick) goes only when ITS id is named: the removal of a card leaves the choices of the
+    /// neighbouring cables alone (they merge, upstream wins, Q6) — except the one that enters a MONO (1 -> 1)
+    /// plugin, which belongs to it: the caller names it (@see `cableChoicesOwned`) before the removal.
     static func removingPlugins(_ ids: Set<UUID>, from plugins: [ObjectPlugin]) -> [ObjectPlugin] {
         plugins.compactMap { p in
             // A choice of cable is a container with no series of its own: it goes when its id is named
@@ -378,6 +381,8 @@ extension EditViewModel {
             return
         }
         let plug = freshPlugin(available)      // its type's default preset, if one is set
+        Diag.log(.plug, "ajout « \(available.name) » (\(available.formatName), \(available.manufacturer)) "
+                 + "sur \(Diag.short(objectID)) plugin=\(Diag.short(plug.id))")
         pushUndo()
         updateChainPlugins(objectID) { $0.append(plug) }
         if compileRack(objectID: objectID).contains(plug.id) {
@@ -586,6 +591,10 @@ extension EditViewModel {
             fxRemovePlugin(linkID: def.linkID, definitionID: def.definitionID)
             return
         }
+        // The choice of channel on the cable that enters a one-input plugin is the plugin's: read before
+        // the removal (it needs the chain as it stands), and taken away in the same undo step.
+        let owned = cableChoicesOwned(by: [pluginID], host: objectID)
+        Diag.log(.plug, "retrait plugin=\(Diag.short(pluginID)) de \(Diag.short(objectID))")
         pushUndo()
         // The touch listening RETAINS the plugin: leaving it armed would keep it alive after it has been
         // removed from the chain. And what was known of its parameters is worth nothing any more.
@@ -593,8 +602,9 @@ extension EditViewModel {
         invalidatePluginParamInfos(pluginID)
         // Removes the plugin then folds the tree back (emptied branches removed, a 1-branch parallel inlined).
         updateChainPlugins(objectID) { p in
-            p = Self.simplifyTree(Self.removingPlugins([pluginID], from: p))
+            p = Self.simplifyTree(Self.removingPlugins(Set([pluginID]).union(owned.pickIDs), from: p))
         }
+        if owned.resetFileMode { resetFileChannelMode(host: objectID) }
         compileRack(objectID: objectID)
         isDirty = true
     }
@@ -657,6 +667,7 @@ extension EditViewModel {
 
     func openPluginEditor(objectID: UUID, pluginID: UUID) {
         guard hasInterface, let engine else { return }
+        Diag.log(.plug, "ouverture de l'éditeur plugin=\(Diag.short(pluginID)) sur \(Diag.short(objectID))")
         let colorIndex = leafPlugins(objectID: objectID).first(where: { $0.id == pluginID })?.colorIndex ?? 0
         nativeEditorHosts[pluginID] = objectID
         engine.openPluginEditor(pluginID.uuidString, colorHex: ObjekatPalette.pluginHex(colorIndex))

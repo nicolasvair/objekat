@@ -262,6 +262,7 @@ final class CommandRegistry {
         registerToolCommands()
         registerTabCommands()
         registerAudioCommands()
+        registerDiagCommands()
         registerRecordCommands()
         registerScriptCommands()
         registerOverlayCommands()
@@ -321,16 +322,47 @@ final class CommandRegistry {
             CommandError(code: .invalid_state, message: "refused by an instrument group: \(reason.rawValue)",
                          details: .object(["reason": .string(reason.rawValue)]))
         }
+        // Diagnostic journal: the line goes out BEFORE the command runs (a command that crashes
+        // the app must be the last line of the journal), the outcome after.
+        let journaled = Diag.isEnabled && Self.isJournaled(name)
+        let started = journaled ? CFAbsoluteTimeGetCurrent() : 0
+        if journaled { Diag.log(.api, "\(name) \(Self.journalParams(params))") }
+        func journalOutcome(_ outcome: @autoclosure () -> String) {
+            guard journaled else { return }
+            Diag.log(.api, "\(name) → \(outcome()) \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - started) * 1000)) ms")
+        }
         let result: JSONValue
         do { result = try await executeCommand(name: name, params: params) }
         catch {
+            journalOutcome("erreur " + Diag.shortenIDs(Diag.truncated(
+                (error as? CommandError).map { "\($0.code.rawValue) : \($0.message)" } ?? "\(error)", 300)))
             // A door that refused did nothing, and a handler that expected its effect may complain about it
             // (`instrument.set` finding no instrument): the refusal is the answer, not the complaint.
             if let reason = vm?.takeGroupInstrumentRefusal() { throw refusalError(reason) }
             throw error
         }
-        if let reason = vm?.takeGroupInstrumentRefusal() { throw refusalError(reason) }
+        if let reason = vm?.takeGroupInstrumentRefusal() {
+            journalOutcome("refus groupe instrument (\(reason.rawValue))")
+            throw refusalError(reason)
+        }
+        journalOutcome("ok")
         return result
+    }
+
+    /// The journal's own readers (`diag.status`, `diag.tail`) are not journaled: polling them
+    /// would bury everything else.
+    private static func isJournaled(_ name: String) -> Bool {
+        name != "diag.status" && name != "diag.tail"
+    }
+
+    /// The parameters on one line, UUIDs shortened, cut at 200 characters.
+    private static func journalParams(_ params: CommandParams) -> String {
+        if params.isEmpty { return "{}" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(JSONValue.object(params.raw)),
+              let text = String(data: data, encoding: .utf8) else { return "{…}" }
+        return Diag.truncated(Diag.shortenIDs(text), 200)
     }
 
     private func executeCommand(name: String, params: CommandParams) async throws -> JSONValue {

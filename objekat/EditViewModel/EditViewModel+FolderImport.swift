@@ -193,23 +193,25 @@ extension EditViewModel {
 
     // MARK: Laying down
 
-    /// Lays the entries down in ONE gesture, in the order given, according to `mode`: the same
-    /// layout as a multiple file drop (`fileDropLayout`) with a folder counting as one entry. The
-    /// first goes through `placeClip` (it decides whether the target lane falls inside an open group
-    /// and converts display → base lane ONCE); the others follow in the same container.
-    ///
-    /// Does NOT push an undo point: the caller did, before this. Returns the ids of what was laid
-    /// down at the level it landed on, in order.
     /// Would laying `entries` down at `baseLane` break the rule of an instrument group (E5)? Audio files and
     /// folders holding audio are refused whole by a group that carries an instrument. Asked by the timeline's drop
     /// BEFORE its undo point, and again by `placeDropEntries`; says so once, when it refuses.
-    func refusesDropEntries(_ entries: [DropEntry], baseLane: Int, baseStart: Double, mode: FileDropMode) -> Bool {
+    func refusesDropEntries(_ entries: [DropEntry], baseLane: Int, baseStart: Double, mode: FileDropMode,
+                            insertion: LaneInsertion.Plan? = nil) -> Bool {
         guard !entries.isEmpty else { return false }
         let folderMode = Self.folderMode(of: mode)
         let slots = Self.fileDropLayout(durations: entries.map { $0.duration(mode: folderMode) },
-                                        mode: mode, baseLane: baseLane, baseStart: baseStart)
-        guard let first = slots.first,
-              let gid = placementGroupID(forDisplayLane: first.lane, snapshot: laneEntries) else { return false }
+                                        mode: mode, baseLane: insertion?.lane ?? baseLane, baseStart: baseStart)
+        // Where the entries go: the frame the insertion names (nil = the root), or what the first
+        // lane's placement resolves to.
+        let gid: UUID?
+        if let insertion {
+            gid = insertion.parentID
+        } else {
+            guard let first = slots.first else { return false }
+            gid = placementGroupID(forDisplayLane: first.lane, snapshot: laneEntries)
+        }
+        guard let gid else { return false }
         var probes: [SoundObject] = []
         for (slot, entry) in zip(slots, entries) {
             switch entry {
@@ -224,21 +226,39 @@ extension EditViewModel {
         return refusesAdding(probes, toGroup: gid)
     }
 
+    /// Lays the entries down in ONE gesture, in the order given, according to `mode`: the same
+    /// layout as a multiple file drop (`fileDropLayout`) with a folder counting as one entry. The
+    /// first goes through `placeClip` (it decides whether the target lane falls inside an open group
+    /// and converts display → base lane ONCE); the others follow in the same container.
+    ///
+    /// `insertion`: the drop lands in the GAP between two lanes (@see fileDropInsertionPlan) rather
+    /// than on one. The lanes below are pushed down first (`applyLaneChanges`), then the entries are
+    /// laid straight onto the MODEL lanes the plan opened, in the frame it names (the root, or an
+    /// open group) — there is no display lane to convert any more, the plan already speaks the
+    /// frame's own lanes. `baseLane` is then unused.
+    ///
+    /// Does NOT push an undo point: the caller did, before this. Returns the ids of what was laid
+    /// down at the level it landed on, in order.
     @discardableResult
     func placeDropEntries(_ entries: [DropEntry], baseLane: Int, baseStart: Double,
-                          mode: FileDropMode) -> [UUID] {
+                          mode: FileDropMode, insertion: LaneInsertion.Plan? = nil) -> [UUID] {
         guard !entries.isEmpty else { return [] }
-        if refusesDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode) { return [] }
+        if refusesDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
+                              insertion: insertion) { return [] }
         let folderMode = Self.folderMode(of: mode)
         // One snapshot of the display lanes: those the user was looking at when he let go, not the
         // ones after the first additions.
         let snapshot = laneEntries
         let slots = Self.fileDropLayout(durations: entries.map { $0.duration(mode: folderMode) },
-                                        mode: mode, baseLane: baseLane, baseStart: baseStart)
+                                        mode: mode, baseLane: insertion?.lane ?? baseLane, baseStart: baseStart)
         // A group of a few hundred clips is a lot of engine work: held as ONE edit, so that a
         // playing transport rebuilds its graph once at the end and not at every clip.
         engine?.beginPlaybackEdit()
         defer { engine?.endPlaybackEdit() }
+
+        // The room is made BEFORE anything is laid: the lanes at and below the gap go down by the
+        // number of lanes the batch takes.
+        if let insertion { applyLaneChanges(insertion.laneChanges) }
 
         // A SINGLE display → base round trip, on the first item's lane; the following ones are
         // derived in the coordinates of the container it landed in (@see the drop handler's note on
@@ -256,7 +276,15 @@ extension EditViewModel {
                                                    mode: folderMode) else { continue }
                 obj = Self.groupObject(for: plan)
             }
-            if placed.isEmpty {
+            if let insertion {
+                // Straight onto the model lane the plan opened (`slot.lane` already is one), in the
+                // frame it names.
+                if let parent = insertion.parentID {
+                    addChild(obj, toGroupID: parent)
+                } else {
+                    add(obj)
+                }
+            } else if placed.isEmpty {
                 obj = placeClip(obj, snapshot: snapshot)
                 containerID   = parentGroup(for: obj.id)?.id
                 firstBaseLane = obj.lane
@@ -272,6 +300,46 @@ extension EditViewModel {
             placed.append(obj.id)
         }
         return placed
+    }
+
+    /// What a file drop did (or refused to do), for the caller and for the headless door.
+    struct FileDropOutcome {
+        /// The objects laid down, in order. Empty when refused.
+        var placed: [UUID] = []
+        /// The insertion between two lanes that was carried out; nil = a normal drop.
+        var insertion: LaneInsertion.Plan? = nil
+        /// An instrument group refused the files (said once; no undo point was pushed).
+        var refused = false
+    }
+
+    /// The whole release of a file drop — the timeline's `placeDroppedEntries` after its
+    /// confirmation, and the headless `debug.file_drop`: one door, so that a script runs exactly what
+    /// the hand does.
+    ///
+    /// `insertionRow`: the drop was let go in the GAP before this display row. The plan is asked again
+    /// HERE, from the real model and with the REAL number of entries (the hover only knew how many
+    /// providers there were); nil, or a plan that no longer holds, is the normal drop.
+    ///
+    /// Exactly ONE undo point is pushed, BEFORE the first change, and none when refused (the
+    /// project's undo convention): the shift of the lanes below and the laying down are one ⌘Z.
+    @discardableResult
+    func commitFileDrop(_ entries: [DropEntry], baseLane: Int, baseStart: Double,
+                        mode: FileDropMode, insertionRow: Int?) -> FileDropOutcome {
+        guard !entries.isEmpty else { return FileDropOutcome() }
+        let plan = insertionRow.flatMap {
+            fileDropInsertionPlan(row: $0, laneCount: Self.fileDropLaneCount(count: entries.count, mode: mode))
+        }
+        // An instrument group takes no audio (E5): refused before the undo point, like every refused gesture.
+        if refusesDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
+                              insertion: plan) {
+            return FileDropOutcome(refused: true)
+        }
+        pushUndo()
+        // The same layout computation as the hover's ghost preview (`fileDropLayout`): what is laid
+        // down has to be exactly what was shown under the cursor.
+        let placed = placeDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
+                                      insertion: plan)
+        return FileDropOutcome(placed: placed, insertion: plan, refused: false)
     }
 
     /// Tells the user what a dropped folder could not give: refused (no audio, too many files) and

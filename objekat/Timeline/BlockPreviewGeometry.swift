@@ -50,6 +50,10 @@ nonisolated struct BlockPreviewGeometry {
     var previewFadeOutCurve: FadeCurve? = nil
     /// The loop bounds being dragged (or the stored ones), seconds local to the block. nil = no loop.
     var previewLoopRange: (start: Double, end: Double)? = nil
+    /// True for an AUDIO clip whose loop is on: its IN/OUT bounds are local seconds over a FILE, so a
+    /// left trim re-anchors them (@see `loopTrimWindow`). A MIDI clip loops in beats and a group has
+    /// no file: neither is concerned, whatever their `previewLoopRange`.
+    var anchorsLoopOnTrim: Bool = false
 
     /// True when nothing is under way: every answer below is then the stored value.
     var isNeutral: Bool {
@@ -102,9 +106,31 @@ nonisolated struct BlockPreviewGeometry {
 
     // MARK: Loop
 
+    /// A LOOPING clip's window while its LEFT edge is being trimmed: the pattern stays anchored in
+    /// the file and on the timeline, so the offset AND the IN / OUT bounds follow the edge
+    /// (@see `LoopRetrim`, the very arithmetic `updateTrim` applies on release). The file bounds are
+    /// read UNCLAMPED here (`sourceOffset + bound × speed`): the geometry has no file length, and the
+    /// two only differ for a bound set beyond the file. nil = nothing to re-anchor.
+    private var loopTrimWindow: LoopRetrim.Window? {
+        guard kind == .clip, anchorsLoopOnTrim, !isReversed, trimDX != 0, pixelsPerSecond > 0,
+              let r = previewLoopRange else { return nil }
+        return LoopRetrim.anchored(startTime: startTime, sourceOffset: sourceOffset,
+                                   speedRatio: speedRatio,
+                                   fileLoopIn: sourceOffset + r.start * speedRatio,
+                                   fileLoopOut: sourceOffset + r.end * speedRatio,
+                                   newStart: startTime + trimDX / pixelsPerSecond)
+    }
+
+    /// The loop bounds on screen, seconds local to the block as it is NOW: the dragged / stored ones,
+    /// re-anchored on the edge during a left trim.
+    var effectiveLoopRange: (start: Double, end: Double)? {
+        if let w = loopTrimWindow { return (w.loopStart, w.loopEnd) }
+        return previewLoopRange
+    }
+
     /// The loop's IN / OUT bounds in px local to the block. nil = does not loop.
     var loopMarkerPx: (start: Double, end: Double)? {
-        guard let r = previewLoopRange else { return nil }
+        guard let r = effectiveLoopRange else { return nil }
         return (r.start * pixelsPerSecond, r.end * pixelsPerSecond)
     }
 
@@ -151,6 +177,8 @@ nonisolated struct BlockPreviewGeometry {
     /// follows the edge to the pixel; in reverse it is the RIGHT edge that governs the source range
     /// (@see `WaveformShaping.retrimmedSourceOffset`).
     var effectiveSourceOffset: Double {
+        // A looping clip keeps its pattern anchored (@see `loopTrimWindow`).
+        if let w = loopTrimWindow { return w.sourceOffset }
         let moving = isReversed ? resizeDX : trimDX
         guard moving != 0, pixelsPerSecond > 0 else { return sourceOffset }
         let dStart = trimDX / pixelsPerSecond

@@ -14,13 +14,23 @@ enum WaveformDrawing {
 
     /// Folding a display position back onto the looped slice. A single rule, shared by the batched
     /// fill and the rich drawing: the local time `u` (0 = the block's left edge) reads the content
-    /// at `start + (u mod period)`. So the left edge plays the part of the IN point, and the slice
-    /// repeats from there — exactly the engine's folding. @see [[loop-item-plan]]
+    /// at `start + ((u − origin) mod period)`, `origin = min(0, start)` — the engine's folding.
+    ///
+    /// The ORIGIN of the repeats is where one starts: with IN INSIDE the block (`start > 0`) the left
+    /// edge plays the IN point and the slice repeats from there (origin 0); with IN at or before the
+    /// edge (`start ≤ 0`, what a left trim leaves, @see LoopRetrim) a repeat began at `start` and is
+    /// already running at the edge — the pattern is anchored, the grid does not move with the edge.
+    /// The same origin as a looping group's (@see GroupWaveformView, `min(0, r.start)`).
+    /// @see [[loop-item-plan]]
     struct LoopFold {
         let start: Double
         let period: Double
+        /// Where the repeats begin, local to the block: `min(0, start)`.
+        var origin: Double { min(0, start) }
         func sourceLocalTime(at u: Double) -> Double {
-            start + max(0, u).truncatingRemainder(dividingBy: period)
+            var r = (u - origin).truncatingRemainder(dividingBy: period)
+            if r < 0 { r += period }
+            return start + r
         }
     }
 
@@ -315,11 +325,14 @@ enum WaveformDrawing {
         let visEnd   = min(size.width, scrollOffsetX + viewportWidth - CGFloat(blockOriginX) + margin)
         guard visEnd > visStart else { return }
 
+        // The repeats begin at the loop's ORIGIN (@see LoopFold): the block's left edge, or the IN
+        // point when it lies before it — the grid stays put when the edge is trimmed.
+        let origin = min(0, r.start)
         let tStart = Double(visStart) / pixelsPerSecond
         let tEnd   = Double(visEnd) / pixelsPerSecond
-        var k = Int((tStart / period).rounded(.down))
-        while Double(k) * period <= tEnd {
-            let t = Double(k) * period
+        var k = Int(((tStart - origin) / period).rounded(.down))
+        while origin + Double(k) * period <= tEnd {
+            let t = origin + Double(k) * period
             k += 1
             guard t > 0.02, t < clipDuration - 0.02 else { continue }   // not on the block's edges
             let x = t * pixelsPerSecond

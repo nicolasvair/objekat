@@ -837,9 +837,12 @@ extension EditViewModel {
         guard let link = fxLink(linkID) else { return false }
         let gone = Set(definitionIDs).intersection(link.plugins.map(\.id))
         guard !gone.isEmpty else { return false }
+        // The picks of the cables that enter a one-input plugin of the definition go with it (@see
+        // `cableChoicesOwned`): read on the members while they still hold the plugin.
+        let owned = fxCableChoicesOwned(linkID: linkID, definitionIDs: gone)
         if undo { pushUndo() }
         refreshFXDefinitionStates(linkID)
-        updateFXLink(linkID) { $0.plugins.removeAll { gone.contains($0.id) } }
+        updateFXLink(linkID) { $0.plugins.removeAll { gone.contains($0.id) || owned.contains($0.id) } }
         reconcileFXLinkMembers(linkID)
         return true
     }

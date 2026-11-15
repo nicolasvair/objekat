@@ -1193,7 +1193,8 @@ extension TimelineView {
             let grabbed = state.anchors[state.grabbedID]!
             let rawDt   = Double(value.translation.width) / pixelsPerSecond
             let snappedEnd = viewModel.snapTime(grabbed.start + grabbed.duration + rawDt,
-                                                excluding: Set(state.anchors.keys))
+                                                excluding: Set(state.anchors.keys),
+                                                includeCaret: true)
             var dDur = snappedEnd - grabbed.start - grabbed.duration
 
             let minDDur = state.anchors.values.map { 0.01 - $0.duration }.max() ?? -.infinity
@@ -1234,7 +1235,8 @@ extension TimelineView {
             let grabbed = state.anchors[state.grabbedID]!
             let rawDt   = Double(value.translation.width) / pixelsPerSecond
             let snappedStart = viewModel.snapTime(grabbed.start + rawDt,
-                                                  excluding: Set(state.anchors.keys))
+                                                  excluding: Set(state.anchors.keys),
+                                                  includeCaret: true)
             var dStart = snappedStart - grabbed.start
 
             // The left limit: timeline 0 for every object at any depth, and the end of the source
@@ -1287,8 +1289,6 @@ extension TimelineView {
         let rawDl = Int((Double(value.translation.height) / laneStep).rounded())
 
         let grabbedDur = viewModel.find(id: state.grabbedID)?.duration ?? 0
-        let rawStart   = grabbedAnchor.start + rawDt
-        let clipEndRaw = rawStart + grabbedDur
         let excl       = Set(state.anchors.keys)
 
         var dt: Double
@@ -1309,18 +1309,13 @@ extension TimelineView {
         } else {
             // The ONLY references are the grabbed object's two edges; the other moved objects
             // only follow with the same `dt`. Nothing carried by the hand is a target — the
-            // children of a carried open group included (@see moveSnapExcluded).
-            let moveExcl   = viewModel.moveSnapExcluded(moved: excl)
-            let candStart  = viewModel.snapTime(rawStart,   excluding: moveExcl)
-            let guideStart = viewModel.snapGuide
-            let candEnd    = viewModel.snapTime(clipEndRaw, excluding: moveExcl)
-            let guideEnd   = viewModel.snapGuide
-
-            let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
-            let snappedStart = useEnd ? candEnd - grabbedDur : candStart
-            viewModel.snapGuide = useEnd ? guideEnd : guideStart
-
-            dt = snappedStart - grabbedAnchor.start
+            // children of a carried open group included (@see moveSnapExcluded). The caret is a
+            // magnet here (@see CaretSnap) — for the plain move only, not for the carried time
+            // selection above, which snaps by its own rules.
+            let snap = viewModel.snapObjectMove(grabbedID: state.grabbedID,
+                                                anchors: state.anchors, rawDt: rawDt)
+            let useEnd = snap.useEnd
+            dt = snap.dt
             // The floor at t = 0, for every moved object at any depth (@see ZeroFloor): the most
             // constraining of them stops there while the hand carries on, a GROUP carrying its
             // children with it whatever they become; an object that started negative is free until

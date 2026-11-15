@@ -46,51 +46,94 @@ extension EditViewModel {
         }
     }
 
+    /// Which surface an edit shortcut ended up acting on — what `edit.copy` / `edit.cut` / `edit.paste`
+    /// answer, so a script can assert that the key went where the hand meant it to.
+    enum EditShortcutBranch: String {
+        /// The signal view's chain fragment.
+        case plugins
+        /// A passage of automation, on the zone or the loose points selected.
+        case automation
+        /// A passage of automation laid at the CARET of a band (⌘V only).
+        case automationCaret
+        /// The piano roll's notes.
+        case midiNotes
+        /// The time selection's objects.
+        case timeSelection
+        /// The selected objects, or the clipboard's objects.
+        case objects
+        /// Nothing to act on.
+        case none
+    }
+
     /// ⌘X.
-    func performCutShortcut() {
+    @discardableResult
+    func performCutShortcut() -> EditShortcutBranch {
         if automationSurfaceHasKeyboard {
             cutAutomationSelection()       // the automation band (internal undo push)
+            return .automation
         } else if !selectedMidiNoteIDs.isEmpty {
             cutSelectedMidiNotes()         // the piano-roll context (internal undo push)
+            return .midiNotes
         } else if timeSelection != nil {
             edit { cutTimeSelection() }
+            return .timeSelection
         } else if !selectedIDs.isEmpty {
             edit { cutSelected() }
+            return .objects
         }
+        return .none
     }
 
     /// ⌘C.
-    func performCopyShortcut() {
+    @discardableResult
+    func performCopyShortcut() -> EditShortcutBranch {
         if pluginSurfaceHasKeyboard {
             copySelectedPluginsToClipboard()   // the signal view
+            return .plugins
         } else if automationSurfaceHasKeyboard {
             copyAutomationSelection()          // the automation band
+            return .automation
         } else if !selectedMidiNoteIDs.isEmpty {
             copySelectedMidiNotes()            // the piano-roll context
+            return .midiNotes
         } else if timeSelection != nil {
             copyTimeSelection()
+            return .timeSelection
         } else if !selectedIDs.isEmpty {
             copySelected()
+            return .objects
         }
+        return .none
     }
 
     /// ⌘V.
-    func performPasteShortcut() {
+    @discardableResult
+    func performPasteShortcut() -> EditShortcutBranch {
         // The signal view holds the keyboard ⇒ the chain fragment goes into ITS chain, after the last
         // selected card or at the end when none is chosen.
         if let host = selectedPluginHostID, !pluginClipboard.isEmpty {
             pastePlugins(into: host)           // internal undo push
+            return .plugins
         }
         // A passage of automation goes back into the band it was traced on — the zone says which rows
         // and at which instant (@see pasteAutomation).
-        else if automationSurfaceHasKeyboard, canPasteAutomation {
+        if automationSurfaceHasKeyboard, canPasteAutomation {
             pasteAutomation()                  // internal undo push
+            return .automation
         }
         // The notes take priority in the piano-roll context (notes selected).
-        else if !selectedMidiNoteIDs.isEmpty, canPasteMidiNotes {
+        if !selectedMidiNoteIDs.isEmpty, canPasteMidiNotes {
             pasteMidiNotes()                   // internal undo push
-        } else {
-            edit { paste() }
+            return .midiNotes
         }
+        // A click in a band leaves a caret and nothing traced: with a passage of automation copied,
+        // that is a place to lay it, and it wins over the objects' paste, which would land the
+        // clipboard's objects on the band's lane instead (@see automationTarget, `forPaste`).
+        if canPasteAutomationAtCaret {
+            pasteAutomation()                  // internal undo push
+            return .automationCaret
+        }
+        edit { paste() }
+        return .objects
     }
 }

@@ -17,6 +17,13 @@ let launchArguments = LaunchArguments.process
 // already built does not get retranslated.
 Localization.applyLaunchOverride(launchArguments)
 
+// The diagnostic journal comes BEFORE the engine, so that what the engine does while it builds
+// (opening the card, scanning plugins) is already on record — and a crash there too. The app only
+// WRITES it; reading a dead session is `tools/diag_latest.py`'s job, run by hand.
+if Diag.shouldStartAtLaunch(preference: UserDefaults.standard.bool(forKey: "pref.diagnosticLog")) {
+    Diag.start()
+}
+
 // Before the engine is built: it is `-[OBJEngineCore init]` that opens the audio device.
 OBJEngineCore.setAudioDisabled(launchArguments.noAudio)
 // Same moment, same reason. `--no-audio` outranks it (the engine drops the virtual card then).

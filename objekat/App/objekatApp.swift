@@ -132,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shuts the command server down cleanly: the socket is a file, and leaving it behind would
     /// make the next client believe a server is still listening.
     func applicationWillTerminate(_ notification: Notification) {
+        Diag.stop(reason: "quit (applicationWillTerminate)")
         CommandServer.shared.stop()
     }
 }
@@ -376,6 +377,21 @@ struct objekatApp: App {
                 }
                     .keyboardShortcut("a", modifiers: [.command])
                     .disabled(busy)
+            }
+            // OBJEKAT ▸ Diagnostic : le journal (préférence, effet immédiat), « Signaler un problème… »
+            // (une ligne ISSUE dans le journal) et l'ouverture du dossier des journaux.
+            // ⌃⌥⌘I et non ⌃⌥⌘P : le moniteur de touches du timeline avale la lettre P (outil Pan, sans
+            // garde de modificateurs) avant que les équivalents de menu la voient ; « i » est libre.
+            CommandGroup(after: .appSettings) {
+                Menu(L("diag.menu.title")) {
+                    Toggle(L("diag.menu.log"), isOn: Binding(
+                        get: { ObjekatPreferences.shared.diagnosticLog },
+                        set: { ObjekatPreferences.shared.diagnosticLog = $0 }))
+                    Button(L("diag.menu.report")) { DiagIssueReport.askAndMark() }
+                        .keyboardShortcut("i", modifiers: [.control, .option, .command])
+                        .disabled(!ObjekatPreferences.shared.diagnosticLog)
+                    Button(L("diag.menu.openFolder")) { DiagIssueReport.openFolder() }
+                }
             }
             // No View menu, no Help menu: emptied here, their top-level items taken off by MainMenuCleanup
             // (AppKit lays "Enter Full Screen" and the help search back on its own otherwise).

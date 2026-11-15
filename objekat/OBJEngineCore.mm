@@ -11,6 +11,7 @@
 #include <thread>
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
+#include <tracktion_graph/tracktion_graph.h>   // PlayHead complet : la boucle donnée à la tête (setLoopRangeRollingIn)
 #include "OBJGainPlugin.h"
 #include "OBJGainStagePlugin.h"
 #include "OBJWindowFadePlugin.h"
@@ -23,6 +24,13 @@
 #include "OBJGainTesterPlugin.h"
 #include "OBJAudioProbe.h"
 #include "OBJPluginProbe.h"     // trims + gain match around a plugin (engine patch 0045)
+#include "Shared/OBJDiagLog.h"      // le journal de diagnostic (C pur) : le logger JUCE y verse tout, catégorie TE
+
+// Journal de diagnostic (catégorie PLUG) : ce que le pont fait des plugins, la ligne qui précède un
+// chargement qui plante. Jamais sur un thread temps réel ; éteint, ne coûte que la lecture d'un entier.
+#define OBJ_DIAG_PLUG(...) \
+    do { if (objdiag_enabled() && !objdiag_is_realtime_thread()) \
+             objdiag_log("PLUG", [[NSString stringWithFormat:__VA_ARGS__] UTF8String]); } while (0)
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
@@ -600,8 +608,15 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
 // Nos propres diagnostics passent par NSLog et ne sont donc pas affectés.
 // Alloué une fois et jamais libéré (leak volontaire) pour éviter l'assert
 // ~Logger (jassert currentLogger != this) à la fin du process.
+//
+// Silencieux pour la console ; mais le journal de diagnostic (Shared/OBJDiagLog.h) reçoit TOUT ce que
+// le moteur dit, catégorie TE — c'est souvent là que se trouve la dernière phrase avant un crash.
+// Jamais depuis un thread audio temps réel (un write() sous verrou) : le message est alors perdu.
 struct OBJSilentLogger : public juce::Logger {
-    void logMessage(const juce::String&) override {}
+    void logMessage(const juce::String& message) override {
+        if (objdiag_enabled() && ! objdiag_is_realtime_thread())
+            objdiag_log("TE", message.toRawUTF8());   // `message` est une référence : pas un temporaire
+    }
 };
 
 // Purge des alias de « track input devices » accumulés dans Settings.xml.
@@ -3569,7 +3584,11 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 }
 
 // Invariants d'un clip wave fraîchement créé dans ce modèle :
-//  • pas de time-stretch (aucune lib activée dans ce build — sinon StretchSegment jassert).
+//  • pas de time-stretch (aucune lib activée dans ce build — sinon StretchSegment jassert) :
+//    ni autoTempo ni autoPitch. `ClipOwner` pose autoPitch=true dès que le fichier porte une
+//    note racine (chunk `acid` d'un WAV, `basc` d'un AIFF…) ; EditNodeBuilder construit alors
+//    un PitchAdjustReader (SyncPitch::yes) sur un time-stretch inexistant → pointeur nul,
+//    plantage au premier rendu (« Guiro Piola 1.wav »).
 //
 // Le proxy n'est PLUS interdit dans un groupe : l'assert(!acb->canUseProxy()) vivait dans la
 // branche USE_DYNAMIC_OFFSET_CONTAINER_CLIP de createNodeForContainerClip, abandonnée à
@@ -3590,6 +3609,7 @@ static void updateProxyUse(te::AudioClipBase& clip) {
 static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::ClipPosition& pos,
                                double speed, bool reversed) {
     clip->setAutoTempo(false);
+    clip->setAutoPitch(false);   // cf. invariant ci-dessus : une note racine du fichier l'active d'office
     clip->setTimeStretchMode(te::TimeStretcher::disabled);
     // Explicite et non hérité de `getClipDefaults` : un clip posé dans un container (groupe), ou
     // un projet rouvert, ne passe pas par le chemin des défauts de `ClipOwner`.
@@ -3644,9 +3664,11 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // ⚠️ INVARIANT « clip sans time-stretch » — à appliquer à TOUT clip fraîchement créé
     // (ici, à la migration dans un container, et au split).
     // Ce build n'a aucune lib de time-stretch activée → defaultMode == disabled. Si on laisse
-    // l'autoTempo/timeStretchMode par défaut, Tracktion demande un proxy time-stretché et
-    // StretchSegment appelle timestretcher.initialise(mode=disabled) → !isInitialised() →
-    // jassert/EXC_BREAKPOINT (tracktion_AudioClipBase.cpp).
+    // l'autoTempo/autoPitch/timeStretchMode par défaut, Tracktion demande un proxy time-stretché
+    // et StretchSegment appelle timestretcher.initialise(mode=disabled) → !isInitialised() →
+    // jassert/EXC_BREAKPOINT (tracktion_AudioClipBase.cpp) ; autoPitch (activé par une note
+    // racine du fichier) fait construire un PitchAdjustReader sur un time-stretch nul.
+    // Invariant : ni autoTempo ni autoPitch.
     configureFreshClip(clip, pos, 1.0, false);
 
     _clipMap[key] = clip;
@@ -7335,6 +7357,98 @@ static void objLayBridgeWires(te::Plugin& plugin) {
     if (_edit) _edit->getTransport().looping = false;
 }
 
+// MARK: Loop Tracktion hors enregistrement — la tête ne bouge JAMAIS
+//
+// Comportement Ableton : modifier la boucle pendant la lecture ne déplace pas la tête, cela décide seulement du prochain
+// retour. Le chemin stock (`setLoopRange` + `looping = true`, puis le passage périodique du timer du transport qui pousse
+// `PlayHead::setLoopRange(..., updatePosition = true)`) recadre la tête dans la région — d'où le saut. On donne donc la boucle
+// DIRECTEMENT à la tête du contexte par `PlayHead::setLoopRangeRollingIn` (patch 0050) : la tête est gardée, elle entre dans la
+// région si elle est avant, ne boucle pas si elle est à la fin ou après (fin exclue).
+//
+// Le timer (TransportControl::timerCallback, un passage sur dix) re-pousse `setLoopTimes(transport.looping, plage)` :
+// `PlayHead::setLoopRange` ne fait RIEN quand le drapeau et la plage sont déjà ceux de la tête. On les rend donc IDENTIQUES —
+// `transport.looping` = ce que la tête fait réellement (armée ou non), plage convertie par la même formule que le timer
+// (fin ≥ début + 1 ms, `toSamples` au taux du contexte) — et le passage périodique n'a plus rien à faire.
+//
+// Jamais pendant un enregistrement (le chemin de 0050 : `applyLoopToPlayHeadNow`, déjà conforme) : l'appelant s'en garde,
+// et le pont refuse aussi.
+
+/// Donne la boucle voulue à la tête du contexte. true = la tête la suit (armée, éventuellement « en entrée »).
+static bool objApplyLoopToHead(te::Edit& edit, double start, double end, bool on) {
+    auto& tc = edit.getTransport();
+    auto* epc = edit.getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    if (on) tc.setLoopRange(te::TimeRange(te::TimePosition::fromSeconds(start), te::TimePosition::fromSeconds(end)));
+    bool armed = false;
+    if (ph != nullptr && tc.isPlaying()) {
+        if (on) {
+            auto lr = tc.getLoopRange();
+            lr = lr.withEnd(std::max(lr.getEnd(), lr.getStart() + te::TimeDuration::fromSeconds(0.001)));
+            ph->setLoopRangeRollingIn(true, te::toSamples(lr, epc->getSampleRate()));
+            armed = ph->isLooping();
+        } else {
+            // looping = false d'abord : la tête garde sa position, la plage est conservée telle quelle.
+            ph->setLoopRangeRollingIn(false, ph->getLoopRange());
+        }
+    }
+    tc.looping = armed;
+    return armed;
+}
+
+- (BOOL)applyTracktionLoopFrom:(double)start to:(double)end enabled:(BOOL)on {
+    if (!_edit || _recordingActive) return NO;
+    return objApplyLoopToHead(*_edit, start, end, on) ? YES : NO;
+}
+
+- (BOOL)seekTo:(double)seconds keepingLoopFrom:(double)start to:(double)end enabled:(BOOL)on {
+    if (!_edit) return NO;
+    if (_recordingActive) { [self seekTo:seconds]; return NO; }
+    auto& tc = _edit->getTransport();
+    auto* epc = _edit->getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    const bool live = ph != nullptr && tc.isPlaying();
+    // 1. Désarmer : ni `performPositionChange` (qui recadre une nouvelle position quand `transport.looping`), ni le
+    //    `overridePosition` de la tête (qui la recadre quand elle boucle) ne doivent toucher à la position demandée.
+    if (live) {
+        tc.looping = false;
+        ph->setLoopRangeRollingIn(false, ph->getLoopRange());
+    }
+    // 2. Se déplacer. La position est postée au fil audio ; on la donne aussi à la tête TOUT DE SUITE, pour que l'armement
+    //    qui suit décide d'après la vraie position (le même échantillon, ré-appliqué plus tard par le fil audio, est sans
+    //    effet : armée comme il le faut, la tête n'est pas recadrée).
+    tc.setPosition(te::TimePosition::fromSeconds(seconds));
+    if (live) ph->setPosition(te::toSamples(te::TimePosition::fromSeconds(seconds), epc->getSampleRate()));
+    // 3. Réarmer : « en entrée » si la tête est avant la région, dedans si elle y est, rien si elle est à la fin ou après.
+    if (!live || !on) return NO;
+    return objApplyLoopToHead(*_edit, start, end, true) ? YES : NO;
+}
+
+- (NSDictionary<NSString*, NSNumber*>*)tracktionLoopState {
+    if (!_edit) return @{};
+    auto& tc = _edit->getTransport();
+    auto* epc = _edit->getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    NSMutableDictionary<NSString*, NSNumber*>* d = [NSMutableDictionary dictionary];
+    d[@"transportLooping"] = @((BOOL) tc.looping.get());
+    d[@"transportPlaying"] = @((BOOL) tc.isPlaying());
+    const auto lr = tc.getLoopRange();
+    d[@"transportLoopStart"] = @(lr.getStart().inSeconds());
+    d[@"transportLoopEnd"] = @(lr.getEnd().inSeconds());
+    d[@"hasPlayHead"] = @(ph != nullptr);
+    if (ph != nullptr) {
+        const double sr = epc->getSampleRate();
+        const auto r = ph->getLoopRange();
+        d[@"isLooping"] = @((BOOL) ph->isLooping());
+        d[@"isRollingIntoLoop"] = @((BOOL) ph->isRollingIntoLoop());
+        d[@"loopStartSamples"] = @((long long) r.getStart());
+        d[@"loopEndSamples"] = @((long long) r.getEnd());
+        d[@"headSamples"] = @((long long) ph->getPosition());
+        d[@"headSeconds"] = @(sr > 0.0 ? (double) ph->getPosition() / sr : 0.0);
+        d[@"sampleRate"] = @(sr);
+    }
+    return d;
+}
+
 // MARK: - Plugins
 
 static NSArray<NSDictionary*>* tracktionBuiltInPluginList() {
@@ -7916,6 +8030,9 @@ static void objClearARAState(te::WaveAudioClip& clip) {
     NSString* format     = pluginInfo[@"format"];
     NSString* pluginName = pluginInfo[@"name"] ?: @"?";
     if (!pluginKey || !identifier || !format) return nil;
+    OBJ_DIAG_PLUG(@"pont : création « %@ » format=%@ chemin=%@ clé=%.8s état=%@",
+                  pluginName, format, identifier, pluginKey.UTF8String,
+                  stateXML.length > 0 ? @"restauré" : @"défaut");
 
     te::Plugin::Ptr ptr = nullptr;
 
@@ -8070,6 +8187,7 @@ static void objClearARAState(te::WaveAudioClip& clip) {
 
     if (!ptr) {
         NSLog(@"[OBJ] addPlugin: ECHEC FINAL pour '%@' [%@]", pluginName, format);
+        OBJ_DIAG_PLUG(@"pont : ÉCHEC création « %@ » [%@]", pluginName, format);
         return nil;
     }
 
@@ -8086,6 +8204,8 @@ static void objClearARAState(te::WaveAudioClip& clip) {
               pluginName,
               instanceReady ? "prête" : "en cours",
               err.toRawUTF8());
+        OBJ_DIAG_PLUG(@"pont : « %@ » inséré, instance=%s loadError='%s'", pluginName,
+                      instanceReady ? "prête" : "en cours (asynchrone)", err.toRawUTF8());
         if (!instanceReady) {
             NSLog(@"[OBJ] addPlugin: chargement asynchrone en cours (normal pour VST3/AU)");
         }
@@ -8426,6 +8546,7 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
             if (++it->ticks <= kObjStateReassertMaxTicks) { ++it; continue; }
             NSLog(@"[OBJ] état plugin : '%s' n'a jamais rendu son état — abandon",
                   it->name.toRawUTF8());
+            OBJ_DIAG_PLUG(@"pont : « %s » n'a jamais rendu son état — abandon", it->name.toRawUTF8());
             it = _pendingStateReasserts.erase(it);
             continue;
         }
@@ -8438,6 +8559,8 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
             juce::MemoryBlock after = objReadInstanceState(*pi);
             NSLog(@"[OBJ] état plugin ré-appliqué : %s → %s", it->name.toRawUTF8(),
                   (after == it->desired) ? "OK" : "toujours différent (état non bit-stable ?)");
+            OBJ_DIAG_PLUG(@"pont : état de « %s » ré-appliqué → %s", it->name.toRawUTF8(),
+                          (after == it->desired) ? "OK" : "toujours différent");
         }
         // L'état est posé : si cette instance appartient à un groupe lié, c'est maintenant que
         // son chunk devient la référence de la synchro d'état (avant, elle traversait ses
@@ -9816,6 +9939,25 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     return instance ? (BOOL)instance->hasEditor() : NO;
 }
 
+// Prépare À LA MAIN un plugin externe que le graphe de lecture n'a pas (encore) préparé, avant
+// qu'on ouvre son éditeur. Les AU Soundtoys (DevilLoc, LittleRadiator…) construisent leur vue sur
+// un état créé par AudioUnitInitialize : sans lui, un clic dans la fenêtre déréférence NULL, ou
+// createView plante. Or le graphe ne prépare qu'un plugin qu'il contient ET dont le contexte de
+// lecture est alloué : un plugin tout juste inséré (graphe reconstruit en différé), bypassé (exclu
+// du graphe, EditNodeBuilder) ou sur un instrument de groupe à container vide n'est pas préparé.
+// `baseClassNeedsInitialising()` = jamais initialisé par le graphe (compteur à 0). `initialise`
+// est appelé en direct (pas `baseClassInitialise`) : le compteur du graphe reste intact, et
+// ExternalPlugin::initialise ne refait le prepareToPlay que si la fréquence ou le bloc changent —
+// idempotent, et sans double préparation quand le graphe prendra le relais.
+// Retourne true si une préparation a été faite.
+static bool objPrepareForEditor(te::ExternalPlugin& ext, te::Engine& engine) {
+    if (!ext.getAudioPluginInstance() || !ext.baseClassNeedsInitialising()) return false;
+    auto& dm = engine.getDeviceManager();
+    ext.initialise({ te::TimePosition(), dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0,
+                     dm.getBlockSize() > 0 ? dm.getBlockSize() : 512 });
+    return true;
+}
+
 - (void)_doOpenPluginEditor:(NSString*)pluginKey attempt:(int)attempt colorHex:(NSInteger)colorHex {
     [self _doOpenEditorForKey:pluginKey araObjectID:nil attempt:attempt colorHex:colorHex];
 }
@@ -9858,23 +10000,6 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     if (_edit && !_edit->getTransport().isPlayContextActive())
         _edit->getTransport().ensureContextAllocated();
 
-    // Un instrument de GROUPE dont le container n'a aucun enfant (zone neuve, vide) n'a pas de nœud
-    // dans le graphe : rien ne le prépare, même avec le contexte alloué, et son GUI retombe sur le
-    // piège ci-dessus. On le prépare donc ici, à la main (idempotent : `initialise` ne refait le
-    // `prepareToPlay` que si la fréquence ou la taille de bloc changent).
-    if (!isARA && _edit) {
-        for (auto& kv : _instrumentMap) {
-            if (kv.second.get() != ext) continue;
-            auto cit = _containerClipMap.find(kv.first);
-            if (cit != _containerClipMap.end() && cit->second->getClips().isEmpty() && ext->getAudioPluginInstance()) {
-                auto& dm = _engine->getDeviceManager();
-                ext->initialise({ te::TimePosition(), dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0,
-                                 dm.getBlockSize() > 0 ? dm.getBlockSize() : 512 });
-            }
-            break;
-        }
-    }
-
     // Le plugin se charge de façon asynchrone : attendre que l'instance soit prête
     if (!ext->getAudioPluginInstance()) {
         if (attempt >= 20) {
@@ -9899,6 +10024,14 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
         NSLog(@"[OBJ] openPluginEditor: plugin sans éditeur GUI (%s)", instance->getName().toRawUTF8());
         return;
     }
+
+    // Préparation à la main (cf. objPrepareForEditor) : tout plugin externe hors ARA — un instrument
+    // de groupe à container vide, un plugin tout juste inséré, un plugin bypassé. Pas pendant un
+    // chargement par lots (`_bulkLoadInhibitor`) : tout est créé, PUIS préparé — préparer un plugin
+    // en plein chargement bloque UADx Opal (@see tickPluginStateReasserts). L'éditeur s'ouvre alors
+    // comme avant ce correctif.
+    if (!isARA && _engine && !_bulkLoadInhibitor && objPrepareForEditor(*ext, *_engine))
+        NSLog(@"[OBJ] openPluginEditor: prepared by hand (%s)", instance->getName().toRawUTF8());
 
     auto* editor = instance->createEditorIfNeeded();
     if (!editor) {
@@ -10426,6 +10559,10 @@ static void objDumpPluginList(te::PluginList& pl,
                 }
             }
             if (!p) p = pl.insertPlugin(vt, indexBefore(pl, anchor));
+            OBJ_DIAG_PLUG(@"pont : chaîne « %@ » format=%@ chemin=%@ clé=%.8s → %s%s",
+                          n.info[@"name"] ?: @"?", n.info[@"format"] ?: @"?",
+                          n.info[@"identifier"] ?: @"?", pk.c_str(),
+                          p ? "inséré" : "REFUSÉ", fromParking ? " (repris de la consigne)" : "");
             if (!p) {
                 NSLog(@"[FX] compile: insertion refusée pour '%s'", pk.c_str());
                 [failed addObject:[NSString stringWithUTF8String:pk.c_str()]];
@@ -10700,6 +10837,20 @@ static void objDumpPluginList(te::PluginList& pl,
         if (auto pit = _pluginMap.find(pk); pit != _pluginMap.end()) {
             pit->second->deleteFromParent();
             _pluginMap.erase(pit);
+        }
+        // The fold halves of the plugin that goes (@see monoFoldKey) go with it. A half laid LAZILY
+        // (`syncMonoFoldHalvesForPluginKey:`, once the plugin has loaded) is in no chain's key list, so
+        // this pass would never have seen it: it stayed behind, orphan, until the project was reloaded.
+        _monoFoldWanted.erase(pk);
+        _monoFoldPending.erase(pk);
+        for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf }) {
+            const std::string fk = monoFoldKey(pk, half);
+            if (auto fit = _pluginMap.find(fk); fit != _pluginMap.end()) {
+                if (fit->second) fit->second->deleteFromParent();
+                _pluginMap.erase(fit);
+            }
+            if (auto oit = _pluginOwnerHost.find(fk); oit != _pluginOwnerHost.end() && oit->second == key)
+                _pluginOwnerHost.erase(oit);
         }
         if (auto oit = _pluginOwnerHost.find(pk); oit != _pluginOwnerHost.end() && oit->second == key)
             _pluginOwnerHost.erase(oit);

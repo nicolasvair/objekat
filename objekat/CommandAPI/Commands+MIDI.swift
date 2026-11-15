@@ -276,23 +276,87 @@ extension CommandRegistry {
                  summary: """
                  DEBUG. Sets the TRANSPORT's loop region and its mode on the view-model — what ⌘L and the \
                  transport bar's button do — since the public API has no door onto it (`transport.state` only \
-                 reads it). The playhead tick arms the engine loop when playback ENTERS the region. \
-                 `enabled: false` switches the mode off. Not present in Release builds.
+                 reads it). Playing (outside a recording), the engine follows AT ONCE and the head never moves: \
+                 before the region it rolls in, inside it loops at the end, at its end or after it plays straight on. \
+                 Under a recording the loop is armed by the playhead tick when playback ENTERS the region. \
+                 `enabled: false` switches the mode off. `dragging`: true = a ruler marker is being dragged (the \
+                 region is applied all the same, playing); false = the drag ends. Answers `engine_loop` (the engine's \
+                 own state of the loop, @see debug.engine_loop). Not present in Release builds.
                  """,
                  params: [ParamSpec("start", "number", required: false, "Region start, seconds."),
                           ParamSpec("end", "number", required: false, "Region end, seconds."),
-                          ParamSpec("enabled", "bool", required: false, "Loop mode (default true).")],
+                          ParamSpec("enabled", "bool", required: false, "Loop mode (default true)."),
+                          ParamSpec("dragging", "bool", required: false,
+                                    "true: the region moves as a marker being dragged; false: the drag ends after this call.")],
                  undo: .none) { p in
             let vm = try CommandContext.shared.requireViewModel()
+            let session = try CommandContext.shared.requireSession()
+            let dragging = try p.optionalBool("dragging")
+            if dragging == true { vm.loopRegionDragging = true }
             if p.raw["start"] != nil || p.raw["end"] != nil {
                 let a = try p.double("start"), b = try p.double("end")
                 guard b > a else { throw CommandError(code: .bad_params, message: "'end' must come after 'start'") }
                 vm.loopRegion = a...b
             }
             vm.loopModeEnabled = try p.bool("enabled", or: true)
+            if dragging == false { vm.endLoopRegionDrag() }
             return .object(["enabled": .bool(vm.loopModeEnabled),
-                            "region": vm.loopRegion.map { .array([.number($0.lowerBound), .number($0.upperBound)]) } ?? .null])
+                            "region": vm.loopRegion.map { .array([.number($0.lowerBound), .number($0.upperBound)]) } ?? .null,
+                            "engine_loop": Self.engineLoopJSON(session)])
+        }
+
+        register("debug.loop_from_selection",
+                 summary: """
+                 DEBUG. The real ⌘L: the loop region becomes the time selection (or the selected objects' span) and the \
+                 loop mode goes on (`EditViewModel.setLoopRegionFromSelection`). Nothing selected = nothing happens. \
+                 Answers like debug.transport_loop. Not present in Release builds.
+                 """,
+                 undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let session = try CommandContext.shared.requireSession()
+            vm.setLoopRegionFromSelection()
+            return .object(["enabled": .bool(vm.loopModeEnabled),
+                            "region": vm.loopRegion.map { .array([.number($0.lowerBound), .number($0.upperBound)]) } ?? .null,
+                            "engine_loop": Self.engineLoopJSON(session)])
+        }
+
+        register("debug.engine_loop",
+                 summary: """
+                 DEBUG, read-only. The ENGINE's own state of the loop: `transportLooping` (the transport's flag), \
+                 `isLooping` / `isRollingIntoLoop` (the play head's), `loopStartSamples` / `loopEndSamples`, \
+                 `headSamples` / `headSeconds` (the play head's own position, not the audible one), `sampleRate`, \
+                 `transportPlaying`, `hasPlayHead`. Not present in Release builds.
+                 """,
+                 undo: .none) { _ in
+            let session = try CommandContext.shared.requireSession()
+            return Self.engineLoopJSON(session)
+        }
+
+        register("debug.transport_pause",
+                 summary: "DEBUG. ⌥space: pauses playback where it is, or resumes it exactly there. Not present in Release builds.",
+                 undo: .none) { _ in
+            let session = try CommandContext.shared.requireSession()
+            session.togglePause()
+            return .object(["playing": .bool(session.isPlaying),
+                            "paused_at": session.pausedAt.map { .number($0) } ?? .null])
+        }
+
+        register("debug.jump_playhead",
+                 summary: "DEBUG. The ⌥-click in the ruler: the cursor AND the playhead go to `seconds`; playing, playback carries on from there. Not present in Release builds.",
+                 params: [ParamSpec("seconds", "number", "Target position, seconds.")],
+                 undo: .none) { p in
+            let session = try CommandContext.shared.requireSession()
+            session.jumpPlayhead(to: try p.double("seconds"))
+            return .object(["playing": .bool(session.isPlaying)])
         }
         #endif
     }
+
+    #if DEBUG
+    /// The engine's own state of the loop, as the debug doors answer it (@see `OBJEngineCore.tracktionLoopState`).
+    @MainActor
+    static func engineLoopJSON(_ session: ObjekatSession) -> JSONValue {
+        .object(session.engineLoopState().mapValues { JSONValue.number($0) })
+    }
+    #endif
 }

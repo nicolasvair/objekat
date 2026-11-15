@@ -96,6 +96,9 @@ extension EditViewModel {
         guard let host = selectedPluginHostID else { return 0 }
         let ids = orderedSelectedPluginIDs()
         guard !ids.isEmpty, chainPlugins(host) != nil, engine != nil else { return 0 }
+        // The choices of channel that belong to the one-input plugins leaving (@see `cableChoicesOwned`):
+        // read now, while the chain is whole.
+        let owned = cableChoicesOwned(by: Set(ids.filter { fxDefinition(ofInstance: $0, on: host) == nil }), host: host)
         pushUndo()
         // The instances of an attached FX link leave through the bin's DEFINITION (every member
         // loses them), the others through this chain alone.
@@ -114,8 +117,9 @@ extension EditViewModel {
         }
         if !own.isEmpty {
             updateChainPlugins(host) { p in
-                p = Self.simplifyTree(Self.removingPlugins(Set(own), from: p))
+                p = Self.simplifyTree(Self.removingPlugins(Set(own).union(owned.pickIDs), from: p))
             }
+            if owned.resetFileMode { resetFileChannelMode(host: host) }
             compileRack(objectID: host)
         }
         clearPluginSelection()

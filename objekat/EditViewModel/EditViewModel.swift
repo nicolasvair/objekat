@@ -619,7 +619,7 @@ final class EditViewModel {
         /// The default: the same starting instant, one lane each. It is the layout that preserves
         /// the time relationship of several takes of one scene (they start together).
         case stacked
-        /// ⌘: a single lane, end to end in the order of the selection.
+        /// ⌥: a single lane, end to end in the order of the selection.
         case sequential
 
         var title: String { self == .stacked ? L("drop.mode.stacked") : L("drop.mode.sequential") }
@@ -637,7 +637,7 @@ final class EditViewModel {
         var name: String
         var duration: Double?
         /// A dropped FOLDER (it becomes one group, @see FolderImport): `duration` is then its span
-        /// laid out stacked, `sequentialDuration` its span laid out end to end (⌘), and `fileCount`
+        /// laid out stacked, `sequentialDuration` its span laid out end to end (⌥), and `fileCount`
         /// the audio files it holds. All nil while they are being read — and they stay nil for a
         /// folder too big to be measured on the way (the rectangle keeps the waiting width).
         var isFolder = false
@@ -699,6 +699,22 @@ final class EditViewModel {
         /// The batch's files, in the order of the selection. Empty until the providers are
         /// resolved: the rectangles are then drawn at the waiting width.
         var previews: [FileDropPreview] = []
+        /// The GAP between two rows the cursor is on, as "before display row B" (@see
+        /// LaneInsertion.boundaryRow(pointerRow:)); nil = the cursor is on a lane, not between two.
+        /// Independent of the layout mode: only the cursor decides it.
+        var boundaryRow: Int? = nil
+        /// What dropping HERE would do, when it inserts the files between two lanes instead of
+        /// laying them on one (@see fileDropInsertionPlan). nil = the normal drop. It depends on the
+        /// gap AND on how many lanes the layout takes, so it follows ⌥ as well as the cursor.
+        var insertion: LaneInsertion.Plan? = nil
+        /// What `insertion` was computed for: it is asked again only when this changes, not on every
+        /// pixel of the cursor's travel.
+        var insertionProbe: InsertionProbe? = nil
+
+        struct InsertionProbe: Equatable {
+            var row: Int
+            var laneCount: Int
+        }
 
         /// The durations to draw: the real one as soon as it is known, the waiting one otherwise. Always
         /// `count` values, so that the rectangles appear as soon as the hover begins.
@@ -712,13 +728,35 @@ final class EditViewModel {
 
     var fileDropHint: FileDropHint? = nil
 
+    /// How many LANES a batch of `count` files takes: one each when stacked, a single one when laid
+    /// end to end. A dropped folder is one entry like a file (it becomes one group on one lane).
+    static func fileDropLaneCount(count: Int, mode: FileDropMode) -> Int {
+        guard count > 0 else { return 0 }
+        return mode == .sequential ? 1 : count
+    }
+
+    /// Brings the hint's insertion up to date with its gap, its count and its mode. Asked again only
+    /// when what the plan depends on has changed (the model does not change under a hover).
+    private func refreshFileDropInsertion(_ hint: inout FileDropHint) {
+        guard let row = hint.boundaryRow else {
+            hint.insertion = nil
+            hint.insertionProbe = nil
+            return
+        }
+        let probe = FileDropHint.InsertionProbe(
+            row: row, laneCount: Self.fileDropLaneCount(count: hint.count, mode: hint.mode))
+        guard hint.insertionProbe != probe else { return }
+        hint.insertion = fileDropInsertionPlan(row: row, laneCount: probe.laneCount)
+        hint.insertionProbe = probe
+    }
+
     /// Reads the drop mode from the current state of the modifiers. ⌥ = end to end.
     static func fileDropMode(for flags: NSEvent.ModifierFlags) -> FileDropMode {
         flags.contains(.option) ? .sequential : .stacked
     }
 
     /// A probe that follows ⌥ during the hover. `dropUpdated` is only called on a MOUSE
-    /// MOVE: without it, pressing ⌘ without moving would change nothing on screen — yet that is
+    /// MOVE: without it, pressing ⌥ without moving would change nothing on screen — yet that is
     /// exactly the expected gesture (you arrive over the timeline, you read the banner, you
     /// press ⌥). An ordinary `Timer` would not do: the drag loop runs in
     /// `NSEventTrackingRunLoopMode`, where a timer in `.default` mode never fires; the
@@ -727,7 +765,11 @@ final class EditViewModel {
 
     /// Opens (or updates) the banner for `count` files and arms the ⌥ tracking.
     /// `location` is the cursor's position in the canvas: it lays the ghost preview.
-    func beginFileDropHint(count: Int, location: CGPoint) {
+    ///
+    /// `rulerHeight` and `laneStep` are the canvas's: they say which GAP between two rows the cursor
+    /// is on (the drop then INSERTS the files there, @see LaneInsertion). Without them (0), the
+    /// hint never proposes an insertion.
+    func beginFileDropHint(count: Int, location: CGPoint, rulerHeight: Double = 0, laneStep: Double = 0) {
         // An update IN PLACE rather than a replacement: `dropUpdated` calls this method again on
         // every mouse move, and starting from a fresh hint would throw away the previews already
         // resolved (their durations) at every pixel travelled.
@@ -735,6 +777,11 @@ final class EditViewModel {
         hint.count    = count
         hint.mode     = Self.fileDropMode(for: NSEvent.modifierFlags)
         hint.location = location
+        hint.boundaryRow = laneStep > 0
+            ? LaneInsertion.boundaryRow(pointerRow: (Double(location.y) - rulerHeight) / laneStep,
+                                        halfBand: LaneInsertion.halfBand(laneStep: laneStep))
+            : nil
+        refreshFileDropInsertion(&hint)
         // Reassigned only if it changes: rewriting the same value would invalidate the view for nothing.
         if fileDropHint != hint { fileDropHint = hint }
         guard fileDropModifierWatch == nil else { return }
@@ -743,7 +790,11 @@ final class EditViewModel {
                 try? await Task.sleep(nanoseconds: 40_000_000)
                 guard let self, self.fileDropHint != nil else { return }
                 let m = Self.fileDropMode(for: NSEvent.modifierFlags)
-                if self.fileDropHint?.mode != m { self.fileDropHint?.mode = m }
+                if self.fileDropHint?.mode != m {
+                    // The mode changes how many lanes the batch takes, hence the insertion.
+                    self.fileDropHint?.mode = m
+                    if var h = self.fileDropHint { self.refreshFileDropInsertion(&h); self.fileDropHint = h }
+                }
             }
         }
     }
@@ -1500,7 +1551,11 @@ final class EditViewModel {
     /// position until the hand tore it eight pixels away — a magnet with nothing on the other end.
     /// The same reason objects are excluded, and it went unnoticed only because a mark had no
     /// gesture that snapped it.
-    func snapTargets(excluding: Set<UUID> = []) -> [Double] {
+    ///
+    /// `includeCaret`: the caret's instant is one more target (@see CaretSnap). Only the gestures that
+    /// carry or trim an OBJECT's edge ask for it — the move and the two trims; a click, the ruler,
+    /// the loop, a mark or a crossfade do not.
+    func snapTargets(excluding: Set<UUID> = [], includeCaret: Bool = false) -> [Double] {
         var out: [Double] = []
         for item in items where !excluding.contains(item.id) {
             out.append(item.startTime)
@@ -1522,6 +1577,11 @@ final class EditViewModel {
                 if m.isRegion { out.append(e.absStart + m.endTime) }
             }
         }
+        if includeCaret,
+           let c = CaretSnap.target(cursor: cursorPosition, caretLane: caretLane,
+                                    hasTimeSelection: timeSelection != nil) {
+            out.append(c)
+        }
         // An edge (or a mark) before 0 is not drawn, so nothing may land on it (@see ZeroFloor, R9).
         return out.filter(ZeroFloor.isSnapTarget)
     }
@@ -1532,8 +1592,9 @@ final class EditViewModel {
     /// `onTarget` is what the guide's colour reads: true when the value came from a mark rather
     /// than from the grid. A grid line that happens to FALL on a mark counts as landing on it —
     /// the eye sees an alignment there, and a guide that stayed grey over it would be lying.
-    func snappedTime(_ t: Double, excluding: Set<UUID> = []) -> (time: Double, onTarget: Bool) {
-        Self.snappedTime(t, in: snapFrame(excluding: excluding))
+    func snappedTime(_ t: Double, excluding: Set<UUID> = [],
+                     includeCaret: Bool = false) -> (time: Double, onTarget: Bool) {
+        Self.snappedTime(t, in: snapFrame(excluding: excluding, includeCaret: includeCaret))
     }
 
     /// Everything a snap reads, taken ONCE: whether it is on, the grid, the tolerance, and the marks
@@ -1548,7 +1609,7 @@ final class EditViewModel {
         let targets: [Double]
     }
 
-    func snapFrame(excluding: Set<UUID> = []) -> SnapFrame {
+    func snapFrame(excluding: Set<UUID> = [], includeCaret: Bool = false) -> SnapFrame {
         guard effectiveSnapEnabled else {
             return SnapFrame(enabled: false, grid: 0, threshold: 0, eps: 0, targets: [])
         }
@@ -1558,7 +1619,7 @@ final class EditViewModel {
                          // the two are computed by different routes and an exact equality would
                          // almost never hold.
                          eps: 0.5 / max(Self.minPixelsPerSecond, pixelsPerSecond),
-                         targets: snapTargets(excluding: excluding))
+                         targets: snapTargets(excluding: excluding, includeCaret: includeCaret))
     }
 
     static func snappedTime(_ t: Double, in f: SnapFrame) -> (time: Double, onTarget: Bool) {
@@ -1604,8 +1665,8 @@ final class EditViewModel {
     /// The snap, PLUS the guide line it leaves behind. The line stands wherever the value landed,
     /// whether or not anything was there to catch it: with the snap off, or on a plain stretch of
     /// grid, it simply follows the edge, in grey.
-    func snapTime(_ t: Double, excluding: Set<UUID> = []) -> Double {
-        let r = snappedTime(t, excluding: excluding)
+    func snapTime(_ t: Double, excluding: Set<UUID> = [], includeCaret: Bool = false) -> Double {
+        let r = snappedTime(t, excluding: excluding, includeCaret: includeCaret)
         snapGuide = SnapGuide(time: r.time, onTarget: r.onTarget)
         return r.time
     }
@@ -1972,7 +2033,11 @@ final class EditViewModel {
             // The content available from the entry point: played forwards, what follows `so`;
             // in reverse the playback goes back up the range, hence what PRECEDES its end.
             let available = rev ? (so + oldSourceSpan) : max(0, fd - so)
-            if fd > 0 { D = min(D, available / newSpeed) }
+            // A LOOPING clip is longer than its material on purpose (the pattern repeats, @see
+            // SoundObject.contentRoomAfter = .infinity): the material bound does not apply, the
+            // NUMBER of repetitions is kept (D = duration × oldSpeed / newSpeed, only the
+            // neighbour and the floor bound it).
+            if fd > 0 && !obj.loopEnabled { D = min(D, available / newSpeed) }
             D = min(D, gap)
             D = max(0.01, D)
             var fi = obj.fadeIn, fo = obj.fadeOut
@@ -1995,6 +2060,12 @@ final class EditViewModel {
             // reason — the points that overrun stay stored, as after a trim.
             obj.automation = obj.automation.timeScaled(by: oldSpeed / newSpeed)
             obj.markers    = obj.markers.timeScaled(by: oldSpeed / newSpeed)
+            // The loop's IN/OUT bounds are in LOCAL timeline seconds: they scale like the
+            // automation, so that they keep framing the same source matter
+            // (@see clipLoopFileBounds: file = offset + local × speed).
+            let k = oldSpeed / newSpeed
+            if let s = obj.loopRangeStart { obj.loopRangeStart = s * k }
+            if let e = obj.loopRangeEnd   { obj.loopRangeEnd   = e * k }
         }
         engine?.updateSpeedRatio(newSpeed, forID: id.uuidString)
         if let obj = find(id: id) {

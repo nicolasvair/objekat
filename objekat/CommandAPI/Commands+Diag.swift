@@ -1,0 +1,155 @@
+import Foundation
+
+// MARK: - The diagnostic journal family
+
+/// `diag.*` : l'état du journal de diagnostic (@see Shared/DiagLog.swift), sa fin, un repère posé à la
+/// main, et — en Debug seulement — de VRAIS crashs et une inondation de lignes pour le mesurer.
+/// Rien ici n'alerte jamais, ni ne prépare quoi que ce soit : `tools/diag_latest.py` lit.
+extension CommandRegistry {
+
+    func registerDiagCommands() {
+
+        register("diag.status",
+                 summary: """
+                 The diagnostic journal: `enabled`, the session file (`log`, null when off) and the \
+                 folder (`root`). Reading dead sessions, crash reports and the system log is \
+                 `tools/diag_latest.py`'s job, not the app's. Not itself journaled.
+                 """,
+                 undo: .none) { _ in
+            .object(["enabled": .bool(Diag.isEnabled),
+                     "root": .string(Diag.rootDirectory.path),
+                     "log": .stringOrNull(Diag.currentLogURL?.path)])
+        }
+
+        register("diag.tail",
+                 summary: """
+                 The last lines of THIS session's journal (the rotated file included), newest last. \
+                 `since`: only the lines at or after that many seconds since the session start. Not \
+                 itself journaled.
+                 """,
+                 params: [ParamSpec("lines", "int", required: false, "How many (default 50, at most 5000)."),
+                          ParamSpec("since", "number", required: false,
+                                    "Session seconds (the `+secs` column).")],
+                 undo: .none) { p in
+            guard let url = Diag.currentLogURL else {
+                throw CommandError(code: .invalid_state, message: "diagnostic journal is off")
+            }
+            let count = min(max(try p.int("lines", or: 50), 1), 5000)
+            let since = try p.optionalDouble("since")
+            var lines: [String] = []
+            for file in [URL(fileURLWithPath: url.path + ".1"), url] {
+                if let text = try? String(contentsOf: file, encoding: .utf8) {
+                    lines.append(contentsOf: text.split(separator: "\n", omittingEmptySubsequences: true)
+                        .map(String.init))
+                }
+            }
+            if let since {
+                lines = lines.filter { (Diag.seconds(ofLine: $0) ?? since) >= since }
+            }
+            return .object(["lines": .array(lines.suffix(count).map { .string($0) }),
+                            "total": .int(lines.count)])
+        }
+
+        register("diag.mark",
+                 summary: """
+                 Reports a problem from a script: writes one `ISSUE "note"` line in the journal \
+                 (what the menu's « Signaler un problème… » does) — nothing else. The journal must be on.
+                 """,
+                 params: [ParamSpec("note", "string", required: false, "What went wrong.")],
+                 undo: .none) { p in
+            guard Diag.mark(note: try p.string("note", or: "")) else {
+                throw CommandError(code: .invalid_state, message: "diagnostic journal is off")
+            }
+            return .object(["log": .stringOrNull(Diag.currentLogURL?.path)])
+        }
+
+        register("diag.set_enabled",
+                 summary: """
+                 Turns the journal on or off for THIS session, at once. The saved preference is left \
+                 alone unless `persist` is true (the menu's own switch).
+                 """,
+                 params: [ParamSpec("on", "bool", "Journal on or off."),
+                          ParamSpec("persist", "bool", required: false,
+                                    "Also write `pref.diagnosticLog` (default false).")],
+                 undo: .none) { p in
+            let on = try p.bool("on")
+            if try p.bool("persist", or: false) {
+                ObjekatPreferences.shared.diagnosticLog = on
+            } else if on {
+                Diag.start()
+                if let vm = CommandContext.shared.viewModel {
+                    Diag.setProject(name: vm.projectName, path: vm.projectURL?.path)
+                }
+            } else {
+                Diag.stop(reason: "journal désactivé (diag.set_enabled)")
+            }
+            return .object(["enabled": .bool(Diag.isEnabled), "log": .stringOrNull(Diag.currentLogURL?.path)])
+        }
+
+        #if DEBUG
+        register("debug.crash",
+                 summary: """
+                 DEBUG. Crashes the app FOR REAL, to test the crash path: `segv` (write at address 8), \
+                 `abort`, `objc_exception` (uncaught NSException, raised on a background thread), `swift_fatal` (fatalError → SIGTRAP), \
+                 `stack_overflow`. The connection drops, no answer comes. Produces a real .ips in \
+                 ~/Library/Logs/DiagnosticReports: use sparingly.
+                 """,
+                 params: [ParamSpec("kind", "string",
+                                    "segv | abort | objc_exception | swift_fatal | stack_overflow")],
+                 undo: .none) { p in
+            switch try p.string("kind") {
+            case "segv":           objdiag_debug_crash(0)
+            case "abort":          objdiag_debug_crash(1)
+            case "stack_overflow": objdiag_debug_crash(2)
+            case "objc_exception":
+                // On a BACKGROUND thread: raised on the main one, AppKit's run loop catches it
+                // (-reportException:) and carries on — nothing would crash, and the uncaught-exception
+                // handler would never run. On a plain thread nobody catches it: the process aborts.
+                Diag.log(.crash, "debug.crash objc_exception : gestionnaire d'exceptions non rattrapées "
+                         + (Diag.exceptionHandlerIsOurs ? "en place" : "REMPLACÉ"))
+                let thread = Thread {
+                    NSException(name: NSExceptionName("OBJDiagTestException"),
+                                reason: "debug.crash objc_exception", userInfo: nil).raise()
+                }
+                thread.start()
+                try await Task.sleep(nanoseconds: 10_000_000_000)
+                throw CommandError(code: .internal_error, message: "the exception did not crash the process")
+            case "swift_fatal":    fatalError("debug.crash swift_fatal")
+            default:
+                throw CommandError(code: .bad_params, message: "kind: segv|abort|objc_exception|swift_fatal|stack_overflow")
+            }
+            return .null   // never reached
+        }
+
+        register("debug.diag_flood",
+                 summary: """
+                 DEBUG. Writes `lines` journal lines (default 10000) and answers the cost of one call: \
+                 `median_us`, `p95_us` and the file counters. The journal must be on.
+                 """,
+                 params: [ParamSpec("lines", "int", required: false, "Number of lines (default 10000)."),
+                          ParamSpec("width", "int", required: false, "Characters per message (default 60).")],
+                 undo: .none) { p in
+            guard Diag.isEnabled else {
+                throw CommandError(code: .invalid_state, message: "diagnostic journal is off")
+            }
+            let n = min(max(try p.int("lines", or: 10_000), 1), 5_000_000)
+            let width = min(max(try p.int("width", or: 60), 1), 3500)
+            let filler = String(repeating: "x", count: width)
+            var samples = [Double](repeating: 0, count: n)
+            for i in 0..<n {
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                Diag.log(.api, "flood \(i) \(filler)")
+                samples[i] = Double(DispatchTime.now().uptimeNanoseconds &- t0) / 1000.0
+            }
+            samples.sort()
+            return .object([
+                "lines": .int(n),
+                "median_us": .number(samples[n / 2]),
+                "p95_us": .number(samples[min(n - 1, n * 95 / 100)]),
+                "bytes": .number(Double(objdiag_bytes_written())),
+                "rotations": .int(Int(objdiag_rotation_count())),
+            ])
+        }
+        #endif
+    }
+}

@@ -234,6 +234,7 @@ final class Workspace {
         isSwitching = true
         defer { isSwitching = false }
 
+        Diag.log(.proj, "onglet : \(Diag.short(activeTabID)) → \(Diag.short(id))")
         session.stop()
         vm.closeAllPluginEditors()
 
@@ -261,6 +262,8 @@ final class Workspace {
             tabs[i].parked = nil
         }
         activeTabID = id
+        Diag.log(.proj, "onglet actif \(Diag.short(id)) (\(vm.projectName), objets=\(vm.items.count))")
+        Diag.setProject(name: vm.projectName, path: vm.projectURL?.path)
         return .success(())
     }
 
@@ -272,6 +275,7 @@ final class Workspace {
         let vm = session.viewModel
         if let reason = vm.tabSwitchBlocker { return .failure(.blocked(reasonKey: reason)) }
 
+        Diag.log(.proj, "nouvel onglet (depuis \(Diag.short(activeTabID)))")
         session.stop()
         vm.closeAllPluginEditors()
 

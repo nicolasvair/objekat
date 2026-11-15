@@ -728,6 +728,9 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--virtual-audio[=in:4,out:2,in2:0,sr:48000,bs:256,inlat:64,outlat:96,splitin:0,hfp:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout): `input.enable` then refuses, unless `in2:N` gives a second, input-only card ("OBJ Virtual In 2", N channels) that can be its microphone. `hfp:1` makes that second card play a Bluetooth microphone (opening it waits for the system to settle, see "An input card other than the output card"). Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
+| `--diag-log` | turns the diagnostic journal on for this launch (see "The diagnostic journal"). Under `--headless` it is the ONLY way: a test instance never writes the user's journals |
+| `--diag-dir=<folder>` | the journal's root instead of `~/Library/Logs/Objekat` (tests) |
+| `--diag-max-mb=<n>` | the session file's size before it rotates to `.log.1` (default 20) |
 
 Exit codes: `0` success · `1` a command of the script failed · `2` a usage error
 (an unreadable project, neither `--api` nor `--exec`, an impossible socket).
@@ -1926,6 +1929,8 @@ point STARTS (−1…1, 0 = straight).
 | `automation.select_points` | `id`, `param`, `indices` → the POINT selection (what clicks in a band pick); drops the time selection. No undo |
 | `automation.straighten` | `id`, `param`, `index?` → c = 0 on that segment's left point (no `index`: every segment of the curve); or `selection: true` → every segment whose TWO ends are selected, on every object. What ⌥ + double click on a segment does. ONE undo point, none when nothing was bent. Answers `straightened` (how many were bent) and `segments` (how many were named) |
 | `automation.wheel_curvature` | `id`, `param`, `index`, `steps` (notches, + = the curve rises), `new_gesture` (default true: opens an undo point, as a pause in the wheel does) → the ⌥-wheel over a segment, through its straight-line detent |
+| `automation.open` | `id`, `open?` (absent = toggle) → unfolds or folds the object's automation band (for a group, without folding its children). Pure UI state, no undo |
+| `automation.rows` | → `rows` (every row on screen, display order: `object`, `param`, `lane` = the DISPLAY lane `timesel.set` speaks in, `origin`, `span_start` / `span_end` = the window the row exists over, `null` for an infinite bus, `infinite`), `covered` (the rows the time selection reaches — by lane AND by time: two objects on one lane are told apart by their window, a zone touching a window at one instant does not reach it), `caret` (the row a plain click in a band laid the caret on: the band whose window holds the cursor), `selected_points` |
 
 **The straight-line detent.** The ⌥-wheel counts it in NOTCHES: the notch that reaches or crosses
 straight lands EXACTLY on it, the next one in the same direction is held there, the one after leaves
@@ -1933,6 +1938,15 @@ by one notch — whatever phase the knob started on. The state is carried from c
 as the curve is the one the wheel last laid on that segment; `new_gesture` opens an undo point, not a
 new detent. The ⌥-DRAG has the same detent in hand travel (about 12 px held when crossing, 6 px to
 leave straight); it is not reachable from the API.
+
+**The edit shortcuts.** `edit.copy` / `edit.cut` / `edit.paste` are ⌘C / ⌘X / ⌘V through the same door as the
+keyboard and the Edit menu (`performCopyShortcut` …): whichever surface holds the keyboard takes the key, and
+`branch` says which one did — `plugins` | `automation` | `automation_caret` | `midi_notes` | `time_selection` |
+`objects` | `none`. `automation_caret` is ⌘V after a plain click in a band (a caret on the row, nothing traced) with a
+passage of automation copied: it lays the passage at the cursor (snapped like a paste), on the row whose window
+holds the cursor, instead of pasting the OBJECT clipboard. A zone over a band's lane but outside its object's
+window still belongs to the band for ⌫ / ⌘C / ⌘X (it must not fall through to the objects), it just reaches no row.
+One undo point per paste.
 
 ### Sliding the time selection
 
@@ -2657,6 +2671,61 @@ Asserted by `tools/scenario_input_device.py` (phases A-E on the virtual cards: t
 `tools/audio_state_guard.py run -- CMD`, which snapshots and restores the cards' rates, the system defaults, the
 preferences and `Settings.xml`. What none of it can prove: the signal through the aggregate (the microphone permission is
 the user's), the latency, and the behaviour of real AirPods.
+
+### The diagnostic journal (`diag.*`)
+
+A text journal meant to be READ AFTER THE FACT — by Claude — when the app has crashed or something went wrong.
+**Off by default** (`pref.diagnosticLog`, menu OBJEKAT ▸ Diagnostic ▸ Journal de diagnostic, immediate effect; or
+`--diag-log` for one launch). Off, a call costs the reading of one integer and the message is not even built;
+on, one line costs a median of ~3 µs (`debug.diag_flood`, Debug build). **The app only WRITES**: the journal, the
+`CRASH` line, the session's meta. It prepares nothing at the next launch and never alerts; everything that interprets
+a dead session lives in `tools/diag_latest.py`, run by hand when the user says "look at the last crash".
+
+Files, under `~/Library/Logs/Objekat/` (its `README.md` explains itself):
+
+| path | content |
+|---|---|
+| `sessions/<date>_<time>_pid<N>.log` (+ `.log.1`) | the journal of one run |
+| `sessions/<date>_<time>_pid<N>.meta.json` | pid, start, version, project, `clean_exit` (false until the run ends normally) |
+
+A line: `HH:MM:SS.mmm +seconds CAT message` (`+seconds` since the session start; UUIDs cut to 8 characters; a message
+is one line, at most ~4 KB). Categories: `PROJ` (open / save / new / tabs), `KEY` (shortcuts — never the text typed in a
+field), `MENU`, `MOUSE` (clicks with the view hit; wheel and pinch as ONE start/end with their sum), `EDIT` (an undo point
+was pushed: `function File.swift:line` of the gesture, thanks to the defaults of `pushUndo`), `UNDO`, `API` (`name {params}`
+BEFORE the command runs — a command that crashes the app is the last line — then `name → ok|erreur … ms`), `TRANS`,
+`PLUG` (add, editor, and the bridge's instance creation / state restore), `AUDIO`, `TE` (every message of the engine),
+`DLG`, `ISSUE "note"` (a reported problem), `CRASH`, `EXIT`.
+
+How a crash is caught: `SIGSEGV/SIGBUS/SIGILL/SIGTRAP/SIGABRT/SIGFPE` handlers that only call `write()` (the line
+`CRASH signal …` and the raw return addresses), then restore the previous handler and re-fault, so macOS still writes its
+`.ips`; an Objective-C exception adds `CRASH objc_exception name= reason=` and its stack (AppKit REPLACES the
+uncaught-exception handler when the launch ends, so it is put back, chained, afterwards). `SIGTERM`/`SIGINT` are
+`EXIT external`, not crashes.
+
+| command | |
+|---|---|
+| `diag.status` | `enabled`, `root`, `log` (the session file, null while off). Nothing else: no crash list, no pending reports. Not journaled itself |
+| `diag.tail {lines, since}` | the last lines of THIS session (rotated file included); `invalid_state` while off. Not journaled itself |
+| `diag.mark {note}` | the script door of "Signaler un problème…" (⌃⌥⌘I): ONE `ISSUE "note"` line, nothing else; `invalid_state` while off |
+| `diag.set_enabled {on, persist}` | turns it on/off for this run; `persist: true` also writes the preference |
+| `debug.crash {kind}` | **Debug builds only.** A REAL crash: `segv`, `abort`, `objc_exception` (raised on a background thread: on the main one AppKit swallows it), `swift_fatal`, `stack_overflow`. Leaves a real `.ips` in `~/Library/Logs/DiagnosticReports`: one try per kind, never in a loop |
+| `debug.diag_flood {lines, width}` | **Debug only.** Writes N lines and answers `median_us`, `p95_us`, the file counters |
+
+**Reading it — `tools/diag_latest.py`** (stdlib, run by Claude):
+
+| call | |
+|---|---|
+| `diag_latest.py` | the newest abnormal session OR session holding an `ISSUE` line, in full: header, `CRASH` lines, `ISSUE` lines (with the 12 lines before each), the system report, the tail of the journal |
+| `diag_latest.py list [-n N]` | recent sessions: `ok` (clean exit), `alive`, `CRASH/<signal>` (a `CRASH` line), `ABNORMAL` (meta `clean_exit:false`, pid gone or reused, no `EXIT`: kill -9, force quit, power cut), `ISSUE×n` |
+| `diag_latest.py show <session>` | one session: its name, its pid, a part of its name, or `latest` |
+| options | `--lines N` (tail, default 40), `--minutes M` (the last M minutes of the session instead), `--oslog` (adds `log show --predicate 'processIdentifier == PID'` over the session's window), `--json`, `--dir PATH` |
+
+The system report is looked up by pid in `~/Library/Logs/DiagnosticReports` (exception, signal, the 20 first frames of
+the faulting thread, the Objective-C exception's stack): macOS writes it asynchronously, up to a minute after the crash,
+and a kill -9 leaves none — the output says so. Rotation (the app's): 20 MB per session file, 30 sessions, 300 MB.
+Asserted by `tools/scenario_diag_log.py` (headless, `--diag-dir` on a temporary folder; the five `debug.crash` kinds are
+real crashes, one each; a missing `.ips` is reported, not failed). **Not covered**: the menu and the note alert on
+screen, and the local `NSEvent` monitors (keys, clicks, wheel) — they only exist with a window.
 
 ### Export
 

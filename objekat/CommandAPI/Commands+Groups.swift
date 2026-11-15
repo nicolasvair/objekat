@@ -250,6 +250,43 @@ extension CommandRegistry {
             }
             return .object(out)
         }
+
+        register("debug.move_snap",
+                 summary: """
+                 DEBUG. The SNAP of a plain move, with no mouse: the very function the drag handler \
+                 calls on every frame (`EditViewModel.snapObjectMove`), fed with the grabbed \
+                 object's CURRENT start and a raw travel `raw_dt` (seconds, what the hand asks for). \
+                 `ids` = the other moved objects (they follow and are not targets). Answers the \
+                 snapped travel `dt` (before the floor at 0), `start` = where the grabbed object's \
+                 start would land, `use_end` (its END won), `guide` = `{time, on_target}` or null. \
+                 Nothing is moved, no undo. Not present in Release builds.
+                 """,
+                 params: [ParamSpec("id", "uuid", "The grabbed object."),
+                          ParamSpec("raw_dt", "double", "Raw time travel in seconds."),
+                          ParamSpec("ids", "array<uuid>", required: false, "Other moved objects.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let grabbed = try p.uuid("id")
+            guard let object = vm.find(id: grabbed) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(grabbed.uuidString)")
+            }
+            var ids: Set<UUID> = [grabbed]
+            if p.raw["ids"] != nil {
+                for other in try CommandAdapters.existingIDs(try p.uuids("ids"), in: vm) { ids.insert(other) }
+            }
+            let anchors = CommandAdapters.currentAnchors(ids, in: vm)
+            let r = vm.snapObjectMove(grabbedID: grabbed, anchors: anchors, rawDt: try p.double("raw_dt"))
+            var out: [String: JSONValue] = ["dt": .number(r.dt),
+                                            "start": .number(object.startTime + r.dt),
+                                            "use_end": .bool(r.useEnd)]
+            if let g = vm.snapGuide {
+                out["guide"] = .object(["time": .number(g.time), "on_target": .bool(g.onTarget)])
+            } else {
+                out["guide"] = .null
+            }
+            vm.snapGuide = nil
+            return .object(out)
+        }
         #endif
     }
 }

@@ -29,6 +29,19 @@ final class ObjekatPreferences {
         }
     }
 
+    /// Journal de diagnostic (@see Shared/DiagLog.swift) : écrit ce que l'app fait, pour comprendre un
+    /// crash ou un problème après coup. OFF par défaut. L'effet est immédiat au basculement : le journal
+    /// s'ouvre ou se ferme sur-le-champ. Au lancement, c'est `main.swift` qui l'allume (avant le moteur).
+    /// `--diag-log` l'allume pour CE lancement sans toucher à la préférence enregistrée ; en `--headless`
+    /// il en est la seule porte.
+    var diagnosticLog: Bool {
+        didSet {
+            UserDefaults.standard.set(diagnosticLog, forKey: Self.diagnosticLogKey)
+            applyDiagnosticPreference()
+        }
+    }
+    static let diagnosticLogKey = "pref.diagnosticLog"
+
     private init() {
         soundLibraryFolder = UserDefaults.standard.string(forKey: Self.soundLibraryFolderKey)
             ?? UserDefaults.standard.string(forKey: Self.legacySoundLibraryFolderKey)
@@ -37,6 +50,21 @@ final class ObjekatPreferences {
         // a test harness does, and it has no business changing the user's preferences.
         apiEnabled = Self.apiForcedByLaunchArgument
             || UserDefaults.standard.bool(forKey: "pref.apiEnabled")
+        diagnosticLog = Diag.shouldStartAtLaunch(
+            preference: UserDefaults.standard.bool(forKey: Self.diagnosticLogKey))
+    }
+
+    /// Aligne le journal réel sur la préférence (à chaque bascule ; le lancement a déjà fait le sien).
+    func applyDiagnosticPreference() {
+        if diagnosticLog {
+            guard Diag.start() else { return }
+            Diag.log(.proj, "journal activé")
+            if let vm = CommandContext.shared.viewModel {
+                Diag.setProject(name: vm.projectName, path: vm.projectURL?.path)
+            }
+        } else {
+            Diag.stop(reason: "journal désactivé")
+        }
     }
 
     // MARK: - Launch arguments

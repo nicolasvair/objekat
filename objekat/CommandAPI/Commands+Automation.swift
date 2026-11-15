@@ -70,6 +70,47 @@ extension CommandRegistry {
 
     func registerAutomationCommands() {
 
+        register("automation.open",
+                 summary: "Unfolds or folds an object's automation band, as the timeline's own "
+                        + "selector does (for a group it hides its children without folding them). "
+                        + "Pure UI state, no undo.",
+                 params: [ParamSpec("id", "uuid", "The object."),
+                          ParamSpec("open", "bool", required: false, "Wanted state; absent = toggle.")]) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let obj = try self.requireObject(vm, try p.uuid("id"))
+            let open = try p.bool("open", or: !obj.automationOpen)
+            vm.setAutomationOpen(id: obj.id, open)
+            return .object(["id": .string(obj.id.uuidString), "open": .bool(open)])
+        }
+
+        register("automation.rows",
+                 summary: "The automation rows on screen, in display order: {object, param, lane (the "
+                        + "DISPLAY lane, the one `timesel.set` speaks in), origin (the instant of the "
+                        + "row's zero), span_start / span_end (the window the row exists over, null "
+                        + "for an infinite bus), infinite}. `covered` lists the ones the time "
+                        + "selection reaches — by lane AND by time (@see AutomationZoneFilter) — "
+                        + "`caret` the one the caret sits in, if any, and `selected_points` the "
+                        + "point selection ({object, param, index}).") { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            @MainActor func json(_ r: EditViewModel.AutomationRowOnScreen) -> JSONValue {
+                let infinite = r.span.lowerBound.isInfinite
+                return .object(["object": .string(r.objectID.uuidString),
+                                "param": .string(Self.automationParamName(r.param)),
+                                "lane": .int(r.lane), "origin": .number(r.origin),
+                                "span_start": infinite ? .null : .number(r.span.lowerBound),
+                                "span_end": infinite ? .null : .number(r.span.upperBound),
+                                "infinite": .bool(infinite)])
+            }
+            return .object(["rows": .array(vm.automationRowsOnScreen().map(json)),
+                            "covered": .array(vm.automationRowsInTimeSelection().map(json)),
+                            "caret": vm.automationCaretRow().map(json) ?? .null,
+                            "selected_points": .array(vm.selectedAutomationPoints.map {
+                                .object(["object": .string($0.objectID.uuidString),
+                                         "param": .string(Self.automationParamName($0.param)),
+                                         "index": .int($0.index)])
+                            })])
+        }
+
         register("automation.list",
                  summary: "An object's automation curves: one entry per automated parameter, its "
                         + "points in STORAGE order ({index, t, v, c}; t relative to the object's "

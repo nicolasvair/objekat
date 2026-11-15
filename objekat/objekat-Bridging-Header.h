@@ -10,6 +10,9 @@
 
 #import "OBJEngineCore.h"
 
+// Le cœur du journal de diagnostic (C pur, partagé avec le pont C++) — @see Shared/DiagLog.swift
+#import "Shared/OBJDiagLog.h"
+
 // libmp3lame — encodage MP3 depuis Swift (macOS ne fournit AUCUN encodeur MP3 : ni CoreAudio ni
 // AVFoundation ne savent écrire du MPEG Layer III). Les sources sont vendorées dans
 // `lame-3.100/` et compilées par les unités de `objekat/LAMEModules/`.

@@ -33,7 +33,7 @@ struct TimelineDropDelegate: DropDelegate {
     /// Files being hovered: a 'how these files will land' band plus a ghost preview.
     /// It receives the providers (to read names and lengths, once only) and the cursor's
     /// position, which places the rectangles. Called again on every movement so as to follow the
-    /// cursor; tracking ⌘, on the other hand, is autonomous on the view-model's side —
+    /// cursor; tracking ⌥, on the other hand, is autonomous on the view-model's side —
     let onFileHint: ([NSItemProvider], CGPoint) -> Void
     /// `dropUpdated` only speaks on movement.
     let onFileHintEnd: () -> Void
@@ -114,7 +114,7 @@ struct TimelineDropDelegate: DropDelegate {
 /// A preview of the drop: one rectangle per file, laid where the clip will land — the same lane,
 /// the same instant, the same width, computed by the layout shared with the real placement
 /// (`EditViewModel.fileDropLayout`). Deliberately bare — no waveform, no clip colour: it is the
-/// LAYOUT that has to read at a glance, and it flips under ⌘ at the same time as the band at the
+/// LAYOUT that has to read at a glance, and it flips under ⌥ at the same time as the band at the
 /// bottom. While a file's length is unread, its rectangle takes the waiting width and keeps a
 /// dotted outline, then resets itself — so the preview appears at once rather than waiting for
 /// the files to be read.
@@ -126,16 +126,39 @@ struct FileDropGhostOverlay: View {
     let pixelsPerSecond: Double
     let rulerHeight: Double
     let laneStep: Double
+    let laneGap: Double
     let blockHeight: Double
+    /// The width of the whole timeline (the insertion line spans it, outside any group).
+    let fullWidth: Double
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let hint = viewModel.fileDropHint, let loc = hint.location {
-                let baseLane  = max(0, Int((loc.y - rulerHeight) / laneStep))
+                // Over the GAP between two rows (`hint.insertion`): the files will be inserted there,
+                // so the ghost is a stack of rows centred on the insertion line (the rows it will
+                // open); otherwise on the lane under the cursor, as ever.
+                let inserting = hint.insertion
+                let baseLane  = inserting != nil ? 0 : max(0, Int((loc.y - rulerHeight) / laneStep))
                 let baseStart = max(0, viewModel.snappedTimePure(loc.x / pixelsPerSecond))
                 let slots = EditViewModel.fileDropLayout(durations: hint.previewDurations,
                                                          mode: hint.mode,
                                                          baseLane: baseLane, baseStart: baseStart)
+                let stackTop: Double? = inserting.map { plan in
+                    let rows = Double((slots.map(\.lane).max() ?? 0) + 1)
+                    let centre = LaneInsertionLine.centreY(boundaryRow: plan.boundaryRow,
+                                                           rulerHeight: rulerHeight,
+                                                           laneStep: laneStep, laneGap: laneGap)
+                    // Never above the first row (the ruler is not a lane).
+                    return max(rulerHeight, centre - (rows * laneStep - laneGap) / 2)
+                }
+                if let plan = inserting {
+                    let extent = LaneInsertionLine.extent(of: plan, in: viewModel,
+                                                          pixelsPerSecond: pixelsPerSecond,
+                                                          fullWidth: fullWidth)
+                    LaneInsertionLine(boundaryRow: plan.boundaryRow, rulerHeight: rulerHeight,
+                                      laneStep: laneStep, laneGap: laneGap,
+                                      x: extent.x, width: extent.width)
+                }
                 ForEach(slots) { slot in
                     let preview = slot.index < hint.previews.count ? hint.previews[slot.index] : nil
                     let w = max(3, slot.duration * pixelsPerSecond)
@@ -164,7 +187,7 @@ struct FileDropGhostOverlay: View {
                         }
                         .frame(width: w, height: blockHeight)
                         .offset(x: slot.startTime * pixelsPerSecond,
-                                y: rulerHeight + Double(slot.lane) * laneStep)
+                                y: (stackTop ?? rulerHeight) + Double(slot.lane) * laneStep)
                         .animation(.easeOut(duration: 0.12), value: hint.mode)
                 }
             }
@@ -181,6 +204,16 @@ extension TimelineView {
         // The layout kept = the one the band was showing at the instant of the drop. Read here,
         // before closing the band, otherwise `endFileDropHint` would already have wiped it.
         let dropMode = viewModel.fileDropMode
+        // The gap between two rows the hover was on, if any (the files are then INSERTED there). Read
+        // off the hint for the same reason: it is what the line showed at the instant of the drop.
+        // With no hover to read (the providers arrived without one), the drop's own position says it.
+        let dropRow: Int?
+        if let hint = viewModel.fileDropHint {
+            dropRow = hint.boundaryRow
+        } else {
+            dropRow = LaneInsertion.boundaryRow(pointerRow: (Double(location.y) - rulerHeight) / laneStep,
+                                                halfBand: LaneInsertion.halfBand(laneStep: laneStep))
+        }
         viewModel.endFileDropHint()
 
         // The files are no longer handled provider by provider: laid down each on its own at the
@@ -217,7 +250,7 @@ extension TimelineView {
             // Files are measured, folders are read down to their leaves (off the main thread, the
             // lengths a few at a time): both come back in the order they were dropped.
             let load = await EditViewModel.loadDropEntries(from: urls)
-            placeDroppedEntries(load, at: location, mode: dropMode)
+            placeDroppedEntries(load, at: location, mode: dropMode, insertionRow: dropRow)
         }
         return true
     }
@@ -264,7 +297,8 @@ extension TimelineView {
     /// rendering.
     @MainActor
     func beginFileDropPreview(providers: [NSItemProvider], location: CGPoint) {
-        viewModel.beginFileDropHint(count: providers.count, location: location)
+        viewModel.beginFileDropHint(count: providers.count, location: location,
+                                    rulerHeight: rulerHeight, laneStep: laneStep)
         guard viewModel.claimFileDropPreviewLoad() else { return }
         let vm = viewModel
         Task { @MainActor in
@@ -304,7 +338,7 @@ extension TimelineView {
     /// one slot of the layout, like a file of the same length.
     @MainActor
     private func placeDroppedEntries(_ load: EditViewModel.DropLoad, at location: CGPoint,
-                                     mode: EditViewModel.FileDropMode) {
+                                     mode: EditViewModel.FileDropMode, insertionRow: Int?) {
         let vm = viewModel
         defer { vm.reportFolderImportIssues(load) }
         guard !load.entries.isEmpty else { return }
@@ -320,11 +354,11 @@ extension TimelineView {
         }
         let baseLane  = max(0, Int((location.y - rulerHeight) / laneStep))
         let baseStart = max(0, vm.snappedTimePure(location.x / pixelsPerSecond))
-        // An instrument group takes no audio (E5): refused before the undo point, like every refused gesture.
-        if vm.refusesDropEntries(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode) { return }
-        vm.pushUndo()
-        // The same layout computation as the hover's ghost preview (`fileDropLayout`): what is laid
-        // down has to be exactly what was shown under the cursor.
-        vm.placeDropEntries(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode)
+        // The release is one door, shared with the headless `debug.file_drop`: the gap (if the drop
+        // was let go between two lanes) is re-planned from the real model with the real number of
+        // entries, an instrument group refuses before any undo point, and ONE undo point covers
+        // the shift of the lanes below and the laying down (@see commitFileDrop).
+        vm.commitFileDrop(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
+                          insertionRow: insertionRow)
     }
 }
