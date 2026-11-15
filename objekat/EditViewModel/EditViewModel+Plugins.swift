@@ -381,6 +381,8 @@ extension EditViewModel {
             return
         }
         let plug = freshPlugin(available)      // its type's default preset, if one is set
+        Diag.log(.plug, "ajout « \(available.name) » (\(available.formatName), \(available.manufacturer)) "
+                 + "sur \(Diag.short(objectID)) plugin=\(Diag.short(plug.id))")
         pushUndo()
         updateChainPlugins(objectID) { $0.append(plug) }
         if compileRack(objectID: objectID).contains(plug.id) {
@@ -592,6 +594,7 @@ extension EditViewModel {
         // The choice of channel on the cable that enters a one-input plugin is the plugin's: read before
         // the removal (it needs the chain as it stands), and taken away in the same undo step.
         let owned = cableChoicesOwned(by: [pluginID], host: objectID)
+        Diag.log(.plug, "retrait plugin=\(Diag.short(pluginID)) de \(Diag.short(objectID))")
         pushUndo()
         // The touch listening RETAINS the plugin: leaving it armed would keep it alive after it has been
         // removed from the chain. And what was known of its parameters is worth nothing any more.
@@ -664,6 +667,7 @@ extension EditViewModel {
 
     func openPluginEditor(objectID: UUID, pluginID: UUID) {
         guard hasInterface, let engine else { return }
+        Diag.log(.plug, "ouverture de l'éditeur plugin=\(Diag.short(pluginID)) sur \(Diag.short(objectID))")
         let colorIndex = leafPlugins(objectID: objectID).first(where: { $0.id == pluginID })?.colorIndex ?? 0
         nativeEditorHosts[pluginID] = objectID
         engine.openPluginEditor(pluginID.uuidString, colorHex: ObjekatPalette.pluginHex(colorIndex))

@@ -54,6 +54,7 @@ extension EditViewModel {
             dialogJournal.removeFirst(dialogJournal.count - Self.maxDialogRecords)
         }
         NSLog("[DIALOGUE] %@ — %@ (answer: %@)", title, info, answer)
+        Diag.log(.dlg, "\(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200)) → \(answer)")
     }
 
     func clearDialogJournal() { dialogJournal = [] }
@@ -68,11 +69,13 @@ extension EditViewModel {
             recordDialog(title, info, answer: "reported")
             return
         }
+        Diag.log(.dlg, "alerte affichée : \(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200))")
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = info
         alert.alertStyle = style
         alert.runModal()
+        Diag.log(.dlg, "alerte fermée")
     }
 
     // MARK: - Ask (yes / no)
@@ -100,7 +103,10 @@ extension EditViewModel {
             alert.alertStyle = style
             alert.addButton(withTitle: yes)
             alert.addButton(withTitle: no)
-            return alert.runModal() == .alertFirstButtonReturn
+            Diag.log(.dlg, "question affichée : \(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200))")
+            let yesChosen = alert.runModal() == .alertFirstButtonReturn
+            Diag.log(.dlg, "réponse : \(yesChosen ? "oui" : "non")")
+            return yesChosen
         }
     }
 
@@ -139,7 +145,10 @@ extension EditViewModel {
             alert.addButton(withTitle: L("dialog.dirty.discard"))
             alert.addButton(withTitle: L("common.cancel"))
             alert.alertStyle = .warning
-            switch alert.runModal() {
+            Diag.log(.dlg, "question affichée : \(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200))")
+            let response = alert.runModal()
+            Diag.log(.dlg, "réponse : \(response == .alertFirstButtonReturn ? "enregistrer" : response == .alertSecondButtonReturn ? "ne pas enregistrer" : "annuler")")
+            switch response {
             case .alertFirstButtonReturn:  return .save
             case .alertSecondButtonReturn: return .discard
             default:                       return .cancel

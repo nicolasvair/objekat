@@ -25,6 +25,12 @@
 #include "OBJAudioProbe.h"
 #include "OBJPluginProbe.h"     // trims + gain match around a plugin (engine patch 0045)
 #include "Shared/OBJDiagLog.h"      // le journal de diagnostic (C pur) : le logger JUCE y verse tout, catégorie TE
+
+// Journal de diagnostic (catégorie PLUG) : ce que le pont fait des plugins, la ligne qui précède un
+// chargement qui plante. Jamais sur un thread temps réel ; éteint, ne coûte que la lecture d'un entier.
+#define OBJ_DIAG_PLUG(...) \
+    do { if (objdiag_enabled() && !objdiag_is_realtime_thread()) \
+             objdiag_log("PLUG", [[NSString stringWithFormat:__VA_ARGS__] UTF8String]); } while (0)
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
@@ -8024,6 +8030,9 @@ static void objClearARAState(te::WaveAudioClip& clip) {
     NSString* format     = pluginInfo[@"format"];
     NSString* pluginName = pluginInfo[@"name"] ?: @"?";
     if (!pluginKey || !identifier || !format) return nil;
+    OBJ_DIAG_PLUG(@"pont : création « %@ » format=%@ chemin=%@ clé=%.8s état=%@",
+                  pluginName, format, identifier, pluginKey.UTF8String,
+                  stateXML.length > 0 ? @"restauré" : @"défaut");
 
     te::Plugin::Ptr ptr = nullptr;
 
@@ -8178,6 +8187,7 @@ static void objClearARAState(te::WaveAudioClip& clip) {
 
     if (!ptr) {
         NSLog(@"[OBJ] addPlugin: ECHEC FINAL pour '%@' [%@]", pluginName, format);
+        OBJ_DIAG_PLUG(@"pont : ÉCHEC création « %@ » [%@]", pluginName, format);
         return nil;
     }
 
@@ -8194,6 +8204,8 @@ static void objClearARAState(te::WaveAudioClip& clip) {
               pluginName,
               instanceReady ? "prête" : "en cours",
               err.toRawUTF8());
+        OBJ_DIAG_PLUG(@"pont : « %@ » inséré, instance=%s loadError='%s'", pluginName,
+                      instanceReady ? "prête" : "en cours (asynchrone)", err.toRawUTF8());
         if (!instanceReady) {
             NSLog(@"[OBJ] addPlugin: chargement asynchrone en cours (normal pour VST3/AU)");
         }
@@ -8534,6 +8546,7 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
             if (++it->ticks <= kObjStateReassertMaxTicks) { ++it; continue; }
             NSLog(@"[OBJ] état plugin : '%s' n'a jamais rendu son état — abandon",
                   it->name.toRawUTF8());
+            OBJ_DIAG_PLUG(@"pont : « %s » n'a jamais rendu son état — abandon", it->name.toRawUTF8());
             it = _pendingStateReasserts.erase(it);
             continue;
         }
@@ -8546,6 +8559,8 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
             juce::MemoryBlock after = objReadInstanceState(*pi);
             NSLog(@"[OBJ] état plugin ré-appliqué : %s → %s", it->name.toRawUTF8(),
                   (after == it->desired) ? "OK" : "toujours différent (état non bit-stable ?)");
+            OBJ_DIAG_PLUG(@"pont : état de « %s » ré-appliqué → %s", it->name.toRawUTF8(),
+                          (after == it->desired) ? "OK" : "toujours différent");
         }
         // L'état est posé : si cette instance appartient à un groupe lié, c'est maintenant que
         // son chunk devient la référence de la synchro d'état (avant, elle traversait ses
@@ -10544,6 +10559,10 @@ static void objDumpPluginList(te::PluginList& pl,
                 }
             }
             if (!p) p = pl.insertPlugin(vt, indexBefore(pl, anchor));
+            OBJ_DIAG_PLUG(@"pont : chaîne « %@ » format=%@ chemin=%@ clé=%.8s → %s%s",
+                          n.info[@"name"] ?: @"?", n.info[@"format"] ?: @"?",
+                          n.info[@"identifier"] ?: @"?", pk.c_str(),
+                          p ? "inséré" : "REFUSÉ", fromParking ? " (repris de la consigne)" : "");
             if (!p) {
                 NSLog(@"[FX] compile: insertion refusée pour '%s'", pk.c_str());
                 [failed addObject:[NSString stringWithUTF8String:pk.c_str()]];

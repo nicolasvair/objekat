@@ -279,6 +279,8 @@ final class ObjekatSession {
         guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
         pausedAt = nil   // a plain playback starts from the cursor, not from the pause
         playheadPosition = viewModel.cursorPosition
+        Diag.log(.trans, String(format: "play depuis %.3f s (boucle=%@)", playheadPosition,
+                                viewModel.loopRegion == nil ? "non" : "oui"))
         engineSeek(playheadPosition)   // (already playing: a seek that the loop does not re-frame)
         isPlaying = true
         engine.play()
@@ -307,7 +309,11 @@ final class ObjekatSession {
         }
         // The instant of the press: the playhead where it is when playing (a punch-in), the caret otherwise.
         let pressedAt = isPlaying ? engine.currentPlaybackPosition() : viewModel.cursorPosition
-        if let why = viewModel.beginRecording(startTime: pressedAt) { return why }
+        Diag.log(.trans, String(format: "rec départ à %.3f s", pressedAt))
+        if let why = viewModel.beginRecording(startTime: pressedAt) {
+            Diag.log(.trans, "rec refusé : \(why)")
+            return why
+        }
         isPlaying = true
         return nil
     }
@@ -325,6 +331,7 @@ final class ObjekatSession {
     /// cut).
     func togglePause() {
         guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
+        Diag.log(.trans, isPlaying ? "pause" : "reprise")
         if isPlaying {
             // Read at the instant of the pause, not at the last tick (up to 50 ms behind).
             let t = engine.currentPlaybackPosition()
@@ -348,6 +355,7 @@ final class ObjekatSession {
     }
 
     func stop() {
+        Diag.log(.trans, "stop (lecture=\(isPlaying ? 1 : 0) rec=\(viewModel.isRecording ? 1 : 0))")
         engine.stop()
         isPlaying = false
         pausedAt = nil
@@ -361,6 +369,7 @@ final class ObjekatSession {
     }
 
     func returnToZero() {
+        Diag.log(.trans, "retour à zéro")
         engine.stop()
         engine.seek(to: 0)
         isPlaying = false

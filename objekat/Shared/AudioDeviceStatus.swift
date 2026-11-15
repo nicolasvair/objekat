@@ -147,6 +147,9 @@ final class AudioDeviceStatus {
                                        rateDecision: SampleRateDecision(raw: live.rateDecision),
                                        deviceRateBeforeDecision: live.deviceRateBeforeDecision)
         guard next != snapshot else { return }
+        Diag.log(.audio, "carte « \(next.name ?? "?") » (\(next.type ?? "?")) \(Int(next.sampleRate)) Hz tampon=\(next.bufferSize) "
+                 + "sorties=\(next.outputChannels) entrées=\(next.inputChannels) "
+                 + "\(next.running ? "en marche" : "ARRÊTÉE")")
         snapshot = next
         generation &+= 1
         onChange?()

@@ -75,6 +75,13 @@ nonisolated enum Diag {
         return uuidPattern.stringByReplacingMatches(in: text, range: range, withTemplate: "$1")
     }
 
+    /// `objekat/EditViewModel+Cut.swift` → `EditViewModel+Cut.swift` (`#fileID`).
+    static func fileName(_ file: StaticString) -> Substring {
+        let text = "\(file)"
+        if let slash = text.lastIndex(of: "/") { return text[text.index(after: slash)...] }
+        return Substring(text)
+    }
+
     /// Coupe à `limit` caractères, avec une ellipse.
     static func truncated(_ text: String, _ limit: Int) -> String {
         text.count <= limit ? text : String(text.prefix(limit)) + "…"
@@ -206,6 +213,9 @@ nonisolated enum Diag {
             return false
         }
         installExceptionHandler()
+        if !launchArguments.headless {
+            Task { @MainActor in DiagInputMonitor.installIfNeeded() }
+        }
         return true
     }
 

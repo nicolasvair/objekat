@@ -321,6 +321,7 @@ extension EditViewModel {
     /// `project.save_as` plug into, with `saveAs()` keeping the choice of path through a panel.
     @discardableResult
     func writeSession(to fileURL: URL) -> Bool {
+        Diag.log(.proj, "enregistrement → \(fileURL.path) (objets=\(items.count))")
         do {
             let folder = fileURL.deletingLastPathComponent()
             try Self.createProjectTree(in: folder)
@@ -330,8 +331,11 @@ extension EditViewModel {
             isDirty = false
             recordRecentProject(fileURL)
             refreshDiskUsage()
+            Diag.log(.proj, "enregistré \(projectName)")
+            Diag.setProject(name: projectName, path: fileURL.path)
             return true
         } catch {
+            Diag.log(.proj, "enregistrement ÉCHOUÉ : \(error.localizedDescription)")
             return false
         }
     }
@@ -374,6 +378,8 @@ extension EditViewModel {
         // A direct render reads the live Edit, which this is about to empty. The API's `project.new`
         // answers `invalid_state` BEFORE getting here; this is the net for every other caller.
         guard !exportPinsActiveDocument else { return }
+        Diag.log(.proj, "nouveau projet (objets avant=\(items.count))")
+        defer { Diag.setProject(name: nil, path: nil) }
         // An empty document has no source files and goes through no load: whatever the previous
         // one knew about its files is gone, and a tab parked just before (`newTab`) must not leave
         // the detection waiting for a load that will never come.
@@ -503,6 +509,8 @@ extension EditViewModel {
     @discardableResult
     func loadProject(from url: URL) -> Bool {
         guard !exportPinsActiveDocument else { return false }
+        let started = CFAbsoluteTimeGetCurrent()
+        Diag.log(.proj, "ouverture début \(url.path)")
         do {
             let doc = try decodeProjectDocument(at: url)
             applyProjectDocument(doc, displayName: Self.projectDisplayName(for: url))
@@ -511,8 +519,12 @@ extension EditViewModel {
             projectName = displayName(for: url)
             settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
+            Diag.log(.proj, String(format: "ouverture fin %@ objets=%d durée=%.0f ms", projectName,
+                                   items.count, (CFAbsoluteTimeGetCurrent() - started) * 1000))
+            Diag.setProject(name: projectName, path: url.path)
             return true
         } catch {
+            Diag.log(.proj, "ouverture ÉCHOUÉE : \(error)")
             return false
         }
     }
@@ -530,17 +542,25 @@ extension EditViewModel {
     @discardableResult
     func loadProjectAsync(from url: URL, pluginIDRepair: PluginIDRepairChoice = .ask) async -> Bool {
         guard !exportPinsActiveDocument else { return false }
+        let started = CFAbsoluteTimeGetCurrent()
+        Diag.log(.proj, "ouverture début (async) \(url.path)")
         do {
             let doc = try decodeProjectDocument(at: url)
             let repair = resolvePluginIDRepair(pluginIDRepair, doc: doc, url: url)
             let ok = await applyProjectDocumentAsync(doc, displayName: Self.projectDisplayName(for: url),
                                                      repairPluginIDs: repair)
             lastProjectLoad?.path = url.path
-            guard ok else { return false }
+            guard ok else {
+                Diag.log(.proj, "ouverture async interrompue ou ÉCHOUÉE \(url.lastPathComponent)")
+                return false
+            }
             projectURL = url
             projectName = displayName(for: url)
             settleDirtyAfterLoad()   // clean, unless the load re-keyed plugin ids
             recordRecentProject(url)
+            Diag.log(.proj, String(format: "ouverture fin %@ objets=%d durée=%.0f ms", projectName,
+                                   items.count, (CFAbsoluteTimeGetCurrent() - started) * 1000))
+            Diag.setProject(name: projectName, path: url.path)
             if pluginIDRepair == .ask { offerFXLinkDivergenceRepair() }
             return true
         } catch {
@@ -548,6 +568,7 @@ extension EditViewModel {
             // `async: true` API path sets a PLACEHOLDER `loadState` synchronously before this
             // function is even scheduled (@see project.open), and a decode failure here must not
             // leave `isLoadingProject` stuck true forever.
+            Diag.log(.proj, "ouverture ÉCHOUÉE (lecture) : \(error)")
             loadState = nil
             lastProjectLoad = ProjectLoadOutcome(path: url.path, success: false,
                                                  errorMessage: String(describing: error), durationMs: 0)

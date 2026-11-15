@@ -5,7 +5,11 @@ extension EditViewModel {
     // MARK: - Undo / Redo
 
     func undo() {
-        guard let snapshot = undoStack.popLast() else { return }
+        guard let snapshot = undoStack.popLast() else {
+            Diag.log(.undo, "undo ignoré (pile vide)")
+            return
+        }
+        Diag.log(.undo, "undo (pile \(undoStack.count + 1) → \(undoStack.count), redo \(redoStack.count + 1))")
         // The snapshot of the LIVE state serves twice: it goes onto the redo stack, and it serves
         // as the reference `applySnapshot` compares against (rebuild only what differs).
         let live = currentSnapshot()
@@ -14,15 +18,20 @@ extension EditViewModel {
     }
 
     func redo() {
-        guard let snapshot = redoStack.popLast() else { return }
+        guard let snapshot = redoStack.popLast() else {
+            Diag.log(.undo, "redo ignoré (pile vide)")
+            return
+        }
+        Diag.log(.undo, "redo (pile \(undoStack.count) → \(undoStack.count + 1), redo \(redoStack.count))")
         let live = currentSnapshot()
         undoStack.append(live)
         applySnapshot(snapshot, live: live)
     }
 
-    func edit(_ action: () -> Void) {
+    func edit(_ action: () -> Void, from function: StaticString = #function,
+              file: StaticString = #fileID, line: UInt = #line) {
         let itemsBefore = items, dirtyBefore = isDirty
-        pushUndo()
+        pushUndo(function, file, line)
         groupInstrumentRefusal = nil
         action()
         // A gesture the rule of an instrument group turned down changed nothing: it leaves no undo point behind.
@@ -32,7 +41,12 @@ extension EditViewModel {
         }
     }
 
-    func pushUndo() {
+    /// `function`/`file`/`line` are the CALLER's (defaults), only for the diagnostic journal: the
+    /// 200-odd call sites stay untouched, and a line `EDIT moveObject EditViewModel+Move.swift:88`
+    /// says which gesture pushed the point (@see Diag).
+    func pushUndo(_ function: StaticString = #function, _ file: StaticString = #fileID,
+                  _ line: UInt = #line) {
+        Diag.log(.edit, "\(function) \(Diag.fileName(file)):\(line)")
         // A new gesture: the previous one's promises are void — except inside a `singleUndoStep`,
         // where the whole run IS one gesture and the sources an early step registered (an
         // automatic FX link waiting to adopt its original) must survive the next step's own push.
@@ -69,8 +83,9 @@ extension EditViewModel {
     ///     run's: the depth is measured AFTER the run's push.
     /// Nested runs are fine: only the outermost truncates.
     @discardableResult
-    func singleUndoStep<T>(_ body: () -> T) -> T {
-        pushUndo()
+    func singleUndoStep<T>(_ function: StaticString = #function, _ file: StaticString = #fileID,
+                           _ line: UInt = #line, _ body: () -> T) -> T {
+        pushUndo(function, file, line)
         let depthWithOwnEntry = undoStack.count
         undoTransactionDepth += 1
         let result = body()
