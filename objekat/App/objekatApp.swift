@@ -378,6 +378,20 @@ struct objekatApp: App {
                     .keyboardShortcut("a", modifiers: [.command])
                     .disabled(busy)
             }
+            // OBJEKAT ▸ Diagnostic : le journal (préférence, effet immédiat), « Signaler un problème… »
+            // (la main rassemble un dossier à lire après coup) et l'ouverture du dossier des journaux.
+            // ⌃⌥⌘I et non ⌃⌥⌘P : le moniteur de touches du timeline avale la lettre P (outil Pan, sans
+            // garde de modificateurs) avant que les équivalents de menu la voient ; « i » est libre.
+            CommandGroup(after: .appSettings) {
+                Menu(L("diag.menu.title")) {
+                    Toggle(L("diag.menu.log"), isOn: Binding(
+                        get: { ObjekatPreferences.shared.diagnosticLog },
+                        set: { ObjekatPreferences.shared.diagnosticLog = $0 }))
+                    Button(L("diag.menu.report")) { DiagIssueReport.askAndCollect() }
+                        .keyboardShortcut("i", modifiers: [.control, .option, .command])
+                    Button(L("diag.menu.openFolder")) { DiagIssueReport.openFolder() }
+                }
+            }
             // No View menu, no Help menu: emptied here, their top-level items taken off by MainMenuCleanup
             // (AppKit lays "Enter Full Screen" and the help search back on its own otherwise).
             CommandGroup(replacing: .toolbar) {}

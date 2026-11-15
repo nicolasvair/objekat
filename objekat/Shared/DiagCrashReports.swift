@@ -87,7 +87,7 @@ nonisolated enum DiagCrashReports {
 
     // MARK: - La préparation d'un rapport
 
-    private struct Builder {
+    struct Builder {
         let root: URL
         let base: String
         let meta: [String: Any]

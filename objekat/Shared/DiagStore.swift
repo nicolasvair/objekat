@@ -37,7 +37,7 @@ nonisolated enum DiagStore {
 
     /// Rédigé à chaque changement de version du texte : un dossier de journaux doit s'expliquer
     /// seul à celui (Claude) qui l'ouvre sans rien savoir de l'app.
-    private static let readmeStamp = "<!-- objekat-diag-readme 1 -->"
+    private static let readmeStamp = "<!-- objekat-diag-readme 2 -->"
 
     static func writeReadmeIfNeeded(_ root: URL) {
         let url = root.appendingPathComponent("README.md")
@@ -79,7 +79,7 @@ nonisolated enum DiagStore {
         `+secondes` = temps écoulé depuis le début de la session. Les identifiants d'objet sont
         raccourcis à 8 caractères. Catégories : PROJ (projet, onglets), KEY (raccourcis), MENU,
         MOUSE (clics, molette), EDIT (un point d'annulation posé : fonction, fichier:ligne), UNDO,
-        API (commandes : `→` à l'appel, `←` au retour, avec durée), TRANS (transport), PLUG
+        API (commandes : une ligne `nom {paramètres}` à l'appel, puis `nom → ok|erreur … durée` au retour ; une commande qui plante reste la dernière ligne), TRANS (transport), PLUG
         (plugins), AUDIO (carte son), TE (messages du moteur Tracktion/JUCE), DLG (dialogues),
         ISSUE (problème signalé), CRASH (la ou les dernières lignes d'un crash), EXIT (fin de session).
 
