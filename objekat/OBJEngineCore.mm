@@ -10811,6 +10811,20 @@ static void objDumpPluginList(te::PluginList& pl,
             pit->second->deleteFromParent();
             _pluginMap.erase(pit);
         }
+        // The fold halves of the plugin that goes (@see monoFoldKey) go with it. A half laid LAZILY
+        // (`syncMonoFoldHalvesForPluginKey:`, once the plugin has loaded) is in no chain's key list, so
+        // this pass would never have seen it: it stayed behind, orphan, until the project was reloaded.
+        _monoFoldWanted.erase(pk);
+        _monoFoldPending.erase(pk);
+        for (int half : { (int)te::ObjMonoFoldPlugin::inHalf, (int)te::ObjMonoFoldPlugin::outHalf }) {
+            const std::string fk = monoFoldKey(pk, half);
+            if (auto fit = _pluginMap.find(fk); fit != _pluginMap.end()) {
+                if (fit->second) fit->second->deleteFromParent();
+                _pluginMap.erase(fit);
+            }
+            if (auto oit = _pluginOwnerHost.find(fk); oit != _pluginOwnerHost.end() && oit->second == key)
+                _pluginOwnerHost.erase(oit);
+        }
         if (auto oit = _pluginOwnerHost.find(pk); oit != _pluginOwnerHost.end() && oit->second == key)
             _pluginOwnerHost.erase(oit);
     }
