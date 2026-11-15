@@ -10720,52 +10720,6 @@
         }
       }
     },
-    "library.autoPreview.off": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto-preview with the ↑ ↓ arrows: off (click to turn on)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pre-escucha automática con las flechas ↑ ↓: desactivada (clic para activar)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pré-écoute automatique aux flèches ↑ ↓ : désactivée (cliquer pour activer)"
-          }
-        }
-      }
-    },
-    "library.autoPreview.on": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Auto-preview with the ↑ ↓ arrows: on (click to turn off)"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pre-escucha automática con las flechas ↑ ↓: activada (clic para desactivar)"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pré-écoute automatique aux flèches ↑ ↓ : activée (cliquer pour désactiver)"
-          }
-        }
-      }
-    },
     "library.chooseAnotherFolder": {
       "extractionState": "manual",
       "localizations": {

@@ -187,14 +187,10 @@ final class SoundLibraryViewModel {
     /// The pending start of the automatic preview (the debounce), cancelled by any stop.
     @ObservationIgnored private var autoPreviewTask: Task<Void, Never>? = nil
 
-    /// ↑ / ↓ play the file the cursor lands on. A preference of the app (headphones button of the
-    /// header), on by default.
-    var autoPreview: Bool = UserDefaults.standard.object(forKey: "finder.autoPreview") as? Bool ?? true {
-        didSet {
-            UserDefaults.standard.set(autoPreview, forKey: "finder.autoPreview")
-            if !autoPreview { autoPreviewTask?.cancel(); autoPreviewTask = nil }
-        }
-    }
+    /// The automatic preview MODE (@see FinderAutoPreview): off at the start of every session, turned on by a
+    /// preview the hand launches, kept by a preview that ends by itself or gives way to the next file, turned
+    /// off by an explicit stop (`stopPreview(.explicit)`). While it is on, ↑ / ↓ play the file they land on.
+    @ObservationIgnored private var autoPreviewMode = FinderAutoPreview.Mode()
 
     // Length and peak caches (the key being the path), shared for the whole session
     private var peaksCache: [String: [Float]] = [:]
@@ -412,7 +408,7 @@ final class SoundLibraryViewModel {
     }
 
     private func navigate(to url: URL) {
-        stopPreview()
+        stopPreview(.explicit)   // a folder left (or entered) ends the automatic preview
         selectedID = nil
         selectedNode = nil
         multiSelectedIDs = []
@@ -449,8 +445,9 @@ final class SoundLibraryViewModel {
             idx = delta >= 0 ? 0 : list.count - 1
         }
         focusCursor(on: list[idx])
-        // ONLY the vertical arrows play (←/→ fold and unfold, a click keeps its own rule).
-        if autoPreview { scheduleAutoPreview(for: list[idx]) }
+        // ONLY the vertical arrows play (←/→ fold and unfold, a click keeps its own rule), and only while the
+        // hand has an automatic preview going (@see FinderAutoPreview.Mode).
+        if autoPreviewMode.shouldSchedule(isDirectory: list[idx].isDirectory) { scheduleAutoPreview(for: list[idx]) }
     }
 
     /// The automatic preview of the file the cursor has just landed on, after a short pause: an arrow
@@ -464,14 +461,13 @@ final class SoundLibraryViewModel {
         autoPreviewTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(FinderAutoPreview.debounce * 1_000_000_000))
             guard let self else { return }
-            guard FinderAutoPreview.shouldStart(enabled: self.autoPreview,
-                                                cancelled: Task.isCancelled,
-                                                cursorID: self.cursorID, nodeID: id,
-                                                isDirectory: node.isDirectory),
+            guard self.autoPreviewMode.shouldStart(cancelled: Task.isCancelled,
+                                                   cursorID: self.cursorID, nodeID: id,
+                                                   isDirectory: node.isDirectory),
                   self.selectedID == id else { return }
             // `startPreview` stops first, which cancels the pending task: this one is spent.
             self.autoPreviewTask = nil
-            self.startPreview(node: node)
+            self.startPreview(node: node, byHand: false)
         }
     }
 
@@ -498,10 +494,11 @@ final class SoundLibraryViewModel {
     /// Places the keyboard cursor on a row; a file becomes selected (the mini player), a folder does not.
     func focusCursor(on node: SoundLibraryNode) {
         cursorID = node.id
+        // The cursor changing row stops the sound it was on, but is not a stop the hand asked for: the mode stays.
         if node.isDirectory {
-            if selectedNode != nil { stopPreview(); selectedID = nil; selectedNode = nil }
+            if selectedNode != nil { stopPreview(.automatic); selectedID = nil; selectedNode = nil }
         } else {
-            stopPreview()
+            stopPreview(.automatic)
             selectedID = node.id
             selectedNode = node
             resetIOSForDuration(node.duration)
@@ -732,7 +729,8 @@ final class SoundLibraryViewModel {
         cursorID = node.id
         rangeAnchorID = node.id
         if !multiSelectedIDs.contains(node.id) { multiSelectedIDs = [] }
-        stopPreview()
+        // A click that stops a sound that is playing is an explicit stop; a click on a silent list is not one.
+        stopPreview(isPlaying ? .explicit : .automatic)
         if selectedID == node.id {
             // second click = play/stop
             togglePreview(node: node)
@@ -792,13 +790,17 @@ final class SoundLibraryViewModel {
 
     // MARK: Preview
 
+    /// The hand's door: play, or stop. A start here turns the automatic preview mode on, a stop turns it off.
     func togglePreview(node: SoundLibraryNode) {
-        if isPlaying { stopPreview() } else { startPreview(node: node) }
+        if isPlaying { stopPreview(.explicit) } else { startPreview(node: node, byHand: true) }
     }
 
-    private func startPreview(node: SoundLibraryNode) {
-        stopPreview()
+    /// `byHand`: the preview was launched by the hand (the second click on a file, the play button) and not
+    /// by the automatic mode itself — only that turns the mode on.
+    private func startPreview(node: SoundLibraryNode, byHand: Bool) {
+        stopPreview(.automatic)   // one file giving way to the next: the mode is neither started nor ended by it
         guard let p = try? AVAudioPlayer(contentsOf: node.url) else { return }
+        autoPreviewMode.started(byHand: byHand)
         // Plays out of the SAME audio device as the engine (the toolbar choice) — without this,
         // AVAudioPlayer plays on the default system device. nil (not found) ⇒ the system default.
         if let uid = AudioOutputDevice.shared.uid { p.currentDevice = uid }
@@ -815,13 +817,17 @@ final class SoundLibraryViewModel {
             try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
             await MainActor.run {
                 if FinderAutoPreview.timerApplies(armed: gen, current: self.previewGen), self.isPlaying {
-                    self.stopPreview()
+                    self.stopPreview(.automatic)   // the end of the file: the mode stays ("locked")
                 }
             }
         }
     }
 
-    func stopPreview() {
+    /// Stops the sound and cancels what was planned. `.explicit` (the default: a stop button, the view going
+    /// away, a folder left) also turns the automatic preview mode off; `.automatic` (the end of the file, a
+    /// change of file) leaves it as it was.
+    func stopPreview(_ stop: FinderAutoPreview.Stop = .explicit) {
+        autoPreviewMode.stopped(stop)
         previewGen &+= 1
         autoPreviewTask?.cancel()
         autoPreviewTask = nil
@@ -898,15 +904,6 @@ struct SoundLibraryView: View {
                             .truncationMode(.head)
                             .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Button { vm.autoPreview.toggle() } label: {
-                            Image(systemName: "headphones")
-                                .font(.system(size: 11))
-                                .foregroundStyle(vm.autoPreview ? Color.accentColor : Color.secondary)
-                                .frame(width: 18, height: 18)
-                        }
-                        .buttonStyle(.plain)
-                        .help(L(vm.autoPreview ? "library.autoPreview.on" : "library.autoPreview.off"))
 
                         Button(action: vm.openFolderPanel) {
                             Image(systemName: "folder")
