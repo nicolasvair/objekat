@@ -25,6 +25,7 @@
 //
 
 import Foundation
+import AppKit
 import CoreAudio
 
 /// `nonisolated` : appelé depuis n'importe quel thread (serveur de commandes, rappels du moteur).
@@ -241,18 +242,42 @@ nonisolated enum Diag {
     // MARK: - Exceptions Objective-C
 
     nonisolated(unsafe) private static var previousExceptionHandler: (@convention(c) (NSException) -> Void)?
-    nonisolated(unsafe) private static var exceptionHandlerInstalled = false
+    nonisolated(unsafe) private static var exceptionObserver: NSObjectProtocol?
+
+    /// Notre gestionnaire. Une constante, pour pouvoir reconnaître qu'il est (ou n'est plus) en place.
+    private static let uncaughtHandler: @convention(c) (NSException) -> Void = { exception in
+        Diag.recordUncaught(exception)
+        Diag.previousExceptionHandler?(exception)
+    }
+
+    /// Vrai si le gestionnaire d'exceptions en place est le nôtre (diagnostic des tests).
+    static var exceptionHandlerIsOurs: Bool { isOurs(NSGetUncaughtExceptionHandler()) }
+
+    private static func isOurs(_ handler: (@convention(c) (NSException) -> Void)?) -> Bool {
+        guard let handler else { return false }
+        return unsafeBitCast(handler, to: UnsafeRawPointer.self)
+            == unsafeBitCast(uncaughtHandler, to: UnsafeRawPointer.self)
+    }
 
     /// Une exception non rattrapée tue le processus par un abort() : la signal-handler écrit la
     /// ligne CRASH, mais seule cette porte-ci sait le NOM et la RAISON de l'exception, et la pile
     /// Objective-C qui y mène. Chaînée : l'éventuel gestionnaire précédent est rappelé ensuite.
-    private static func installExceptionHandler() {
-        guard !exceptionHandlerInstalled else { return }
-        exceptionHandlerInstalled = true
-        previousExceptionHandler = NSGetUncaughtExceptionHandler()
-        NSSetUncaughtExceptionHandler { exception in
-            Diag.recordUncaught(exception)
-            Diag.previousExceptionHandler?(exception)
+    ///
+    /// ⚠️ AppKit remplace le gestionnaire quand l'application finit de se lancer (constaté : installé
+    /// dans `main.swift`, il n'était plus appelé à l'exécution). On le repose donc à la fin du
+    /// lancement, toujours chaîné devant celui d'AppKit.
+    static func installExceptionHandler() {
+        let current = NSGetUncaughtExceptionHandler()
+        if !isOurs(current) {
+            previousExceptionHandler = current
+            NSSetUncaughtExceptionHandler(uncaughtHandler)
+        }
+        if exceptionObserver == nil {
+            exceptionObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didFinishLaunchingNotification, object: nil, queue: nil) { _ in
+                installExceptionHandler()
+                DispatchQueue.main.async { installExceptionHandler() }
+            }
         }
     }
 

@@ -51,11 +51,12 @@ nonisolated enum DiagCrashReports {
             let pid = Int32((meta["pid"] as? Int) ?? 0)
             let start = (meta["start_epoch"] as? Double) ?? 0
             if DiagStore.isProcessAlive(pid: pid, sessionStart: start) { continue }
-            // La prise : atomique, une seule instance gagne.
+            // La prise : atomique, une seule instance gagne. Le marqueur dit qui a pris (`claimed pid=…
+            // at=…`) puis `done` quand le dossier est complet : une instance qui meurt en cours de
+            // route (on quitte dans la minute qui suit un relancement, ou un deuxième crash) laisse
+            // un marqueur « claimed » dont le pid est mort — le lancement suivant reprend la main.
             let marker = DiagStore.sessionsDirectory(root).appendingPathComponent("\(entry.base).reported")
-            let fd = open(marker.path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
-            if fd < 0 { continue }
-            close(fd)
+            if !DiagStore.claimReport(marker: marker) { continue }
             lock.lock(); inFlight.insert(entry.base); lock.unlock()
             claimed += 1
             let thread = Thread {
@@ -99,6 +100,7 @@ nonisolated enum DiagCrashReports {
 
         func run() {
             let fm = FileManager.default
+            removeIncompleteFolders()
             let logURL = sessions.appendingPathComponent("\(base).log")
             let rotated = sessions.appendingPathComponent("\(base).log.1")
 
@@ -177,6 +179,21 @@ nonisolated enum DiagCrashReports {
             Self.writeJSON(info, to: folder.appendingPathComponent("meta.json"))
             DiagStore.writeLatest(root: root, kind: abnormal ? "arrêt anormal" : "crash (\(signal))",
                                   time: ended, folder: folder, summary: summaryLine)
+            DiagStore.markReportDone(marker: sessions.appendingPathComponent("\(base).reported"))
+        }
+
+        /// Une instance précédente est morte en préparant CE rapport : son dossier à moitié écrit
+        /// (`complete` absent ou faux) est retiré avant de refaire le travail.
+        private func removeIncompleteFolders() {
+            let fm = FileManager.default
+            let dir = DiagStore.crashesDirectory(root)
+            for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where !name.hasPrefix(".") {
+                let folder = dir.appendingPathComponent(name)
+                guard let data = try? Data(contentsOf: folder.appendingPathComponent("meta.json")),
+                      let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      (m["session"] as? String) == base, (m["complete"] as? Bool) != true else { continue }
+                try? fm.removeItem(at: folder)
+            }
         }
 
         // MARK: Journal

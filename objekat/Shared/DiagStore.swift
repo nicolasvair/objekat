@@ -172,9 +172,54 @@ nonisolated enum DiagStore {
         let pid = Int32((meta["pid"] as? Int) ?? 0)
         let start = (meta["start_epoch"] as? Double) ?? 0
         if isProcessAlive(pid: pid, sessionStart: start) { return true }
-        // Morte sans rapport encore : le relancement va la traiter (ou l'a fait : le marqueur existe).
+        // Morte sans rapport terminé : le relancement va la traiter (ou la reprendre).
         let reported = sessionsDirectory(root).appendingPathComponent("\(entry.base).reported")
-        return !fm_exists(reported)
+        return reportMarkerState(reported) != .done
+    }
+
+    // MARK: - Marqueur « rapport pris / terminé »
+
+    enum MarkerState: Equatable { case absent, claimed(pid: Int32, at: Double), done }
+
+    static func reportMarkerState(_ marker: URL) -> MarkerState {
+        guard let text = try? String(contentsOf: marker, encoding: .utf8) else {
+            return fm_exists(marker) ? .claimed(pid: 0, at: 0) : .absent
+        }
+        if text.hasPrefix("done") { return .done }
+        var pid: Int32 = 0
+        var at = 0.0
+        for part in text.split(whereSeparator: { $0 == " " || $0 == "\n" }) {
+            if part.hasPrefix("pid=") { pid = Int32(part.dropFirst(4)) ?? 0 }
+            if part.hasPrefix("at=") { at = Double(part.dropFirst(3)) ?? 0 }
+        }
+        return .claimed(pid: pid, at: at)
+    }
+
+    /// Prend le rapport d'une session morte. Vrai si CETTE instance le prépare : le marqueur n'existait
+    /// pas, ou il datait d'une instance morte avant la fin du travail.
+    static func claimReport(marker: URL) -> Bool {
+        func create() -> Bool {
+            let fd = open(marker.path, O_CREAT | O_EXCL | O_WRONLY, 0o644)
+            if fd < 0 { return false }
+            let text = "claimed pid=\(getpid()) at=\(Date().timeIntervalSince1970)\n"
+            _ = text.withCString { write(fd, $0, strlen($0)) }
+            close(fd)
+            return true
+        }
+        if create() { return true }
+        switch reportMarkerState(marker) {
+        case .done: return false
+        case .absent: return create()
+        case .claimed(let pid, let at):
+            // Vivante : quelqu'un s'en occupe. Morte (ou marqueur illisible) : on reprend.
+            if pid > 0, isProcessAlive(pid: pid, sessionStart: at) { return false }
+            try? FileManager.default.removeItem(at: marker)
+            return create()
+        }
+    }
+
+    static func markReportDone(marker: URL) {
+        try? "done\n".write(to: marker, atomically: true, encoding: .utf8)
     }
 
     private static func fm_exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }

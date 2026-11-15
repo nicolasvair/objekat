@@ -334,7 +334,8 @@ final class CommandRegistry {
         let result: JSONValue
         do { result = try await executeCommand(name: name, params: params) }
         catch {
-            journalOutcome("erreur \((error as? CommandError).map { "\($0.code.rawValue) : \($0.message)" } ?? "\(error)")")
+            journalOutcome("erreur " + Diag.shortenIDs(Diag.truncated(
+                (error as? CommandError).map { "\($0.code.rawValue) : \($0.message)" } ?? "\(error)", 300)))
             // A door that refused did nothing, and a handler that expected its effect may complain about it
             // (`instrument.set` finding no instrument): the refusal is the answer, not the complaint.
             if let reason = vm?.takeGroupInstrumentRefusal() { throw refusalError(reason) }
@@ -357,7 +358,9 @@ final class CommandRegistry {
     /// The parameters on one line, UUIDs shortened, cut at 200 characters.
     private static func journalParams(_ params: CommandParams) -> String {
         if params.isEmpty { return "{}" }
-        guard let data = try? JSONEncoder().encode(JSONValue.object(params.raw)),
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(JSONValue.object(params.raw)),
               let text = String(data: data, encoding: .utf8) else { return "{…}" }
         return Diag.truncated(Diag.shortenIDs(text), 200)
     }

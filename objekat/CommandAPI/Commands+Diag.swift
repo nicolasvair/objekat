@@ -13,7 +13,7 @@ extension CommandRegistry {
                  summary: """
                  The diagnostic journal: `enabled`, the session file (`log`, `bytes`, `rotations`), the \
                  folder (`root`), and `last_crash` — the newest crash folder on disk (`dir`, `signal`, \
-                 `summary`, `complete`), or null. Not itself journaled.
+                 `summary`, `complete`), or null — and `reports_pending`, the folders still being prepared. Not itself journaled.
                  """,
                  undo: .none) { _ in
             let root = Diag.rootDirectory
@@ -25,6 +25,9 @@ extension CommandRegistry {
                 "log": .stringOrNull(Diag.currentLogURL?.path),
                 "bytes": .number(Double(objdiag_bytes_written())),
                 "rotations": .int(Int(objdiag_rotation_count())),
+                // Crash folders still being prepared in the background (the .ips of a fresh crash
+                // can take up to 60 s to appear): the app does not wait for them to start.
+                "reports_pending": .int(DiagCrashReports.pendingCount),
             ]
             payload["last_crash"] = Self.jsonValue(DiagCrashReports.lastCrash(root: root)) ?? .null
             return .object(payload)
@@ -101,7 +104,7 @@ extension CommandRegistry {
         register("debug.crash",
                  summary: """
                  DEBUG. Crashes the app FOR REAL, to test the crash path: `segv` (write at address 8), \
-                 `abort`, `objc_exception` (uncaught NSException), `swift_fatal` (fatalError → SIGTRAP), \
+                 `abort`, `objc_exception` (uncaught NSException, raised on a background thread), `swift_fatal` (fatalError → SIGTRAP), \
                  `stack_overflow`. The connection drops, no answer comes. Produces a real .ips in \
                  ~/Library/Logs/DiagnosticReports: use sparingly.
                  """,
@@ -113,8 +116,18 @@ extension CommandRegistry {
             case "abort":          objdiag_debug_crash(1)
             case "stack_overflow": objdiag_debug_crash(2)
             case "objc_exception":
-                NSException(name: NSExceptionName("OBJDiagTestException"),
-                            reason: "debug.crash objc_exception", userInfo: nil).raise()
+                // On a BACKGROUND thread: raised on the main one, AppKit's run loop catches it
+                // (-reportException:) and carries on — nothing would crash, and the uncaught-exception
+                // handler would never run. On a plain thread nobody catches it: the process aborts.
+                Diag.log(.crash, "debug.crash objc_exception : gestionnaire d'exceptions non rattrapées "
+                         + (Diag.exceptionHandlerIsOurs ? "en place" : "REMPLACÉ"))
+                let thread = Thread {
+                    NSException(name: NSExceptionName("OBJDiagTestException"),
+                                reason: "debug.crash objc_exception", userInfo: nil).raise()
+                }
+                thread.start()
+                try await Task.sleep(nanoseconds: 10_000_000_000)
+                throw CommandError(code: .internal_error, message: "the exception did not crash the process")
             case "swift_fatal":    fatalError("debug.crash swift_fatal")
             default:
                 throw CommandError(code: .bad_params, message: "kind: segv|abort|objc_exception|swift_fatal|stack_overflow")
