@@ -9823,6 +9823,25 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     return instance ? (BOOL)instance->hasEditor() : NO;
 }
 
+// Prépare À LA MAIN un plugin externe que le graphe de lecture n'a pas (encore) préparé, avant
+// qu'on ouvre son éditeur. Les AU Soundtoys (DevilLoc, LittleRadiator…) construisent leur vue sur
+// un état créé par AudioUnitInitialize : sans lui, un clic dans la fenêtre déréférence NULL, ou
+// createView plante. Or le graphe ne prépare qu'un plugin qu'il contient ET dont le contexte de
+// lecture est alloué : un plugin tout juste inséré (graphe reconstruit en différé), bypassé (exclu
+// du graphe, EditNodeBuilder) ou sur un instrument de groupe à container vide n'est pas préparé.
+// `baseClassNeedsInitialising()` = jamais initialisé par le graphe (compteur à 0). `initialise`
+// est appelé en direct (pas `baseClassInitialise`) : le compteur du graphe reste intact, et
+// ExternalPlugin::initialise ne refait le prepareToPlay que si la fréquence ou le bloc changent —
+// idempotent, et sans double préparation quand le graphe prendra le relais.
+// Retourne true si une préparation a été faite.
+static bool objPrepareForEditor(te::ExternalPlugin& ext, te::Engine& engine) {
+    if (!ext.getAudioPluginInstance() || !ext.baseClassNeedsInitialising()) return false;
+    auto& dm = engine.getDeviceManager();
+    ext.initialise({ te::TimePosition(), dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0,
+                     dm.getBlockSize() > 0 ? dm.getBlockSize() : 512 });
+    return true;
+}
+
 - (void)_doOpenPluginEditor:(NSString*)pluginKey attempt:(int)attempt colorHex:(NSInteger)colorHex {
     [self _doOpenEditorForKey:pluginKey araObjectID:nil attempt:attempt colorHex:colorHex];
 }
@@ -9865,23 +9884,6 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
     if (_edit && !_edit->getTransport().isPlayContextActive())
         _edit->getTransport().ensureContextAllocated();
 
-    // Un instrument de GROUPE dont le container n'a aucun enfant (zone neuve, vide) n'a pas de nœud
-    // dans le graphe : rien ne le prépare, même avec le contexte alloué, et son GUI retombe sur le
-    // piège ci-dessus. On le prépare donc ici, à la main (idempotent : `initialise` ne refait le
-    // `prepareToPlay` que si la fréquence ou la taille de bloc changent).
-    if (!isARA && _edit) {
-        for (auto& kv : _instrumentMap) {
-            if (kv.second.get() != ext) continue;
-            auto cit = _containerClipMap.find(kv.first);
-            if (cit != _containerClipMap.end() && cit->second->getClips().isEmpty() && ext->getAudioPluginInstance()) {
-                auto& dm = _engine->getDeviceManager();
-                ext->initialise({ te::TimePosition(), dm.getSampleRate() > 0 ? dm.getSampleRate() : 48000.0,
-                                 dm.getBlockSize() > 0 ? dm.getBlockSize() : 512 });
-            }
-            break;
-        }
-    }
-
     // Le plugin se charge de façon asynchrone : attendre que l'instance soit prête
     if (!ext->getAudioPluginInstance()) {
         if (attempt >= 20) {
@@ -9906,6 +9908,14 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
         NSLog(@"[OBJ] openPluginEditor: plugin sans éditeur GUI (%s)", instance->getName().toRawUTF8());
         return;
     }
+
+    // Préparation à la main (cf. objPrepareForEditor) : tout plugin externe hors ARA — un instrument
+    // de groupe à container vide, un plugin tout juste inséré, un plugin bypassé. Pas pendant un
+    // chargement par lots (`_bulkLoadInhibitor`) : tout est créé, PUIS préparé — préparer un plugin
+    // en plein chargement bloque UADx Opal (@see tickPluginStateReasserts). L'éditeur s'ouvre alors
+    // comme avant ce correctif.
+    if (!isARA && _engine && !_bulkLoadInhibitor && objPrepareForEditor(*ext, *_engine))
+        NSLog(@"[OBJ] openPluginEditor: prepared by hand (%s)", instance->getName().toRawUTF8());
 
     auto* editor = instance->createEditorIfNeeded();
     if (!editor) {
