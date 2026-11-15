@@ -192,6 +192,63 @@ extension EditViewModel {
         return ChannelPicks.pick(atVisible: i, in: series)?.channelPick?.mode
     }
 
+    // MARK: - The choices a plugin takes away with it
+
+    /// The choices of channel that BELONG to the plugins `ids` of host `hostID`'s chain, to be read BEFORE
+    /// they are removed: the choice written on the cable that ENTERS a MONO plugin (one input AND at most one
+    /// output, a 1 -> 1) is that plugin's (it is what lets a stereo cable reach it: left, right or the sum, and
+    /// its output is mono too, so what follows it hangs on it), so it leaves with it. A 1 -> 2 plugin gives
+    /// the stereo pair back: the choice before it stays, upstream wins (Q6).
+    ///   • `pickIDs`: the picks standing on those cables (a series' entry, @see ChannelPick.swift);
+    ///   • `resetFileMode`: the plugin stands at the head of a stereo clip and the file's own channel
+    ///     choice (`channelMode`) is what feeds it: the file goes back to LR.
+    /// A choice on the cable of a plugin with two inputs, or on a cable that enters nothing, is not
+    /// owned: it stays (Q6 keeps its rule when a card between two choices goes). A cable with no choice
+    /// written (the plugin's own inherited key, which goes with it anyway) owns nothing.
+    func cableChoicesOwned(by ids: Set<UUID>, host hostID: UUID) -> (pickIDs: Set<UUID>, resetFileMode: Bool) {
+        guard !ids.isEmpty, let infos = cableInfos(host: hostID) else { return ([], false) }
+        let channels = pluginChannels(pluginIDs: Array(ids))
+        var picks: Set<UUID> = []
+        var file = false
+        for i in infos {
+            guard let e = i.entering, ids.contains(e), i.intoOneInput, i.explicit,
+                  (channels[e]?.outputs ?? 2) <= 1 else { continue }
+            if i.fileLevel { file = true } else if let pid = i.pickID { picks.insert(pid) }
+        }
+        return (picks, file)
+    }
+
+    /// The picks of an FX link's DEFINITION that belong to the definition plugins `definitionIDs`
+    /// (@see `cableChoicesOwned`): read on the attached members' instances (that is where the engine says
+    /// which plugin has one input), written back to the definition's own picks at the same cable.
+    func fxCableChoicesOwned(linkID: UUID, definitionIDs: Set<UUID>) -> Set<UUID> {
+        guard let link = fxLink(linkID), !definitionIDs.isEmpty else { return [] }
+        var out: Set<UUID> = []
+        var seen: Set<UUID> = []
+        for m in fxLinkAttachedMembers(linkID) {
+            guard let infos = cableInfos(host: m.hostID) else { continue }
+            for inst in m.block.fxBlock?.plugins ?? [] where !inst.isChannelPick {
+                guard let g = inst.linkGroupID, definitionIDs.contains(g), !seen.contains(g),
+                      let info = infos.first(where: { $0.entering == inst.id }),
+                      info.intoOneInput, info.explicit, info.pickID != nil,
+                      (pluginChannels(pluginID: inst.id)?.outputs ?? 2) <= 1,
+                      let k = link.plugins.firstIndex(where: { $0.id == g }) else { continue }
+                seen.insert(g)
+                let vi = ChannelPicks.visibleIndex(ofModelIndex: k, in: link.plugins)
+                if let pick = ChannelPicks.pick(atVisible: vi, in: link.plugins) { out.insert(pick.id) }
+            }
+        }
+        return out
+    }
+
+    /// The file's own channel choice back to LR (the head of a clip whose one-input plugin has just left),
+    /// the model and the engine together. No undo of its own: the caller's step holds it.
+    func resetFileChannelMode(host hostID: UUID) {
+        guard find(id: hostID) != nil else { return }
+        update(id: hostID) { $0.channelMode = .lr }
+        engine?.updateChannelMode(ChannelMode.lr.engineCode, forID: hostID.uuidString)
+    }
+
     // MARK: - Writing
 
     /// Writes `choice` on the cable point (`location`, `index`) of host `hostID`'s chain, as ONE undo step

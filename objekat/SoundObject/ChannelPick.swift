@@ -27,6 +27,15 @@ import Foundation
 // pick and clears P's `monoFold`; `engineFold(…)` then tells the engine P is fed its LEFT channel — which
 // is exact, the pick having made the pair L = R, and which lays no fold-in (`left` has none).
 //
+// WHEN A PLUGIN LEAVES. The choice written on the cable that ENTERS a MONO plugin (one input, at most one
+// output: a 1 -> 1) is that plugin's (it is what lets a stereo cable reach it), so it leaves with it: the pick before it goes, and so does the
+// file's own channel choice when the plugin stood at the head of a stereo clip (`channelMode` back to LR) —
+// else the chain downstream would stay mono (the merged gap, Q6) or the file stuck on one channel.
+// `EditViewModel.cableChoicesOwned` reads it before the removal. A choice on the cable of a plugin with two
+// inputs, a 1 -> 2 plugin (it gives the pair back: upstream wins, Q6), or on a cable that enters a plugin
+// that is not removed, stays; so does the one of a card that is
+// only moved, or set back to stereo through the Channels menu (nothing changes there).
+//
 // The head of a STEREO audio file's root series is a special place: its cable is the file's own channel
 // choice (`SoundObject.channelMode`, the most economical: no node at all in the engine for LR). There is
 // no separate pick under the head "+": a pick that arrives at the head of a clip's root (a retouched file)
