@@ -237,9 +237,16 @@ nonisolated enum DiagStore {
     // MARK: - LATEST.md
 
     private static let latestLock = NSLock()
+    /// L'heure du dernier rapport inscrit dans LATEST.md par CE processus. Les rapports d'un
+    /// relancement sont préparés en parallèle et finissent dans le désordre (surtout quand aucun
+    /// .ips n'arrive : tous attendent le délai complet) ; le dernier à finir ne doit pas pour
+    /// autant prendre la place d'un rapport plus récent.
+    nonisolated(unsafe) private static var latestWrittenTime: Date?
 
     static func writeLatest(root: URL, kind: String, time: Date, folder: URL, summary: String) {
         latestLock.lock(); defer { latestLock.unlock() }
+        if let written = latestWrittenTime, time < written { return }
+        latestWrittenTime = time
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
