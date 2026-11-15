@@ -205,7 +205,7 @@ struct SoundBlockView: View {
                     curveOut: effectiveFadeOutCurve,
                     isMuted: object.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
-                    loopRange: previewLoopRange,
+                    loopRange: geo.effectiveLoopRange,
                     channelMode: object.channelMode
                 )
                 // The same radius as the block: a block with a large radius carries its waveform, which

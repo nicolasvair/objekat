@@ -22,6 +22,7 @@ extension BlockPreviewGeometry {
                   resizeDX: resizeDX, trimDX: trimDX,
                   previewFadeIn: previewFadeIn, previewFadeOut: previewFadeOut,
                   previewFadeInCurve: previewFadeInCurve, previewFadeOutCurve: previewFadeOutCurve,
-                  previewLoopRange: previewLoopRange)
+                  previewLoopRange: previewLoopRange,
+                  anchorsLoopOnTrim: object.isClip && object.loopEnabled && !object.isReversed)
     }
 }

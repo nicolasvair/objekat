@@ -967,6 +967,10 @@ struct SoundObject: Identifiable, Codable, Equatable {
     /// is then the material located AFTER the range (@see WaveformShaping.retrimmedSourceOffset).
     var contentRoomBefore: Double {
         guard case .clip(_, let so, let fd, let sr, let rev) = kind, fd > 0 else { return .infinity }
+        // A LOOPING clip has no edge on the left either: opening it shows the previous repeats of
+        // the pattern, which is anchored (@see LoopRetrim); only the floor at 0 bounds it
+        // (@see ZeroFloor.trimLimit). The mirror of `contentRoomAfter`.
+        if loopEnabled && !rev { return .infinity }
         let sp = max(sr, 0.0001)
         return max(0, rev ? (fd - so - duration * sp) : so) / sp
     }

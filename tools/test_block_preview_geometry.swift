@@ -5,7 +5,7 @@
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/FadeCurve.swift ../objekat/Shared/WaveformShaping.swift \
-//         ../objekat/Timeline/BlockPreviewGeometry.swift \
+//         ../objekat/Shared/LoopRetrim.swift ../objekat/Timeline/BlockPreviewGeometry.swift \
 //         test_block_preview_geometry.swift -o /tmp/bpg && /tmp/bpg
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -239,6 +239,26 @@ enum BlockPreviewGeometryTest {
     check("reversed: a left trim does not move the source", base.effectiveSourceOffset == 3)
     base.resizeDX = -50
     check("reversed: the right edge governs", base.effectiveSourceOffset != 3)
+
+    // A LOOPING audio clip being trimmed on the left keeps its pattern anchored: the preview reads the
+    // same window `updateTrim` will write on release (@see LoopRetrim). 1 s pattern, 100 px/s, +25 px.
+    var looped = BlockPreviewGeometry(kind: .clip, startTime: 2, duration: 4, sourceOffset: 0,
+                                      speedRatio: 1, isReversed: false, fadeIn: 0, fadeOut: 0,
+                                      fadeInCurve: .linear, fadeOutCurve: .linear, pixelsPerSecond: 100,
+                                      trimDX: 25, previewLoopRange: (0, 1), anchorsLoopOnTrim: true)
+    check("loop trim: the offset follows the phase", abs(looped.effectiveSourceOffset - 0.25) < 1e-12,
+          "\(looped.effectiveSourceOffset)")
+    let lr = looped.effectiveLoopRange
+    check("loop trim: IN -0.25, OUT 0.75", lr != nil && abs(lr!.start + 0.25) < 1e-12 && abs(lr!.end - 0.75) < 1e-12,
+          "\(String(describing: lr))")
+    check("loop trim: the markers are drawn from the re-anchored bounds",
+          looped.loopMarkerPx.map { abs($0.start + 25) < 1e-9 && abs($0.end - 75) < 1e-9 } == true)
+    looped.anchorsLoopOnTrim = false      // a MIDI clip (or a group): the old reading, untouched
+    check("not an audio loop: the ordinary offset rule", abs(looped.effectiveSourceOffset - 0.25) < 1e-12
+          && looped.effectiveLoopRange?.start == 0)
+    looped.anchorsLoopOnTrim = true
+    looped.trimDX = 0
+    check("no trim: the stored loop, untouched", looped.effectiveSourceOffset == 0 && looped.effectiveLoopRange?.end == 1)
 
     if fails.isEmpty {
         print("ALL PASS  \(total) assertions (\(neutralCount) neutral cases)")

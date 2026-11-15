@@ -228,6 +228,10 @@ extension EditViewModel {
         let oldStart = obj.startTime
         let oldDuration = obj.duration
         let D = max(0.01, newDuration)
+        // A LOOPING clip: the pattern is anchored (in the file and on the timeline), the edge only
+        // moves the window over it. Read BEFORE the start changes — it needs the old frame
+        // (@see loopAnchoredRetrim, LoopRetrim).
+        let loopWindow = loopAnchoredRetrim(obj, newStart: newStart)
         // The mirror of `updateDuration`: a trim does not change the size of a fade. The
         // fade-in keeps its LENGTH and follows the start edge it is anchored to. Shortening it
         // here (`fadeInAnchoredAtEnd`) belonged to the other gesture — matter REMOVED off the
@@ -248,7 +252,11 @@ extension EditViewModel {
         // curve followed the edge instead of staying in front of the matter it modulates.
         obj.automation = obj.automation.shiftedInTime(by: -delta)
         obj.markers    = obj.markers.shiftedInTime(by: -delta)
-        if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind {
+        if let loopWindow {
+            // The offset AND the IN/OUT bounds move together (the bounds are local to the edge, which
+            // has just moved): what is heard at an instant that stays in the window is unchanged.
+            adopt(loopWindow, in: &obj)
+        } else if case .clip(let fp, let so, let fd, let sr, let rev) = obj.kind {
             // The left edge moves by `delta` on the timeline → the source advances by delta×speed.
             // In reverse it is the right edge that commands the source range: trimming the entry
             // does not touch the offset (@see WaveformShaping.retrimmedSourceOffset).

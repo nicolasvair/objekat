@@ -3307,7 +3307,7 @@ struct TimelineView: View {
                             sourceOffset: g.effectiveSourceOffset, duration: g.effectiveDuration,
                             fadeIn: g.effectiveFadeIn, fadeOut: g.effectiveFadeOut,
                             curveIn: g.effectiveFadeInCurve, curveOut: g.effectiveFadeOutCurve,
-                            loopRange: g.previewLoopRange, trimDX: g.trimDX)
+                            loopRange: g.effectiveLoopRange, trimDX: g.trimDX)
                     }
                     return CanvasBlockLook(
                         rect: rectFor(entry), sourceOffset: item.sourceOffset, duration: item.duration,
