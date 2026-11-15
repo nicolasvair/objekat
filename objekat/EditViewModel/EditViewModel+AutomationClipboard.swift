@@ -32,15 +32,23 @@ extension EditViewModel {
     /// Where a copy or a paste acts: the rows the time selection covers, or failing that the rows
     /// a loose point selection touches. One reading for both, so the clipboard has one kind of
     /// source and not two.
-    private func automationTarget() -> (rows: [AutomationRowOnScreen], start: Double,
-                                        duration: Double)? {
+    ///
+    /// `forPaste` adds a last resort: the CARET. A plain click in a band leaves no zone and no point,
+    /// only the caret on the row and the cursor at the instant — and that is enough to say where a
+    /// passage goes, never what a copy takes (a click picked nothing). Its instant is the cursor, as
+    /// for a loose selection.
+    private func automationTarget(forPaste: Bool = false)
+        -> (rows: [AutomationRowOnScreen], start: Double, duration: Double)? {
         let zoned = automationRowsInTimeSelection()
         if let sel = timeSelection, !zoned.isEmpty {
             return (zoned, sel.timeRange.lowerBound,
                     max(0, sel.timeRange.upperBound - sel.timeRange.lowerBound))
         }
         let loose = automationRowsOfPointSelection()
-        guard !loose.isEmpty else { return nil }
+        guard !loose.isEmpty else {
+            if forPaste, let row = automationCaretRow() { return ([row], cursorPosition, 0) }
+            return nil
+        }
         var lo = Double.greatestFiniteMagnitude, hi = -Double.greatestFiniteMagnitude
         for r in loose {
             let pts = automationPoints(r.objectID, r.param)
@@ -101,6 +109,12 @@ extension EditViewModel {
     /// True when ⌘V has both something to lay down and somewhere to lay it.
     var canPasteAutomation: Bool { automationClipboard != nil && automationTarget() != nil }
 
+    /// True when ⌘V has a passage to lay and the only place it can go is the CARET's row — a click in
+    /// a band with nothing traced (@see automationTarget, `forPaste`).
+    var canPasteAutomationAtCaret: Bool {
+        automationClipboard != nil && automationTarget(forPaste: true) != nil
+    }
+
     /// ⌘V. The passage lands ON THE SELECTION — its rows and its start — which is what makes
     /// ↑ / ↓ worth having: copy a passage of volume, walk the frame down onto pan, paste, and the
     /// curve arrives at the SAME INSTANT on the other parameter.
@@ -117,7 +131,7 @@ extension EditViewModel {
     ///   raw onto a pan would flatten onto the bound and arrive as a straight line.
     /// - Rows pair UP IN ORDER, as many as both sides have.
     func pasteAutomation() {
-        guard let cb = automationClipboard, !cb.rows.isEmpty, let t = automationTarget()
+        guard let cb = automationClipboard, !cb.rows.isEmpty, let t = automationTarget(forPaste: true)
         else { return }
 
         let anchorAbs: Double = {
@@ -178,8 +192,20 @@ extension EditViewModel {
         }
         // The frame lands where the passage did, and the points are read back OFF IT — so a second
         // ⌘V after an arrow goes on reading the same way, and the eye sees what was laid down.
-        timeSelection = TimeSelection(timeRange: anchorAbs...(anchorAbs + cb.duration),
-                                      lanes: Set(pairs.map { $0.1.lane }))
+        //
+        // The lanes are READ AGAIN, from the rows as they are NOW: the write can have moved them. A
+        // row left empty by the wipe leaves the band (or reappears at its end as the 'future
+        // automation' row), and the rows after it slide by one — so the lanes computed before the
+        // write would have pointed the second ⌘V at a neighbour. The pairs are (object, parameter),
+        // which is what survives; a pair whose row is gone names no lane, and when none is left the
+        // frame goes with them rather than staying over a row that is not theirs.
+        let rowsNow = automationRowsOnScreen()
+        let lanes = Set(pairs.compactMap { pair -> Int? in
+            rowsNow.first { $0.objectID == pair.1.objectID && $0.param == pair.1.param }?.lane
+        })
+        timeSelection = lanes.isEmpty
+            ? nil
+            : TimeSelection(timeRange: anchorAbs...(anchorAbs + cb.duration), lanes: lanes)
         isDirty = true
     }
 }

@@ -30,6 +30,10 @@ extension EditViewModel {
         /// its object, a `TimeSelection` in timeline seconds; this is the difference between them,
         /// and the one conversion this file exists to keep in a single place.
         var origin:   Double
+        /// The window the row exists over, in absolute seconds: its object's, unbounded for an
+        /// infinite bus. Two objects on the same lane share a lane NUMBER and nothing else — this is
+        /// what tells their rows apart (@see AutomationZoneFilter).
+        var span:     ClosedRange<Double>
     }
 
     /// Every automation row currently unfolded, in display order.
@@ -44,7 +48,9 @@ extension EditViewModel {
                 // seconds from the points it holds.
                 out.append(AutomationRowOnScreen(
                     objectID: e.item.id, param: param, lane: e.displayLane + 1 + i,
-                    origin: e.item.isInfiniteBus ? 0 : e.absStart))
+                    origin: e.item.isInfiniteBus ? 0 : e.absStart,
+                    span: AutomationZoneFilter.span(origin: e.absStart, duration: e.item.duration,
+                                                    isInfinite: e.item.isInfiniteBus)))
             }
         }
         return out
@@ -53,9 +59,14 @@ extension EditViewModel {
     /// The automation rows the time selection covers. Empty when the selection is on objects —
     /// which is exactly how the keys tell the two apart, with nothing to store and nothing to
     /// keep in step.
+    ///
+    /// A row is covered by its LANE and by its TIME: two objects on one lane (consecutive children
+    /// of a group, say) have bands that share a lane number and nothing else, and a zone over one
+    /// must not reach the other (@see AutomationZoneFilter).
     func automationRowsInTimeSelection() -> [AutomationRowOnScreen] {
         guard let sel = timeSelection else { return [] }
-        return automationRowsOnScreen().filter { sel.lanes.contains($0.lane) }
+        return AutomationZoneFilter.rows(automationRowsOnScreen(), lanes: sel.lanes,
+                                         zone: sel.timeRange, lane: { $0.lane }, span: { $0.span })
     }
 
     /// Reads the point selection off the time selection. Called from `timeSelection`'s own
@@ -108,8 +119,24 @@ extension EditViewModel {
     /// Is the keyboard talking to an automation band? A zone holding NO point still answers YES,
     /// and that is why this reads the ROWS and not the points: an EMPTY stretch is a thing one
     /// copies — to wipe the same stretch elsewhere — and walks across the rows with the arrows.
+    ///
+    /// It reads the LANES of the zone and not the rows it reaches in TIME: a zone traced on a band's
+    /// lane, over a stretch where that band's object is not, still belongs to the band. Letting it go
+    /// would hand ⌫ to the object deletion, which resolves a display lane back to a BASE lane — and
+    /// the base lane of a row inside a band is the band's OWNER (@see the head of this file).
     var automationSurfaceHasKeyboard: Bool {
-        !automationRowsInTimeSelection().isEmpty || !selectedAutomationPoints.isEmpty
+        if let sel = timeSelection, !sel.lanes.isDisjoint(with: automationLanes) { return true }
+        return !selectedAutomationPoints.isEmpty
+    }
+
+    /// The row the CARET sits in: a plain click in a band leaves no zone, only the caret on the row's
+    /// lane and the cursor at the instant clicked. Two objects can share the lane, so the instant picks
+    /// the band that contains it (the selected one when several do — a click selects its object).
+    func automationCaretRow() -> AutomationRowOnScreen? {
+        guard timeSelection == nil, let lane = caretLane else { return nil }
+        let t = cursorPosition
+        let candidates = automationRowsOnScreen().filter { $0.lane == lane && $0.span.contains(t) }
+        return candidates.first(where: { selectedIDs.contains($0.objectID) }) ?? candidates.first
     }
 
     /// The rows a LOOSE point selection touches — no zone, points picked one by one. Same shape as

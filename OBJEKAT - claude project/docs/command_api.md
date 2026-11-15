@@ -1926,6 +1926,8 @@ point STARTS (−1…1, 0 = straight).
 | `automation.select_points` | `id`, `param`, `indices` → the POINT selection (what clicks in a band pick); drops the time selection. No undo |
 | `automation.straighten` | `id`, `param`, `index?` → c = 0 on that segment's left point (no `index`: every segment of the curve); or `selection: true` → every segment whose TWO ends are selected, on every object. What ⌥ + double click on a segment does. ONE undo point, none when nothing was bent. Answers `straightened` (how many were bent) and `segments` (how many were named) |
 | `automation.wheel_curvature` | `id`, `param`, `index`, `steps` (notches, + = the curve rises), `new_gesture` (default true: opens an undo point, as a pause in the wheel does) → the ⌥-wheel over a segment, through its straight-line detent |
+| `automation.open` | `id`, `open?` (absent = toggle) → unfolds or folds the object's automation band (for a group, without folding its children). Pure UI state, no undo |
+| `automation.rows` | → `rows` (every row on screen, display order: `object`, `param`, `lane` = the DISPLAY lane `timesel.set` speaks in, `origin`, `span_start` / `span_end` = the window the row exists over, `null` for an infinite bus, `infinite`), `covered` (the rows the time selection reaches — by lane AND by time: two objects on one lane are told apart by their window, a zone touching a window at one instant does not reach it), `caret` (the row a plain click in a band laid the caret on: the band whose window holds the cursor), `selected_points` |
 
 **The straight-line detent.** The ⌥-wheel counts it in NOTCHES: the notch that reaches or crosses
 straight lands EXACTLY on it, the next one in the same direction is held there, the one after leaves
@@ -1933,6 +1935,15 @@ by one notch — whatever phase the knob started on. The state is carried from c
 as the curve is the one the wheel last laid on that segment; `new_gesture` opens an undo point, not a
 new detent. The ⌥-DRAG has the same detent in hand travel (about 12 px held when crossing, 6 px to
 leave straight); it is not reachable from the API.
+
+**The edit shortcuts.** `edit.copy` / `edit.cut` / `edit.paste` are ⌘C / ⌘X / ⌘V through the same door as the
+keyboard and the Edit menu (`performCopyShortcut` …): whichever surface holds the keyboard takes the key, and
+`branch` says which one did — `plugins` | `automation` | `automation_caret` | `midi_notes` | `time_selection` |
+`objects` | `none`. `automation_caret` is ⌘V after a plain click in a band (a caret on the row, nothing traced) with a
+passage of automation copied: it lays the passage at the cursor (snapped like a paste), on the row whose window
+holds the cursor, instead of pasting the OBJECT clipboard. A zone over a band's lane but outside its object's
+window still belongs to the band for ⌫ / ⌘C / ⌘X (it must not fall through to the objects), it just reaches no row.
+One undo point per paste.
 
 ### Sliding the time selection
 

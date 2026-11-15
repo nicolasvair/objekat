@@ -1052,6 +1052,31 @@ extension CommandRegistry {
             vm.redo()
             return .object(["can_undo": .bool(vm.canUndo), "can_redo": .bool(vm.canRedo)])
         }
+
+        // The three edit shortcuts, through the SAME door the keyboard and the Edit menu use
+        // (@see EditViewModel+EditMenu): which surface takes the key depends on what is selected, and
+        // the answer names the branch that was taken, so a script can assert that ⌘V on a caret in a
+        // band lands on the band and not on the objects.
+        for (name, verb) in [("edit.copy", "⌘C"), ("edit.cut", "⌘X"), ("edit.paste", "⌘V")] {
+            register(name,
+                     summary: "\(verb), as the keyboard does it: the surface that holds the keyboard "
+                            + "(plugin chain, automation band, piano roll notes, time selection, "
+                            + "objects) takes it. Answers `branch`: plugins | automation | "
+                            + "automation_caret | midi_notes | time_selection | objects | none.",
+                     undo: .handled) { _ in
+                let vm = try CommandContext.shared.requireViewModel()
+                let branch: EditViewModel.EditShortcutBranch
+                switch name {
+                case "edit.copy": branch = vm.performCopyShortcut()
+                case "edit.cut":  branch = vm.performCutShortcut()
+                default:          branch = vm.performPasteShortcut()
+                }
+                let camel: [EditViewModel.EditShortcutBranch: String] = [
+                    .automationCaret: "automation_caret", .midiNotes: "midi_notes",
+                    .timeSelection: "time_selection"]
+                return .object(["branch": .string(camel[branch] ?? branch.rawValue)])
+            }
+        }
     }
 }
 
