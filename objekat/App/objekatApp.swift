@@ -379,7 +379,7 @@ struct objekatApp: App {
                     .disabled(busy)
             }
             // OBJEKAT ▸ Diagnostic : le journal (préférence, effet immédiat), « Signaler un problème… »
-            // (la main rassemble un dossier à lire après coup) et l'ouverture du dossier des journaux.
+            // (une ligne ISSUE dans le journal) et l'ouverture du dossier des journaux.
             // ⌃⌥⌘I et non ⌃⌥⌘P : le moniteur de touches du timeline avale la lettre P (outil Pan, sans
             // garde de modificateurs) avant que les équivalents de menu la voient ; « i » est libre.
             CommandGroup(after: .appSettings) {
@@ -387,8 +387,9 @@ struct objekatApp: App {
                     Toggle(L("diag.menu.log"), isOn: Binding(
                         get: { ObjekatPreferences.shared.diagnosticLog },
                         set: { ObjekatPreferences.shared.diagnosticLog = $0 }))
-                    Button(L("diag.menu.report")) { DiagIssueReport.askAndCollect() }
+                    Button(L("diag.menu.report")) { DiagIssueReport.askAndMark() }
                         .keyboardShortcut("i", modifiers: [.control, .option, .command])
+                        .disabled(!ObjekatPreferences.shared.diagnosticLog)
                     Button(L("diag.menu.openFolder")) { DiagIssueReport.openFolder() }
                 }
             }

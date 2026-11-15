@@ -4,33 +4,21 @@ import Foundation
 
 /// `diag.*` : l'état du journal de diagnostic (@see Shared/DiagLog.swift), sa fin, un repère posé à la
 /// main, et — en Debug seulement — de VRAIS crashs et une inondation de lignes pour le mesurer.
-/// Rien ici n'alerte jamais : un crash est préparé en silence au relancement.
+/// Rien ici n'alerte jamais, ni ne prépare quoi que ce soit : `tools/diag_latest.py` lit.
 extension CommandRegistry {
 
     func registerDiagCommands() {
 
         register("diag.status",
                  summary: """
-                 The diagnostic journal: `enabled`, the session file (`log`, `bytes`, `rotations`), the \
-                 folder (`root`), and `last_crash` — the newest crash folder on disk (`dir`, `signal`, \
-                 `summary`, `complete`), or null — and `reports_pending`, the folders still being prepared. Not itself journaled.
+                 The diagnostic journal: `enabled`, the session file (`log`, null when off) and the \
+                 folder (`root`). Reading dead sessions, crash reports and the system log is \
+                 `tools/diag_latest.py`'s job, not the app's. Not itself journaled.
                  """,
                  undo: .none) { _ in
-            let root = Diag.rootDirectory
-            var payload: [String: JSONValue] = [
-                "enabled": .bool(Diag.isEnabled),
-                "root": .string(root.path),
-                "pid": .int(Int(getpid())),
-                "headless": .bool(Diag.isHeadless),
-                "log": .stringOrNull(Diag.currentLogURL?.path),
-                "bytes": .number(Double(objdiag_bytes_written())),
-                "rotations": .int(Int(objdiag_rotation_count())),
-                // Crash folders still being prepared in the background (the .ips of a fresh crash
-                // can take up to 60 s to appear): the app does not wait for them to start.
-                "reports_pending": .int(DiagCrashReports.pendingCount),
-            ]
-            payload["last_crash"] = Self.jsonValue(DiagCrashReports.lastCrash(root: root)) ?? .null
-            return .object(payload)
+            .object(["enabled": .bool(Diag.isEnabled),
+                     "root": .string(Diag.rootDirectory.path),
+                     "log": .stringOrNull(Diag.currentLogURL?.path)])
         }
 
         register("diag.tail",
@@ -56,7 +44,7 @@ extension CommandRegistry {
                 }
             }
             if let since {
-                lines = lines.filter { (DiagCrashReports.Builder.seconds(of: $0) ?? since) >= since }
+                lines = lines.filter { (Diag.seconds(ofLine: $0) ?? since) >= since }
             }
             return .object(["lines": .array(lines.suffix(count).map { .string($0) }),
                             "total": .int(lines.count)])
@@ -64,17 +52,15 @@ extension CommandRegistry {
 
         register("diag.mark",
                  summary: """
-                 Reports a problem from a script: writes an ISSUE line, gathers `issues/<date>_<time>/` \
-                 (note.txt, state.json, journal.log, oslog.txt), updates LATEST.md. Does not touch the \
-                 clipboard. Works with the journal off too (the journal.log then says so).
+                 Reports a problem from a script: writes one `ISSUE "note"` line in the journal \
+                 (what the menu's « Signaler un problème… » does) — nothing else. The journal must be on.
                  """,
                  params: [ParamSpec("note", "string", required: false, "What went wrong.")],
                  undo: .none) { p in
-            let note = try p.string("note", or: "")
-            guard let folder = await DiagIssueReport.collect(note: note, copyToClipboard: false) else {
-                throw CommandError(code: .engine_error, message: "could not create the issue folder")
+            guard Diag.mark(note: try p.string("note", or: "")) else {
+                throw CommandError(code: .invalid_state, message: "diagnostic journal is off")
             }
-            return .object(["folder": .string(folder.path)])
+            return .object(["log": .stringOrNull(Diag.currentLogURL?.path)])
         }
 
         register("diag.set_enabled",
@@ -165,13 +151,5 @@ extension CommandRegistry {
             ])
         }
         #endif
-    }
-
-    /// `[String: Any]` (JSON read by Foundation) → `JSONValue`.
-    private static func jsonValue(_ object: [String: Any]?) -> JSONValue? {
-        guard let object, JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object),
-              let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
-        return value
     }
 }

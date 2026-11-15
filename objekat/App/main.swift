@@ -18,12 +18,8 @@ let launchArguments = LaunchArguments.process
 Localization.applyLaunchOverride(launchArguments)
 
 // The diagnostic journal comes BEFORE the engine, so that what the engine does while it builds
-// (opening the card, scanning plugins) is already on record — and a crash there too. First, the
-// sessions that died since the last launch are looked at (headless: only if asked for with
-// `--diag-log`, a test instance has no business reading the user's journals), then this one opens.
-if launchArguments.diagLog || !launchArguments.headless {
-    DiagCrashReports.scanAtLaunch(root: Diag.rootDirectory, ipsWait: launchArguments.diagIpsWait ?? 60)
-}
+// (opening the card, scanning plugins) is already on record — and a crash there too. The app only
+// WRITES it; reading a dead session is `tools/diag_latest.py`'s job, run by hand.
 if Diag.shouldStartAtLaunch(preference: UserDefaults.standard.bool(forKey: "pref.diagnosticLog")) {
     Diag.start()
 }

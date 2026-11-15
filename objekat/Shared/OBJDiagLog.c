@@ -142,7 +142,7 @@ int objdiag_is_realtime_thread(void) {
 // ─── Méta ────────────────────────────────────────────────────────────────────
 
 static void write_file_replace(const char* path, const char* content) {
-    // temp + rename : un lecteur (le relancement) ne voit jamais un méta à moitié écrit.
+    // temp + rename : un lecteur (diag_latest.py) ne voit jamais un méta à moitié écrit.
     char tmp[OBJDIAG_PATH_MAX + 8];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -350,7 +350,7 @@ static void write_crash_lines(int sig, siginfo_t* info, void* uctx) {
     p = as_putu(p, end, (uint64_t)getpid(), 1, '0');
     *p++ = '\n';
 
-    // Deuxième ligne : les adresses brutes (la symbolisation vient du .ips, au relancement).
+    // Deuxième ligne : les adresses brutes (la symbolisation vient du .ips, lu par diag_latest.py).
     p = put_prefix(p, end);
     p = put_category(p, end, "CRASH");
     p = as_puts(p, end, "stack slide=");

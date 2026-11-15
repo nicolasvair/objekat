@@ -3038,71 +3038,25 @@
         }
       }
     },
-    "diag.issue.done.info": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The folder is ready and its path is on the clipboard:\n%@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "La carpeta está lista y su ruta está en el portapapeles:\n%@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le dossier est prêt et son chemin est dans le presse-papiers :\n%@"
-          }
-        }
-      }
-    },
-    "diag.issue.done.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Report saved"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Informe guardado"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rapport enregistré"
-          }
-        }
-      }
-    },
     "diag.issue.info": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Describe what happened (optional). The log, the project state and the system logs will be gathered in a folder whose path will be copied to the clipboard."
+            "value": "Describe what happened (optional). The note will be written to the diagnostic log."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Describa lo que ha pasado (opcional). El registro, el estado del proyecto y los registros del sistema se reunirán en una carpeta cuya ruta se copiará al portapapeles."
+            "value": "Describa lo que ha pasado (opcional). La nota se escribirá en el registro de diagnóstico."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Décrivez ce qui s'est passé (facultatif). Le journal, l'état du projet et les logs système seront rassemblés dans un dossier dont le chemin sera copié dans le presse-papiers."
+            "value": "Décrivez ce qui s'est passé (facultatif). La note sera écrite dans le journal de diagnostic."
           }
         }
       }

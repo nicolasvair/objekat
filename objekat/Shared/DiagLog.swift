@@ -4,19 +4,21 @@
 //
 //  Le journal de diagnostic : de quoi comprendre, APRÈS COUP, ce que l'app faisait quand elle a
 //  planté ou quand quelque chose a mal tourné. Pensé pour être lu par Claude : un fichier texte,
-//  une ligne par évènement, un dossier par crash.
+//  une ligne par évènement, une session = un fichier.
 //
 //  CE QUE C'EST ET CE QUE CE N'EST PAS
 //    • Désactivé par défaut (préférence `pref.diagnosticLog`, menu OBJEKAT ▸ Diagnostic). Désactivé,
 //      un appel de `Diag.log` ne coûte que la lecture d'un entier : le message n'est même pas construit.
 //    • Ce n'est pas un enregistreur de session : il ne dit pas tout, il dit ce qui change l'état
 //      (gestes, commandes, transport, projet, plugins, carte son) — de quoi reconstituer le chemin.
-//    • Il n'alerte jamais. Un crash est préparé en silence au relancement (@see DiagCrashReports) ;
-//      c'est à l'utilisateur de dire « regarde le dernier crash ».
+//    • Il n'alerte jamais et ne prépare rien : l'app ÉCRIT (le journal, la ligne CRASH, le méta de
+//      session) ; tout ce qui se lit après coup — sessions mortes, rapport système .ips, logs
+//      système — est fait par `tools/diag_latest.py`, lancé à la main quand l'utilisateur dit
+//      « regarde le dernier crash ».
 //
 //  LA PARTIE C (Shared/OBJDiagLog.c) fait le travail qui doit survivre à un crash : écriture,
 //  rotation, gestionnaires de signaux. Ici, tout ce qui a droit à Foundation : dossiers, méta,
-//  rapports, exceptions Objective-C.
+//  exceptions Objective-C.
 //
 //  ⚠️ JAMAIS depuis le thread audio. `Diag.log` prend un verrou et fait un write().
 //
@@ -62,7 +64,23 @@ nonisolated enum Diag {
         objdiag_log(category.rawValue, message())
     }
 
+    /// Un problème signalé à la main : une ligne `ISSUE "note"`. Faux si le journal est éteint.
+    @discardableResult
+    static func mark(note: String) -> Bool {
+        guard isEnabled else { return false }
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        log(.issue, "\"" + trimmed.replacingOccurrences(of: "\"", with: "\\\"") + "\"")
+        return true
+    }
+
     // MARK: - Aides de mise en forme
+
+    /// `15:02:11.123 +12.345 API …` → 12.345 (les secondes de session ; nil pour une ligne d'en-tête).
+    static func seconds(ofLine line: String) -> Double? {
+        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 2, parts[1].hasPrefix("+") else { return nil }
+        return Double(parts[1].dropFirst())
+    }
 
     /// Les identifiants sont raccourcis à 8 caractères : assez pour se repérer, peu pour lire.
     static func short(_ id: UUID) -> String { String(id.uuidString.prefix(8)) }

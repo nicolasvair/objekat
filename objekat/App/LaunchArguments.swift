@@ -77,6 +77,4 @@ nonisolated struct LaunchArguments: Sendable {
     var diagDir: String? { value("diag-dir") }
     /// Taille de rotation d'un journal, en Mo (défaut 20) — pour éprouver la rotation sans écrire 20 Mo.
     var diagMaxMB: Double? { value("diag-max-mb").flatMap(Double.init) }
-    /// Combien de secondes attendre le rapport système (.ips) d'une session morte (défaut 60).
-    var diagIpsWait: Double? { value("diag-ips-wait").flatMap(Double.init) }
 }
