@@ -3153,11 +3153,11 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
 
 ## Permanent points of attention
 
-- **Crash or reported problem: read `~/Library/Logs/Objekat/LATEST.md`, then the folder it points to,
-  `summary.md` first** (`python3 tools/diag_latest.py` does it). Crash ou problème signalé : lire
-  `~/Library/Logs/Objekat/LATEST.md` puis le dossier indiqué, summary.md d'abord ; tools/diag_latest.py.
-  The journal is off by default (menu OBJEKAT ▸ Diagnostic); format and `diag.*` commands in
-  `OBJEKAT - claude project/docs/command_api.md`.
+- **Crash or reported problem: run `python3 tools/diag_latest.py`** (sessions in
+  `~/Library/Logs/Objekat/sessions/`; `list`, `show <session>`, `--oslog`). Crash ou problème
+  signalé : lancer `python3 tools/diag_latest.py` ; sessions dans `~/Library/Logs/Objekat/sessions/`.
+  The journal is off by default (menu OBJEKAT ▸ Diagnostic); the app only writes it, the script reads
+  it. Format and `diag.*` commands in `OBJEKAT - claude project/docs/command_api.md`.
 - **No visible sentence lives in a `.swift`.** Every interface text goes through `L("key")`
   (or `Ln("key", n, …)` for a singular/plural), and the keys are SYMBOLIC —
   `export.panel.title`, never the sentence. The values live in

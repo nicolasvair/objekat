@@ -728,10 +728,9 @@ objekat.app/Contents/MacOS/objekat --headless --api --socket=/tmp/o.sock
 | `--virtual-audio[=in:4,out:2,in2:0,sr:48000,bs:256,inlat:64,outlat:96,splitin:0,hfp:0]` | replaces EVERY sound card with the virtual one, paced on the wall clock, with synthetic inputs (see "The audio device"). `splitin:1` declares the card's inputs to be ANOTHER device with the same name (the AirPods layout): `input.enable` then refuses, unless `in2:N` gives a second, input-only card ("OBJ Virtual In 2", N channels) that can be its microphone. `hfp:1` makes that second card play a Bluetooth microphone (opening it waits for the system to settle, see "An input card other than the output card"). Every key is optional; an unknown key or a bad value falls back to the default. `--no-audio` outranks it |
 | `--no-recent` | writes nothing into "Recent projects" (with or without a window); also keeps the script panels' `remember` memory in the process instead of `UserDefaults` (as `--headless` does) |
 | `--language=<fr\|en\|es>` | forces the interface's language for this launch |
-| `--diag-log` | turns the diagnostic journal on for this launch (see "The diagnostic journal"). Under `--headless` it is the ONLY way: a test instance never writes the user's journals nor reads their crashes |
+| `--diag-log` | turns the diagnostic journal on for this launch (see "The diagnostic journal"). Under `--headless` it is the ONLY way: a test instance never writes the user's journals |
 | `--diag-dir=<folder>` | the journal's root instead of `~/Library/Logs/Objekat` (tests) |
 | `--diag-max-mb=<n>` | the session file's size before it rotates to `.log.1` (default 20) |
-| `--diag-ips-wait=<s>` | how long a crash folder waits for the system's `.ips` (default 60) |
 
 Exit codes: `0` success · `1` a command of the script failed · `2` a usage error
 (an unreadable project, neither `--api` nor `--exec`, an impossible socket).
@@ -2678,17 +2677,16 @@ the user's), the latency, and the behaviour of real AirPods.
 A text journal meant to be READ AFTER THE FACT — by Claude — when the app has crashed or something went wrong.
 **Off by default** (`pref.diagnosticLog`, menu OBJEKAT ▸ Diagnostic ▸ Journal de diagnostic, immediate effect; or
 `--diag-log` for one launch). Off, a call costs the reading of one integer and the message is not even built;
-on, one line costs a median of ~3 µs (`debug.diag_flood`, Debug build). It never alerts: after a crash the folder
-is prepared silently at the next launch, and the user says "look at the last crash".
+on, one line costs a median of ~3 µs (`debug.diag_flood`, Debug build). **The app only WRITES**: the journal, the
+`CRASH` line, the session's meta. It prepares nothing at the next launch and never alerts; everything that interprets
+a dead session lives in `tools/diag_latest.py`, run by hand when the user says "look at the last crash".
 
 Files, under `~/Library/Logs/Objekat/` (its `README.md` explains itself):
 
 | path | content |
 |---|---|
-| `LATEST.md` | the last crash OR reported problem: kind, time, folder, one-line summary |
-| `sessions/<date>_<time>_pid<N>.log` (+ `.log.1`, `.meta.json`) | the journal of one run; `clean_exit` is false until the run ends normally |
-| `crashes/<date>_<time>_<SIGNAL>/` | `summary.md` (exception, signal, the 20 symbolised frames of the faulting thread, the last actions), `journal.log` (15 min, 3000 lines at most), `meta.json`, the system `*.ips` of the SAME pid, `oslog.txt` (`log show` for the pid). `…_ABNORMAL` = no system report (kill -9, force quit, power cut): the journal is all there is |
-| `issues/<date>_<time>/` | a reported problem: `note.txt`, `state.json`, `journal.log`, `oslog.txt` |
+| `sessions/<date>_<time>_pid<N>.log` (+ `.log.1`) | the journal of one run |
+| `sessions/<date>_<time>_pid<N>.meta.json` | pid, start, version, project, `clean_exit` (false until the run ends normally) |
 
 A line: `HH:MM:SS.mmm +seconds CAT message` (`+seconds` since the session start; UUIDs cut to 8 characters; a message
 is one line, at most ~4 KB). Categories: `PROJ` (open / save / new / tabs), `KEY` (shortcuts — never the text typed in a
@@ -2696,31 +2694,38 @@ field), `MENU`, `MOUSE` (clicks with the view hit; wheel and pinch as ONE start/
 was pushed: `function File.swift:line` of the gesture, thanks to the defaults of `pushUndo`), `UNDO`, `API` (`name {params}`
 BEFORE the command runs — a command that crashes the app is the last line — then `name → ok|erreur … ms`), `TRANS`,
 `PLUG` (add, editor, and the bridge's instance creation / state restore), `AUDIO`, `TE` (every message of the engine),
-`DLG`, `ISSUE`, `CRASH`, `EXIT`.
+`DLG`, `ISSUE "note"` (a reported problem), `CRASH`, `EXIT`.
 
 How a crash is caught: `SIGSEGV/SIGBUS/SIGILL/SIGTRAP/SIGABRT/SIGFPE` handlers that only call `write()` (the line
 `CRASH signal …` and the raw return addresses), then restore the previous handler and re-fault, so macOS still writes its
 `.ips`; an Objective-C exception adds `CRASH objc_exception name= reason=` and its stack (AppKit REPLACES the
 uncaught-exception handler when the launch ends, so it is put back, chained, afterwards). `SIGTERM`/`SIGINT` are
-`EXIT external`, not crashes. At the next launch (before the engine), every session whose meta says `clean_exit:false`
-and whose pid is gone becomes a `crashes/` folder, **prepared in the background** (the `.ips` can take up to 60 s to
-appear): `diag.status.reports_pending` tells when it is done. A report taken by an instance that dies before finishing
-(quit within the minute, a second crash) is taken over by the next launch.
+`EXIT external`, not crashes.
 
 | command | |
 |---|---|
-| `diag.status` | `enabled`, `root`, `log`, `bytes`, `rotations`, `reports_pending`, `last_crash` (the newest crash folder: `dir`, `signal`, `summary`, `complete`) |
+| `diag.status` | `enabled`, `root`, `log` (the session file, null while off). Nothing else: no crash list, no pending reports. Not journaled itself |
 | `diag.tail {lines, since}` | the last lines of THIS session (rotated file included); `invalid_state` while off. Not journaled itself |
-| `diag.mark {note}` | the script door of "Signaler un problème…" (⌃⌥⌘I): an `ISSUE` line, the `issues/` folder, LATEST.md; no clipboard; works with the journal off |
+| `diag.mark {note}` | the script door of "Signaler un problème…" (⌃⌥⌘I): ONE `ISSUE "note"` line, nothing else; `invalid_state` while off |
 | `diag.set_enabled {on, persist}` | turns it on/off for this run; `persist: true` also writes the preference |
-| `debug.crash {kind}` | **Debug builds only.** A REAL crash: `segv`, `abort`, `objc_exception` (raised on a background thread: on the main one AppKit swallows it), `swift_fatal`, `stack_overflow`. Leaves a real `.ips` in `~/Library/Logs/DiagnosticReports` |
+| `debug.crash {kind}` | **Debug builds only.** A REAL crash: `segv`, `abort`, `objc_exception` (raised on a background thread: on the main one AppKit swallows it), `swift_fatal`, `stack_overflow`. Leaves a real `.ips` in `~/Library/Logs/DiagnosticReports`: one try per kind, never in a loop |
 | `debug.diag_flood {lines, width}` | **Debug only.** Writes N lines and answers `median_us`, `p95_us`, the file counters |
 
-Reading it: `python3 tools/diag_latest.py` (LATEST.md, then the folder's summary/note and journal tail) or
-`--list 10`. Rotation: 20 MB per session file, 30 sessions, 300 MB, the last 50 `crashes/` and `issues/` folders.
+**Reading it — `tools/diag_latest.py`** (stdlib, run by Claude):
+
+| call | |
+|---|---|
+| `diag_latest.py` | the newest abnormal session OR session holding an `ISSUE` line, in full: header, `CRASH` lines, `ISSUE` lines (with the 12 lines before each), the system report, the tail of the journal |
+| `diag_latest.py list [-n N]` | recent sessions: `ok` (clean exit), `alive`, `CRASH/<signal>` (a `CRASH` line), `ABNORMAL` (meta `clean_exit:false`, pid gone or reused, no `EXIT`: kill -9, force quit, power cut), `ISSUE×n` |
+| `diag_latest.py show <session>` | one session: its name, its pid, a part of its name, or `latest` |
+| options | `--lines N` (tail, default 40), `--minutes M` (the last M minutes of the session instead), `--oslog` (adds `log show --predicate 'processIdentifier == PID'` over the session's window), `--json`, `--dir PATH` |
+
+The system report is looked up by pid in `~/Library/Logs/DiagnosticReports` (exception, signal, the 20 first frames of
+the faulting thread, the Objective-C exception's stack): macOS writes it asynchronously, up to a minute after the crash,
+and a kill -9 leaves none — the output says so. Rotation (the app's): 20 MB per session file, 30 sessions, 300 MB.
 Asserted by `tools/scenario_diag_log.py` (headless, `--diag-dir` on a temporary folder; the five `debug.crash` kinds are
-real crashes). **Not covered**: the menu and the note alert on screen, and the local `NSEvent` monitors (keys, clicks,
-wheel) — they only exist with a window.
+real crashes, one each; a missing `.ips` is reported, not failed). **Not covered**: the menu and the note alert on
+screen, and the local `NSEvent` monitors (keys, clicks, wheel) — they only exist with a window.
 
 ### Export
 

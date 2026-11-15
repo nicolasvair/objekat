@@ -2,27 +2,28 @@
 # -*- coding: utf-8 -*-
 """The diagnostic journal — a scenario that ASSERTS, against HEADLESS instances only.
 
-    python3 tools/scenario_diag_log.py [path/to/objekat/binary]
+    python3 tools/scenario_diag_log.py [path/to/objekat/binary] [T0 T4 …]
 
-Each test launches its own instances (`--headless --api --no-audio --no-recent`, a short socket
-under /tmp, `--diag-dir=<temporary folder>` so ~/Library/Logs/Objekat is never touched). No window
-is ever opened; T4 checks it on the crashing pids.
+The app only WRITES the journal; reading it is `tools/diag_latest.py`'s job, and this scenario
+tests both halves. Each test launches its own instances (`--headless --api --no-audio --no-recent`,
+a short socket under /tmp, `--diag-dir=<temporary folder>` so ~/Library/Logs/Objekat is never
+touched). No window is ever opened.
 
   T0  journal option off          → no file, no folder, `diag.status` says so
   T1  startup                     → header line, meta clean_exit:false, session file
   T2  tracing                     → API / EDIT / UNDO / TRANS / PROJ lines, in order, EDIT with
                                     function + file:line
-  T3  normal exits                → SIGTERM and a plain `exit()` (`--exec`) leave NO crash folder
-  T4  real crashes (Debug)        → segv, abort, objc_exception, swift_fatal, stack_overflow: the
-                                    journal ends with the last API line then CRASH ; the relaunch
-                                    prepares a complete crashes/… folder (summary, journal, .ips of
-                                    the right pid, oslog, LATEST.md, diag.status.last_crash)
-  T5  kill -9                     → « arrêt anormal sans rapport »
-  T6  diag.mark                   → a complete issues/… folder
+  T3  normal exits                → SIGTERM and a plain `exit()` leave clean_exit true and
+                                    diag_latest.py calls them ok
+  T4  real crashes (Debug)        → ONE crash per debug.crash kind: the journal ends with the last
+                                    API line then CRASH ; diag_latest.py flags the session CRASH
+                                    and finds its .ips (macOS may not write one: reported, not failed)
+  T5  kill -9                     → diag_latest.py: ABNORMAL, and it is the default pick
+  T6  diag.mark                   → an ISSUE "note" line, found by diag_latest.py
   T7  rotation                    → --diag-max-mb=1 + diag_flood
-  T8  two instances, one folder   → only the instance that crashed is reported
+  T8  two instances, one folder   → the killed one is ABNORMAL, the live one is alive
   T9  cost                        → median of one journal line < 10 µs
-  T10 catalogue                   → the Diagnostic menu's keys exist in fr/en/es
+  T10 catalogue                   → the Diagnostic menu's keys exist in fr/en/es, none orphaned
 
 The five debug.crash calls leave real .ips files in ~/Library/Logs/DiagnosticReports (expected).
 Exit: 0 if every assertion passes, 1 otherwise.
@@ -144,27 +145,24 @@ def index_of(lines, pattern, start=0):
     return -1
 
 
-def crash_folders(diag_dir):
-    return sorted(glob.glob(os.path.join(diag_dir, "crashes", "*")))
+LATEST = os.path.join(HERE, "diag_latest.py")
 
 
-def wait_reports(sock, timeout=240):
-    """The crash folders are prepared in the BACKGROUND after startup (the .ips of a fresh crash can
-    take up to 60 s to appear): waits until `diag.status` says none is pending."""
-    deadline = time.time() + timeout
-    with client(sock) as c:
-        while time.time() < deadline:
-            if c.send("diag.status")["reports_pending"] == 0:
-                return True
-            time.sleep(1.0)
-    return False
+def diag_latest(d, *args):
+    """Runs tools/diag_latest.py on a logs folder. Returns (returncode, stdout)."""
+    r = subprocess.run([sys.executable, LATEST, "--dir", d] + list(args), capture_output=True, text=True,
+                       timeout=180)
+    return r.returncode, r.stdout
 
 
-def folder_meta(folder):
-    try:
-        return json.load(open(os.path.join(folder, "meta.json")))
-    except Exception:
-        return {}
+def sessions_json(d):
+    rc, out = diag_latest(d, "list", "--json", "-n", "50")
+    return {s["pid"]: s for s in json.loads(out)} if rc == 0 and out.strip() else {}
+
+
+def show_json(d, pid, *extra):
+    rc, out = diag_latest(d, "show", str(pid), "--json", *extra)
+    return json.loads(out) if rc == 0 and out.strip() else {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,9 +180,14 @@ def t0_off():
             check("diag.tail refused while off", False)
         except ObjekatError as e:
             check("diag.tail refused while off", e.code == "invalid_state", str(e))
+        try:
+            c.send("diag.mark", {"note": "x"})
+            check("diag.mark refused while off", False)
+        except ObjekatError as e:
+            check("diag.mark refused while off", e.code == "invalid_state", str(e))
     stop(proc, sock)
     check("no sessions file", not glob.glob(os.path.join(d, "sessions", "*")))
-    check("no crash / issue folder", not crash_folders(d) and not glob.glob(os.path.join(d, "issues", "*")))
+    check("no crash / issue folder", not glob.glob(os.path.join(d, "crashes")) and not glob.glob(os.path.join(d, "issues")))
 
 
 def t1_startup():
@@ -291,15 +294,13 @@ def t3_normal_exits():
     check("--exec exits by itself", rc == 0, "rc=%s" % rc)
     meta2 = session_meta(d, p2.pid)
     check("exit(): meta clean_exit true", meta2 and meta2["clean_exit"] is True, str(meta2))
-    # Relaunch: neither session may produce a crash folder.
-    proc3, sock3 = launch(d, extra=["--diag-ips-wait=2"])
-    wait_reports(sock3, 60)
-    with client(sock3) as c:
-        st = c.send("diag.status")
-        check("relaunch: no last_crash", st["last_crash"] is None, str(st["last_crash"]))
-    stop(proc3, sock3)
-    check("relaunch: no crash folder", not crash_folders(d))
-    check("no LATEST.md", not os.path.exists(os.path.join(d, "LATEST.md")))
+    sess = sessions_json(d)
+    check("diag_latest: both sessions ok", sess.get(pid1, {}).get("status") == "ok"
+          and sess.get(p2.pid, {}).get("status") == "ok", str({k: v["status"] for k, v in sess.items()}))
+    rc, out = diag_latest(d)
+    check("diag_latest default: nothing abnormal", rc == 0 and "Aucune session anormale" in out, out[:200])
+    check("no crashes/, issues/ or LATEST.md written by the app",
+          not any(os.path.exists(os.path.join(d, n)) for n in ("crashes", "issues", "LATEST.md")))
 
 
 KINDS = {  # kind → acceptable signals
@@ -312,7 +313,7 @@ KINDS = {  # kind → acceptable signals
 
 
 def t4_crashes():
-    section("T4  real crashes (Debug)")
+    section("T4  real crashes (Debug) — one per kind")
     d = tmpdir()
     crashed = {}
     for kind in KINDS:
@@ -351,56 +352,53 @@ def t4_crashes():
         check("%s: meta still clean_exit false" % kind, meta and meta["clean_exit"] is False)
         time.sleep(1.0)
 
-    print("   … relaunching: the folders are prepared before the engine (up to ~60 s per .ips)")
-    t0 = time.time()
-    proc, sock = launch(d, extra=["--diag-ips-wait=60"], wait_socket=420)
-    check("reports finished", wait_reports(sock, 300))
-    print("   … relaunch + reports took %.0f s" % (time.time() - t0))
-    folders = crash_folders(d)
-    check("one crash folder per crash", len(folders) == len(KINDS), str(folders))
-    by_pid = {folder_meta(f).get("pid"): f for f in folders}
-    with client(sock) as c:
-        st = c.send("diag.status")
-    last = st.get("last_crash")
+    # diag_latest.py reads the dead sessions.
+    sess = sessions_json(d)
     for kind, pid in crashed.items():
-        f = by_pid.get(pid)
-        if not check("%s: folder for pid %d" % (kind, pid), f is not None, str(list(by_pid))):
+        s_ = sess.get(pid, {})
+        check("%s: diag_latest says CRASH/%s" % (kind, s_.get("signal")),
+              s_.get("status") == "CRASH" and s_.get("signal") in KINDS[kind], str(s_))
+    rc, out = diag_latest(d)
+    last_pid = crashed[list(KINDS)[-1]]
+    check("diag_latest default: the newest crash, in full", rc == 0 and "pid %d" % last_pid in out
+          and "── CRASH ──" in out and "Fin du journal" in out, out[:400])
+    data = show_json(d, last_pid, "--lines", "5")
+    check("show --lines 5: 5 journal lines, ending on the CRASH", len(data.get("tail", [])) == 5
+          and " CRASH " in data["tail"][-1], str(data.get("tail", [])[-2:]))
+    data = show_json(d, last_pid, "--minutes", "0.01")
+    check("show --minutes: a window, not the whole journal", 0 < len(data.get("tail", [])) < 40,
+          str(len(data.get("tail", []))))
+
+    # The system report: macOS writes it asynchronously, up to a minute later, and sometimes not at
+    # all — absent is REPORTED, never a failure.
+    print("   … waiting for the .ips files (up to 60 s)")
+    deadline = time.time() + 60
+    found = {}
+    while time.time() < deadline:
+        for kind, pid in crashed.items():
+            if kind not in found:
+                data = show_json(d, pid)
+                if data.get("ips"):
+                    found[kind] = data
+        if len(found) == len(crashed):
+            break
+        time.sleep(3.0)
+    for kind, pid in crashed.items():
+        data = found.get(kind)
+        if not data:
+            print("  NOTE %s: no .ips found for pid %d (macOS did not write one, or not yet)" % (kind, pid))
             continue
-        meta = folder_meta(f)
-        check("%s: meta complete, signal %s" % (kind, meta.get("signal")),
-              meta.get("complete") is True and meta.get("signal") in KINDS[kind], str(meta))
-        check("%s: name ends with the signal" % kind, os.path.basename(f).endswith(meta.get("signal", "?"))
-              or re.search(r"_%s-\d+$" % meta.get("signal", "?"), os.path.basename(f)) is not None, f)
-        summary = open(os.path.join(f, "summary.md"), encoding="utf-8").read()
-        check("%s: summary.md names the signal" % kind, meta.get("signal", "?") in summary)
-        frames = [l for l in summary.split("## Pile du thread fautif", 1)[-1].split("##", 1)[0].splitlines()
-                  if re.match(r"^#\d+\s+\S+", l)]
-        check("%s: summary.md has a non-empty stack (%d frames)" % (kind, len(frames)),
-              len(frames) >= 3, summary[:600])
-        check("%s: journal.log ends on the crash" % kind,
-              "CRASH" in open(os.path.join(f, "journal.log"), encoding="utf-8").read().splitlines()[-1]
-              or any("CRASH" in l for l in open(os.path.join(f, "journal.log"), encoding="utf-8").read().splitlines()[-30:]))
-        ips = glob.glob(os.path.join(f, "*.ips"))
-        ips_pid = None
-        if ips:
-            try:
-                body = open(ips[0], encoding="utf-8").read().split("\n", 1)[1]
-                ips_pid = json.loads(body).get("pid")
-            except Exception as e:
-                ips_pid = str(e)
-        check("%s: .ips of the right pid" % kind, ips_pid == pid, "ips=%s pid=%s" % (ips, ips_pid))
-        oslog = os.path.join(f, "oslog.txt")
-        check("%s: oslog.txt non-empty" % kind, os.path.exists(oslog) and os.path.getsize(oslog) > 80,
-              "%s bytes" % (os.path.getsize(oslog) if os.path.exists(oslog) else "missing"))
-    latest = open(os.path.join(d, "LATEST.md"), encoding="utf-8").read() if os.path.exists(
-        os.path.join(d, "LATEST.md")) else ""
-    check("LATEST.md names the newest folder", last is not None and last.get("dir", "?") in latest, latest[:300])
-    check("diag.status.last_crash filled", last is not None and last.get("complete") is True, str(last))
-    stop(proc, sock)
+        exc = data.get("ips_exception") or {}
+        check("%s: .ips of pid %d, signal %s" % (kind, pid, exc.get("signal")),
+              exc.get("signal") in KINDS[kind], str(exc))
+        rc, out = diag_latest(d, "show", str(pid))
+        frames = re.findall(r"^\s+#\d+\s+\S+", out.split("Thread fautif", 1)[-1], re.M)
+        check("%s: show prints the faulting thread (%d frames)" % (kind, len(frames)),
+              "Thread fautif" in out and len(frames) >= 3, out[-500:])
 
 
 def t5_kill9():
-    section("T5  kill -9 → abnormal stop, no report")
+    section("T5  kill -9 → ABNORMAL for diag_latest.py")
     d = tmpdir()
     proc, sock = launch(d)
     pid = proc.pid
@@ -408,44 +406,36 @@ def t5_kill9():
         c.send("project.new")
     proc.kill()
     proc.wait()
-    proc2, sock2 = launch(d, extra=["--diag-ips-wait=3"])
-    check("reports finished", wait_reports(sock2))
-    folders = crash_folders(d)
-    check("one folder", len(folders) == 1, str(folders))
-    if folders:
-        meta = folder_meta(folders[0])
-        check("meta: abnormal, no ips", meta.get("abnormal") is True and meta.get("ips_found") is False, str(meta))
-        check("name ends with ABNORMAL", folders[0].endswith("ABNORMAL"), folders[0])
-        s = open(os.path.join(folders[0], "summary.md"), encoding="utf-8").read()
-        check("summary: « arrêt anormal sans rapport »", "arrêt anormal sans rapport" in s, s[:400])
-    stop(proc2, sock2)
+    s_ = sessions_json(d).get(pid, {})
+    check("list: ABNORMAL", s_.get("status") == "ABNORMAL", str(s_))
+    rc, out = diag_latest(d)
+    check("default pick: the killed session, « Arrêt anormal »", rc == 0 and "ABNORMAL" in out
+          and "Arrêt anormal" in out and "pid %d" % pid in out, out[:400])
+    data = show_json(d, pid)
+    check("no CRASH line, no .ips", not data.get("crash_lines") and not data.get("ips"), str(data.get("ips")))
 
 
 def t6_mark():
-    section("T6  diag.mark → issues/ folder")
+    section("T6  diag.mark → ISSUE line")
     d = tmpdir()
     proc, sock = launch(d)
     with client(sock) as c:
         c.send("project.new")
         c.send("object.add", {"path": BIP, "lane": 0, "start": 0})
-        r = c.send("diag.mark", {"note": "le son craque après le split"})
-    folder = r["folder"]
-    check("folder under issues/", os.path.dirname(folder) == os.path.join(d, "issues"), folder)
-    check("note.txt", open(os.path.join(folder, "note.txt"), encoding="utf-8").read().strip()
-          == "le son craque après le split")
-    try:
-        state = json.load(open(os.path.join(folder, "state.json"), encoding="utf-8"))
-    except Exception as e:
-        state = {"err": str(e)}
-    check("state.json: project, selection, transport, undo depth",
-          all(k in state for k in ("project.get_state", "selection.get", "transport.state", "annulation")),
-          str(list(state)))
-    j = open(os.path.join(folder, "journal.log"), encoding="utf-8").read()
-    check("journal.log holds the ISSUE line and the API lines",
-          " ISSUE " in j and "object.add" in j)
-    check("oslog.txt present", os.path.exists(os.path.join(folder, "oslog.txt")))
-    latest = open(os.path.join(d, "LATEST.md"), encoding="utf-8").read()
-    check("LATEST.md points at it", folder in latest and "problème signalé" in latest, latest[:200])
+        c.send("diag.mark", {"note": 'le son craque après le "split"'})
+        lines = read_lines(session_log(d, proc.pid))
+        check("session stays alive", c.send("diag.status")["enabled"] is True)
+    issue = [l for l in lines if re.search(r" ISSUE +", l)]
+    check("one ISSUE line, note quoted", len(issue) == 1 and re.search(
+        r'ISSUE +"le son craque après le \\"split\\""$', issue[0]) is not None, str(issue))
+    check("after the object.add line", index_of(lines, r"ISSUE") > index_of(lines, r"API +object\.add"))
+    check("nothing else written: no issues/ folder, no LATEST.md",
+          not os.path.exists(os.path.join(d, "issues")) and not os.path.exists(os.path.join(d, "LATEST.md")))
+    rc, out = diag_latest(d)
+    check("diag_latest default finds the ISSUE of the live session",
+          rc == 0 and "Problèmes signalés" in out and "craque" in out and "alive" in out, out[:500])
+    s_ = sessions_json(d).get(proc.pid, {})
+    check("list: alive, 1 issue", s_.get("status") == "alive" and s_.get("issues") == 1, str(s_))
     stop(proc, sock)
 
 
@@ -473,24 +463,20 @@ def t8_two_instances():
     pb, sb = launch(d)
     with client(sa) as c:
         c.send("project.new")
-        try:
-            c.send("debug.crash", {"kind": "segv"})
-        except (ConnectionError, OSError, ValueError):
-            pass
+    pa.kill()                      # no real crash needed: an abrupt death is what is being told apart
     pa.wait(timeout=60)
     with client(sb) as c:
         c.send("project.new")
         check("B survives and answers", c.send("diag.status")["enabled"] is True)
-    pc, sc = launch(d, extra=["--diag-ips-wait=40"], wait_socket=240)
-    check("reports finished", wait_reports(sc, 200))
-    folders = crash_folders(d)
-    check("exactly one crash folder", len(folders) == 1, str(folders))
-    if folders:
-        check("it is A's", folder_meta(folders[0]).get("pid") == pa.pid, str(folder_meta(folders[0])))
-    check("B's session left alone (clean_exit false, alive)",
+    sess = sessions_json(d)
+    check("A is ABNORMAL, B is alive", sess.get(pa.pid, {}).get("status") == "ABNORMAL"
+          and sess.get(pb.pid, {}).get("status") == "alive", str({k: v["status"] for k, v in sess.items()}))
+    rc, out = diag_latest(d)
+    check("default pick is A, never B", "pid %d" % pa.pid in out and "pid %d" % pb.pid not in out, out[:300])
+    check("B's meta untouched (clean_exit false, process alive)",
           session_meta(d, pb.pid)["clean_exit"] is False and pb.poll() is None)
     stop(pb, sb)
-    stop(pc, sc)
+    check("B, stopped, is ok", sessions_json(d).get(pb.pid, {}).get("status") == "ok")
 
 
 def t9_cost():
@@ -507,14 +493,16 @@ def t10_catalogue():
     section("T10 catalogue")
     cat = json.load(open(os.path.join(ROOT, "objekat/Resources/Localizable.xcstrings"), encoding="utf-8"))
     keys = ["diag.menu.title", "diag.menu.log", "diag.menu.report", "diag.menu.openFolder",
-            "diag.issue.title", "diag.issue.info", "diag.issue.send", "diag.issue.placeholder",
-            "diag.issue.done.title", "diag.issue.done.info"]
+            "diag.issue.title", "diag.issue.info", "diag.issue.send", "diag.issue.placeholder"]
     missing = [k for k in keys for l in ("fr", "en", "es")
                if not cat["strings"].get(k, {}).get("localizations", {}).get(l, {}).get("stringUnit", {}).get("value")]
-    check("the 10 diag keys exist in fr/en/es", not missing, str(missing))
+    check("the 8 diag keys exist in fr/en/es", not missing, str(missing))
     r = subprocess.run([sys.executable, os.path.join(HERE, "i18n/xcstrings.py"), "check"], cwd=ROOT,
                        capture_output=True, text=True)
     check("xcstrings check: no diag.* key reported", "diag." not in r.stdout, r.stdout[-300:])
+    r = subprocess.run([sys.executable, os.path.join(HERE, "i18n/xcstrings.py"), "orphans"], cwd=ROOT,
+                       capture_output=True, text=True)
+    check("xcstrings orphans: no diag.* key", "diag." not in r.stdout, r.stdout[-300:])
 
 
 TESTS = [t0_off, t1_startup, t2_tracing, t3_normal_exits, t4_crashes, t5_kill9, t6_mark, t7_rotation,
