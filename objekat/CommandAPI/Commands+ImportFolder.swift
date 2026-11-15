@@ -76,5 +76,76 @@ extension CommandRegistry {
             }
             return .object(result)
         }
+
+        #if DEBUG
+        register("debug.file_drop",
+                 summary: """
+                 DEBUG. The RELEASE of a file drop, with no mouse: the very function the timeline's \
+                 drop calls once the files are read (`EditViewModel.commitFileDrop`) — files and \
+                 folders from the Finder or from the library alike. `lane` is the DISPLAY row under \
+                 the cursor, `start` the instant (seconds, no snap), `mode` 'stacked' (default: one \
+                 lane each) or 'sequential' (⌥: one lane, end to end). `insert_row` = let go in the \
+                 GAP before that display row: the files are INSERTED there (the lanes below go down \
+                 by the number of lanes the batch takes, nothing is overwritten); `lane` is then \
+                 ignored. Answers `refused` (an instrument group took no audio: nothing touched, no \
+                 undo point), `insert` — `{group|null, lane, lane_before, count, boundary}`, or null \
+                 when the insertion does not apply (nobody below, inside a piano roll, an open \
+                 consolidated object…) and the normal drop was done instead — and `placed`: each \
+                 object laid down with its `lane` (in its own frame), its display `row`, its `start` \
+                 and its `parent`. ONE undo point per call (none when refused). Not present in \
+                 Release builds.
+                 """,
+                 params: [ParamSpec("paths", "array<string>", "Files and/or folders, in the order dropped."),
+                          ParamSpec("lane", "int", required: false, "Display row under the cursor (default 0)."),
+                          ParamSpec("start", "number", required: false, "Start, in seconds (default 0)."),
+                          ParamSpec("mode", "string", required: false, "'stacked' (default) or 'sequential'."),
+                          ParamSpec("insert_row", "int", required: false,
+                                    "Insert BEFORE this display row (the gap between two lanes) "
+                                  + "instead of dropping on a lane; `lane` is then ignored.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let paths = try Self.strings(p, "paths")
+            guard !paths.isEmpty else { throw CommandError(code: .bad_params, message: "'paths' is empty") }
+            let mode: EditViewModel.FileDropMode
+            switch try p.string("mode", or: "stacked") {
+            case "stacked":    mode = .stacked
+            case "sequential": mode = .sequential
+            case let other:
+                throw CommandError(code: .bad_params,
+                                   message: "unknown mode '\(other)' (expected 'stacked' or 'sequential')")
+            }
+            let lane = max(0, try p.int("lane", or: 0))
+            let start = max(0, try p.double("start", or: 0))
+            var insertRow: Int? = nil
+            if p.raw["insert_row"] != nil, p.raw["insert_row"] != .null { insertRow = try p.int("insert_row") }
+            let load = await EditViewModel.loadDropEntries(from: paths.map { URL(fileURLWithPath: $0) })
+            guard !load.entries.isEmpty else {
+                throw CommandError(code: .invalid_state, message: "nothing to drop (no readable file or audio folder)")
+            }
+            let outcome = vm.commitFileDrop(load.entries, baseLane: lane, baseStart: start,
+                                            mode: mode, insertionRow: insertRow)
+            var out: [String: JSONValue] = ["refused": .bool(outcome.refused)]
+            if insertRow != nil {
+                if let pl = outcome.insertion {
+                    out["insert"] = .object(["group": .stringOrNull(pl.parentID?.uuidString),
+                                             "lane": .int(pl.lane), "lane_before": .int(pl.laneBefore),
+                                             "count": .int(pl.count), "boundary": .int(pl.boundaryRow)])
+                } else {
+                    out["insert"] = .null
+                }
+            }
+            out["placed"] = .array(outcome.placed.compactMap { id -> JSONValue? in
+                guard let obj = vm.find(id: id) else { return nil }
+                let row = vm.laneEntries.first(where: { $0.item.id == id })?.displayLane
+                return .object(["id": .string(id.uuidString),
+                                "name": .string(obj.displayName),
+                                "lane": .int(obj.lane),
+                                "row": row.map { .int($0) } ?? .null,
+                                "start": .number(obj.startTime),
+                                "parent": .stringOrNull(vm.parentGroup(for: id)?.id.uuidString)])
+            })
+            return .object(out)
+        }
+        #endif
     }
 }

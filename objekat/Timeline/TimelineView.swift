@@ -1069,7 +1069,9 @@ struct TimelineView: View {
                                      pixelsPerSecond: pixelsPerSecond,
                                      rulerHeight: rulerHeight,
                                      laneStep: laneStep,
-                                     blockHeight: blockHeight)
+                                     laneGap: laneGap,
+                                     blockHeight: blockHeight,
+                                     fullWidth: max(contentWidth, Double(viewportWidth)))
                     .allowsHitTesting(false)
                     .zIndex(2.95)
 
@@ -3961,21 +3963,14 @@ struct TimelineView: View {
 
     // MARK: - The insertion between two lanes (line and HUD)
 
-    /// The line in the gap before display row `ins.boundaryRow`: 3 px of accent in the middle of the
-    /// 4 px between the two rows.
+    /// The line in the gap before display row `ins.boundaryRow` (@see LaneInsertionLine, shared with
+    /// the file drop).
     private func insertionLine(for ins: LaneInsertion.Plan) -> some View {
-        let y = rulerHeight + Double(ins.boundaryRow) * laneStep - laneGap / 2 - 1.5
-        var x0 = 0.0
-        var w = max(contentWidth, Double(viewportWidth))
-        if let gid = ins.parentID, let e = viewModel.laneEntries.first(where: { $0.item.id == gid }),
-           !e.item.isInfiniteBus {
-            x0 = e.absStart * pixelsPerSecond
-            w = e.item.duration * pixelsPerSecond
-        }
-        return Capsule()
-            .fill(Color.accentColor)
-            .frame(width: w, height: 3)
-            .offset(x: x0, y: y)
+        let extent = LaneInsertionLine.extent(of: ins, in: viewModel, pixelsPerSecond: pixelsPerSecond,
+                                              fullWidth: max(contentWidth, Double(viewportWidth)))
+        return LaneInsertionLine(boundaryRow: ins.boundaryRow, rulerHeight: rulerHeight,
+                                 laneStep: laneStep, laneGap: laneGap,
+                                 x: extent.x, width: extent.width)
     }
 
     /// The second line of the move HUD while a block is straddling two rows: WHERE it will be
@@ -4250,6 +4245,9 @@ struct TimelineView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
+                // Let go in the gap between two lanes: the files are INSERTED there (the lanes below
+                // go down), and the HUD says where, like the move's.
+                if let ins = hint.insertion { insertionHUDLine(ins) }
                 HStack(spacing: 8) {
                     fileDropModeCard(.stacked, active: hint.mode == .stacked, count: hint.count)
                     fileDropModeCard(.sequential, active: hint.mode == .sequential, count: hint.count)
@@ -4273,7 +4271,7 @@ struct TimelineView: View {
             fileDropModeGlyph(mode, active: active, count: count)
             HStack(spacing: 4) {
                 if mode == .sequential {
-                    Text(verbatim: "⌘")
+                    Text(verbatim: "⌥")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(active ? Color.accentColor : .secondary)
                 }
@@ -4295,7 +4293,7 @@ struct TimelineView: View {
 
     /// A schematic preview: blocks laid out as they really will be — stacked on lanes at the same
     /// start, or lined up end to end on a single lane. A drawing says the layout faster than a
-    /// sentence, and it is what flips under ⌘.
+    /// sentence, and it is what flips under ⌥.
     private func fileDropModeGlyph(_ mode: EditViewModel.FileDropMode,
                                    active: Bool, count: Int) -> some View {
         let n = min(max(count, 2), 3)

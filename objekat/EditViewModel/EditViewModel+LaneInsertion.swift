@@ -20,6 +20,39 @@ extension EditViewModel {
                            sourceGroupID: UUID?,
                            isAltCopy: Bool) -> LaneInsertion.Plan? {
         guard row >= 0, !ids.isEmpty else { return nil }
+        let frames = laneInsertionFrames(row: row, ids: ids, sourceGroupID: sourceGroupID,
+                                         isAltCopy: isAltCopy)
+        var movedLanes: [UUID: Int] = [:]
+        for id in ids { if let a = anchors[id] { movedLanes[id] = a.lane } }
+
+        return LaneInsertion.plan(
+            boundaryRow: row, openGroups: frames.openGroups, root: frames.root, source: frames.source,
+            movedLanes: movedLanes, isCopy: isAltCopy,
+            // An ⌥ copy from the ROOT lands on the root only (as `commitMoveDrop` always said).
+            allowsGroupTarget: !isAltCopy || sourceGroupID != nil)
+    }
+
+    /// What inserting `laneCount` NEW lanes before display row `row` would do for FILES let go there
+    /// (the drop from the Finder or from the library: they come from nowhere, nothing closes up), or
+    /// nil when the normal drop applies — nothing below to push, a row inside a piano roll or an
+    /// automation band, or a consolidated object open (its stage is protected, @see
+    /// sessionMoveDropGate: files laid in it go where the normal drop puts them). Asked by the hover
+    /// (the line and the ghost) and asked again by the drop, from the real model.
+    func fileDropInsertionPlan(row: Int, laneCount: Int) -> LaneInsertion.Plan? {
+        guard row >= 0, laneCount > 0, consolidateEditStack.isEmpty else { return nil }
+        let frames = laneInsertionFrames(row: row, ids: [], sourceGroupID: nil, isAltCopy: false)
+        return LaneInsertion.insertPlan(boundaryRow: row, openGroups: frames.openGroups,
+                                        root: frames.root, laneCount: laneCount)
+    }
+
+    /// The lanes of the root and of the open groups whose band may hold `row`, flattened into the
+    /// pure rule's `Frame`s (what both plans above read), plus the frame the moved objects come
+    /// from. `ids` are the moved objects (none for a file drop).
+    private func laneInsertionFrames(row: Int,
+                                     ids: Set<UUID>,
+                                     sourceGroupID: UUID?,
+                                     isAltCopy: Bool)
+        -> (openGroups: [LaneInsertion.Frame], root: LaneInsertion.Frame, source: LaneInsertion.Frame?) {
 
         func siblings(of children: [SoundObject], parentID: UUID?) -> [LaneInsertion.Sibling] {
             var out = children.map {
@@ -58,14 +91,7 @@ extension EditViewModel {
                 source = nil
             }
         }
-        var movedLanes: [UUID: Int] = [:]
-        for id in ids { if let a = anchors[id] { movedLanes[id] = a.lane } }
-
-        return LaneInsertion.plan(
-            boundaryRow: row, openGroups: openGroups, root: root, source: source,
-            movedLanes: movedLanes, isCopy: isAltCopy,
-            // An ⌥ copy from the ROOT lands on the root only (as `commitMoveDrop` always said).
-            allowsGroupTarget: !isAltCopy || sourceGroupID != nil)
+        return (openGroups, root, source)
     }
 
     /// Carries out the lane changes of a plan — objects AND comments — in ONE batch (a single

@@ -352,6 +352,88 @@ enum LaneInsertionTest {
         check("T16 200 random scenes: invariants hold (\(planCount) plans checked)", bad.isEmpty && planCount > 100, bad.prefix(5).joined(separator: " | "))
     }
 
+    // T17 — the gap under a POINTER (a file drop has no block): the move's rule, centred on the hand
+    do {
+        let hb = LI.halfBand(laneStep: 125)
+        check("T17 pointer on a row top (3.0) -> before row 3", LI.boundaryRow(pointerRow: 3.0, halfBand: hb) == 3)
+        check("T17 pointer just under the previous row (2.95) -> 3", LI.boundaryRow(pointerRow: 2.95, halfBand: hb) == 3)
+        check("T17 pointer just under the top (3.05) -> 3", LI.boundaryRow(pointerRow: 3.05, halfBand: hb) == 3)
+        check("T17 pointer mid-row (3.5) -> nil", LI.boundaryRow(pointerRow: 3.5, halfBand: hb) == nil)
+        check("T17 pointer at 3.3 -> nil", LI.boundaryRow(pointerRow: 3.3, halfBand: hb) == nil)
+        check("T17 pointer at the top of the first row (0.0) -> before row 0", LI.boundaryRow(pointerRow: 0.0, halfBand: hb) == 0)
+        check("T17 pointer in the ruler (-0.2) -> nil", LI.boundaryRow(pointerRow: -0.2, halfBand: hb) == nil)
+        // the same band as the move: what the move calls a gap, the pointer calls a gap
+        var same = true
+        var r = 0.0
+        while r < 6 {
+            let mv = LI.boundaryRow(grabbedDisplayLane: 0, rawRows: r - 0.5, halfBand: hb)
+            let pt = LI.boundaryRow(pointerRow: r, halfBand: hb)
+            if mv != pt { same = false }
+            r += 0.01
+        }
+        check("T17 same zone as the move (pointer row r = block top r - 0.5), 0..6 by 0.01", same)
+    }
+
+    // T18 — inserting NEW lanes (a file drop): the lanes below go down, nothing closes up
+    do {
+        let S = Scene()
+        let sibs = [S.sib("a", 0), S.sib("b", 1), S.sib("c", 2)]
+        let root = rootFrame(sibs)
+        let p = LI.insertPlan(boundaryRow: 1, openGroups: [], root: root, laneCount: 2)
+        check("T18 plan: root, before row 1, lane 1, k 2", p?.parentID == nil && p?.boundaryRow == 1 && p?.lane == 1 && p?.count == 2, "\(String(describing: p))")
+        if let p = p {
+            check("T18 a stays, b -> 3, c -> 4", S.finals(sibs, p) == ["a": 0, "b": 3, "c": 4], "\(S.finals(sibs, p))")
+        }
+        let p1 = LI.insertPlan(boundaryRow: 1, openGroups: [], root: root, laneCount: 1)
+        check("T18 one lane (end to end): b -> 2, c -> 3", p1.map { S.finals(sibs, $0) } == ["a": 0, "b": 2, "c": 3])
+        let top = LI.insertPlan(boundaryRow: 0, openGroups: [], root: root, laneCount: 1)
+        check("T18 before the first lane: everything goes down by one", top.map { S.finals(sibs, $0) } == ["a": 1, "b": 2, "c": 3])
+        check("T18 after the last lane: nobody to push -> nil", LI.insertPlan(boundaryRow: 3, openGroups: [], root: root, laneCount: 1) == nil)
+        check("T18 laneCount 0 -> nil", LI.insertPlan(boundaryRow: 1, openGroups: [], root: root, laneCount: 0) == nil)
+        check("T18 negative row -> nil", LI.insertPlan(boundaryRow: -1, openGroups: [], root: root, laneCount: 1) == nil)
+    }
+
+    // T19 — inserting new lanes inside an open group; the root does not move
+    do {
+        let S = Scene()
+        let gID = S.id("G")
+        let kids = [S.sib("g0", 0), S.sib("g1", 1)]
+        let G = LI.Frame(parentID: gID, origin: 1, rowCount: 3, siblings: kids)
+        let sibs = [S.sib("G", 0, span: 3), S.sib("t", 1)]
+        let root = rootFrame(sibs)
+        // rows: G 0, g0 1, g1 2, (drop row 3), t 4. B = 2 -> between g0 and g1.
+        let p = LI.insertPlan(boundaryRow: 2, openGroups: [G], root: root, laneCount: 2)
+        check("T19 inside G: parent G, lane 1, k 2", p?.parentID == gID && p?.lane == 1 && p?.count == 2, "\(String(describing: p))")
+        if let p = p {
+            check("T19 only g1 moves (1 -> 3); the root's t stays", S.finals(kids, p) == ["g0": 0, "g1": 3] && p.laneChanges[S.id("t")] == nil, "\(p.laneChanges)")
+        }
+        // B = 1 -> at the top of G
+        let top = LI.insertPlan(boundaryRow: 1, openGroups: [G], root: root, laneCount: 1)
+        check("T19 top of G: g0 -> 1, g1 -> 2", top?.parentID == gID && top.map { S.finals(kids, $0) } == ["g0": 1, "g1": 2])
+        // B = 3 -> the group's drop row: nobody pushed in G -> nil (a normal drop)
+        check("T19 on the group's drop row (3): nobody below in G -> nil", LI.insertPlan(boundaryRow: 3, openGroups: [G], root: root, laneCount: 1) == nil)
+        // B = 4 -> root, before t (the group's band ended): t is pushed
+        let r4 = LI.insertPlan(boundaryRow: 4, openGroups: [], root: root, laneCount: 1)
+        check("T19 under the group (4): root, t -> 2", r4?.parentID == nil && r4.map { S.finals(sibs, $0)["t"] } == 2)
+    }
+
+    // T20 — a piano roll's inside is no gap
+    do {
+        let S = Scene()
+        let sibs = [S.sib("m", 0, span: 2), S.sib("n", 1)]   // m: row 0, its roll rows 1-2; n: row 3
+        let root = rootFrame(sibs)
+        check("T20 inside the roll (row 1) -> nil", LI.insertPlan(boundaryRow: 1, openGroups: [], root: root, laneCount: 1) == nil)
+        check("T20 under the roll (row 3) -> before n", LI.insertPlan(boundaryRow: 3, openGroups: [], root: root, laneCount: 1)?.lane == 1)
+    }
+
+    // T21 — a comment is pushed like an object
+    do {
+        let S = Scene()
+        let sibs = [S.sib("a", 0), S.sib("note", 1)]
+        let p = LI.insertPlan(boundaryRow: 1, openGroups: [], root: rootFrame(sibs), laneCount: 1)
+        check("T21 a comment on the lane below is pushed", p?.laneChanges[S.id("note")] == 2)
+    }
+
     print(fails == 0 ? "ALL PASS" : "\(fails) FAILED")
     exit(fails == 0 ? 0 : 1)
   }

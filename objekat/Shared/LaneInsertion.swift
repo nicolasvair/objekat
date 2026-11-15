@@ -92,6 +92,19 @@ nonisolated enum LaneInsertion {
         return b >= 0 ? b : nil
     }
 
+    /// The same gap, read off a POINTER rather than off a carried block (a file dragged in from the
+    /// Finder or from the library has no block yet, only a hand). `pointerRow` is the continuous row
+    /// under the pointer, `(y − rulerHeight) / laneStep`, whose integer values are the TOPS of the
+    /// rows. The block a drop would lay down is centred on the pointer, so this is the move's rule
+    /// with the same band (`halfBand`): the pointer within that band of a row top — which is where
+    /// the gap between two rows sits — means "between", anywhere else means "on this lane".
+    /// nil = not on a gap, or above the first row (the ruler).
+    static func boundaryRow(pointerRow: Double, halfBand: Double) -> Int? {
+        guard pointerRow >= 0 else { return nil }
+        // A block of one row centred on the pointer has its top half a row above it.
+        return boundaryRow(grabbedDisplayLane: 0, rawRows: pointerRow - 0.5, halfBand: halfBand)
+    }
+
     // MARK: - 2. The plan
 
     /// The selection's lanes brought to ranks (`id -> rank`): 1 and 3 land on b' and b' + 1.
@@ -185,5 +198,25 @@ nonisolated enum LaneInsertion {
         }
         return Plan(parentID: target.parentID, boundaryRow: B, laneBefore: b, lane: bPrime,
                     count: k, laneChanges: changes)
+    }
+
+    // MARK: - 3. Inserting something that is not on the timeline yet
+
+    /// What inserting `laneCount` NEW lanes before display row `B` does: files dropped from outside
+    /// have no source frame and nothing closes up, they only make room. It is `plan` for a copy that
+    /// comes from nowhere — the lanes at or below the gap, in the frame that holds it (the root, or
+    /// the innermost open group), go down by `laneCount`, and `Plan.lane` is where the first new lane
+    /// lands in that frame. nil when nothing is below (the normal drop overwrites nothing anyway), when
+    /// `B` is inside a piano roll or an automation band, or when `laneCount` is not positive.
+    static func insertPlan(boundaryRow B: Int,
+                           openGroups: [Frame],
+                           root: Frame,
+                           laneCount: Int) -> Plan? {
+        guard laneCount > 0 else { return nil }
+        // `laneCount` distinct lanes: ids are of no importance, only the number of lanes counts.
+        var lanes: [UUID: Int] = [:]
+        for k in 0..<laneCount { lanes[UUID()] = k }
+        return plan(boundaryRow: B, openGroups: openGroups, root: root, source: nil,
+                    movedLanes: lanes, isCopy: true, allowsGroupTarget: true)
     }
 }

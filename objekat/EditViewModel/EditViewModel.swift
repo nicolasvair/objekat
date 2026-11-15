@@ -619,7 +619,7 @@ final class EditViewModel {
         /// The default: the same starting instant, one lane each. It is the layout that preserves
         /// the time relationship of several takes of one scene (they start together).
         case stacked
-        /// ⌘: a single lane, end to end in the order of the selection.
+        /// ⌥: a single lane, end to end in the order of the selection.
         case sequential
 
         var title: String { self == .stacked ? L("drop.mode.stacked") : L("drop.mode.sequential") }
@@ -637,7 +637,7 @@ final class EditViewModel {
         var name: String
         var duration: Double?
         /// A dropped FOLDER (it becomes one group, @see FolderImport): `duration` is then its span
-        /// laid out stacked, `sequentialDuration` its span laid out end to end (⌘), and `fileCount`
+        /// laid out stacked, `sequentialDuration` its span laid out end to end (⌥), and `fileCount`
         /// the audio files it holds. All nil while they are being read — and they stay nil for a
         /// folder too big to be measured on the way (the rectangle keeps the waiting width).
         var isFolder = false
@@ -699,6 +699,22 @@ final class EditViewModel {
         /// The batch's files, in the order of the selection. Empty until the providers are
         /// resolved: the rectangles are then drawn at the waiting width.
         var previews: [FileDropPreview] = []
+        /// The GAP between two rows the cursor is on, as "before display row B" (@see
+        /// LaneInsertion.boundaryRow(pointerRow:)); nil = the cursor is on a lane, not between two.
+        /// Independent of the layout mode: only the cursor decides it.
+        var boundaryRow: Int? = nil
+        /// What dropping HERE would do, when it inserts the files between two lanes instead of
+        /// laying them on one (@see fileDropInsertionPlan). nil = the normal drop. It depends on the
+        /// gap AND on how many lanes the layout takes, so it follows ⌥ as well as the cursor.
+        var insertion: LaneInsertion.Plan? = nil
+        /// What `insertion` was computed for: it is asked again only when this changes, not on every
+        /// pixel of the cursor's travel.
+        var insertionProbe: InsertionProbe? = nil
+
+        struct InsertionProbe: Equatable {
+            var row: Int
+            var laneCount: Int
+        }
 
         /// The durations to draw: the real one as soon as it is known, the waiting one otherwise. Always
         /// `count` values, so that the rectangles appear as soon as the hover begins.
@@ -712,13 +728,35 @@ final class EditViewModel {
 
     var fileDropHint: FileDropHint? = nil
 
+    /// How many LANES a batch of `count` files takes: one each when stacked, a single one when laid
+    /// end to end. A dropped folder is one entry like a file (it becomes one group on one lane).
+    static func fileDropLaneCount(count: Int, mode: FileDropMode) -> Int {
+        guard count > 0 else { return 0 }
+        return mode == .sequential ? 1 : count
+    }
+
+    /// Brings the hint's insertion up to date with its gap, its count and its mode. Asked again only
+    /// when what the plan depends on has changed (the model does not change under a hover).
+    private func refreshFileDropInsertion(_ hint: inout FileDropHint) {
+        guard let row = hint.boundaryRow else {
+            hint.insertion = nil
+            hint.insertionProbe = nil
+            return
+        }
+        let probe = FileDropHint.InsertionProbe(
+            row: row, laneCount: Self.fileDropLaneCount(count: hint.count, mode: hint.mode))
+        guard hint.insertionProbe != probe else { return }
+        hint.insertion = fileDropInsertionPlan(row: row, laneCount: probe.laneCount)
+        hint.insertionProbe = probe
+    }
+
     /// Reads the drop mode from the current state of the modifiers. ⌥ = end to end.
     static func fileDropMode(for flags: NSEvent.ModifierFlags) -> FileDropMode {
         flags.contains(.option) ? .sequential : .stacked
     }
 
     /// A probe that follows ⌥ during the hover. `dropUpdated` is only called on a MOUSE
-    /// MOVE: without it, pressing ⌘ without moving would change nothing on screen — yet that is
+    /// MOVE: without it, pressing ⌥ without moving would change nothing on screen — yet that is
     /// exactly the expected gesture (you arrive over the timeline, you read the banner, you
     /// press ⌥). An ordinary `Timer` would not do: the drag loop runs in
     /// `NSEventTrackingRunLoopMode`, where a timer in `.default` mode never fires; the
@@ -727,7 +765,11 @@ final class EditViewModel {
 
     /// Opens (or updates) the banner for `count` files and arms the ⌥ tracking.
     /// `location` is the cursor's position in the canvas: it lays the ghost preview.
-    func beginFileDropHint(count: Int, location: CGPoint) {
+    ///
+    /// `rulerHeight` and `laneStep` are the canvas's: they say which GAP between two rows the cursor
+    /// is on (the drop then INSERTS the files there, @see LaneInsertion). Without them (0), the
+    /// hint never proposes an insertion.
+    func beginFileDropHint(count: Int, location: CGPoint, rulerHeight: Double = 0, laneStep: Double = 0) {
         // An update IN PLACE rather than a replacement: `dropUpdated` calls this method again on
         // every mouse move, and starting from a fresh hint would throw away the previews already
         // resolved (their durations) at every pixel travelled.
@@ -735,6 +777,11 @@ final class EditViewModel {
         hint.count    = count
         hint.mode     = Self.fileDropMode(for: NSEvent.modifierFlags)
         hint.location = location
+        hint.boundaryRow = laneStep > 0
+            ? LaneInsertion.boundaryRow(pointerRow: (Double(location.y) - rulerHeight) / laneStep,
+                                        halfBand: LaneInsertion.halfBand(laneStep: laneStep))
+            : nil
+        refreshFileDropInsertion(&hint)
         // Reassigned only if it changes: rewriting the same value would invalidate the view for nothing.
         if fileDropHint != hint { fileDropHint = hint }
         guard fileDropModifierWatch == nil else { return }
@@ -743,7 +790,11 @@ final class EditViewModel {
                 try? await Task.sleep(nanoseconds: 40_000_000)
                 guard let self, self.fileDropHint != nil else { return }
                 let m = Self.fileDropMode(for: NSEvent.modifierFlags)
-                if self.fileDropHint?.mode != m { self.fileDropHint?.mode = m }
+                if self.fileDropHint?.mode != m {
+                    // The mode changes how many lanes the batch takes, hence the insertion.
+                    self.fileDropHint?.mode = m
+                    if var h = self.fileDropHint { self.refreshFileDropInsertion(&h); self.fileDropHint = h }
+                }
             }
         }
     }
