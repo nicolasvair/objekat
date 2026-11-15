@@ -180,6 +180,21 @@ final class SoundLibraryViewModel {
     // Preview player
     private var player: AVAudioPlayer? = nil
     var isPlaying: Bool = false
+    /// Bumped by every `stopPreview`: the stop timer of a preview only cuts the preview it was armed
+    /// for (@see FinderAutoPreview.timerApplies). Without it, the timer of a preview stopped by hand
+    /// cut the NEXT one at the first one's end.
+    @ObservationIgnored private var previewGen = 0
+    /// The pending start of the automatic preview (the debounce), cancelled by any stop.
+    @ObservationIgnored private var autoPreviewTask: Task<Void, Never>? = nil
+
+    /// ↑ / ↓ play the file the cursor lands on. A preference of the app (headphones button of the
+    /// header), on by default.
+    var autoPreview: Bool = UserDefaults.standard.object(forKey: "finder.autoPreview") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoPreview, forKey: "finder.autoPreview")
+            if !autoPreview { autoPreviewTask?.cancel(); autoPreviewTask = nil }
+        }
+    }
 
     // Length and peak caches (the key being the path), shared for the whole session
     private var peaksCache: [String: [Float]] = [:]
@@ -434,6 +449,30 @@ final class SoundLibraryViewModel {
             idx = delta >= 0 ? 0 : list.count - 1
         }
         focusCursor(on: list[idx])
+        // ONLY the vertical arrows play (←/→ fold and unfold, a click keeps its own rule).
+        if autoPreview { scheduleAutoPreview(for: list[idx]) }
+    }
+
+    /// The automatic preview of the file the cursor has just landed on, after a short pause: an arrow
+    /// held down walks the list without a sound per row; the file plays once the hand rests. The whole
+    /// file (the I/O points were reset by `focusCursor`). Any stop cancels the wait.
+    private func scheduleAutoPreview(for node: SoundLibraryNode) {
+        autoPreviewTask?.cancel()
+        autoPreviewTask = nil
+        guard !node.isDirectory else { return }
+        let id = node.id
+        autoPreviewTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(FinderAutoPreview.debounce * 1_000_000_000))
+            guard let self else { return }
+            guard FinderAutoPreview.shouldStart(enabled: self.autoPreview,
+                                                cancelled: Task.isCancelled,
+                                                cursorID: self.cursorID, nodeID: id,
+                                                isDirectory: node.isDirectory),
+                  self.selectedID == id else { return }
+            // `startPreview` stops first, which cancels the pending task: this one is spent.
+            self.autoPreviewTask = nil
+            self.startPreview(node: node)
+        }
     }
 
     /// →: unfolds a folded folder, otherwise goes down onto the first child.
@@ -767,15 +806,25 @@ final class SoundLibraryViewModel {
         p.play()
         player = p
         isPlaying = true
-        // an automatic stop at point O
-        let remaining = pointO - pointI
+        // An automatic stop at point O — or at the end of the file when the length is not known yet
+        // (pointO is 0 until the media has loaded). The timer only cuts the preview it was armed for.
+        let remaining = FinderAutoPreview.remaining(pointI: pointI, pointO: pointO,
+                                                    playerDuration: p.duration)
+        let gen = previewGen
         Task {
             try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
-            await MainActor.run { if self.isPlaying { self.stopPreview() } }
+            await MainActor.run {
+                if FinderAutoPreview.timerApplies(armed: gen, current: self.previewGen), self.isPlaying {
+                    self.stopPreview()
+                }
+            }
         }
     }
 
     func stopPreview() {
+        previewGen &+= 1
+        autoPreviewTask?.cancel()
+        autoPreviewTask = nil
         player?.stop()
         player = nil
         isPlaying = false
@@ -849,6 +898,15 @@ struct SoundLibraryView: View {
                             .truncationMode(.head)
                             .foregroundStyle(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button { vm.autoPreview.toggle() } label: {
+                            Image(systemName: "headphones")
+                                .font(.system(size: 11))
+                                .foregroundStyle(vm.autoPreview ? Color.accentColor : Color.secondary)
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L(vm.autoPreview ? "library.autoPreview.on" : "library.autoPreview.off"))
 
                         Button(action: vm.openFolderPanel) {
                             Image(systemName: "folder")
