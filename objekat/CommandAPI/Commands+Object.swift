@@ -33,6 +33,10 @@ extension CommandRegistry {
             // without going through `object.set_loop`, which WRITES the flag rather than
             // reading it.
             payload["loop"] = .bool(item.loopEnabled)
+            // The IN/OUT bounds, LOCAL seconds (null while the loop has never been turned on): what a
+            // varispeed has to rescale, so a script can assert it.
+            payload["loop_start"] = item.loopRangeStart.map { JSONValue.number($0) } ?? JSONValue.null
+            payload["loop_end"] = item.loopRangeEnd.map { JSONValue.number($0) } ?? JSONValue.null
             // A group has no file of its own, so `missing` is false for it whatever its content —
             // this is the separate question: is anything DOWN THERE broken? False for everything
             // that is not a group. The two are kept apart on purpose: only the clips this counts

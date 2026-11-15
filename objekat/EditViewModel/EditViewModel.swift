@@ -1972,7 +1972,11 @@ final class EditViewModel {
             // The content available from the entry point: played forwards, what follows `so`;
             // in reverse the playback goes back up the range, hence what PRECEDES its end.
             let available = rev ? (so + oldSourceSpan) : max(0, fd - so)
-            if fd > 0 { D = min(D, available / newSpeed) }
+            // A LOOPING clip is longer than its material on purpose (the pattern repeats, @see
+            // SoundObject.contentRoomAfter = .infinity): the material bound does not apply, the
+            // NUMBER of repetitions is kept (D = duration × oldSpeed / newSpeed, only the
+            // neighbour and the floor bound it).
+            if fd > 0 && !obj.loopEnabled { D = min(D, available / newSpeed) }
             D = min(D, gap)
             D = max(0.01, D)
             var fi = obj.fadeIn, fo = obj.fadeOut
@@ -1995,6 +1999,12 @@ final class EditViewModel {
             // reason — the points that overrun stay stored, as after a trim.
             obj.automation = obj.automation.timeScaled(by: oldSpeed / newSpeed)
             obj.markers    = obj.markers.timeScaled(by: oldSpeed / newSpeed)
+            // The loop's IN/OUT bounds are in LOCAL timeline seconds: they scale like the
+            // automation, so that they keep framing the same source matter
+            // (@see clipLoopFileBounds: file = offset + local × speed).
+            let k = oldSpeed / newSpeed
+            if let s = obj.loopRangeStart { obj.loopRangeStart = s * k }
+            if let e = obj.loopRangeEnd   { obj.loopRangeEnd   = e * k }
         }
         engine?.updateSpeedRatio(newSpeed, forID: id.uuidString)
         if let obj = find(id: id) {
