@@ -3569,7 +3569,11 @@ static te::Track* objOwningTrack(te::Clip& clip) {
 }
 
 // Invariants d'un clip wave fraîchement créé dans ce modèle :
-//  • pas de time-stretch (aucune lib activée dans ce build — sinon StretchSegment jassert).
+//  • pas de time-stretch (aucune lib activée dans ce build — sinon StretchSegment jassert) :
+//    ni autoTempo ni autoPitch. `ClipOwner` pose autoPitch=true dès que le fichier porte une
+//    note racine (chunk `acid` d'un WAV, `basc` d'un AIFF…) ; EditNodeBuilder construit alors
+//    un PitchAdjustReader (SyncPitch::yes) sur un time-stretch inexistant → pointeur nul,
+//    plantage au premier rendu (« Guiro Piola 1.wav »).
 //
 // Le proxy n'est PLUS interdit dans un groupe : l'assert(!acb->canUseProxy()) vivait dans la
 // branche USE_DYNAMIC_OFFSET_CONTAINER_CLIP de createNodeForContainerClip, abandonnée à
@@ -3590,6 +3594,7 @@ static void updateProxyUse(te::AudioClipBase& clip) {
 static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::ClipPosition& pos,
                                double speed, bool reversed) {
     clip->setAutoTempo(false);
+    clip->setAutoPitch(false);   // cf. invariant ci-dessus : une note racine du fichier l'active d'office
     clip->setTimeStretchMode(te::TimeStretcher::disabled);
     // Explicite et non hérité de `getClipDefaults` : un clip posé dans un container (groupe), ou
     // un projet rouvert, ne passe pas par le chemin des défauts de `ClipOwner`.
@@ -3644,9 +3649,11 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
     // ⚠️ INVARIANT « clip sans time-stretch » — à appliquer à TOUT clip fraîchement créé
     // (ici, à la migration dans un container, et au split).
     // Ce build n'a aucune lib de time-stretch activée → defaultMode == disabled. Si on laisse
-    // l'autoTempo/timeStretchMode par défaut, Tracktion demande un proxy time-stretché et
-    // StretchSegment appelle timestretcher.initialise(mode=disabled) → !isInitialised() →
-    // jassert/EXC_BREAKPOINT (tracktion_AudioClipBase.cpp).
+    // l'autoTempo/autoPitch/timeStretchMode par défaut, Tracktion demande un proxy time-stretché
+    // et StretchSegment appelle timestretcher.initialise(mode=disabled) → !isInitialised() →
+    // jassert/EXC_BREAKPOINT (tracktion_AudioClipBase.cpp) ; autoPitch (activé par une note
+    // racine du fichier) fait construire un PitchAdjustReader sur un time-stretch nul.
+    // Invariant : ni autoTempo ni autoPitch.
     configureFreshClip(clip, pos, 1.0, false);
 
     _clipMap[key] = clip;
