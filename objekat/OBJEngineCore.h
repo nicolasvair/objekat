@@ -944,6 +944,14 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 - (void)setTracktionLoopRegionFrom:(double)start to:(double)end;
 - (void)activateTracktionLoop;
 - (void)deactivateTracktionLoop;
+// Hors enregistrement : la boucle est donnée à la tête du contexte SANS jamais la déplacer (patch 0050,
+// `PlayHead::setLoopRangeRollingIn`) — entre dans la région si elle est avant, boucle si elle est dedans, linéaire si elle
+// est à la fin ou après. YES = la tête suit la boucle. Refusé (NO, rien fait) pendant un enregistrement.
+- (BOOL)applyTracktionLoopFrom:(double)start to:(double)end enabled:(BOOL)on;
+// Déplace le transport sans que la boucle recadre la position : désarme, se déplace (tête comprise), réarme comme ci-dessus.
+- (BOOL)seekTo:(double)seconds keepingLoopFrom:(double)start to:(double)end enabled:(BOOL)on;
+// État de la boucle côté moteur (tests, API debug) : transportLooping, isLooping, isRollingIntoLoop, plage en échantillons, tête.
+- (NSDictionary<NSString*, NSNumber*>*)tracktionLoopState;
 
 // Device
 - (NSArray<NSString*>*)availableOutputDevices;

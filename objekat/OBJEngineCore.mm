@@ -11,6 +11,7 @@
 #include <thread>
 #include <mach/mach.h>   // task_info : le RSS journalisé autour d'une source ARA
 #include <tracktion_engine/tracktion_engine.h>
+#include <tracktion_graph/tracktion_graph.h>   // PlayHead complet : la boucle donnée à la tête (setLoopRangeRollingIn)
 #include "OBJGainPlugin.h"
 #include "OBJGainStagePlugin.h"
 #include "OBJWindowFadePlugin.h"
@@ -7340,6 +7341,98 @@ static void objLayBridgeWires(te::Plugin& plugin) {
 
 - (void)deactivateTracktionLoop {
     if (_edit) _edit->getTransport().looping = false;
+}
+
+// MARK: Loop Tracktion hors enregistrement — la tête ne bouge JAMAIS
+//
+// Comportement Ableton : modifier la boucle pendant la lecture ne déplace pas la tête, cela décide seulement du prochain
+// retour. Le chemin stock (`setLoopRange` + `looping = true`, puis le passage périodique du timer du transport qui pousse
+// `PlayHead::setLoopRange(..., updatePosition = true)`) recadre la tête dans la région — d'où le saut. On donne donc la boucle
+// DIRECTEMENT à la tête du contexte par `PlayHead::setLoopRangeRollingIn` (patch 0050) : la tête est gardée, elle entre dans la
+// région si elle est avant, ne boucle pas si elle est à la fin ou après (fin exclue).
+//
+// Le timer (TransportControl::timerCallback, un passage sur dix) re-pousse `setLoopTimes(transport.looping, plage)` :
+// `PlayHead::setLoopRange` ne fait RIEN quand le drapeau et la plage sont déjà ceux de la tête. On les rend donc IDENTIQUES —
+// `transport.looping` = ce que la tête fait réellement (armée ou non), plage convertie par la même formule que le timer
+// (fin ≥ début + 1 ms, `toSamples` au taux du contexte) — et le passage périodique n'a plus rien à faire.
+//
+// Jamais pendant un enregistrement (le chemin de 0050 : `applyLoopToPlayHeadNow`, déjà conforme) : l'appelant s'en garde,
+// et le pont refuse aussi.
+
+/// Donne la boucle voulue à la tête du contexte. true = la tête la suit (armée, éventuellement « en entrée »).
+static bool objApplyLoopToHead(te::Edit& edit, double start, double end, bool on) {
+    auto& tc = edit.getTransport();
+    auto* epc = edit.getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    if (on) tc.setLoopRange(te::TimeRange(te::TimePosition::fromSeconds(start), te::TimePosition::fromSeconds(end)));
+    bool armed = false;
+    if (ph != nullptr && tc.isPlaying()) {
+        if (on) {
+            auto lr = tc.getLoopRange();
+            lr = lr.withEnd(std::max(lr.getEnd(), lr.getStart() + te::TimeDuration::fromSeconds(0.001)));
+            ph->setLoopRangeRollingIn(true, te::toSamples(lr, epc->getSampleRate()));
+            armed = ph->isLooping();
+        } else {
+            // looping = false d'abord : la tête garde sa position, la plage est conservée telle quelle.
+            ph->setLoopRangeRollingIn(false, ph->getLoopRange());
+        }
+    }
+    tc.looping = armed;
+    return armed;
+}
+
+- (BOOL)applyTracktionLoopFrom:(double)start to:(double)end enabled:(BOOL)on {
+    if (!_edit || _recordingActive) return NO;
+    return objApplyLoopToHead(*_edit, start, end, on) ? YES : NO;
+}
+
+- (BOOL)seekTo:(double)seconds keepingLoopFrom:(double)start to:(double)end enabled:(BOOL)on {
+    if (!_edit) return NO;
+    if (_recordingActive) { [self seekTo:seconds]; return NO; }
+    auto& tc = _edit->getTransport();
+    auto* epc = _edit->getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    const bool live = ph != nullptr && tc.isPlaying();
+    // 1. Désarmer : ni `performPositionChange` (qui recadre une nouvelle position quand `transport.looping`), ni le
+    //    `overridePosition` de la tête (qui la recadre quand elle boucle) ne doivent toucher à la position demandée.
+    if (live) {
+        tc.looping = false;
+        ph->setLoopRangeRollingIn(false, ph->getLoopRange());
+    }
+    // 2. Se déplacer. La position est postée au fil audio ; on la donne aussi à la tête TOUT DE SUITE, pour que l'armement
+    //    qui suit décide d'après la vraie position (le même échantillon, ré-appliqué plus tard par le fil audio, est sans
+    //    effet : armée comme il le faut, la tête n'est pas recadrée).
+    tc.setPosition(te::TimePosition::fromSeconds(seconds));
+    if (live) ph->setPosition(te::toSamples(te::TimePosition::fromSeconds(seconds), epc->getSampleRate()));
+    // 3. Réarmer : « en entrée » si la tête est avant la région, dedans si elle y est, rien si elle est à la fin ou après.
+    if (!live || !on) return NO;
+    return objApplyLoopToHead(*_edit, start, end, true) ? YES : NO;
+}
+
+- (NSDictionary<NSString*, NSNumber*>*)tracktionLoopState {
+    if (!_edit) return @{};
+    auto& tc = _edit->getTransport();
+    auto* epc = _edit->getCurrentPlaybackContext();
+    auto* ph = epc != nullptr ? epc->getNodePlayHead() : nullptr;
+    NSMutableDictionary<NSString*, NSNumber*>* d = [NSMutableDictionary dictionary];
+    d[@"transportLooping"] = @((BOOL) tc.looping.get());
+    d[@"transportPlaying"] = @((BOOL) tc.isPlaying());
+    const auto lr = tc.getLoopRange();
+    d[@"transportLoopStart"] = @(lr.getStart().inSeconds());
+    d[@"transportLoopEnd"] = @(lr.getEnd().inSeconds());
+    d[@"hasPlayHead"] = @(ph != nullptr);
+    if (ph != nullptr) {
+        const double sr = epc->getSampleRate();
+        const auto r = ph->getLoopRange();
+        d[@"isLooping"] = @((BOOL) ph->isLooping());
+        d[@"isRollingIntoLoop"] = @((BOOL) ph->isRollingIntoLoop());
+        d[@"loopStartSamples"] = @((long long) r.getStart());
+        d[@"loopEndSamples"] = @((long long) r.getEnd());
+        d[@"headSamples"] = @((long long) ph->getPosition());
+        d[@"headSeconds"] = @(sr > 0.0 ? (double) ph->getPosition() / sr : 0.0);
+        d[@"sampleRate"] = @(sr);
+    }
+    return d;
 }
 
 // MARK: - Plugins

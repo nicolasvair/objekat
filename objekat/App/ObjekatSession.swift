@@ -198,21 +198,72 @@ final class ObjekatSession {
         // not the static setting the curve has replaced.
         viewModel.refreshLiveAutomation(at: playheadPosition)
 
-        // Objekat's loop mode is on but Tracktion is not looping yet: we turn it on as soon as the
-        // playhead ENTERS the region. The end bound is EXCLUDED — a cursor sitting exactly on the
-        // loop's end is AFTER it (like a clip's right edge), and we read straight on.
-        // Under a recording the loop is kept (engine patch 0050: the recording goes THROUGH it), unless it is too short
-        // for the recorder (`RecordLoopPlanner.minimumLoopLength`): that one records linearly.
-        if viewModel.loopModeEnabled,
-           !tracktionLoopActive,
-           let r = viewModel.loopRegion,
-           !viewModel.isRecording || Self.loopIsLongEnoughToRecord(r),
-           playheadPosition >= r.lowerBound,
-           playheadPosition < r.upperBound {
-            engine.setTracktionLoopRegionFrom(r.lowerBound, to: r.upperBound)
-            engine.activateTracktionLoop()
-            tracktionLoopActive = true
+        // Under a recording, the loop is armed as it always was: when the playhead ENTERS the region. The end bound is
+        // EXCLUDED — a cursor sitting exactly on the loop's end is AFTER it (like a clip's right edge), and we read
+        // straight on. The loop is kept under a recording (engine patch 0050: the recording goes THROUGH it), unless it is
+        // too short for the recorder (`RecordLoopPlanner.minimumLoopLength`): that one records linearly.
+        if viewModel.isRecording {
+            if viewModel.loopModeEnabled,
+               !tracktionLoopActive,
+               let r = viewModel.loopRegion,
+               Self.loopIsLongEnoughToRecord(r),
+               playheadPosition >= r.lowerBound,
+               playheadPosition < r.upperBound {
+                engine.setTracktionLoopRegionFrom(r.lowerBound, to: r.upperBound)
+                engine.activateTracktionLoop()
+                tracktionLoopActive = true
+            }
+            return
         }
+        // Not recording, the loop reaches the head through `syncTracktionLoop` at every gesture that matters (the region, the
+        // mode, a jump, a start): the tick only keeps a safety net — a loop the hand wants, a head before its end, and the
+        // engine not following (a head that was past the end while the region moved, then came back) → armed again.
+        if !tracktionLoopActive,
+           viewModel.loopModeEnabled,
+           let r = viewModel.loopRegion,
+           playheadPosition < r.upperBound {
+            syncTracktionLoop(head: playheadPosition)
+        }
+    }
+
+    // MARK: - The loop on the head (outside a recording)
+
+    /// The loop as the HAND wants it: mode on and a region. Nil = no loop.
+    private var wantedLoop: ClosedRange<Double>? {
+        viewModel.loopModeEnabled ? viewModel.loopRegion : nil
+    }
+
+    /// Hands the wanted loop to the engine WITHOUT EVER MOVING THE HEAD (Ableton's behaviour): the loop only decides what
+    /// happens at the NEXT return. Before the region the head rolls in and loops at its end; inside, it loops at the (new)
+    /// end; at its end or after (the end is EXCLUDED), playback carries on straight. Switching the loop off, or moving a
+    /// bound, never jumps. Applied at once and exactly (engine patch 0050, `PlayHead::setLoopRangeRollingIn`), no tick
+    /// involved. Under a recording the loop keeps its own path (`loopRegionChanged`, `tickPlayhead`).
+    /// `head`: where the head is when the caller knows (a jump); the engine decides on the real head either way.
+    func syncTracktionLoop(head: Double? = nil) {
+        guard !viewModel.isRecording else { return }
+        guard isPlaying, let r = wantedLoop, head.map({ $0 < r.upperBound }) ?? true else {
+            // Nothing to follow: no loop, or the head is already past its end. Playing, the head keeps its place and the
+            // loop goes off at once; stopped, the engine only has to forget it.
+            if isPlaying { _ = engine.applyTracktionLoop(from: 0, to: 0, enabled: false) }
+            else if tracktionLoopActive { engine.deactivateTracktionLoop() }
+            tracktionLoopActive = false
+            return
+        }
+        tracktionLoopActive = engine.applyTracktionLoop(from: r.lowerBound, to: r.upperBound, enabled: true)
+    }
+
+    /// Moves the engine's transport to `t` without the loop re-framing it: a playing transport has its loop disarmed for the
+    /// move and re-armed after it (before the region: rolls in; inside: loops; at its end or after: straight on).
+    /// Stopped or paused, a plain move (nothing is looping then).
+    private func engineSeek(_ t: Double) {
+        guard isPlaying, !viewModel.isRecording else { engine.seek(to: t); return }
+        let r = wantedLoop
+        tracktionLoopActive = engine.seek(to: t, keepingLoopFrom: r?.lowerBound ?? 0, to: r?.upperBound ?? 0, enabled: r != nil)
+    }
+
+    /// The state of the loop on the engine's side (tests, `debug.engine_loop`).
+    func engineLoopState() -> [String: Double] {
+        (engine.tracktionLoopState() as? [String: NSNumber])?.mapValues { $0.doubleValue } ?? [:]
     }
 
     // MARK: - Transport commands
@@ -228,9 +279,12 @@ final class ObjekatSession {
         guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
         pausedAt = nil   // a plain playback starts from the cursor, not from the pause
         playheadPosition = viewModel.cursorPosition
-        engine.seek(to: playheadPosition)
+        engineSeek(playheadPosition)   // (already playing: a seek that the loop does not re-frame)
         isPlaying = true
         engine.play()
+        // Stock `TransportControl::play` brings a head that is before the loop (or within 0.1 s of its end) back to the loop's
+        // start: the loop is therefore handed over AFTER the start, to the head where it really is.
+        syncTracktionLoop(head: playheadPosition)
     }
 
     /// Record: the armed zones' inputs are recorded from here to the next stop. Stopped, it plays AND
@@ -272,9 +326,16 @@ final class ObjekatSession {
     func togglePause() {
         guard !viewModel.isLoadingProject, !viewModel.isRecording else { return }
         if isPlaying {
+            // Read at the instant of the pause, not at the last tick (up to 50 ms behind).
+            let t = engine.currentPlaybackPosition()
             engine.stop()
             isPlaying = false
-            pausedAt = playheadPosition
+            pausedAt = t
+            // Nothing loops while paused: the stock `play` would re-frame the resumed head into the loop.
+            if tracktionLoopActive {
+                engine.deactivateTracktionLoop()
+                tracktionLoopActive = false
+            }
         } else {
             let t = pausedAt ?? playheadPosition
             pausedAt = nil
@@ -282,6 +343,7 @@ final class ObjekatSession {
             engine.seek(to: t)
             isPlaying = true
             engine.play()
+            syncTracktionLoop(head: t)   // the loop comes back AFTER the start: the resume is exactly where the pause was
         }
     }
 
@@ -315,7 +377,7 @@ final class ObjekatSession {
         viewModel.cursorPosition = t
         playheadPosition = t
         pausedAt = nil
-        engine.seek(to: t)
+        engineSeek(t)
     }
 
     /// ⌥-click in the ruler: the cursor AND the playhead go there. Playing, playback carries on
@@ -328,14 +390,9 @@ final class ObjekatSession {
         viewModel.cursorPosition = t
         playheadPosition = t
         if pausedAt != nil { pausedAt = t }
-        // The engine loop is armed on ENTERING the region (@see tickPlayhead): a jump out of it
-        // disarms it, and the tick re-arms it if playback reaches the region again.
-        if tracktionLoopActive, let r = viewModel.loopRegion,
-           !(t >= r.lowerBound && t < r.upperBound) {
-            engine.deactivateTracktionLoop()
-            tracktionLoopActive = false
-        }
-        engine.seek(to: t)
+        // The engine seeks WITHOUT the loop re-framing the head, then the loop is handed back to the head where it landed:
+        // before the region it rolls in, inside it loops, at its end or after playback carries on straight.
+        engineSeek(t)
     }
 
     // MARK: - Reacting to changes in the document
@@ -348,15 +405,18 @@ final class ObjekatSession {
         viewModel.seekRequest = nil
     }
 
-    /// Resyncs the Tracktion region on the fly if the engine loop is already active.
-    /// Under a recording: a region under `minimumLoopLength` is ignored (the last valid bounds are kept), and a ruler
-    /// marker being dragged is applied once, on release (`EditViewModel.endLoopRegionDrag`) — the head would otherwise
-    /// follow every pixel of the drag.
+    /// The region moved (a drag of a marker, ⌘L, the API): outside a recording, the engine follows at once, the head where it
+    /// is (@see `syncTracktionLoop`) — a bound dragged under the head makes it linear, dragged over it makes it loop at the new
+    /// end. Under a recording: the engine loop, if active, is resynced; a region under `minimumLoopLength` is ignored (the last
+    /// valid bounds are kept), and a ruler marker being dragged is applied once, on release (`EditViewModel.endLoopRegionDrag`)
+    /// — the head would otherwise follow every pixel of the drag.
     func loopRegionChanged(_ newRegion: ClosedRange<Double>?) {
+        guard viewModel.isRecording else {
+            syncTracktionLoop()
+            return
+        }
         if tracktionLoopActive, let r = newRegion {
-            if viewModel.isRecording {
-                guard Self.loopIsLongEnoughToRecord(r), !viewModel.loopRegionDragging else { return }
-            }
+            guard Self.loopIsLongEnoughToRecord(r), !viewModel.loopRegionDragging else { return }
             engine.setTracktionLoopRegionFrom(r.lowerBound, to: r.upperBound)
         }
     }
@@ -366,9 +426,14 @@ final class ObjekatSession {
         r.upperBound - r.lowerBound >= RecordLoopPlanner.minimumLoopLength
     }
 
-    /// Loop mode switched off during playback: we cut the Tracktion loop straight away, without
-    /// waiting for the next stop.
+    /// Loop mode switched on or off during playback: outside a recording, the engine follows at once and never moves the head
+    /// (on: before the region it rolls in, inside it loops, past its end nothing happens; off: straight on from where it is).
+    /// Under a recording the loop is cut straight away when switched off (the tick arms it when it is switched on).
     func loopModeChanged(_ enabled: Bool) {
+        guard viewModel.isRecording else {
+            syncTracktionLoop()
+            return
+        }
         if !enabled && tracktionLoopActive {
             engine.deactivateTracktionLoop()
             tracktionLoopActive = false
