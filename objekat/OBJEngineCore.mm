@@ -24,6 +24,7 @@
 #include "OBJGainTesterPlugin.h"
 #include "OBJAudioProbe.h"
 #include "OBJPluginProbe.h"     // trims + gain match around a plugin (engine patch 0045)
+#include "Shared/OBJDiagLog.h"      // le journal de diagnostic (C pur) : le logger JUCE y verse tout, catégorie TE
 #include "Shared/OBJLoudness.h"   // la mesure de sonie de l'export (OBJExportTap) — C pur, partagé avec le test
 #include "Shared/OBJSampleRatePolicy.h"   // adopter ou non la fréquence de la carte — C++ pur, partagé avec le test
 #include "Shared/OBJInputLayout.h"        // which input channels are described as mono / stereo devices — pure C++, shared with its test
@@ -601,8 +602,15 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
 // Nos propres diagnostics passent par NSLog et ne sont donc pas affectés.
 // Alloué une fois et jamais libéré (leak volontaire) pour éviter l'assert
 // ~Logger (jassert currentLogger != this) à la fin du process.
+//
+// Silencieux pour la console ; mais le journal de diagnostic (Shared/OBJDiagLog.h) reçoit TOUT ce que
+// le moteur dit, catégorie TE — c'est souvent là que se trouve la dernière phrase avant un crash.
+// Jamais depuis un thread audio temps réel (un write() sous verrou) : le message est alors perdu.
 struct OBJSilentLogger : public juce::Logger {
-    void logMessage(const juce::String&) override {}
+    void logMessage(const juce::String& message) override {
+        if (objdiag_enabled() && ! objdiag_is_realtime_thread())
+            objdiag_log("TE", message.toRawUTF8());   // `message` est une référence : pas un temporaire
+    }
 };
 
 // Purge des alias de « track input devices » accumulés dans Settings.xml.

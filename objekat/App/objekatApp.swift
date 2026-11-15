@@ -132,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Shuts the command server down cleanly: the socket is a file, and leaving it behind would
     /// make the next client believe a server is still listening.
     func applicationWillTerminate(_ notification: Notification) {
+        Diag.stop(reason: "quit (applicationWillTerminate)")
         CommandServer.shared.stop()
     }
 }
