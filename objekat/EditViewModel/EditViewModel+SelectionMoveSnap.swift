@@ -73,4 +73,30 @@ extension EditViewModel {
         snapGuide = SnapGuide(time: r.guideTime, onTarget: r.onTarget)
         return r
     }
+
+    /// The snap of a plain MOVE of objects (no time selection) by `rawDt`: the grabbed object's two
+    /// edges are the ONLY references (its start, its end — whichever lands closest wins); the other
+    /// moved objects only follow with the same `dt`, and nothing carried by the hand is a target.
+    /// The caret IS one (@see CaretSnap). Leaves the guide where the winner landed.
+    ///
+    /// `dt` is the travel BEFORE the floor at 0 (@see ZeroFloor) — the caller clamps and re-pins the
+    /// guide (`pinSnapGuide`). `useEnd`: the end won, not the start. The very block of the drag
+    /// handler, taken out so that a script can drive it (`debug.move_snap`).
+    func snapObjectMove(grabbedID: UUID, anchors: [UUID: (start: Double, lane: Int)],
+                        rawDt: Double) -> (dt: Double, useEnd: Bool) {
+        guard let grabbedAnchor = anchors[grabbedID] else { return (rawDt, false) }
+        let grabbedDur = find(id: grabbedID)?.duration ?? 0
+        let rawStart   = grabbedAnchor.start + rawDt
+        let clipEndRaw = rawStart + grabbedDur
+        let moveExcl   = moveSnapExcluded(moved: Set(anchors.keys))
+        let candStart  = snapTime(rawStart,   excluding: moveExcl, includeCaret: true)
+        let guideStart = snapGuide
+        let candEnd    = snapTime(clipEndRaw, excluding: moveExcl, includeCaret: true)
+        let guideEnd   = snapGuide
+
+        let useEnd       = abs(candEnd - clipEndRaw) < abs(candStart - rawStart)
+        let snappedStart = useEnd ? candEnd - grabbedDur : candStart
+        snapGuide = useEnd ? guideEnd : guideStart
+        return (snappedStart - grabbedAnchor.start, useEnd)
+    }
 }

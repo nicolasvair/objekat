@@ -1500,7 +1500,11 @@ final class EditViewModel {
     /// position until the hand tore it eight pixels away — a magnet with nothing on the other end.
     /// The same reason objects are excluded, and it went unnoticed only because a mark had no
     /// gesture that snapped it.
-    func snapTargets(excluding: Set<UUID> = []) -> [Double] {
+    ///
+    /// `includeCaret`: the caret's instant is one more target (@see CaretSnap). Only the gestures that
+    /// carry or trim an OBJECT's edge ask for it — the move and the two trims; a click, the ruler,
+    /// the loop, a mark or a crossfade do not.
+    func snapTargets(excluding: Set<UUID> = [], includeCaret: Bool = false) -> [Double] {
         var out: [Double] = []
         for item in items where !excluding.contains(item.id) {
             out.append(item.startTime)
@@ -1522,6 +1526,11 @@ final class EditViewModel {
                 if m.isRegion { out.append(e.absStart + m.endTime) }
             }
         }
+        if includeCaret,
+           let c = CaretSnap.target(cursor: cursorPosition, caretLane: caretLane,
+                                    hasTimeSelection: timeSelection != nil) {
+            out.append(c)
+        }
         // An edge (or a mark) before 0 is not drawn, so nothing may land on it (@see ZeroFloor, R9).
         return out.filter(ZeroFloor.isSnapTarget)
     }
@@ -1532,8 +1541,9 @@ final class EditViewModel {
     /// `onTarget` is what the guide's colour reads: true when the value came from a mark rather
     /// than from the grid. A grid line that happens to FALL on a mark counts as landing on it —
     /// the eye sees an alignment there, and a guide that stayed grey over it would be lying.
-    func snappedTime(_ t: Double, excluding: Set<UUID> = []) -> (time: Double, onTarget: Bool) {
-        Self.snappedTime(t, in: snapFrame(excluding: excluding))
+    func snappedTime(_ t: Double, excluding: Set<UUID> = [],
+                     includeCaret: Bool = false) -> (time: Double, onTarget: Bool) {
+        Self.snappedTime(t, in: snapFrame(excluding: excluding, includeCaret: includeCaret))
     }
 
     /// Everything a snap reads, taken ONCE: whether it is on, the grid, the tolerance, and the marks
@@ -1548,7 +1558,7 @@ final class EditViewModel {
         let targets: [Double]
     }
 
-    func snapFrame(excluding: Set<UUID> = []) -> SnapFrame {
+    func snapFrame(excluding: Set<UUID> = [], includeCaret: Bool = false) -> SnapFrame {
         guard effectiveSnapEnabled else {
             return SnapFrame(enabled: false, grid: 0, threshold: 0, eps: 0, targets: [])
         }
@@ -1558,7 +1568,7 @@ final class EditViewModel {
                          // the two are computed by different routes and an exact equality would
                          // almost never hold.
                          eps: 0.5 / max(Self.minPixelsPerSecond, pixelsPerSecond),
-                         targets: snapTargets(excluding: excluding))
+                         targets: snapTargets(excluding: excluding, includeCaret: includeCaret))
     }
 
     static func snappedTime(_ t: Double, in f: SnapFrame) -> (time: Double, onTarget: Bool) {
@@ -1604,8 +1614,8 @@ final class EditViewModel {
     /// The snap, PLUS the guide line it leaves behind. The line stands wherever the value landed,
     /// whether or not anything was there to catch it: with the snap off, or on a plain stretch of
     /// grid, it simply follows the edge, in grey.
-    func snapTime(_ t: Double, excluding: Set<UUID> = []) -> Double {
-        let r = snappedTime(t, excluding: excluding)
+    func snapTime(_ t: Double, excluding: Set<UUID> = [], includeCaret: Bool = false) -> Double {
+        let r = snappedTime(t, excluding: excluding, includeCaret: includeCaret)
         snapGuide = SnapGuide(time: r.time, onTarget: r.onTarget)
         return r.time
     }
