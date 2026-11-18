@@ -710,6 +710,10 @@ final class EditViewModel {
         /// What `insertion` was computed for: it is asked again only when this changes, not on every
         /// pixel of the cursor's travel.
         var insertionProbe: InsertionProbe? = nil
+        /// Whether the drop would SNAP, as the keyboard says it NOW (the project's snap inverted by ⌘,
+        /// @see FileDropModifiers.fileDropSnapOn). Part of the hint so that a ⌘ pressed or released
+        /// without a mouse move rewrites it, and the ghost is drawn again on the grid or off it.
+        var snapOn: Bool = true
 
         struct InsertionProbe: Equatable {
             var row: Int
@@ -755,7 +759,19 @@ final class EditViewModel {
         flags.contains(.option) ? .sequential : .stacked
     }
 
-    /// A probe that follows ⌥ during the hover. `dropUpdated` is only called on a MOUSE
+    /// Reads the keyboard NOW into the hint: the drop mode (⌥) and whether the drop snaps (⌘ inverts
+    /// the snap), and keeps `cmdKeyHeld` — what `effectiveSnapEnabled`, hence the ghost and the drop's
+    /// snap, read — in step with it. A drag session under way (the Finder's included) starves the
+    /// `flagsChanged` monitor that normally feeds it, which left ⌘ deaf during a drop.
+    private func syncFileDropModifiers(_ hint: inout FileDropHint) {
+        let flags = NSEvent.modifierFlags
+        let cmd = flags.contains(.command)
+        if cmdKeyHeld != cmd { cmdKeyHeld = cmd }   // only on a change: a write notifies the observers
+        hint.mode   = Self.fileDropMode(for: flags)
+        hint.snapOn = FileDropModifiers.fileDropSnapOn(snapEnabled: snapEnabled, flags: flags)
+    }
+
+    /// A probe that follows ⌥ and ⌘ during the hover. `dropUpdated` is only called on a MOUSE
     /// MOVE: without it, pressing ⌥ without moving would change nothing on screen — yet that is
     /// exactly the expected gesture (you arrive over the timeline, you read the banner, you
     /// press ⌥). An ordinary `Timer` would not do: the drag loop runs in
@@ -775,7 +791,7 @@ final class EditViewModel {
         // resolved (their durations) at every pixel travelled.
         var hint = fileDropHint ?? FileDropHint(count: count, mode: .stacked)
         hint.count    = count
-        hint.mode     = Self.fileDropMode(for: NSEvent.modifierFlags)
+        syncFileDropModifiers(&hint)
         hint.location = location
         hint.boundaryRow = laneStep > 0
             ? LaneInsertion.boundaryRow(pointerRow: (Double(location.y) - rulerHeight) / laneStep,
@@ -788,16 +804,20 @@ final class EditViewModel {
         fileDropModifierWatch = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 40_000_000)
-                guard let self, self.fileDropHint != nil else { return }
-                let m = Self.fileDropMode(for: NSEvent.modifierFlags)
-                if self.fileDropHint?.mode != m {
-                    // The mode changes how many lanes the batch takes, hence the insertion.
-                    self.fileDropHint?.mode = m
-                    if var h = self.fileDropHint { self.refreshFileDropInsertion(&h); self.fileDropHint = h }
-                }
+                guard let self, var h = self.fileDropHint else { return }
+                let before = h
+                self.syncFileDropModifiers(&h)
+                // The mode changes how many lanes the batch takes, hence the insertion.
+                self.refreshFileDropInsertion(&h)
+                if h != before { self.fileDropHint = h }
             }
         }
     }
+
+    /// The instant a file drop lets go at, from the cursor's time `t`: snapped (⌘ inverts the snap, @see
+    /// `FileDropModifiers`) and never before zero. THE one door of the ghost, the real drop and
+    /// `debug.file_drop`'s `snap`: what the preview shows is what the release lays down.
+    func fileDropStart(atTime t: Double) -> Double { max(0, snappedTimePure(t)) }
 
     /// The mode kept for the drop under way (`stacked` by default outside a hover).
     var fileDropMode: FileDropMode { fileDropHint?.mode ?? .stacked }
@@ -825,6 +845,11 @@ final class EditViewModel {
         fileDropModifierWatch = nil
         fileDropPreviewClaimed = false
         fileDropHint = nil
+        // The drag session swallowed the modifier changes made during it: a ⌘ released mid-drag would
+        // stay "held" for good. Back to what the keyboard says now (the monitor takes over from here).
+        let flags = NSEvent.modifierFlags
+        if cmdKeyHeld != flags.contains(.command) { cmdKeyHeld = flags.contains(.command) }
+        if optKeyHeld != flags.contains(.option) { optKeyHeld = flags.contains(.option) }
     }
 
     var canUndo: Bool { !undoStack.isEmpty }

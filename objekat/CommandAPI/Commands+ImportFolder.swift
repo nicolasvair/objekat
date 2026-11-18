@@ -83,7 +83,7 @@ extension CommandRegistry {
                  DEBUG. The RELEASE of a file drop, with no mouse: the very function the timeline's \
                  drop calls once the files are read (`EditViewModel.commitFileDrop`) — files and \
                  folders from the Finder or from the library alike. `lane` is the DISPLAY row under \
-                 the cursor, `start` the instant (seconds, no snap), `mode` 'stacked' (default: one \
+                 the cursor, `start` the instant (seconds; snapped only when `snap` is given), `mode` 'stacked' (default: one \
                  lane each) or 'sequential' (⌥: one lane, end to end). `insert_row` = let go in the \
                  GAP before that display row: the files are INSERTED there (the lanes below go down \
                  by the number of lanes the batch takes, nothing is overwritten); `lane` is then \
@@ -99,6 +99,10 @@ extension CommandRegistry {
                           ParamSpec("lane", "int", required: false, "Display row under the cursor (default 0)."),
                           ParamSpec("start", "number", required: false, "Start, in seconds (default 0)."),
                           ParamSpec("mode", "string", required: false, "'stacked' (default) or 'sequential'."),
+                          ParamSpec("snap", "bool", required: false,
+                                    "Snap `start` the way the release does (grid + marks, `fileDropStart`), "
+                                  + "the project's snap forced to this value and ⌘ neutralised. Absent = `start` "
+                                  + "is taken as is."),
                           ParamSpec("insert_row", "int", required: false,
                                     "Insert BEFORE this display row (the gap between two lanes) "
                                   + "instead of dropping on a lane; `lane` is then ignored.")],
@@ -115,7 +119,12 @@ extension CommandRegistry {
                                    message: "unknown mode '\(other)' (expected 'stacked' or 'sequential')")
             }
             let lane = max(0, try p.int("lane", or: 0))
-            let start = max(0, try p.double("start", or: 0))
+            var start = max(0, try p.double("start", or: 0))
+            if p.raw["snap"] != nil, p.raw["snap"] != .null {
+                let snap = try p.bool("snap")
+                let raw = start
+                CommandAdapters.withSnapping(snap, vm) { start = vm.fileDropStart(atTime: raw) }
+            }
             var insertRow: Int? = nil
             if p.raw["insert_row"] != nil, p.raw["insert_row"] != .null { insertRow = try p.int("insert_row") }
             let load = await EditViewModel.loadDropEntries(from: paths.map { URL(fileURLWithPath: $0) })

@@ -139,7 +139,7 @@ struct FileDropGhostOverlay: View {
                 // open); otherwise on the lane under the cursor, as ever.
                 let inserting = hint.insertion
                 let baseLane  = inserting != nil ? 0 : max(0, Int((loc.y - rulerHeight) / laneStep))
-                let baseStart = max(0, viewModel.snappedTimePure(loc.x / pixelsPerSecond))
+                let baseStart = viewModel.fileDropStart(atTime: loc.x / pixelsPerSecond)
                 let slots = EditViewModel.fileDropLayout(durations: hint.previewDurations,
                                                          mode: hint.mode,
                                                          baseLane: baseLane, baseStart: baseStart)
@@ -215,6 +215,9 @@ extension TimelineView {
                                                 halfBand: LaneInsertion.halfBand(laneStep: laneStep))
         }
         viewModel.endFileDropHint()
+        // The instant is snapped NOW, with the modifiers of the release (`endFileDropHint` has just
+        // read them back off the keyboard): the files are read afterwards, and ⌘ may well be up by then.
+        let dropStart = viewModel.fileDropStart(atTime: location.x / pixelsPerSecond)
 
         // The files are no longer handled provider by provider: laid down each on its own at the
         // same instant and on the same lane, they chased each other away through
@@ -250,7 +253,7 @@ extension TimelineView {
             // Files are measured, folders are read down to their leaves (off the main thread, the
             // lengths a few at a time): both come back in the order they were dropped.
             let load = await EditViewModel.loadDropEntries(from: urls)
-            placeDroppedEntries(load, at: location, mode: dropMode, insertionRow: dropRow)
+            placeDroppedEntries(load, at: location, start: dropStart, mode: dropMode, insertionRow: dropRow)
         }
         return true
     }
@@ -337,7 +340,7 @@ extension TimelineView {
     /// folded group named after it, the hierarchy kept (@see FolderImport); it takes one lane and
     /// one slot of the layout, like a file of the same length.
     @MainActor
-    private func placeDroppedEntries(_ load: EditViewModel.DropLoad, at location: CGPoint,
+    private func placeDroppedEntries(_ load: EditViewModel.DropLoad, at location: CGPoint, start: Double,
                                      mode: EditViewModel.FileDropMode, insertionRow: Int?) {
         let vm = viewModel
         defer { vm.reportFolderImportIssues(load) }
@@ -353,12 +356,11 @@ extension TimelineView {
                              style: .informational) else { return }
         }
         let baseLane  = max(0, Int((location.y - rulerHeight) / laneStep))
-        let baseStart = max(0, vm.snappedTimePure(location.x / pixelsPerSecond))
         // The release is one door, shared with the headless `debug.file_drop`: the gap (if the drop
         // was let go between two lanes) is re-planned from the real model with the real number of
         // entries, an instrument group refuses before any undo point, and ONE undo point covers
         // the shift of the lanes below and the laying down (@see commitFileDrop).
-        vm.commitFileDrop(load.entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
+        vm.commitFileDrop(load.entries, baseLane: baseLane, baseStart: start, mode: mode,
                           insertionRow: insertionRow)
     }
 }

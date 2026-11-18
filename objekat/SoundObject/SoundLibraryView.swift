@@ -97,6 +97,12 @@ struct FileDragSource: NSViewRepresentable {
                              sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
             .copy
         }
+
+        /// The modifier keys do not pick the operation: with a mask of `.copy` alone, holding ⌘ (which
+        /// the system reads as "generic / move") narrowed it to nothing and the timeline refused the
+        /// drop. ⌘ is the timeline's snap toggle and ⌥ its end-to-end mode — they are READ there, off the
+        /// keyboard, and must not interfere with the session.
+        func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
     }
 }
 
