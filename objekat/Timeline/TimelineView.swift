@@ -1658,7 +1658,7 @@ struct TimelineView: View {
         let foPx    = min(entry.item.fadeOut * pixelsPerSecond, bw)
         // The loop's IN/OUT markers: nil (hence ignored by `resolve`) if the object does not loop,
         // or if the marker falls outside the current block (V1 scope, @see [[loop-item-plan]]).
-        let loopLocal = entry.item.loopMarkerLocalRange
+        let loopLocal = entry.item.loopMarkerDisplay   // AS SHOWN (@see LoopRetrim.displayShift)
         let loopInPx  = loopLocal.flatMap { r -> Double? in
             let px = r.start * pixelsPerSecond
             return (0...bw).contains(px) ? px : nil
@@ -2829,6 +2829,7 @@ struct TimelineView: View {
             sharedLeadingPx:  shared.leading,
             sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: object),
+            previewLoopShift: previewLoopShift(for: object),
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:         (viewModel.activeTool == .toolAux && !object.isAux)
@@ -2906,6 +2907,8 @@ struct TimelineView: View {
         var curveIn: FadeCurve
         var curveOut: FadeCurve
         var loopRange: (start: Double, end: Double)?
+        /// The bounds AS SHOWN: where the grips are drawn (`loopRange` is what the waveform folds on).
+        var loopMarkers: (start: Double, end: Double)?
         /// The left edge's travel in whole px (a MIDI clip's notes stay anchored in absolute terms).
         var trimDX: Double
         var w: Double { rect.width }
@@ -3162,6 +3165,7 @@ struct TimelineView: View {
                 sharedLeading: shared.leading, sharedTrailing: shared.trailing,
                 toolOverlay: toolOverlays[item.id],
                 loopRange: previewLoopRange(for: item),
+                loopMarkers: previewLoopMarkerRange(for: item),
                 preview: previews[item.id])
         }
         guard resolved.contains(where: { $0.selected }) else { return resolved }
@@ -3307,13 +3311,15 @@ struct TimelineView: View {
                             sourceOffset: g.effectiveSourceOffset, duration: g.effectiveDuration,
                             fadeIn: g.effectiveFadeIn, fadeOut: g.effectiveFadeOut,
                             curveIn: g.effectiveFadeInCurve, curveOut: g.effectiveFadeOutCurve,
-                            loopRange: g.effectiveLoopRange, trimDX: g.trimDX)
+                            loopRange: g.effectiveLoopRange, loopMarkers: g.loopMarkerRange,
+                            trimDX: g.trimDX)
                     }
                     return CanvasBlockLook(
                         rect: rectFor(entry), sourceOffset: item.sourceOffset, duration: item.duration,
                         fadeIn: item.fadeIn, fadeOut: item.fadeOut,
                         curveIn: item.fadeInCurve, curveOut: item.fadeOutCurve,
-                        loopRange: item.loopMarkerLocalRange, trimDX: 0)
+                        loopRange: item.loopMarkerLocalRange,
+                        loopMarkers: item.loopMarkerDisplay.map { ($0.start, $0.end) }, trimDX: 0)
                 }
 
                 // ── The names (declared ahead of phase 1: the STICKY pass below needs them) ──
@@ -3722,7 +3728,7 @@ struct TimelineView: View {
                     // they do in its rich view: they are what one takes hold of to move IN / OUT.
                     // A MIDI clip shows them whether selected or not, as its rich view always did.
                     let loopGrips = (selectedIDs.contains(item.id) || item.isMIDI) && !item.isReversed
-                        ? blockLook.loopRange : nil
+                        ? blockLook.loopMarkers : nil
                     let consolidatedBadge = consolidated[item.id]
                     guard needsLabel || needsFade || needsMute || loopGrips != nil || toolOverlay != nil
                             || consolidatedBadge != nil else { continue }
@@ -3934,6 +3940,7 @@ struct TimelineView: View {
             sharedLeadingPx:  shared.leading,
             sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: group),
+            previewLoopShift: previewLoopShift(for: group),
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:        (viewModel.activeTool == .toolAux)

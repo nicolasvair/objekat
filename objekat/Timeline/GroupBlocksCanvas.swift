@@ -58,6 +58,9 @@ struct CanvasGroup {
     /// The loop's IN / OUT bounds, in seconds LOCAL to the block (`previewLoopRange(for:)`): the
     /// composite repeats from the block's left edge and the two grips are drawn. nil = no loop.
     var loopRange: (start: Double, end: Double)? = nil
+    /// The same bounds AS SHOWN, where the two grips are drawn (`loopRange` is what the composite
+    /// folds on): the first cycle that starts at or after the left edge. nil = no loop.
+    var loopMarkers: (start: Double, end: Double)? = nil
     /// The geometry of the block while a gesture previews it (move, trim, resize, fade, spill):
     /// where it stands, how long it is, its fades, the start its composite is aligned on. nil =
     /// nothing under way on it, and the stored values are drawn. A reading of the gesture, never a
@@ -478,7 +481,7 @@ enum GroupBlocksCanvas {
 
             // The loop's IN / OUT grips (a bar and a flag at each bound), over the fades and under
             // the tool's overlay, as the rich view stacks them. Always shown on a looping group.
-            if let lr = g.loopRange {
+            if let lr = g.loopMarkers {
                 var grips = Path()
                 LoopRangeMarkersView.appendGrips(
                     to: &grips, originX: x, originY: y,

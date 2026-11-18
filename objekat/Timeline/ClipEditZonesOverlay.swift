@@ -39,7 +39,7 @@ extension EditZoneHover {
         let by   = rulerHeight + Double(entry.displayLane) * laneStep
         let fiPx = min(item.fadeIn  * pps, bw)
         let foPx = min(item.fadeOut * pps, bw)
-        let loop = item.loopMarkerLocalRange
+        let loop = item.loopMarkerDisplay   // AS SHOWN (@see LoopRetrim.displayShift)
         let markerX: Double
         switch zone {
         case .loopIn:  markerX = loop.map { $0.start * pps } ?? 0

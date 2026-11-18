@@ -699,6 +699,16 @@ struct SoundObject: Identifiable, Codable, Equatable {
         return (s, e)
     }
 
+    /// The loop's IN/OUT bounds as they are SHOWN and grabbed (seconds local to the block), and the
+    /// shift between them and the stored ones: the first cycle whose IN lies at or after the left
+    /// edge (@see LoopRetrim.displayShift). Equal to `loopMarkerLocalRange` (shift 0) whenever IN is
+    /// already inside the block. For the markers ONLY — the waveform's fold and the engine read the
+    /// stored bounds. `nil` if the loop is not active.
+    var loopMarkerDisplay: (start: Double, end: Double, shift: Double)? {
+        guard let r = loopMarkerLocalRange else { return nil }
+        return LoopRetrim.displayed(start: r.start, end: r.end)
+    }
+
     /// Stretches the loop's IN/OUT bounds (local seconds) by `ratio` — a tempo remap stretches the
     /// musical content they point into (@see EditViewModel.resyncPositionsFromTracktion,
     /// rescaleMidiClipDurations). Bounds never set stay unset.

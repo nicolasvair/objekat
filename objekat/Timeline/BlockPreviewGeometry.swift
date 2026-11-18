@@ -54,6 +54,10 @@ nonisolated struct BlockPreviewGeometry {
     /// left trim re-anchors them (@see `loopTrimWindow`). A MIDI clip loops in beats and a group has
     /// no file: neither is concerned, whatever their `previewLoopRange`.
     var anchorsLoopOnTrim: Bool = false
+    /// While a loop marker is DRAGGED: the shift (seconds) between the bounds stored and the ones
+    /// shown, frozen at the start of the gesture so that the marker follows the hand (@see
+    /// `LoopRangeDragState.shift`). nil = the shift is derived from the bounds as they stand.
+    var previewLoopShift: Double? = nil
 
     /// True when nothing is under way: every answer below is then the stored value.
     var isNeutral: Bool {
@@ -128,9 +132,19 @@ nonisolated struct BlockPreviewGeometry {
         return previewLoopRange
     }
 
+    /// The loop's IN / OUT bounds as they are SHOWN, seconds local to the block: `effectiveLoopRange`
+    /// moved onto the first cycle that starts at or after the left edge (@see LoopRetrim.displayShift)
+    /// — or by the shift a marker drag froze. For the markers only; the waveform folds on
+    /// `effectiveLoopRange`.
+    var loopMarkerRange: (start: Double, end: Double)? {
+        guard let r = effectiveLoopRange else { return nil }
+        let shift = previewLoopShift ?? LoopRetrim.displayShift(start: r.start, end: r.end)
+        return (r.start + shift, r.end + shift)
+    }
+
     /// The loop's IN / OUT bounds in px local to the block. nil = does not loop.
     var loopMarkerPx: (start: Double, end: Double)? {
-        guard let r = effectiveLoopRange else { return nil }
+        guard let r = loopMarkerRange else { return nil }
         return (r.start * pixelsPerSecond, r.end * pixelsPerSecond)
     }
 

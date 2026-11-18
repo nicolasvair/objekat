@@ -64,6 +64,9 @@ struct GroupBlockView: View {
     /// The loop's IN/OUT bounds in preview (seconds local to the block), @see previewLoopRange(for:)
     /// in TimelineView+DragHandler. `nil` if the group does not loop.
     var previewLoopRange: (start: Double, end: Double)? = nil
+    /// The shift between the bounds stored and the ones shown while a marker is dragged
+    /// (@see previewLoopShift(for:)); nil = derived from the bounds.
+    var previewLoopShift: Double? = nil
     var isToolHovered: Bool = false
     /// The stem the assignment tool is aiming at (nil = the tool is not armed), for the hover veil.
     var stemAssignTarget: StemAssignTarget? = nil
@@ -103,7 +106,8 @@ struct GroupBlockView: View {
                              previewFadeIn: previewFadeIn, previewFadeOut: previewFadeOut,
                              previewFadeInCurve: previewFadeInCurve,
                              previewFadeOutCurve: previewFadeOutCurve,
-                             previewLoopRange: previewLoopRange)
+                             previewLoopRange: previewLoopRange,
+                             previewLoopShift: previewLoopShift)
     }
     private var blockWidth: Double { geo.blockWidth }
     private var xPos: Double { geo.xPos }
