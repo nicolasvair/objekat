@@ -19,9 +19,12 @@ import Foundation
 // finds something decides):
 //
 //   1. A REAL target — an edge, a marker, a region's bound; the grid does not count — within the
-//      tolerance of the range's START, or of its END. The nearer wins and a tie goes to the start
-//      (the caret). A real target is never beaten by the grid, which `snappedTime` allows.
-//   2. The grid, on the range's start or end — again the nearer, ties to the start.
+//      tolerance of the range's START (the caret): the start lands on it, EVEN IF the end is nearer
+//      to a target of its own (the start has priority, decided 17 November 2026 — the same rule as
+//      an object's move, @see ObjectMoveSnap). A real target is never beaten by the grid, which
+//      `snappedTime` allows.
+//   2. Otherwise a real target within the tolerance of the range's END: the end lands on it.
+//   3. Otherwise the grid, on the range's START.
 //
 // With the snap off (⌘ inverts it, that is the caller's business) nothing is looked at: the range
 // follows the hand.
@@ -80,30 +83,17 @@ enum SelectionMoveSnap {
         var onTarget = false
 
         if snapEnabled {
-            // 1. the range's own bounds against the real marks
-            let aLo = nearest(to: lo + rawDt)
-            let aHi = nearest(to: hi + rawDt)
-            if aLo != nil || aHi != nil {
-                if let l = aLo, aHi == nil || l.distance <= aHi!.distance {
-                    dt = l.value - lo; edge = .start
-                } else if let h = aHi {
-                    dt = h.value - hi; edge = .end
-                }
-                onTarget = true
-            }
-            // 2. the grid, on the range's bounds
-            else if gridInterval > 0 {
+            if let l = nearest(to: lo + rawDt) {
+                // 1. the range's start against the real marks: it has priority
+                dt = l.value - lo; edge = .start; onTarget = true
+            } else if let h = nearest(to: hi + rawDt) {
+                // 2. the range's end against the real marks
+                dt = h.value - hi; edge = .end; onTarget = true
+            } else if gridInterval > 0 {
+                // 3. the grid, on the start
                 let pLo = gridPoint(near: lo + rawDt)
-                let pHi = gridPoint(near: hi + rawDt)
-                let dLo = abs(pLo - (lo + rawDt))
-                let dHi = abs(pHi - (hi + rawDt))
-                if dHi < dLo {
-                    dt = pHi - hi; edge = .end
-                    onTarget = targets.contains { abs($0 - pHi) <= onTargetEpsilon }
-                } else {
-                    dt = pLo - lo; edge = .start
-                    onTarget = targets.contains { abs($0 - pLo) <= onTargetEpsilon }
-                }
+                dt = pLo - lo; edge = .start
+                onTarget = targets.contains { abs($0 - pLo) <= onTargetEpsilon }
             }
         }
 

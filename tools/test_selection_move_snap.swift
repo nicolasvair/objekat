@@ -59,16 +59,18 @@ enum SelectionMoveSnapTest {
         let r = resolve(rawDt: 7.98, targets: [14.03])   // end -> 13.98, start -> 11.98
         check("end lands on a marker", near(6 + r.dt, 14.03) && r.edge == .end && r.onTarget, "\(r)")
     }
-    // Both within reach: the NEARER wins …
+    // Both within reach: the START wins, even though the END is the nearer (start priority).
     do {
         let r = resolve(rawDt: 6.0, targets: [10.0625, 12.03125])   // start .0625 away, end .03125
-        check("the nearer of the two bounds wins", r.edge == .end && near(6 + r.dt, 12.03125), "\(r)")
+        check("both bounds within reach: the start wins although the end is nearer",
+              r.edge == .start && near(4 + r.dt, 10.0625) && r.onTarget, "\(r)")
     }
-    // … and an exact tie goes to the START — the caret.
+    // Only the end within reach: it is the end that lands.
     do {
-        let r = resolve(rawDt: 6.0, targets: [10.0625, 12.0625])
-        check("an exact tie goes to the start", r.edge == .start && near(4 + r.dt, 10.0625), "\(r)")
+        let r = resolve(rawDt: 6.0, targets: [12.03125])
+        check("only the end within reach: the end lands", r.edge == .end && near(6 + r.dt, 12.03125), "\(r)")
     }
+
     // Out of reach: 0.09 s is more than 8 px at 100 px/s. The marker is off the grid on purpose.
     do {
         let r = resolve(rawDt: 6.29, targets: [10.2])    // start -> 10.29, 0.09 from the marker
@@ -100,9 +102,11 @@ enum SelectionMoveSnapTest {
               r.edge == .start && near(4 + r.dt, 10.0) && !r.onTarget && near(r.guideTime, 10.0), "\(r)")
     }
     do {
-        // A range whose END is the one near a grid line: 4 -> 6.1 (not a multiple of the grid).
+        // A range whose END is the one near a grid line: 4 -> 6.1 (not a multiple of the grid). The
+        // grid is read on the START only (start priority): 7.4 -> 7.5, though the end sits on 9.5.
         let r2 = resolve(lo: 4, hi: 6.1, rawDt: 3.4)      // start -> 7.4 (0.1 from 7.5), end -> 9.5 (0.0)
-        check("the grid takes the END when it is nearer", r2.edge == .end && near(6.1 + r2.dt, 9.5), "\(r2)")
+        check("the grid is read on the START, even when the end is nearer to a line",
+              r2.edge == .start && near(4 + r2.dt, 7.5), "\(r2)")
     }
     // A grid line that FALLS on a mark counts as landing on it (the guide goes yellow).
     do {
