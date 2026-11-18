@@ -26,6 +26,8 @@ render [0, 8] is the REFERENCE every other render is compared against.
   T9  loop off / on after a trim
   N1  a plain cut of a looping clip: the right piece plays the same pattern
   N2  an object laid over its head / its middle (resolveOverlaps): the kept parts are unchanged
+  L1  loop OFF on an audio clip: duration = the matter, ONE undo; L4 a clip at 0 trimmed
+  GT  the left trim of a looping GROUP: the pattern does not move, cycles go and come
   N3  a time selection deleted from its head / its middle (carve), and a copied passage pasted away
 
 Exit: 0 if every assertion passes, 1 otherwise.
@@ -45,6 +47,8 @@ if len(sys.argv) != 2:
 
 SOCK = sys.argv[1]
 WORK = tempfile.mkdtemp(prefix="objekat_trimloop_")
+import atexit, shutil
+atexit.register(shutil.rmtree, WORK, True)   # the renders are large: leave no trace
 SR = 48000
 L = 1.0
 TOL = 5e-3
@@ -432,6 +436,102 @@ with ObjekatClient(SOCK) as c:
     same("N3 a passage pasted at 10: the same sound as [2.6, 3.4]", R0, R, 10.01, 10.79, ya=2.61)
     check("N3 the pasted passage is not silent", peak(R, 10.0, 10.8) > 0.5, str(peak(R, 10.0, 10.8)))
     same("N3 the source clip is untouched", R0, R, 2.01, 5.99)
+
+    # ------------------------------------------------------------------ L1: the loop OFF crops onto the matter
+    clear()
+    clip = looped_clip()
+    R0 = mix()
+    cmd("object.set_loop", id=clip, enabled=False)
+    s, d, so, lp, ls, le, sp = st(clip)
+    check("L1 loop off: the duration is the matter (1 s), the left edge and the offset kept",
+          lp is False and near(d, 1.0) and near(s, 2.0) and near(so, 0.0), str((s, d, so, lp)))
+    R = mix()
+    same("L1 loop off: the first pass is untouched", R0, R, 2.01, 2.99)
+    check("L1 loop off: silent beyond the end of the file", peak(R, 3.05, 6.0) < 1e-4, str(peak(R, 3.05, 6.0)))
+    cmd("edit.undo")
+    s, d, so, lp, ls, le, sp = st(clip)
+    check("L1 ONE undo: looping again, 4 s", lp is True and near(d, 4.0), str((d, lp)))
+    same("L1 undo: the reference again", R0, mix(), 2.01, 5.99)
+
+    # after a left trim the matter is shorter: (file - offset) / speed
+    trim_left(clip, 2.25)
+    cmd("object.set_loop", id=clip, enabled=False)
+    s, d, so, lp, ls, le, sp = st(clip)
+    check("L1 trimmed +0.25 then loop off: duration 0.75, offset 0.25", near(d, 0.75) and near(so, 0.25), str((d, so)))
+    cmd("edit.undo")
+    check("L1 undo after the trim: looping, 3.75 s", st(clip)[3] is True and near(st(clip)[1], 3.75), str(st(clip)))
+
+    # a clip shorter than its matter keeps its length (min)
+    clear()
+    clip = cmd("object.add", path=RAMP, lane=0, start=2.0)["id"]
+    cmd("object.set_loop", id=clip, enabled=True)
+    cmd("object.set_duration", id=clip, duration=0.6)
+    cmd("object.set_loop", id=clip, enabled=False)
+    check("L1 shorter than the matter: the duration is kept (0.6)", near(st(clip)[1], 0.6), str(st(clip)))
+
+    # at speed 2 the matter lasts half as long
+    clear()
+    clip = looped_clip()
+    try:
+        cmd("object.set_speed", id=clip, ratio=2.0)
+        s, d, so, lp, ls, le, sp = st(clip)
+        cmd("object.set_loop", id=clip, enabled=False)
+        s, d2, so, lp, ls, le, sp = st(clip)
+        check("L1 speed 2: the matter is 0.5 s", near(sp, 2.0) and near(d2, 0.5), str((sp, d, d2)))
+    except Exception as e:      # the command's name may differ: say so rather than fail on it
+        check("L1 speed 2 (object.set_speed available)", False, str(e))
+
+    # ------------------------------------------------------------------ L4: a clip at 0 trimmed on the left
+    clear()
+    clip = looped_clip(start=0.0)
+    R0 = mix()
+    cmd("object.trim", id=clip, start=0.25, duration=3.75)
+    s, d, so, lp, ls, le, sp = st(clip)
+    check("L4 clip at 0, trimmed +0.25: offset 0.25, IN -0.25, OUT 0.75",
+          near(s, 0.25) and near(so, 0.25) and near(ls, -0.25) and near(le, 0.75), str((s, so, ls, le)))
+    same("L4 the pattern stays in place on [0.26, 3.99]", R0, mix(), 0.26, 3.99)
+    cmd("object.trim", id=clip, start=0.0, duration=4.0)
+    s, d, so, lp, ls, le, sp = st(clip)
+    check("L4 out and back: the identity", near(s, 0.0) and near(so, 0.0) and near(ls, 0.0) and near(le, 1.0),
+          str((s, so, ls, le)))
+
+    # ------------------------------------------------------------------ GT: the left trim of a LOOPING GROUP
+    clear()
+    ga = cmd("object.add", path=RAMP, lane=0, start=2.0)["id"]
+    grp = cmd("group.create", ids=[ga])["id"]
+    cmd("object.set_duration", id=grp, duration=4.0)
+    cmd("object.set_loop", id=grp, enabled=True)
+    cmd("object.set_loop_range", id=grp, start=0, end=1)
+
+    def gstate():
+        o = cmd("object.get", id=grp)
+        it = cmd("project.get_state")["items"][0]
+        return (o["start"], o["duration"], o.get("loop_start"), o.get("loop_end"),
+                it["kind"]["children"][0]["startTime"])
+
+    RG = mix()
+    g_s, g_d, g_ls, g_le, g_ch = gstate()
+    cmd("object.trim", id=grp, start=2.3, duration=3.7)
+    s2, d2, ls2, le2, ch2 = gstate()
+    check("GT trim +0.3: the window shrinks, the pattern does not move (child kept, IN -0.3, OUT 0.7)",
+          near(s2, 2.3) and near(d2, 3.7) and near(ls2, -0.3) and near(le2, 0.7) and near(ch2, g_ch),
+          str((s2, d2, ls2, le2, ch2)))
+    same("GT the sound is unchanged on [2.31, 5.99]", RG, mix(), 2.31, 5.99)
+    cmd("object.trim", id=grp, start=3.4, duration=2.6)
+    s3, d3, ls3, le3, ch3 = gstate()
+    check("GT trim +1.4: IN -0.4 (a whole cycle gone), the children laid on the repeat",
+          near(s3, 3.4) and near(ls3, -0.4) and near(le3 - ls3, 1.0), str((s3, ls3, le3)))
+    same("GT +1.4: the sound is unchanged on [3.41, 5.99]", RG, mix(), 3.41, 5.99)
+    cmd("object.trim", id=grp, start=1.7, duration=4.3)
+    s4, d4, ls4, le4, ch4 = gstate()
+    same("GT extension -0.3: the old window is unchanged on [2.01, 5.99]", RG, mix(), 2.01, 5.99)
+    same("GT extension -0.3: the previous repeat shows (1.71 plays what 2.71 plays)", RG, mix(), 1.71, 1.99, ya=2.71)
+    cmd("object.trim", id=grp, start=2.0, duration=4.0)
+    s5, d5, ls5, le5, ch5 = gstate()
+    check("GT out and back: bounds 0 / 1, the child where it was",
+          near(s5, g_s) and near(ls5, 0.0) and near(le5, 1.0) and near(ch5, g_ch), str((s5, ls5, le5, ch5)))
+    cmd("edit.undo")
+    check("GT undo of the last trim: the extended window (start 1.7)", near(gstate()[0], 1.7), str(gstate()))
 
     clear()
 

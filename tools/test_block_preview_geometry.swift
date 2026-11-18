@@ -251,8 +251,16 @@ enum BlockPreviewGeometryTest {
     let lr = looped.effectiveLoopRange
     check("loop trim: IN -0.25, OUT 0.75", lr != nil && abs(lr!.start + 0.25) < 1e-12 && abs(lr!.end - 0.75) < 1e-12,
           "\(String(describing: lr))")
-    check("loop trim: the markers are drawn from the re-anchored bounds",
+    // The markers are drawn on the first cycle that starts at or after the left edge (IN + k.P, k minimal,
+    // LoopRetrim.displayShift): the stored IN -0.25 / OUT 0.75 are SHOWN at 0.75 / 1.75 -> 75 / 175 px,
+    // reachable instead of sitting before the edge. The waveform still folds on `effectiveLoopRange`.
+    check("loop trim: the markers are drawn on the first cycle at or after the left edge",
+          looped.loopMarkerPx.map { abs($0.start - 75) < 1e-9 && abs($0.end - 175) < 1e-9 } == true,
+          "\(String(describing: looped.loopMarkerPx))")
+    looped.previewLoopShift = 0      // a marker drag froze the shift at 0: the marker follows the hand
+    check("loop trim: a frozen shift (marker drag) wins over the derived one",
           looped.loopMarkerPx.map { abs($0.start + 25) < 1e-9 && abs($0.end - 75) < 1e-9 } == true)
+    looped.previewLoopShift = nil
     looped.anchorsLoopOnTrim = false      // a MIDI clip (or a group): the old reading, untouched
     check("not an audio loop: the ordinary offset rule", abs(looped.effectiveSourceOffset - 0.25) < 1e-12
           && looped.effectiveLoopRange?.start == 0)
