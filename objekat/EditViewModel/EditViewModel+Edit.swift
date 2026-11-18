@@ -232,6 +232,13 @@ extension EditViewModel {
         // moves the window over it. Read BEFORE the start changes — it needs the old frame
         // (@see loopAnchoredRetrim, LoopRetrim).
         let loopWindow = loopAnchoredRetrim(obj, newStart: newStart)
+        // A LOOPING group: the same rule, in its own terms — its window is a porthole onto a pattern, so
+        // moving the left edge CROPS INTO the loop (cycles go, or come) instead of sliding the pattern
+        // along. The content and the bounds are laid on the repeat that starts at or before the new
+        // edge (@see portholeRebased, LoopRetrim.porthole). Read BEFORE the start changes.
+        let porthole: (shift: Double, loopStart: Double, loopEnd: Double)? =
+            (isLoopedGroupPorthole(obj) && abs(delta) > 1e-12)
+                ? portholeRebased(obj, at: newStart, extending: true) : nil
         // The mirror of `updateDuration`: a trim does not change the size of a fade. The
         // fade-in keeps its LENGTH and follows the start edge it is anchored to. Shortening it
         // here (`fadeInAnchoredAtEnd`) belonged to the other gesture — matter REMOVED off the
@@ -252,6 +259,14 @@ extension EditViewModel {
         // curve followed the edge instead of staying in front of the matter it modulates.
         obj.automation = obj.automation.shiftedInTime(by: -delta)
         obj.markers    = obj.markers.shiftedInTime(by: -delta)
+        if let porthole, case .group(var children, let isExpanded) = obj.kind {
+            if porthole.shift != 0 {
+                EditViewModel.shiftStartTimes(&children, by: porthole.shift)
+                obj.kind = .group(children: children, isExpanded: isExpanded)
+            }
+            obj.loopRangeStart = porthole.loopStart
+            obj.loopRangeEnd   = porthole.loopEnd
+        }
         if let loopWindow {
             // The offset AND the IN/OUT bounds move together (the bounds are local to the edge, which
             // has just moved): what is heard at an instant that stays in the window is unchanged.

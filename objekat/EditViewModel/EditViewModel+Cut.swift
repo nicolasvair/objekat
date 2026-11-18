@@ -521,19 +521,18 @@ extension EditViewModel {
     /// What keeps the phase of a looping group whose left edge comes to lie at `time`: how far its
     /// content must move, and its IN/OUT bounds local to that new edge (@see loopedGroupRightHalf
     /// for the reasoning). `nil` if the group does not loop.
-    func portholeRebased(_ group: SoundObject, at time: Double)
+    ///
+    /// `extending`: a TRIM, whose edge may also go out beyond the grid's origin (the pattern then
+    /// gains cycles, the content moving by whole periods) — @see LoopRetrim.porthole, the arithmetic.
+    func portholeRebased(_ group: SoundObject, at time: Double, extending: Bool = false)
         -> (shift: Double, loopStart: Double, loopEnd: Double)? {
 
         guard group.loopEnabled, group.canLoop,
-              let a = group.loopRangeStart, let b = group.loopRangeEnd else { return nil }
-        let period = b - a
-        guard period > 0.001 else { return nil }
-
-        let inAbs  = group.startTime + a                      // the IN point, in timeline time
-        let origin = min(group.startTime, inAbs)              // where the engine's repeats start
-        let k      = max(0, ((time - origin) / period).rounded(.down))
-        let newInAbs = origin + k * period
-        return (newInAbs - inAbs, newInAbs - time, newInAbs - time + period)
+              let a = group.loopRangeStart, let b = group.loopRangeEnd,
+              let p = LoopRetrim.porthole(startTime: group.startTime, loopStart: a, loopEnd: b,
+                                          at: time, allowEarlier: extending)
+        else { return nil }
+        return (p.shift, p.loopStart, p.loopEnd)
     }
 
     /// `windowOnly` only concerns a GROUP (case 3): the window is cut in two and the children are
