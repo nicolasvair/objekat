@@ -3153,6 +3153,29 @@ a second one elsewhere. The most exposed points:
   `seekRequest` itself on the `midi_notes` branch (a headless session has no window to do it). Contract: `command_api.md` ("The edit
   shortcuts"). To test: the plan's scenario `tools/scenario_midi_clipboard.py` (not written yet).
 
+- **An object's loop, six retouches (18 November 2026, branch `main`, no engine patch, no format change, nothing pushed).**
+  (1) The IN/OUT markers are ORANGE (`LoopRangeMarkersView.loopColor`, shared with the ruler's transport loop) in the four places
+  they are drawn; the repeat dashes keep the object's colour. (2) `object.set_loop false` on a looping AUDIO clip crops
+  `duration` onto its matter, `(fileDuration − sourceOffset)/speed` (left edge and offset fixed, fades recalled as in
+  `applyDuration`, one undo step); a group and a MIDI clip keep their window. (3) A tempo remap scales `loopRangeStart/End` by the
+  ratio: a looping GROUP in BPM mode (`resyncPositionsFromTracktion`), a MIDI clip in both modes (+ `rescaleMidiClipDurations`);
+  an audio clip's loop stays in file seconds. The auto-alignment of the group's end on its content is untouched and still wins
+  over the scaled duration when the window hugged the content (a looping group normally overruns it). (4) After a left trim the
+  stored IN lies in `]−P, 0]` (storage and engine UNCHANGED); the markers are now DRAWN, GRABBED, hovered and previewed on the
+  first cycle that starts at or after the left edge, `IN + k·P`, k minimal (`LoopRetrim.displayShift`, `SoundObject.loopMarkerDisplay`,
+  `BlockPreviewGeometry.loopMarkerRange`); the waveform's fold keeps the STORED bounds. A drag freezes that shift
+  (`LoopRangeDragState.shift`) and writes `shown − shift`. Known: after the release the shift is recomputed from the new period, so
+  a marker whose period changed can land one cycle off from where the hand left it; a block shorter than the distance to the
+  shown IN shows no marker at all (reopen the edge). (5) Trimming the START of a looping GROUP crops into the loop
+  (`applyTrim` → `portholeRebased(extending: true)` → `LoopRetrim.porthole`): children and bounds are laid on the repeat that
+  starts at or before the new edge; an edge pulled OUT beyond the grid's origin moves the children by whole periods (possibly before
+  0). The cut / delete path keeps its rule (k ≥ 0). The mouse preview of that trim still slides the pattern (the model is right on
+  release). (6) API: `project.set_tempo` (undoable), `project.set_grid_mode`; contract in `command_api.md` ("The tempo and the grid
+  mode, from a script"). Verified: Debug build, no new warning; `tools/test_loop_retrim.swift` 47 assertions; a 10-assertion smoke
+  run through the socket (set_tempo/set_grid_mode, audio loop off + undo, looped-group trim and back, 120→100 BPM and undo). **To do**:
+  the planned scenarios (`scenario_object_loop_tempo.py`, `scenario_trim_loop.py` L1–L4 + group trim; its T9 changes), the
+  non-regression set, and a look at the screen (orange, the markers after a trim, the drag).
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged
