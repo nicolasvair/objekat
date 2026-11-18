@@ -150,6 +150,83 @@ extension CommandRegistry {
             return .object(["transposed": .int(count), "semitones": .int(delta)])
         }
 
+        // MARK: the piano roll as a surface of the keyboard (notes' clipboard, @see EditViewModel+MIDINotes)
+
+        register("midi.piano_roll",
+                 summary: "Opens or closes a MIDI clip's piano roll, as the clip's unfold button does (pure "
+                        + "view state, no undo). Opening also gives the band back to the notes if the "
+                        + "automation band held it. Any change lets go of the notes selected, and a "
+                        + "closed piano roll is no piano-roll context. Answers "
+                        + "`piano_roll_open` and `focused` (the piano roll is the keyboard's context).",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip."),
+                          ParamSpec("open", "bool", "true = open, false = close.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let clip = try CommandAdapters.requireMIDI(id, in: vm)
+            let open = try p.bool("open")
+            // `togglePianoRoll` gives the content back instead of toggling while the band is open.
+            if open {
+                if clip.automationOpen { vm.setAutomationOpen(id: id, false) }
+                if vm.find(id: id)?.pianoRollOpen == false { vm.togglePianoRoll(id: id) }
+            } else if clip.pianoRollOpen {
+                if clip.automationOpen { vm.setAutomationOpen(id: id, false) }
+                vm.togglePianoRoll(id: id)
+            }
+            let after = vm.find(id: id)
+            return .object(["id": .string(id.uuidString),
+                            "piano_roll_open": .bool(after?.pianoRollOpen ?? false),
+                            "focused": .bool(vm.focusedPianoRollClipID == id)])
+        }
+
+        register("midi.select_notes",
+                 summary: "Selects notes of a MIDI clip, as a click on them does: the note selection is "
+                        + "REPLACED (empty = none), the clip itself is selected, and when its piano roll "
+                        + "is open it becomes the piano-roll context — where ⌘V (`edit.paste`) lands. "
+                        + "Answers like `selection.get` (`selected_note_ids`, `focused_midi_clip`).",
+                 params: [ParamSpec("id", "uuid", "The MIDI clip that owns the notes."),
+                          ParamSpec("note_ids", "array<uuid>", "Notes to select (may be empty).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let clip = try CommandAdapters.requireMIDI(id, in: vm)
+            let wanted = Set(try p.uuids("note_ids"))
+            let unknown = wanted.subtracting(Set(clip.midiNotes.map(\.id)))
+            guard unknown.isEmpty else {
+                throw CommandError(code: .not_found, message: "unknown note: \(unknown.first!.uuidString)")
+            }
+            vm.select(id, additive: false)
+            vm.selectedMidiNoteIDs = wanted
+            if clip.showsPianoRollInline { vm.focusedMidiClipID = id }
+            return CommandAdapters.selectionPayload(vm)
+        }
+
+        register("midi.focus",
+                 summary: "A click on the BACKGROUND of a MIDI clip's open piano roll: the notes selected "
+                        + "are let go of, the clip is selected and becomes the piano-roll context (where "
+                        + "⌘V pastes notes), the time selection is dropped and, with `time`, the cursor "
+                        + "(the caret) goes there. Refused when the piano roll is not open and on screen "
+                        + "(see `midi.piano_roll`). Answers like `selection.get`.",
+                 params: [ParamSpec("id", "uuid", "Target MIDI clip."),
+                          ParamSpec("time", "number", required: false,
+                                    "Caret instant, in seconds (default: the cursor where it is).")],
+                 undo: .none) { p in
+            let session = try CommandContext.shared.requireSession()
+            let vm = session.viewModel
+            let id = try p.uuid("id")
+            _ = try CommandAdapters.requireMIDI(id, in: vm)
+            guard vm.laneEntries.contains(where: { $0.item.id == id && $0.item.showsPianoRollInline }) else {
+                throw CommandError(code: .invalid_state,
+                                   message: "the piano roll of \(id.uuidString) is not open on screen")
+            }
+            vm.selectedMidiNoteIDs = []
+            vm.select(id, additive: false)
+            vm.focusedMidiClipID = id
+            vm.timeSelection = nil
+            if let time = try p.optionalDouble("time") { session.seek(to: max(0, time)) }
+            return CommandAdapters.selectionPayload(vm)
+        }
+
         #if DEBUG
         // MARK: debug (E0 of plan_groupes_midi.md: engine proof, no production code)
 

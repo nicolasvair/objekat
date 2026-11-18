@@ -459,6 +459,10 @@ extension CommandRegistry {
             let lane = max(0, try p.int("lane"))
             if p.raw["time"] != nil { session.seek(to: max(0, try p.double("time"))) }
             vm.clearSelection()
+            // A click in the timeline leaves the piano-roll context, and the notes selected there
+            // (@see TimelineView+TapHandler): ⌘V then pastes objects.
+            vm.focusedMidiClipID = nil
+            vm.selectedMidiNoteIDs = []
             vm.caretLane = lane
             // A plain click lays the ⇧-extension origin at the same point (@see the tap handler).
             vm.timeSelectionOrigin = (lane: lane, time: vm.cursorPosition)
