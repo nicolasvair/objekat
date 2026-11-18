@@ -98,10 +98,10 @@ struct FileDragSource: NSViewRepresentable {
             .copy
         }
 
-        /// The modifier keys do not pick the operation: with a mask of `.copy` alone, holding ⌘ (which
-        /// the system reads as "generic / move") narrowed it to nothing and the timeline refused the
-        /// drop. ⌘ is the timeline's snap toggle and ⌥ its end-to-end mode — they are READ there, off the
-        /// keyboard, and must not interfere with the session.
+        /// The modifier keys do not pick the operation: the mask is `.copy` whatever is held (the system
+        /// would otherwise restrict it by the keys, ⌘ standing for "generic / move", which a `.copy`
+        /// alone does not offer). ⌘ is the timeline's snap toggle and ⌥ its end-to-end mode — they are
+        /// READ there, off the keyboard, and must not interfere with the session.
         func ignoreModifierKeys(for session: NSDraggingSession) -> Bool { true }
     }
 }
@@ -981,9 +981,8 @@ struct SoundLibraryView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(rows) { node in
-                        row(for: node)
+                        row(for: node)   // its separator is part of the row
                             .id(node.id)
-                        Divider()
                     }
                 }
                 .scrollTargetLayout()
@@ -1187,19 +1186,44 @@ private struct SoundLibraryRowView: View {
     private var indent: CGFloat { indented ? CGFloat(node.depth) * 12 : 0 }
 
     var body: some View {
-        Group {
-            if node.isDirectory { folderRow } else { fileRow }
+        // The separator belongs to the row (it is the row's last point, not a sibling in the list): a
+        // click or a drag begun ANYWHERE in the row's rectangle — the margins and the separator
+        // included — reaches the AppKit view below, there is no dead strip between two rows.
+        VStack(spacing: 0) {
+            Group {
+                if node.isDirectory { folderRow } else { fileRow }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            // The explicit full size: the AppKit view below covers what the row's rectangle covers.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background((isSelected || isCursor) ? Color.accentColor.opacity(0.12) : Color.clear)
+            Divider()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background((isSelected || isCursor) ? Color.accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
-        // Files hand click and drag over to AppKit: it is the only way to emit a batch of N
-        // elements (@see FileDragSource). A folder does the same on its icon and name only — the
-        // chevron stays a SwiftUI button — and its double click (go down into it) travels with it.
+        // Click and drag are handed over to AppKit on the WHOLE row, files and folders alike: it is
+        // the only way to emit a batch of N elements (@see FileDragSource). A folder's double click
+        // (go down into it) travels with it; its chevron stays a SwiftUI button, laid ABOVE.
         .overlay {
-            if let dragURLsProvider, !node.isDirectory {
-                FileDragSource(urls: dragURLsProvider, onClick: onSelect, toolTip: node.name)
+            if let dragURLsProvider {
+                FileDragSource(urls: dragURLsProvider, onClick: onSelect,
+                               onDoubleClick: node.isDirectory ? onEnter : nil, toolTip: node.name)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if node.isDirectory {
+                Button(action: onToggleExpand) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(node.isExpanded ? 90 : 0))
+                        .frame(width: 12, height: 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                // Over the row's content, not over its separator (1 pt).
+                .padding(.bottom, 1)
+                .padding(.leading, 8 + indent)
             }
         }
     }
@@ -1210,15 +1234,9 @@ private struct SoundLibraryRowView: View {
         HStack(spacing: 6) {
             if indent > 0 { Color.clear.frame(width: indent) }
 
-            Button(action: onToggleExpand) {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(node.isExpanded ? 90 : 0))
-                    .frame(width: 12, height: 12)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            // The chevron's place: the button itself is laid over the row (@see body), above the
+            // AppKit view that takes the rest of the row.
+            Color.clear.frame(width: 12, height: 12)
 
             HStack(spacing: 6) {
                 Image(systemName: "folder.fill")
@@ -1236,17 +1254,7 @@ private struct SoundLibraryRowView: View {
                     .padding(.trailing, 14)   // the minimum gap the former `Spacer` kept (spacing + 8)
                     .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
             }
-            // The drag handle of the folder (the tooltip lives on it, it covers the name).
-            .overlay {
-                if let dragURLsProvider {
-                    FileDragSource(urls: dragURLsProvider, onClick: onSelect,
-                                   onDoubleClick: onEnter, toolTip: node.name)
-                }
-            }
         }
-        // Double click = go down into the folder; plain click = cursor/focus
-        .onTapGesture(count: 2) { onEnter() }
-        .onTapGesture { onSelect() }
     }
 
     // MARK: File
