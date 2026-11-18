@@ -1851,6 +1851,14 @@ pull. The tolerance is 8 px, so it follows the zoom.
 unless asked otherwise. A mark asking for the snap excludes ITSELF from the targets — see
 `marker.move` above.
 
+**A file dropped on the timeline** (the Finder's or the library's) snaps its START through ONE door,
+`EditViewModel.fileDropStart(atTime:)` — the ghost under the cursor and the release both call it. ⌘
+inverts the snap during the hover as well as at the release: the modifiers are read off the keyboard
+(`FileDropModifiers.fileDropSnapOn`, asserted alone by `tools/test_file_drop_modifiers.swift`) because a
+drag session starves the app's key monitor. `debug.file_drop` (DEBUG) takes an optional `snap` (bool):
+the `start` is then snapped through that same door, the project's snap forced to the value and ⌘
+neutralised (`start` 1.23 s, `snap: true` → the grid; `snap: false` → 1.23). Absent: `start` is taken as is.
+
 It does NOT decide any VALUE, and that is a rule and not an exception for the pan. The snap is the
 GRID's, hence TIME's: it says where a thing is PLACED — an object, a mark, an automation point. What
 a thing is WORTH answers to a DETENT of its own, which is **unconditional**: the pan's tenth, the
@@ -2031,11 +2039,16 @@ through ONE snap whose subject is the **range**, not the object grabbed inside i
 the first step that finds something deciding:
 
 1. a **real mark** — an object's edge, a marker, a region's bound; the grid is *not* one — within
-   8 px of the range's **start** (the caret) or of its **end**. The nearer wins and a tie goes to the
-   start. A real mark is never beaten by the grid, even a nearer one;
-2. else a real mark within reach of the **grabbed object's** edges (clipped to the range) — what an
-   object's own move has always done, now second;
-3. else the **grid**, on the range's start or end (again the nearer, ties to the start).
+   8 px of the range's **start** (the caret): the start lands on it, **even if the end is nearer** to a
+   mark of its own (the start has priority, 17 November 2026). A real mark is never beaten by the grid,
+   even a nearer one;
+2. else a real mark within 8 px of the range's **end**: the end lands on it;
+3. else the **grid**, on the range's **start** (never on the end).
+
+The grabbed object's own edges are never a reference (the range's two bounds are the only ones).
+A plain MOVE of objects (no range) follows the same rule on the grabbed object's two edges
+(`ObjectMoveSnap`, asserted alone by `tools/test_object_move_snap.swift`; `debug.move_snap`'s shape is
+unchanged, its `use_end` is true only when the start had no real mark within reach).
 
 With the snap off (or ⌘ held, which inverts it) the range follows the hand. The range itself stops at
 **zero**: it is the selection that is walled, so an object lying later than the range's start does not
@@ -3263,7 +3276,9 @@ definition's current wave); only the definition's current wave counts (fixed 20 
 | `tools/scenario_stem_plugin_state.py` | the state of a plugin on a bus (Main, stem) is written into the file and does not leak between projects sharing the Main's UUID (V1/V2, Save As, copies, tabs): 39 assertions, launches its own headless instances (`--app=PATH`); the external half (Pro-Q 4 by default) needs a DEBUG build |
 | `tools/scenario_selection_snap.py` | what a carried time selection lands on, through `timesel.snap_probe`: 21 assertions (the range's start on a mark, real mark over grid, object edge second, the end, snap off, the wall at zero, ⌥ and the cut scraps) |
 | `tools/scenario_context_click.py` | what a right click decides, through `selection.context_click`: 50 assertions (the body selects like a left click, an already-selected object changes nothing, the upper half selects nothing, a point inside the range builds, on the upper half, the annotations alone (marker + comment) and, on the lower half, the object's menu on the zone (no marker, no comment), and touches nothing, an empty lane gives the range's menu wherever the range lies, 'Group the selection' when clips are selected and no range, and no menu otherwise, a child, an infinite bus) |
-| `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 19 assertions, no app needed |
+| `tools/test_selection_move_snap.swift` | the precedence of that snap, compiled standalone: 17 assertions, no app needed |
+| `tools/test_object_move_snap.swift` | the precedence of a plain move's snap (start first, then end, then the grid on the start), compiled standalone: 11 assertions, no app needed |
+| `tools/test_file_drop_modifiers.swift` | ⌘ inverting a file drop's snap, compiled standalone: 8 assertions, no app needed |
 | `tools/test_send_columns.swift` | the Send tool's knob columns, compiled standalone: 22 assertions, no app needed |
 | `tools/test_synoptic_marquee.swift` | the marquee and ⇧'s box, compiled standalone: 21 assertions, no app needed |
 | `tools/test_piano_roll_framing.swift` | where a piano roll opens — the notes framed, the window on a C: 31 assertions, no app needed |
