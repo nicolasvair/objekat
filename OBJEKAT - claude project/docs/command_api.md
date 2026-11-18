@@ -1873,6 +1873,36 @@ hand gestures still land on whole dB (the timeline drag snaps its travel, the bo
 step), so a file only holds a tenth when the fine adjustment put it there. The session stores the
 Float as is: no format change, and a file written with whole dB reads the same.
 
+### The tempo and the grid mode, from a script
+
+`project.set_tempo` (`bpm`) is the transport's BPM field: clamped to [20, 300], rounded the way the field rounds it,
+**one undo step** (none when the value does not change). It answers `{tempo, previous, changed, grid_mode}`.
+`project.set_grid_mode` (`mode`: `time` or `bpm`, case-insensitive) is the project's grid switch — saved with the file
+(`project.get_state`, field `gridMode`, written `Time` / `BPM`), no undo step, as the interface's switch has none.
+The pair is what a scenario needs to drive a tempo remap: in **`bpm`** mode a tempo change stretches the positions by
+old/new, in **`time`** mode nothing moves in seconds and only the musical (MIDI) content follows.
+
+What a tempo change does to an object's LOOP bounds (`object.get`: `loop_start` / `loop_end`, seconds local to the object):
+a looping **group** in `bpm` mode and a **MIDI clip** in both modes have them multiplied by the same ratio as their
+duration (the bounds name a place in musical content; without it the period handed to the engine stayed the old one on a
+stretched content). A looping **audio** clip keeps its bounds (the loop reads seconds of the file). Undo restores them.
+
+### An object's loop: three edits that change its window
+
+- `object.set_loop {enabled: false}` on a looping **audio clip** crops it onto its matter: `duration` becomes
+  `min(duration, (file_duration - source_offset) / speed)` — the left edge and the offset stay where they are, what lay
+  beyond the end of the file (the loop was filling it) goes, the fades are recalled as the right-edge crop recalls them.
+  The same undo step as the toggle. A group and a MIDI clip keep their window.
+- `object.trim` (and the mouse's left-edge trim) on a looping **group** crops INTO the loop, as it does for a clip: the
+  pattern does not slide, it keeps its place in time and cycles go (or come, when the edge goes out past the grid's
+  origin). The group's children and its bounds are laid on the repeat that starts at or before the new edge (the bounds
+  come out ≤ 0, as the right half of a cut), so going out and back is the identity. Children can end up before the
+  group's start, and before 0 when an edge is pulled out near the head — the usual negative-time convention.
+- The IN / OUT **markers** are drawn, grabbed and previewed on the first cycle that starts at or after the left edge
+  (stored IN + k·P, k minimal): after a left trim the stored IN sits before the edge (`loop_start` ≤ 0, still what
+  `object.get` answers) and the marker is one period on. Dragging it moves the stored bound by the same amount.
+  Nothing stored or sent to the engine changes. `view.state.hover` reports the zone `loopIn` / `loopOut` over the shown marker.
+
 ### The pan clicks onto the tenths, always
 
 `object.adjust_pan` moves the pan BY a delta — the path every hand gesture takes (the Pan tool, the
