@@ -2592,7 +2592,12 @@ final class EditViewModel {
                 case .midiClip:
                     let t = engine.getClipStartTime(forID: arr[i].id.uuidString)
                     if t >= 0 { arr[i].startTime = t }
-                    if scale != 1 { arr[i].duration = max(0.01, arr[i].duration * scale) }
+                    if scale != 1 {
+                        arr[i].duration = max(0.01, arr[i].duration * scale)
+                        // The loop is musical too (the engine keeps it in beats): its bounds, in
+                        // local seconds, stretch with the block or they would name another place.
+                        arr[i].scaleLoopRange(by: scale)
+                    }
                 case .aux:
                     if scale != 1 {
                         arr[i].startTime *= scale
@@ -2615,6 +2620,11 @@ final class EditViewModel {
                     }
                     arr[i].startTime = newStart
                     arr[i].duration  = max(0.01, newEnd - newStart)
+                    // A looping group's IN/OUT bounds are LOCAL seconds (0 = its start): its content
+                    // has been stretched by the ratio, so they follow, or the period `syncGroupWindow`
+                    // hands the engine stayed the old one — the loop kept its old length over a
+                    // content that had moved apart.
+                    arr[i].scaleLoopRange(by: scale)
                 }
             }
         }
@@ -2640,6 +2650,9 @@ final class EditViewModel {
                 switch arr[i].kind {
                 case .midiClip:
                     arr[i].duration = max(0.01, arr[i].duration * ratio)
+                    // Its loop bounds are seconds LOCAL to the block, over notes in beats: they stretch
+                    // with it (the engine's loop, in beats, did not move).
+                    arr[i].scaleLoopRange(by: ratio)
                     touched.append(arr[i])
                 case .group(var children, let isExpanded):
                     rescale(in: &children)

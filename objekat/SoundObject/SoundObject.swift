@@ -699,6 +699,15 @@ struct SoundObject: Identifiable, Codable, Equatable {
         return (s, e)
     }
 
+    /// Stretches the loop's IN/OUT bounds (local seconds) by `ratio` — a tempo remap stretches the
+    /// musical content they point into (@see EditViewModel.resyncPositionsFromTracktion,
+    /// rescaleMidiClipDurations). Bounds never set stay unset.
+    mutating func scaleLoopRange(by ratio: Double) {
+        guard ratio.isFinite, ratio > 0, ratio != 1 else { return }
+        if let s = loopRangeStart { loopRangeStart = s * ratio }
+        if let e = loopRangeEnd { loopRangeEnd = e * ratio }
+    }
+
     /// The inverse of `loopMarkerLocalRange` — the identity since storage IS local, kept as a single
     /// point of passage should a kind ever store things differently.
     /// @see [[loop-item-plan]]
