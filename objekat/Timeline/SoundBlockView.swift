@@ -59,6 +59,7 @@ struct SoundBlockView: View {
     /// The shift between the bounds stored and the ones shown while a marker is dragged
     /// (@see previewLoopShift(for:)); nil = derived from the bounds.
     var previewLoopShift: Double? = nil
+    var previewLoopPinned: Bool? = nil
     var isToolHovered: Bool = false
     /// The stem the assignment tool is aiming at (nil = the tool is not armed), for the hover veil.
     var stemAssignTarget: StemAssignTarget? = nil
@@ -101,7 +102,8 @@ struct SoundBlockView: View {
                              previewFadeInCurve: previewFadeInCurve,
                              previewFadeOutCurve: previewFadeOutCurve,
                              previewLoopRange: previewLoopRange,
-                             previewLoopShift: previewLoopShift)
+                             previewLoopShift: previewLoopShift,
+                             previewLoopPinned: previewLoopPinned)
     }
     private var effectiveDuration: Double { geo.effectiveDuration }
     private var effectiveFadeIn: Double  { geo.effectiveFadeIn }

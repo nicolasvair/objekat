@@ -699,14 +699,22 @@ struct SoundObject: Identifiable, Codable, Equatable {
         return (s, e)
     }
 
-    /// The loop's IN/OUT bounds as they are SHOWN and grabbed (seconds local to the block), and the
-    /// shift between them and the stored ones: the first cycle whose IN lies at or after the left
-    /// edge (@see LoopRetrim.displayShift). Equal to `loopMarkerLocalRange` (shift 0) whenever IN is
-    /// already inside the block. For the markers ONLY — the waveform's fold and the engine read the
-    /// stored bounds. `nil` if the loop is not active.
-    var loopMarkerDisplay: (start: Double, end: Double, shift: Double)? {
+    /// The loop's IN/OUT bounds as they are SHOWN and grabbed (seconds local to the block): the first
+    /// cycle whose IN lies at or after the left edge (@see LoopRetrim.displayShift), or — a crop
+    /// leaving no boundary inside the block — the cycle that crosses it, pinned onto its edges
+    /// (@see LoopRetrim.markerFrame). Equal to `loopMarkerLocalRange` whenever IN is already inside the
+    /// block. For the markers ONLY — the waveform's fold and the engine read the stored bounds.
+    /// `nil` if the loop is not active.
+    var loopMarkerFrame: LoopRetrim.MarkerFrame? {
         guard let r = loopMarkerLocalRange else { return nil }
-        return LoopRetrim.displayed(start: r.start, end: r.end)
+        return LoopRetrim.markerFrame(start: r.start, end: r.end, duration: duration)
+    }
+
+    /// The markers' positions as they are drawn and grabbed (`loopMarkerFrame` applied: pinned onto
+    /// the block's edges when the crop leaves no cycle boundary inside it).
+    var loopMarkerDisplay: (start: Double, end: Double)? {
+        guard let r = loopMarkerLocalRange, let f = loopMarkerFrame else { return nil }
+        return LoopRetrim.markerPositions(start: r.start, end: r.end, frame: f, duration: duration)
     }
 
     /// Stretches the loop's IN/OUT bounds (local seconds) by `ratio` — a tempo remap stretches the

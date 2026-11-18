@@ -356,13 +356,21 @@ enum GroupBlocksCanvas {
                 fadeIn: g.fadeIn, fadeOut: g.fadeOut,
                 curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve,
                 offBins: offBins)
+            // A LOOPING group's left trim crops INTO the loop: the composite is drawn as the model
+            // will hold it on release (the children laid on the repeat that starts at or before the
+            // new edge, the bounds local to it) — the pattern keeps its place in time, it does not
+            // slide with the edge (@see BlockPreviewGeometry.groupContentShift).
+            var kids = children
+            let contentShift = g.preview?.groupContentShift ?? 0
+            if contentShift != 0 { EditViewModel.shiftStartTimes(&kids, by: contentShift) }
             GroupWaveformDrawing.draw(
-                into: gc, size: rect.size, waveformCache: waveformCache, children: children,
+                into: gc, size: rect.size, waveformCache: waveformCache, children: kids,
                 groupStartTime: startTime, pixelsPerSecond: geo.pixelsPerSecond,
                 stemColor: g.stem, blockXPos: rect.minX,
                 scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth,
                 rootMod: rootMod, rootMuted: item.isMuted,
-                waveformDisplayDB: waveformDisplayDB, loopRange: g.loopRange, offBins: offBins,
+                waveformDisplayDB: waveformDisplayDB,
+                loopRange: g.preview?.effectiveLoopRange ?? g.loopRange, offBins: offBins,
                 secPerBeat: secPerBeat)
         }
     }
@@ -481,7 +489,7 @@ enum GroupBlocksCanvas {
 
             // The loop's IN / OUT grips (a bar and a flag at each bound), over the fades and under
             // the tool's overlay, as the rich view stacks them. Always shown on a looping group.
-            if let lr = g.loopMarkers {
+            if let lr = g.preview?.loopMarkerRange ?? g.loopMarkers {
                 var grips = Path()
                 LoopRangeMarkersView.appendGrips(
                     to: &grips, originX: x, originY: y,

@@ -58,6 +58,12 @@ nonisolated struct BlockPreviewGeometry {
     /// shown, frozen at the start of the gesture so that the marker follows the hand (@see
     /// `LoopRangeDragState.shift`). nil = the shift is derived from the bounds as they stand.
     var previewLoopShift: Double? = nil
+    /// Frozen with `previewLoopShift`: the markers were pinned onto the block's edges when the drag began.
+    var previewLoopPinned: Bool? = nil
+    /// True for a GROUP whose loop is on and bounded (a porthole onto a pattern): a left trim then
+    /// crops INTO the loop — the content and the bounds are laid on the repeat that starts at or
+    /// before the new edge (@see `groupLoopTrim`, `LoopRetrim.porthole`).
+    var anchorsGroupLoopOnTrim: Bool = false
 
     /// True when nothing is under way: every answer below is then the stored value.
     var isNeutral: Bool {
@@ -125,21 +131,40 @@ nonisolated struct BlockPreviewGeometry {
                                    newStart: startTime + trimDX / pixelsPerSecond)
     }
 
+    /// A looping GROUP's frame while its LEFT edge is being trimmed: what `updateTrim` will write on
+    /// release (@see `LoopRetrim.porthole`, the same arithmetic) — the pattern keeps its place in time,
+    /// only the window moves over it. The bounds are local to the new edge, and the children are
+    /// laid `shift` further (`groupContentShift`).
+    private var groupLoopTrim: LoopRetrim.Porthole? {
+        guard kind == .group, anchorsGroupLoopOnTrim, trimDX != 0, pixelsPerSecond > 0,
+              let r = previewLoopRange else { return nil }
+        return LoopRetrim.porthole(startTime: startTime, loopStart: r.start, loopEnd: r.end,
+                                   at: effectiveStartTime, allowEarlier: true)
+    }
+
+    /// How far the CHILDREN of a looping group are laid, in seconds, while its left edge is being
+    /// trimmed (0 outside a trim): the composite is drawn with them there, as the model will hold them.
+    var groupContentShift: Double { groupLoopTrim?.shift ?? 0 }
+
     /// The loop bounds on screen, seconds local to the block as it is NOW: the dragged / stored ones,
     /// re-anchored on the edge during a left trim.
     var effectiveLoopRange: (start: Double, end: Double)? {
         if let w = loopTrimWindow { return (w.loopStart, w.loopEnd) }
+        if let p = groupLoopTrim { return (p.loopStart, p.loopEnd) }
         return previewLoopRange
     }
 
     /// The loop's IN / OUT bounds as they are SHOWN, seconds local to the block: `effectiveLoopRange`
-    /// moved onto the first cycle that starts at or after the left edge (@see LoopRetrim.displayShift)
-    /// — or by the shift a marker drag froze. For the markers only; the waveform folds on
-    /// `effectiveLoopRange`.
+    /// moved onto the first cycle that starts at or after the left edge (@see LoopRetrim.displayShift),
+    /// or onto the cycle that crosses a block too short to hold a boundary, pinned onto its edges
+    /// (@see LoopRetrim.markerFrame) — or by the frame a marker drag froze. For the markers only; the
+    /// waveform folds on `effectiveLoopRange`.
     var loopMarkerRange: (start: Double, end: Double)? {
         guard let r = effectiveLoopRange else { return nil }
-        let shift = previewLoopShift ?? LoopRetrim.displayShift(start: r.start, end: r.end)
-        return (r.start + shift, r.end + shift)
+        let d = effectiveDuration
+        let frame = previewLoopShift.map { LoopRetrim.MarkerFrame(shift: $0, pinned: previewLoopPinned ?? false) }
+            ?? LoopRetrim.markerFrame(start: r.start, end: r.end, duration: d)
+        return LoopRetrim.markerPositions(start: r.start, end: r.end, frame: frame, duration: d)
     }
 
     /// The loop's IN / OUT bounds in px local to the block. nil = does not loop.

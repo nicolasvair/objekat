@@ -194,7 +194,14 @@ enum BlockPreviewGeometryTest {
             check("\(tag) loopPx", {
                 switch (geo.loopMarkerPx, old.loopMarkerPx) {
                 case (nil, nil): return true
-                case let (a?, b?): return eq(a.start, b.start) && eq(a.end, b.end)
+                case let (a?, b?):
+                    // A crop that leaves no cycle boundary inside the block (the stored IN past the effective
+                    // length) PINS the markers onto its edges (LoopRetrim.markerFrame): both lie inside it.
+                    if let l = loop, l.end > l.start, l.start > geo.effectiveDuration + 1e-9 {
+                        let w = geo.effectiveDuration * pps
+                        return a.start >= -1e-9 && a.start <= w + 1e-9 && a.end >= -1e-9 && a.end <= w + 1e-9
+                    }
+                    return eq(a.start, b.start) && eq(a.end, b.end)
                 default: return false
                 }
             }())
@@ -267,6 +274,43 @@ enum BlockPreviewGeometryTest {
     looped.anchorsLoopOnTrim = true
     looped.trimDX = 0
     check("no trim: the stored loop, untouched", looped.effectiveSourceOffset == 0 && looped.effectiveLoopRange?.end == 1)
+
+    // A looping GROUP being trimmed on the left crops INTO the loop: the preview lays the bounds (and the
+    // children, `groupContentShift`) as `updateTrim` will on release (@see LoopRetrim.porthole) — the pattern does
+    // not slide with the edge. 1 s pattern, 100 px/s.
+    var grp = BlockPreviewGeometry(kind: .group, startTime: 2, duration: 4, fadeIn: 0, fadeOut: 0,
+                                   fadeInCurve: .linear, fadeOutCurve: .linear, pixelsPerSecond: 100,
+                                   trimDX: 30, previewLoopRange: (0, 1), anchorsGroupLoopOnTrim: true)
+    var gl = grp.effectiveLoopRange
+    check("group loop trim +0.3: IN -0.3, OUT 0.7, children not moved",
+          gl != nil && abs(gl!.start + 0.3) < 1e-9 && abs(gl!.end - 0.7) < 1e-9 && grp.groupContentShift == 0,
+          "\(String(describing: gl)) \(grp.groupContentShift)")
+    check("group loop trim +0.3: the markers are on the next cycle (0.7 / 1.7)",
+          grp.loopMarkerPx.map { abs($0.start - 70) < 1e-9 && abs($0.end - 170) < 1e-9 } == true,
+          "\(String(describing: grp.loopMarkerPx))")
+    grp.trimDX = 140
+    gl = grp.effectiveLoopRange
+    check("group loop trim +1.4: IN -0.4, the children laid one period further",
+          gl != nil && abs(gl!.start + 0.4) < 1e-9 && abs(grp.groupContentShift - 1) < 1e-9,
+          "\(String(describing: gl)) \(grp.groupContentShift)")
+    grp.trimDX = -30                       // the edge goes OUT past the grid's origin: a cycle is gained
+    gl = grp.effectiveLoopRange
+    check("group loop trim -0.3: IN -0.7, the children laid one period back",
+          gl != nil && abs(gl!.start + 0.7) < 1e-9 && abs(grp.groupContentShift + 1) < 1e-9,
+          "\(String(describing: gl)) \(grp.groupContentShift)")
+    grp.anchorsGroupLoopOnTrim = false     // not a looping group: the stored bounds, nothing laid
+    check("group not looping: nothing re-laid", grp.effectiveLoopRange?.start == 0 && grp.groupContentShift == 0)
+    // A crop leaving no cycle boundary inside the block: the markers are pinned on its two edges.
+    var tiny = BlockPreviewGeometry(kind: .clip, startTime: 2, duration: 0.5, sourceOffset: 0.3,
+                                    speedRatio: 1, isReversed: false, fadeIn: 0, fadeOut: 0,
+                                    fadeInCurve: .linear, fadeOutCurve: .linear, pixelsPerSecond: 100,
+                                    previewLoopRange: (-0.3, 0.7))
+    check("short block: the markers are pinned on the edges (0 / 50 px)",
+          tiny.loopMarkerPx.map { abs($0.start) < 1e-9 && abs($0.end - 50) < 1e-9 } == true,
+          "\(String(describing: tiny.loopMarkerPx))")
+    tiny.previewLoopShift = 0; tiny.previewLoopPinned = false
+    check("short block: a frozen unpinned frame is read as it is (-30 / 70 px)",
+          tiny.loopMarkerPx.map { abs($0.start + 30) < 1e-9 && abs($0.end - 70) < 1e-9 } == true)
 
     if fails.isEmpty {
         print("ALL PASS  \(total) assertions (\(neutralCount) neutral cases)")

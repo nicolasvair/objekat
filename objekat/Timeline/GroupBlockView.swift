@@ -67,6 +67,7 @@ struct GroupBlockView: View {
     /// The shift between the bounds stored and the ones shown while a marker is dragged
     /// (@see previewLoopShift(for:)); nil = derived from the bounds.
     var previewLoopShift: Double? = nil
+    var previewLoopPinned: Bool? = nil
     var isToolHovered: Bool = false
     /// The stem the assignment tool is aiming at (nil = the tool is not armed), for the hover veil.
     var stemAssignTarget: StemAssignTarget? = nil
@@ -107,7 +108,8 @@ struct GroupBlockView: View {
                              previewFadeInCurve: previewFadeInCurve,
                              previewFadeOutCurve: previewFadeOutCurve,
                              previewLoopRange: previewLoopRange,
-                             previewLoopShift: previewLoopShift)
+                             previewLoopShift: previewLoopShift,
+                             previewLoopPinned: previewLoopPinned)
     }
     private var blockWidth: Double { geo.blockWidth }
     private var xPos: Double { geo.xPos }
@@ -175,7 +177,13 @@ struct GroupBlockView: View {
             if case .group(let children, _) = group.kind {
                 GroupWaveformView(
                     waveformCache: waveformCache,
-                    children: children,
+                    // A looping group's left trim under way crops into the loop: the children are drawn
+                    // where the model will lay them on release (@see BlockPreviewGeometry.groupContentShift).
+                    children: geo.groupContentShift == 0 ? children : {
+                        var kids = children
+                        EditViewModel.shiftStartTimes(&kids, by: geo.groupContentShift)
+                        return kids
+                    }(),
                     groupStartTime: effectiveStartTime,
                     pixelsPerSecond: pixelsPerSecond,
                     stemColor: stemColor,
@@ -185,7 +193,7 @@ struct GroupBlockView: View {
                     rootMod: rootMod,
                     rootMuted: group.isMuted,
                     waveformDisplayDB: waveformDisplayDB,
-                    loopRange: previewLoopRange,
+                    loopRange: geo.effectiveLoopRange,
                     offBins: offBins,
                     secPerBeat: secPerBeat
                 )

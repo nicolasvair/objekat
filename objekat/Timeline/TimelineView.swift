@@ -2830,6 +2830,7 @@ struct TimelineView: View {
             sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: object),
             previewLoopShift: previewLoopShift(for: object),
+            previewLoopPinned: previewLoopPinned(for: object),
             isToolHovered:    toolHoveredID == object.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:         (viewModel.activeTool == .toolAux && !object.isAux)
@@ -3941,6 +3942,7 @@ struct TimelineView: View {
             sharedTrailingPx: shared.trailing,
             previewLoopRange: previewLoopRange(for: group),
             previewLoopShift: previewLoopShift(for: group),
+            previewLoopPinned: previewLoopPinned(for: group),
             isToolHovered:   toolHoveredID == group.id,
             stemAssignTarget: stemAssignTarget,
             sendRows:        (viewModel.activeTool == .toolAux)

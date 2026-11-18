@@ -173,6 +173,49 @@ func maxDiff(_ x: Clip, _ y: Clip, from: Double, to: Double) -> Double {
     // no period: shown where it is
     check("D8 no period: no shift", LoopRetrim.displayShift(start: -1, end: -1) == 0)
 
+    // ── the markers of a block too SHORT to hold a cycle boundary (`markerFrame` / `markerPositions`) ──
+    // Long enough: the first cycle at or after the edge, not pinned (the same shift as `displayShift`).
+    let m1 = LoopRetrim.markerFrame(start: -0.3, end: 0.7, duration: 3.7)
+    check("M1 long block: shift 1, not pinned", near(m1.shift, 1) && !m1.pinned, "\(m1)")
+    let m1p = LoopRetrim.markerPositions(start: -0.3, end: 0.7, frame: m1, duration: 3.7)
+    check("M1 positions 0.7 / 1.7", near(m1p.start, 0.7) && near(m1p.end, 1.7), "\(m1p)")
+    // The shown IN exactly on the right edge still counts as inside.
+    check("M2 shown IN on the right edge: not pinned", !LoopRetrim.markerFrame(start: -0.3, end: 0.7, duration: 0.7).pinned)
+    // Shorter than the distance to the shown IN (0.7): the cycle that crosses the block is shown, pinned on the edges.
+    let m3 = LoopRetrim.markerFrame(start: -0.3, end: 0.7, duration: 0.5)
+    check("M3 short block: the cycle holding the left edge (shift 0), pinned", near(m3.shift, 0) && m3.pinned, "\(m3)")
+    let m3p = LoopRetrim.markerPositions(start: -0.3, end: 0.7, frame: m3, duration: 0.5)
+    check("M3 positions pinned: IN on the left edge, OUT on the right edge", near(m3p.start, 0) && near(m3p.end, 0.5), "\(m3p)")
+    // Several periods before the edge (IN -2.5, P = 1): the crossing cycle is [-0.5, 0.5] -> shift 2.
+    let m4 = LoopRetrim.markerFrame(start: -2.5, end: -1.5, duration: 0.2)
+    check("M4 IN -2.5 / short block: shift 2, pinned", near(m4.shift, 2) && m4.pinned, "\(m4)")
+    // An IN stored past the right edge of a block that was cropped below it: nothing to take back, pinned in place.
+    let m5 = LoopRetrim.markerFrame(start: 2, end: 3, duration: 1)
+    let m5p = LoopRetrim.markerPositions(start: 2, end: 3, frame: m5, duration: 1)
+    check("M5 IN past the right edge: pinned, shift 0, drawn on the right edge", m5.pinned && near(m5.shift, 0)
+          && near(m5p.start, 1) && near(m5p.end, 1), "\(m5) \(m5p)")
+    // A drag then moves the STORED bound by the hand's travel (TRUE position + d, shift frozen).
+    check("M6 stored = shown true position - shift", near((-0.3 + m3.shift + 0.1) - m3.shift, -0.2))
+    // Property: whatever the crop, there is ALWAYS an IN marker position inside [0, duration] and, when pinned,
+    // the pair holds the left edge (IN <= 0 < OUT, true positions) or sits past the right edge.
+    var always = true, crossing = true
+    for i in 0..<4000 {
+        let p = 0.05 + Double(i % 41) * 0.11
+        let a = -Double(i % 97) * 0.063 + (i % 5 == 0 ? 3.0 : 0)
+        let dur = 0.01 + Double(i % 53) * 0.09
+        let f = LoopRetrim.markerFrame(start: a, end: a + p, duration: dur)
+        let pos = LoopRetrim.markerPositions(start: a, end: a + p, frame: f, duration: dur)
+        if !(pos.start >= -1e-9 && pos.start <= dur + 1e-9) { always = false }
+        if f.pinned {
+            let tin = a + f.shift, tout = a + p + f.shift
+            if !(pos.end >= -1e-9 && pos.end <= dur + 1e-9) { always = false }
+            // the crossing cycle: IN <= 0 < OUT (k >= 1 case), or the stored IN beyond the right edge (k = 0)
+            if !((tin <= 1e-9 && tout > -1e-9) || (f.shift == 0 && tin > dur)) { crossing = false }
+        }
+    }
+    check("M7 random crops: a marker always lies inside the block", always)
+    check("M8 random crops: a pinned pair is the cycle that crosses the block", crossing)
+
     // ── a looping GROUP's left edge (`porthole`) ──────────────────────────────────────────────
     // group at 2, IN = 0, OUT = 1 (P = 1); left edge to 2.3: the content stays, IN = -0.3.
     let g1 = LoopRetrim.porthole(startTime: 2, loopStart: 0, loopEnd: 1, at: 2.3, allowEarlier: true)!

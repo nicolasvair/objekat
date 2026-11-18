@@ -100,6 +100,44 @@ enum LoopRetrim {
         return (start + shift, end + shift, shift)
     }
 
+    /// Where the markers stand for a block `duration` seconds long: the shift that brings them onto
+    /// the cycle to show, and whether they are PINNED onto the block's edges.
+    ///
+    /// The cycle shown is the first one that starts at or after the left edge (`displayShift`). When
+    /// the block is shorter than the distance to that IN — a crop leaves no cycle boundary inside
+    /// it — there is nothing to grab, and the bounds would be lost. Then the cycle shown is the one
+    /// that CROSSES the block (the one holding its left edge: IN ≤ 0 < OUT), and since both of its
+    /// bounds lie outside the block (IN before the left edge, OUT after the right one) they are
+    /// PINNED onto the two edges, where the upper half of an edge stays grabbable
+    /// (@see ClipEditZone.resolve). Dragging a pinned marker moves the STORED bound by the hand's
+    /// travel, from where it really is. The same function draws, hit-tests, hovers and previews.
+    struct MarkerFrame: Equatable {
+        var shift: Double
+        var pinned: Bool
+    }
+
+    nonisolated static func markerFrame(start: Double, end: Double, duration: Double) -> MarkerFrame {
+        let period = end - start
+        guard period > 1e-6 else { return MarkerFrame(shift: 0, pinned: false) }
+        var shift = displayShift(start: start, end: end)
+        guard start + shift > duration + 1e-9 else { return MarkerFrame(shift: shift, pinned: false) }
+        // No cycle starts inside the block: take the cycle that holds its left edge (one period back
+        // when IN had to be pushed; an IN stored past the right edge stays where it is).
+        if shift > 0 { shift -= period }
+        return MarkerFrame(shift: shift, pinned: true)
+    }
+
+    /// The markers' positions (seconds local to the block): the stored bounds + `shift`, onto the
+    /// block's edges when `pinned`. For a pinned frame the TRUE positions (unclamped) are the stored
+    /// bounds + `shift`; these are the ones that are drawn and hit-tested.
+    nonisolated static func markerPositions(start: Double, end: Double, frame: MarkerFrame,
+                                            duration: Double) -> (start: Double, end: Double) {
+        let a = start + frame.shift, b = end + frame.shift
+        guard frame.pinned else { return (a, b) }
+        let hi = max(0, duration)
+        return (min(max(a, 0), hi), min(max(b, 0), hi))
+    }
+
     // MARK: - The left edge of a LOOPING group
 
     /// A looping group's new frame: the content's shift and the bounds local to the new edge.
@@ -125,7 +163,7 @@ enum LoopRetrim {
     /// going out and back is the identity.
     ///
     /// `nil` when the loop has no period (OUT − IN ≤ 1 ms).
-    static func porthole(startTime: Double, loopStart a: Double, loopEnd b: Double,
+    nonisolated static func porthole(startTime: Double, loopStart a: Double, loopEnd b: Double,
                          at time: Double, allowEarlier: Bool) -> Porthole? {
         let period = b - a
         guard period > 0.001 else { return nil }

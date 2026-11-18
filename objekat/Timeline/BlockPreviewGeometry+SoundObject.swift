@@ -11,7 +11,7 @@ extension BlockPreviewGeometry {
          previewFadeIn: Double? = nil, previewFadeOut: Double? = nil,
          previewFadeInCurve: FadeCurve? = nil, previewFadeOutCurve: FadeCurve? = nil,
          previewLoopRange: (start: Double, end: Double)? = nil,
-         previewLoopShift: Double? = nil) {
+         previewLoopShift: Double? = nil, previewLoopPinned: Bool? = nil) {
         self.init(kind: object.isGroup ? .group : .clip,
                   startTime: absStart ?? object.startTime, duration: object.duration,
                   sourceOffset: object.sourceOffset, speedRatio: object.speedRatio,
@@ -25,6 +25,7 @@ extension BlockPreviewGeometry {
                   previewFadeInCurve: previewFadeInCurve, previewFadeOutCurve: previewFadeOutCurve,
                   previewLoopRange: previewLoopRange,
                   anchorsLoopOnTrim: object.isClip && object.loopEnabled && !object.isReversed,
-                  previewLoopShift: previewLoopShift)
+                  previewLoopShift: previewLoopShift, previewLoopPinned: previewLoopPinned,
+                  anchorsGroupLoopOnTrim: object.isGroup && object.loopEnabled && object.canLoop)
     }
 }

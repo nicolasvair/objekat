@@ -93,8 +93,10 @@ enum LoopMarkerSide { case start, end }
 struct LoopRangeDragState {
     var id: UUID
     var side: LoopMarkerSide
-    /// The bounds AS SHOWN (the gesture reasons on screen: what is under the hand), i.e. the stored
-    /// ones plus `shift`.
+    /// The bounds' TRUE positions on the block's frame (the gesture reasons on screen: what is under
+    /// the hand), i.e. the stored ones plus `shift` — outside the block when they are `pinned`
+    /// onto its edges (@see LoopRetrim.markerFrame): the marker is drawn on the edge, but it is
+    /// the bound itself that travels with the hand.
     var anchorStart: Double
     var anchorEnd: Double
     /// The distance, in seconds, between the bounds shown and the bounds stored, frozen at the start of
@@ -102,6 +104,8 @@ struct LoopRangeDragState {
     /// block's edge and the marker is shown one cycle later. Grabbing the marker shown moves the
     /// stored bound by the same amount, hence `stored = shown − shift` (@see `storedStart`).
     var shift: Double = 0
+    /// The markers were pinned onto the block's edges when the gesture began (frozen with `shift`).
+    var pinned: Bool = false
     /// The V1 bound on the travel: the object's current [0, duration] — @see the type's documentation.
     var maxLocal: Double
     /// The block's ABSOLUTE start: the bounds live locally, while snapping reasons in timeline
@@ -114,11 +118,14 @@ struct LoopRangeDragState {
 
     var finalStart: Double {
         guard side == .start else { return anchorStart }
-        return max(0, min(anchorStart + dDrag, anchorEnd - 0.01))
+        // The block's left edge is the floor — unless the bound began before it (a pinned marker):
+        // then it may only come back from where it is.
+        return max(min(0, anchorStart), min(anchorStart + dDrag, anchorEnd - 0.01))
     }
     var finalEnd: Double {
         guard side == .end else { return anchorEnd }
-        return max(anchorStart + 0.01, min(maxLocal, anchorEnd + dDrag))
+        // The block's right edge is the ceiling — unless the bound began beyond it (a pinned marker).
+        return max(anchorStart + 0.01, min(max(maxLocal, anchorEnd), anchorEnd + dDrag))
     }
     /// The bounds as they go to the model (`shown − shift`).
     var storedStart: Double { finalStart - shift }
@@ -947,10 +954,12 @@ extension TimelineView {
                 }
                 // The bounds AS SHOWN: a marker the left trim has pushed before the edge is grabbed on
                 // the next cycle, and the gesture carries that shift to the model.
-                guard let local = item.loopMarkerDisplay else { return }
+                // TRUE positions (stored + shift): a pinned marker is drawn on an edge, the bound is not.
+                guard let real = item.loopMarkerLocalRange, let frame = item.loopMarkerFrame else { return }
                 loopRangeDrag = LoopRangeDragState(
                     id: item.id, side: zone == .loopIn ? .start : .end,
-                    anchorStart: local.start, anchorEnd: local.end, shift: local.shift,
+                    anchorStart: real.start + frame.shift, anchorEnd: real.end + frame.shift,
+                    shift: frame.shift, pinned: frame.pinned,
                     maxLocal: item.duration, absStart: hitAbsStart)
 
             case .move:
@@ -1764,12 +1773,22 @@ extension TimelineView {
         return ld.shift
     }
 
+    /// Frozen with the shift: whether the markers were pinned onto the block's edges.
+    func previewLoopPinned(for object: SoundObject) -> Bool? {
+        guard let ld = loopRangeDrag, ld.id == object.id else { return nil }
+        return ld.pinned
+    }
+
     /// The markers' positions as shown (seconds local to the block): the dragged ones, else the first
     /// cycle that starts at or after the left edge (@see SoundObject.loopMarkerDisplay). For the
     /// markers ONLY — the waveform folds on `previewLoopRange`.
     func previewLoopMarkerRange(for object: SoundObject) -> (start: Double, end: Double)? {
-        if let ld = loopRangeDrag, ld.id == object.id { return (ld.finalStart, ld.finalEnd) }
-        return object.loopMarkerDisplay.map { ($0.start, $0.end) }
+        if let ld = loopRangeDrag, ld.id == object.id {
+            return LoopRetrim.markerPositions(start: ld.storedStart, end: ld.storedEnd,
+                                              frame: .init(shift: ld.shift, pinned: ld.pinned),
+                                              duration: object.duration)
+        }
+        return object.loopMarkerDisplay
     }
 
     /// True while a gesture is under way that PREVIEWS something on the blocks (a move that is not
@@ -1797,7 +1816,8 @@ extension TimelineView {
             previewFadeInCurve: previewFadeCurveIn(for: object),
             previewFadeOutCurve: previewFadeCurveOut(for: object),
             previewLoopRange: previewLoopRange(for: object),
-            previewLoopShift: previewLoopShift(for: object))
+            previewLoopShift: previewLoopShift(for: object),
+            previewLoopPinned: previewLoopPinned(for: object))
         // The loop bounds do not count in `isNeutral` (they move nothing): the block whose bound is
         // being dragged is previewed all the same.
         return (!geo.isNeutral || loopRangeDrag?.id == object.id) ? geo : nil
