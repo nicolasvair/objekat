@@ -395,6 +395,46 @@ extension CommandRegistry {
             return .object(["snap": .bool(vm.snapEnabled)])
         }
 
+        register("project.set_tempo",
+                 summary: "Sets the project's tempo (BPM), exactly as the transport's BPM field does: "
+                        + "clamped to [20, 300] and rounded as the field rounds it, UNDOABLE (one step, "
+                        + "none when the value does not change). In 'bpm' grid mode (@see "
+                        + "project.set_grid_mode) the positions are stretched by the ratio; in 'time' "
+                        + "mode nothing moves in seconds, only the musical (MIDI) content follows. "
+                        + "Answers the tempo that was applied and the grid mode.",
+                 params: [ParamSpec("bpm", "number", "The new tempo, in beats per minute.")],
+                 // `applyTempo` lays its own undo point, before the write.
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let bpm = try p.double("bpm")
+            guard bpm.isFinite, bpm > 0 else {
+                throw CommandError(code: .bad_params, message: "bpm must be a positive number")
+            }
+            let before = vm.tempo
+            vm.applyTempo(bpm)
+            return .object(["tempo": .number(vm.tempo),
+                            "previous": .number(before),
+                            "changed": .bool(vm.tempo != before),
+                            "grid_mode": .string(vm.gridMode.rawValue)])
+        }
+
+        register("project.set_grid_mode",
+                 summary: "Sets the grid mode: 'time' (positions in seconds, a tempo change moves "
+                        + "nothing) or 'bpm' (positions are musical, a tempo change stretches them). "
+                        + "It is the PROJECT's setting, saved with the file (field 'gridMode' of "
+                        + "project.get_state). Not undoable, no more than the interface's switch is.",
+                 params: [ParamSpec("mode", "string", "'time' or 'bpm' (case-insensitive).")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let text = try p.string("mode")
+            guard let mode = GridMode.allCases.first(where: { $0.rawValue.caseInsensitiveCompare(text) == .orderedSame })
+            else {
+                throw CommandError(code: .bad_params, message: "mode must be 'time' or 'bpm', got '\(text)'")
+            }
+            vm.gridMode = mode
+            return .object(["grid_mode": .string(vm.gridMode.rawValue)])
+        }
+
         register("project.missing_files",
                  summary: "The source files the project names and cannot find, each with its "
                         + "reason ('absent', or 'volumeOffline' when the /Volumes drive is not "
@@ -1071,6 +1111,9 @@ extension CommandRegistry {
                 case "edit.cut":  branch = vm.performCutShortcut()
                 default:          branch = vm.performPasteShortcut()
                 }
+                // The caret goes to the end of the notes pasted (`seekRequest`): the window's `.onChange`
+                // drains it, and a headless session has no window.
+                if branch == .midiNotes { try CommandContext.shared.requireSession().applyPendingSeekRequest() }
                 let camel: [EditViewModel.EditShortcutBranch: String] = [
                     .automationCaret: "automation_caret", .midiNotes: "midi_notes",
                     .timeSelection: "time_selection"]
@@ -1098,6 +1141,10 @@ enum CommandAdapters {
         if let cl = vm.caretLane {
             payload["caret"] = .object(["lane": .int(cl), "time": .number(vm.cursorPosition)])
         }
+        // The piano roll's side of the selection: the notes selected (ids, any clip) and the clip whose
+        // open piano roll holds the keyboard — where ⌘V pastes notes (@see EditViewModel+MIDINotes).
+        payload["selected_note_ids"] = .array(vm.selectedMidiNoteIDs.map { $0.uuidString }.sorted().map { .string($0) })
+        payload["focused_midi_clip"] = vm.focusedPianoRollClipID.map { .string($0.uuidString) } ?? .null
         if let ts = vm.timeSelection {
             payload["time_selection"] = .object([
                 "start": .number(ts.timeRange.lowerBound),
