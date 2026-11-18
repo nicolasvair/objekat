@@ -1931,16 +1931,33 @@ final class EditViewModel {
 
     private func applyLoopEnabled(id: UUID, enabled: Bool) {
         guard find(id: id)?.canLoop == true else { return }
-        update(id: id) {
-            $0.loopEnabled = enabled
-            if enabled, $0.loopRangeStart == nil {
-                $0.loopRangeStart = 0
-                $0.loopRangeEnd   = $0.duration
+        var cropped = false
+        update(id: id) { obj in
+            let wasLooping = obj.loopEnabled
+            obj.loopEnabled = enabled
+            if enabled, obj.loopRangeStart == nil {
+                obj.loopRangeStart = 0
+                obj.loopRangeEnd   = obj.duration
+            }
+            // An AUDIO clip that STOPS looping: its window, which the loop let run beyond the file,
+            // falls back onto the matter it has — the left edge and the offset stay where they are,
+            // what lay beyond the end of the file goes (the loop was what filled it). Without this
+            // the clip kept its length and played silence past the file's end. The duration goes
+            // through `applyDuration`, as the crop of the right edge does (fades recalled), in the
+            // one undo step of the toggle. A group or a MIDI clip keeps its window.
+            if wasLooping, !enabled, case .clip(_, let so, let fd, let sr, _) = obj.kind {
+                let matter = (fd - so) / max(sr, 0.0001)
+                if matter > 0.01, obj.duration > matter + 1e-9 {
+                    applyDuration(to: &obj, duration: matter)
+                    cropped = true
+                }
             }
         }
         guard let obj = find(id: id) else { return }
         switch obj.kind {
-        case .clip:     syncPosition(obj)
+        case .clip:
+            syncPosition(obj)
+            if cropped { engine?.updateFade(in: obj.fadeIn, fadeOut: obj.fadeOut, forID: id.uuidString) }
         case .group:    syncGroupWindow(obj)
         case .midiClip: syncMidiLoop(obj)
         case .aux:      break
