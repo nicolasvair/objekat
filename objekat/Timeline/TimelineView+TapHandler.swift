@@ -145,6 +145,9 @@ extension TimelineView {
         // A real click in the timeline → we leave the piano-roll context (⌘A goes back to selecting
         // clips).
         viewModel.focusedMidiClipID = nil
+        // ...and the notes that were selected there: left selected they would keep ⌘V / ⌫ / ⌘C on the
+        // notes, with the hand now on the timeline.
+        if !viewModel.selectedMidiNoteIDs.isEmpty { viewModel.selectedMidiNoteIDs.removeAll() }
 
         if viewModel.activeTool == .toolCut {
             handleCutTap(at: point)

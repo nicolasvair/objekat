@@ -121,8 +121,10 @@ extension EditViewModel {
             pasteAutomation()                  // internal undo push
             return .automation
         }
-        // The notes take priority in the piano-roll context (notes selected).
-        if !selectedMidiNoteIDs.isEmpty, canPasteMidiNotes {
+        // The notes take priority in the piano-roll context: notes selected, or a piano roll that holds
+        // the keyboard (a click on its background, a cut that emptied the selection) with notes to
+        // paste. They land in THAT piano roll, at the caret (@see pasteGoesToMidiNotes).
+        if pasteGoesToMidiNotes {
             pasteMidiNotes()                   // internal undo push
             return .midiNotes
         }

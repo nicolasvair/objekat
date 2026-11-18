@@ -74,9 +74,23 @@ extension EditViewModel {
         )
     }
 
-    /// The paste's target clip: the source clip if it still exists and is still MIDI, otherwise a
-    /// MIDI clip taken from the current clip selection.
+    /// The MIDI clip whose piano roll holds the keyboard: the last one a click or a drag landed in
+    /// (`focusedMidiClipID`), provided it is STILL on screen — it exists, its piano roll is open
+    /// (and not hidden under the automation band) and the clip is on a displayed row (not in a
+    /// folded group). Read where it is used rather than cleared at every path that can hide a piano
+    /// roll (folding a group, opening the band, an undo, a delete): the paths are many, the test is
+    /// one. nil = no piano-roll context, the notes' shortcuts only follow a note selection.
+    var focusedPianoRollClipID: UUID? {
+        guard let id = focusedMidiClipID, let clip = find(id: id), clip.showsPianoRollInline,
+              laneEntries.contains(where: { $0.item.id == id }) else { return nil }
+        return id
+    }
+
+    /// The paste's target clip: the one whose piano roll was clicked (`focusedPianoRollClipID`),
+    /// otherwise the clipboard's source clip if it still exists and is still MIDI, otherwise a MIDI
+    /// clip taken from the current clip selection.
     private func midiPasteTargetClipID(_ cb: MidiNotesClipboard) -> UUID? {
+        if let focused = focusedPianoRollClipID { return focused }
         if let src = find(id: cb.sourceClipID), src.isMIDI { return cb.sourceClipID }
         var fallback: UUID? = nil
         forEachMidiClip { o in if fallback == nil, selectedIDs.contains(o.id) { fallback = o.id } }
@@ -89,8 +103,19 @@ extension EditViewModel {
         return midiPasteTargetClipID(cb) != nil
     }
 
-    /// Pastes the clipboard's notes into the target clip, at the playhead (the black cursor),
-    /// snapped to the grid. Pitches kept; relative timing kept. Selects the copies.
+    /// True when ⌘V belongs to the notes: notes are selected, or a piano roll holds the keyboard (a
+    /// click on its background selects no note but is still "in the piano roll"), AND there is
+    /// something to paste there. The notes' clipboard and the objects' stay two: the context decides.
+    var pasteGoesToMidiNotes: Bool {
+        (!selectedMidiNoteIDs.isEmpty || focusedPianoRollClipID != nil) && canPasteMidiNotes
+    }
+
+    /// Pastes the clipboard's notes into the target clip, at the caret (the black cursor), snapped to
+    /// the grid. Pitches kept; relative timing kept. Selects the copies. ONE undo step, which also
+    /// carries the clip's lengthening when the notes run past its end (a non-looping clip's right
+    /// edge goes out to the end of the last note — a note past the end would be mute), and the caret
+    /// goes to the end of what was pasted (`seekRequest`, like the objects' paste), so a second ⌘V
+    /// chains onto the first.
     func pasteMidiNotes() {
         guard let cb = midiNotesClipboard, !cb.notes.isEmpty,
               let targetID = midiPasteTargetClipID(cb),
@@ -101,6 +126,9 @@ extension EditViewModel {
         let snappedAbs = (effectiveSnapEnabled && g > 0)
             ? (cursorPosition / g).rounded() * g : cursorPosition
         let anchorBeat = max(0, (snappedAbs - clip.startTime) / secPerBeat)
+        // The end of the pasted block, in beats from the clip's start.
+        let endBeat = anchorBeat + (cb.notes.map { $0.startBeat + $0.lengthBeats }.max() ?? 0)
+        let endAbs = clip.startTime + endBeat * secPerBeat
 
         pushUndo()
         var newIDs: Set<UUID> = []
@@ -115,7 +143,17 @@ extension EditViewModel {
             }
         }
         if let obj = find(id: targetID) { syncMidiNotes(obj) }
+        // The notes first (editing them detaches a take from its sequence), then the window: a
+        // right edge pulled out through the door the mouse and `object.set_duration` use. A looping
+        // clip has no edge (its window is a porthole onto the pattern): left as it is.
+        if !clip.loopEnabled, endAbs > clip.startTime + clip.duration + 1e-6 {
+            withCrossfadeRefit(around: [targetID]) {
+                updateDuration(id: targetID, duration: endAbs - clip.startTime)
+            }
+            resolveOverlaps(for: targetID)
+        }
         selectedMidiNoteIDs = newIDs
+        seekRequest = endAbs
         isDirty = true
     }
 
