@@ -1948,6 +1948,26 @@ holds the cursor, instead of pasting the OBJECT clipboard. A zone over a band's 
 window still belongs to the band for ⌫ / ⌘C / ⌘X (it must not fall through to the objects), it just reaches no row.
 One undo point per paste.
 
+**Notes in the piano roll (⌘X / ⌘C / ⌘V on notes).** The notes have their own clipboard, apart from the objects':
+the context decides which one ⌘V reads. `midi_notes` is the branch when notes are selected, **or when a piano roll
+holds the keyboard** (a click on its background, or a ⌘X that emptied the selection) and notes were copied; the
+notes then land in THAT piano roll's clip — not in the clip they came from — at the cursor (the caret, snapped like
+a note drawn), pitches and rhythm kept. The copies become the note selection, **the caret goes to the end of the
+pasted block** (as an objects' paste does, so a second ⌘V chains onto the first), and a non-looping clip whose end
+the notes run past is **lengthened** to the end of the last note (a note past the end would be mute) — all in the
+ONE undo point. A click in the timeline (or `caret.set`) leaves the piano-roll context AND lets go of the notes
+selected: ⌘V pastes objects again. With the piano roll closed, folded away (its group folded) or under the
+automation band, there is no piano-roll context.
+
+`midi.piano_roll` (`id`, `open`) opens or closes a MIDI clip's piano roll (view state, no undo; any change lets go
+of the notes selected). `midi.select_notes` (`id`, `note_ids`) is a click on notes: it REPLACES the note selection
+(`[]` = none), selects the clip and, when its piano roll is open, makes it the piano-roll context. `midi.focus`
+(`id`, optional `time`) is a click on the BACKGROUND of the open piano roll: notes let go of, the clip selected and
+in context, the time selection dropped, and with `time` the cursor goes there; `invalid_state` when the piano roll is
+not open on screen. The three answer like `selection.get`, which now carries **`selected_note_ids`** (sorted) and
+**`focused_midi_clip`** (the clip whose open piano roll holds the keyboard, or `null`). In a headless session
+`edit.paste` on the `midi_notes` branch moves the cursor itself (no window drains the request).
+
 ### Sliding the time selection
 
 `timesel.step_lane` (`by`: -1 one row up, +1 one row down, any step) moves **THE TRACED PASSAGE and
@@ -2098,7 +2118,7 @@ actually is. It answers `invalid_state` when there is no caret, and when a range
 selection is holding the arrows — that case is `timesel.step_lane`'s.
 
 `caret.set` (`lane`, optional `time`) lays the caret as a plain click does: the selections are let
-go of, and `time` moves the cursor with it. The selection payload now carries **`caret`**
+go of (the notes selected and the piano-roll context too), and `time` moves the cursor with it. The selection payload now carries **`caret`**
 (`lane` + `time`) whenever there is one.
 
 ### Ripple

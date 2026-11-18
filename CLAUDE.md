@@ -3141,6 +3141,18 @@ a second one elsewhere. The most exposed points:
   while recording** (the overlay redraws at 30 Hz) and **no change to the recording itself** (the calibration scenarios are the
   proof; the WAV was NOT compared byte for byte with a run before the change, which would need the input signal to be identical from take to take, not established).
 
+- **Cut / copy / paste of MIDI notes follows the piano roll that was clicked (18 November 2026, branch `main`, no engine
+  patch, no format change, nothing pushed).** ⌘V now reads the NOTES' clipboard (still apart from the objects') when notes are
+  selected OR a piano roll holds the keyboard (`pasteGoesToMidiNotes`; `focusedPianoRollClipID` = `focusedMidiClipID` re-validated
+  at the read: the clip exists, its piano roll is open and not under the automation band, its row is displayed). Destination:
+  that piano roll's clip > the source clip > a selected MIDI clip. After the paste: copies selected, caret at the END of the
+  pasted block through `seekRequest` (⌘V ⌘V chains), and a non-looping clip the notes run past is lengthened to the last note's end
+  through `updateDuration` (the mouse's right-edge door) — all in ONE undo step; a looping clip is left alone. A click in the
+  timeline now also lets go of the notes selected (`TimelineView+TapHandler`), `caret.set` too. API: `midi.piano_roll`,
+  `midi.select_notes`, `midi.focus`; `selection.get` carries `selected_note_ids` and `focused_midi_clip`; `edit.paste` drains
+  `seekRequest` itself on the `midi_notes` branch (a headless session has no window to do it). Contract: `command_api.md` ("The edit
+  shortcuts"). To test: the plan's scenario `tools/scenario_midi_clipboard.py` (not written yet).
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged
