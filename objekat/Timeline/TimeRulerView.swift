@@ -24,7 +24,7 @@ struct TimeRulerView: View {
     var scrollOffsetX: CGFloat = 0
     var viewportWidth: CGFloat = 0
 
-    private var loopColor: Color { .orange }
+    private var loopColor: Color { LoopRangeMarkersView.loopColor }
 
     var body: some View {
         ZStack(alignment: .topLeading) {

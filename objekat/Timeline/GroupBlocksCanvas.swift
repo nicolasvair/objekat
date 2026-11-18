@@ -486,7 +486,7 @@ enum GroupBlocksCanvas {
                     blockWidth: w, blockHeight: rect.height)
                 var gc = c
                 gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
-                gc.fill(grips, with: .color(g.outlineColor))
+                gc.fill(grips, with: .color(LoopRangeMarkersView.loopColor))
             }
 
             // The tool's overlay, under the mute veil (a GROUP's mute veil stays under every tool,

@@ -71,7 +71,12 @@ struct LoopRangeMarkersView: View {
     let endPx: Double
     let blockWidth: Double
     let blockHeight: Double
-    var color: Color = .white
+    var color: Color = LoopRangeMarkersView.loopColor
+
+    /// The colour of a loop's IN/OUT bounds: the one of the transport loop's ruler band
+    /// (`TimeRulerView`), so that a loop reads as a loop wherever it is drawn — whatever the object's
+    /// own colour. The repeat dashes of the folded waveform keep the object's colour (only the bounds change).
+    static let loopColor: Color = .orange
 
     /// The flag's size, shared with the batched Canvas (`appendGrips`): one definition for the two
     /// ways a selected clip's grips are drawn.

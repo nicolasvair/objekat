@@ -228,7 +228,7 @@ struct SoundBlockView: View {
             if let lm = loopMarkerPx {
                 LoopRangeMarkersView(startPx: lm.start, endPx: lm.end,
                                      blockWidth: blockWidth, blockHeight: blockHeight,
-                                     color: effectiveColor)
+                                     color: LoopRangeMarkersView.loopColor)
                     .allowsHitTesting(false)
             }
 

@@ -3762,7 +3762,7 @@ struct TimelineView: View {
                             blockWidth: w, blockHeight: blockHeight)
                         var gc = c
                         gc.addFilter(.shadow(color: .black.opacity(0.5), radius: 1))
-                        gc.fill(grips, with: .color(item.customColor ?? viewModel.stemColor(for: item.id)))
+                        gc.fill(grips, with: .color(LoopRangeMarkersView.loopColor))
                     }
 
                     // The active tool's overlay: over the waveform, the fades and the loop's grips,
