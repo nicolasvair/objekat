@@ -66,4 +66,84 @@ enum LoopRetrim {
                       loopStart: loopStart,
                       loopEnd: loopStart + period)
     }
+    // MARK: - Where the bounds are SHOWN
+
+    /// How far the IN/OUT markers are drawn (and grabbed) from where they are STORED, in seconds
+    /// local to the block: `k·P` with `k` the smallest whole number of periods that brings IN onto
+    /// the block's left edge or after it (`IN + k·P ≥ 0`), 0 when IN is already there.
+    ///
+    /// Why. After a left trim the anchored retrim (@see `anchored`) leaves IN in `]−P, 0]`: BEFORE the
+    /// left edge, where nothing is drawn and nothing can be grabbed — the bounds seemed lost the
+    /// moment the edge crossed them. The cycle that follows is the same pattern one period later,
+    /// so it is that one that is shown: IN at `IN + k·P`, OUT at `OUT + k·P`, the FIRST cycle that
+    /// starts inside the block. Storage and engine are untouched; this is a reading, and the one
+    /// function the drawing, the hit test, the hover and the drag preview all call.
+    ///
+    /// Dragging the marker shown by `d` moves the stored bound by the same `d` (the offset is
+    /// carried through the gesture, @see `LoopRangeDragState.shift`).
+    ///
+    /// A range with no period (OUT ≤ IN) is shown where it is. A block shorter than the distance to
+    /// the shown IN has no marker to draw (the caller only draws what falls inside the block):
+    /// opening the block again brings them back.
+    nonisolated static func displayShift(start: Double, end: Double) -> Double {
+        let period = end - start
+        guard period > 1e-6, start < -1e-9 else { return 0 }
+        // A hair of tolerance so that an IN that lies one whole period before the edge (to the bit)
+        // is shown ON the edge instead of one period further.
+        let k = max(0, (-start / period - 1e-9).rounded(.up))
+        return k * period
+    }
+
+    /// `(start, end)` shifted by `displayShift` — the bounds as they are shown — and the shift itself.
+    nonisolated static func displayed(start: Double, end: Double) -> (start: Double, end: Double, shift: Double) {
+        let shift = displayShift(start: start, end: end)
+        return (start + shift, end + shift, shift)
+    }
+
+    // MARK: - The left edge of a LOOPING group
+
+    /// A looping group's new frame: the content's shift and the bounds local to the new edge.
+    struct Porthole: Equatable {
+        var shift: Double
+        var loopStart: Double
+        var loopEnd: Double
+    }
+
+    /// What keeps the phase of a looping GROUP whose left edge comes to lie at `time`: how far its
+    /// content must move (`shift`, the group's own children being what the loop repeats) and its
+    /// IN/OUT bounds local to the new edge. The group counterpart of `anchored`: a group has no
+    /// file to read at an offset, so the pattern is anchored by laying its content on the repeat
+    /// that starts at or before the edge (the bounds come out ≤ 0, like the right half of a cut).
+    ///
+    /// The grid starts at `min(startTime, IN)`, not at IN: a group whose IN lies inside it plays IN
+    /// on its LEFT EDGE.
+    ///
+    /// `allowEarlier`: false = a cut or a deletion (the edge only ever moves INTO the group, so the
+    /// repeat is never before the grid's origin); true = a trim, whose edge may also go OUT beyond
+    /// the origin, where the grid carries on backwards — the pattern gains cycles. Then the content
+    /// moves by whole periods, and `time` within `1e-9` periods of a repeat counts as ON it, so that
+    /// going out and back is the identity.
+    ///
+    /// `nil` when the loop has no period (OUT − IN ≤ 1 ms).
+    static func porthole(startTime: Double, loopStart a: Double, loopEnd b: Double,
+                         at time: Double, allowEarlier: Bool) -> Porthole? {
+        let period = b - a
+        guard period > 0.001 else { return nil }
+        let inAbs  = startTime + a                      // the IN point, in timeline time
+        let origin = min(startTime, inAbs)              // where the engine's repeats start
+        let x = (time - origin) / period
+        var k: Double
+        if allowEarlier {
+            let r = x.rounded()
+            k = abs(x - r) < 1e-9 ? r : x.rounded(.down)
+        } else {
+            k = max(0, x.rounded(.down))
+        }
+        if k == 0 { k = 0 }                             // never −0.0
+        let newInAbs = origin + k * period
+        let loopStart = newInAbs - time
+        return Porthole(shift: newInAbs - inAbs,
+                        loopStart: loopStart == 0 ? 0 : loopStart,
+                        loopEnd: loopStart + period)
+    }
 }

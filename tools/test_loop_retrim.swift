@@ -135,6 +135,68 @@ func maxDiff(_ x: Clip, _ y: Clip, from: Double, to: Double) -> Double {
     let t0 = base.retrimmed(to: 2)
     check("zero trim: the same state", near(t0.so, 0) && near(t0.a, 0) && near(t0.b, 1))
 
+    // ── the bounds AS SHOWN (`displayShift`): the first cycle that starts at or after the edge ──
+    // IN inside the block (>= 0): shown where it is.
+    check("D1 IN >= 0: no shift", LoopRetrim.displayShift(start: 0.25, end: 0.75) == 0
+          && LoopRetrim.displayShift(start: 0, end: 1) == 0)
+    // IN in ]-P, 0[ (what a left trim leaves): the next cycle, one period on.
+    let d2 = LoopRetrim.displayed(start: -0.3, end: 0.7)
+    check("D2 IN = -0.3, P = 1: shown at 0.7 / 1.7", near(d2.start, 0.7) && near(d2.end, 1.7) && near(d2.shift, 1), "\(d2)")
+    // IN exactly one period before the edge: ON the edge, not a period further (float noise included).
+    check("D3 IN = -P: shown on the edge", near(LoopRetrim.displayed(start: -1, end: 0).start, 0)
+          && near(LoopRetrim.displayed(start: -1 + 1e-12, end: 0 + 1e-12).start, 0, 1e-9))
+    // IN several periods before (set by hand / by repeated trims): k minimal.
+    let d4 = LoopRetrim.displayed(start: -2.5, end: -1.5)             // P = 1
+    check("D4 IN = -2.5, P = 1: k = 3, shown at 0.5", near(d4.start, 0.5) && near(d4.shift, 3), "\(d4)")
+    // The shown IN is always in [0, P) when IN < 0, whatever the period.
+    var okRange = true
+    for i in 0..<2000 {
+        let p = 0.05 + Double(i % 37) * 0.13
+        let a = -Double(i % 91) * 0.071
+        let d = LoopRetrim.displayed(start: a, end: a + p)
+        if !(d.start >= -1e-9 && d.start < p + 1e-9 && near(d.end - d.start, p)) { okRange = false }
+        // the shown IN is a repeat of the stored IN
+        let k = d.shift / p
+        if abs(k - k.rounded()) > 1e-6 { okRange = false }
+    }
+    check("D5 random: shown IN in [0, P), a whole number of periods away", okRange)
+    // A clip trimmed to the left by a clip's anchored retrim: the shown IN is the next repeat's
+    // start, i.e. the timeline instant where a repeat of the pattern begins (grid g + k P).
+    let base5 = Clip(start: 2, so: 0, v: 1, a: 0, b: 1)
+    let tr = base5.retrimmed(to: 2.3)                                   // IN = -0.3
+    let shown = LoopRetrim.displayed(start: tr.a, end: tr.b)
+    check("D6 after a left trim, the shown IN lands on the grid (2 + k)",
+          near((tr.start + shown.start - 2).truncatingRemainder(dividingBy: 1), 0)
+          || near(abs((tr.start + shown.start - 2).truncatingRemainder(dividingBy: 1)), 1), "\(tr.start + shown.start)")
+    // a drag of the shown marker by d moves the stored one by d: stored = shown - shift.
+    check("D7 stored = shown - shift", near((d2.start + 0.1) - d2.shift, -0.3 + 0.1))
+    // no period: shown where it is
+    check("D8 no period: no shift", LoopRetrim.displayShift(start: -1, end: -1) == 0)
+
+    // ── a looping GROUP's left edge (`porthole`) ──────────────────────────────────────────────
+    // group at 2, IN = 0, OUT = 1 (P = 1); left edge to 2.3: the content stays, IN = -0.3.
+    let g1 = LoopRetrim.porthole(startTime: 2, loopStart: 0, loopEnd: 1, at: 2.3, allowEarlier: true)!
+    check("G1 trim +0.3: no shift, IN -0.3 / OUT 0.7", near(g1.shift, 0) && near(g1.loopStart, -0.3) && near(g1.loopEnd, 0.7), "\(g1)")
+    // ... and back to 2.0 from that state (start 2.3, IN -0.3): the identity.
+    let g1b = LoopRetrim.porthole(startTime: 2.3, loopStart: g1.loopStart, loopEnd: g1.loopEnd, at: 2, allowEarlier: true)!
+    check("G1b out and back: the identity", near(g1b.shift, 0) && near(g1b.loopStart, 0) && near(g1b.loopEnd, 1), "\(g1b)")
+    // past one period: 2.3 -> 3.4 = one cycle gone + 0.4 (k = 1): the content moves by +1 (whole period).
+    let g2 = LoopRetrim.porthole(startTime: 2, loopStart: 0, loopEnd: 1, at: 3.4, allowEarlier: true)!
+    check("G2 trim +1.4: shift +1, IN -0.4", near(g2.shift, 1) && near(g2.loopStart, -0.4), "\(g2)")
+    // extending to the left of the grid's origin: the pattern gains a cycle (k = -1, content moves by -P).
+    let g3 = LoopRetrim.porthole(startTime: 2, loopStart: 0, loopEnd: 1, at: 1.7, allowEarlier: true)!
+    check("G3 extension -0.3: shift -1, IN -0.7", near(g3.shift, -1) && near(g3.loopStart, -0.7), "\(g3)")
+    // ... and back in: the identity again (start 1.7, IN -0.7 and content moved by -1).
+    let g3b = LoopRetrim.porthole(startTime: 1.7, loopStart: g3.loopStart, loopEnd: g3.loopEnd, at: 2, allowEarlier: true)!
+    check("G3b extension then back: shift +1, bounds 0 / 1", near(g3b.shift, 1) && near(g3b.loopStart, 0) && near(g3b.loopEnd, 1), "\(g3b)")
+    // the cut / deletion rule is untouched (no extension past the origin).
+    let g4 = LoopRetrim.porthole(startTime: 2, loopStart: 0, loopEnd: 1, at: 1.7, allowEarlier: false)!
+    check("G4 cut rule: k never negative", near(g4.shift, 0) && near(g4.loopStart, 0.3), "\(g4)")
+    // IN inside the block: the grid starts at the edge (a = 0.25 > 0 -> origin = startTime).
+    let g5 = LoopRetrim.porthole(startTime: 2, loopStart: 0.25, loopEnd: 0.75, at: 2.1, allowEarlier: true)!
+    check("G5 IN inside: content moves by -a, IN = -0.1", near(g5.shift, -0.25) && near(g5.loopStart, -0.1), "\(g5)")
+    check("G6 no period: nil", LoopRetrim.porthole(startTime: 0, loopStart: 1, loopEnd: 1, at: 2, allowEarlier: true) == nil)
+
     print("\n\(total) assertions, \(fails.count) failed")
     print(fails.isEmpty ? "ALL PASS" : "FAILED:\n  " + fails.joined(separator: "\n  "))
     exit(fails.isEmpty ? 0 : 1)
