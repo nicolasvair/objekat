@@ -196,7 +196,7 @@ def settle():
 
 
 def commit():
-    r = cmd("consolidate.edit_commit")
+    r = cmd("consolidate.edit_commit", mode="propagate")
     j = cmd("job.wait", id=r["job_id"], timeout_ms=60000)
     settle()
     return j
@@ -752,7 +752,7 @@ def main():
     cmd("object.set_gain", ids=[i1], db=-1.0)
     a = children(find(i1))[0]["id"]
     cmd("object.set_gain", ids=[a], db=-2.0); settle()
-    r = cmd("consolidate.edit_commit")
+    r = cmd("consolidate.edit_commit", mode="propagate")
     j = cmd("job.wait", id=r["job_id"], timeout_ms=60000)
     cmd("transport.stop"); settle()
     check("committed while playing: the application answers, I1 closed and linked",

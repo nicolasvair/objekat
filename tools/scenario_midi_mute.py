@@ -460,7 +460,7 @@ def m6():
         app.c.send("object.set_mute", {"ids": [ka], "muted": False})
         app.c.send("object.set_mute", {"ids": [kb], "muted": True})
         app.c.send("solo.set", {"ids": [ids["k"]], "on": True})
-        ok, res = wait_job(app, app.c.send("consolidate.edit_commit"))
+        ok, res = wait_job(app, app.c.send("consolidate.edit_commit", {"mode": "propagate"}))
         w2 = [w for w in waves_of(proj) if w not in w1]
         check("M6 the commit re-baked and wrote a second wave (%s, %d new wave)" % ("ok" if ok else res, len(w2)),
               ok and len(w2) == 1)

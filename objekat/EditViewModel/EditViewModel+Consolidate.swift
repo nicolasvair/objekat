@@ -159,8 +159,33 @@ extension EditViewModel {
     /// True if `object` is a consolidated instance LINKED to at least one other placement
     /// (the same definition).
     func hasLinkedSiblings(_ object: SoundObject) -> Bool {
-        guard let defID = object.consolidateID else { return false }
-        return !placementIDs(forConsolidate: defID, excluding: object.id).isEmpty
+        !consolidateLinkMembers(of: object).isEmpty
+    }
+
+    /// The placements the violet traits join `object` to: the other placements of its consolidated
+    /// object, the stage of a session closing in `variant` left out (@see `consolidateLinkID`).
+    func consolidateLinkMembers(of object: SoundObject) -> [UUID] {
+        guard let defID = consolidateLinkID(of: object) else { return [] }
+        return placementIDs(forConsolidate: defID, excluding: object.id).filter { !isForkingStage($0) }
+    }
+
+    /// The consolidated object an item is LINKED through, for the violet traits between the instances
+    /// that share one (`TimelineView.consolidateLinkPlan`, `hasLinkedSiblings`). It is the item's
+    /// `consolidateID`, except for the stage of an open session in `variant` mode: that instance is
+    /// on its way to a NEW consolidated object (the others are not mirrored and will not follow), so
+    /// it is not linked to them while it is open. Once closed in variant it carries the new id, and
+    /// the link plan, reading `consolidateID`, links it to the instances of THAT object only.
+    /// A nested use (an instance inside another consolidated object's content) has no placement on
+    /// the timeline to draw a trait to: the box and the API count it, the traits cannot show it.
+    func consolidateLinkID(of object: SoundObject) -> UUID? {
+        guard let defID = object.consolidateID else { return nil }
+        return isForkingStage(object.id) ? nil : defID
+    }
+
+    /// True for the stage of an open session whose object closes in `variant` mode.
+    func isForkingStage(_ id: UUID) -> Bool {
+        guard let session = consolidateEditStack.first(where: { $0.placementID == id }) else { return false }
+        return consolidateDefinitions[session.defID]?.closeMode == .variant
     }
 
     /// How many things use the content of a definition, `excluding` one placement: its placements on
@@ -179,9 +204,55 @@ extension EditViewModel {
     /// the UI's own `pushUndo` before the call).
     func setConsolidateCloseMode(_ defID: UUID, to mode: ConsolidateCloseMode) {
         guard var def = consolidateDefinitions[defID], def.closeMode != mode else { return }
+        let before = def.closeMode
         def.closeMode = mode
         consolidateDefinitions[defID] = def
         isDirty = true
+        // The setting is visible while the object is open: the live mirrors of the other instances
+        // follow it at once (none in `variant`, laid again otherwise).
+        if isEditingConsolidate, editingConsolidateID == defID {
+            if mode == .variant {
+                teardownLiveMirroring()
+                restoreLiveMirrors()
+                armConsolidateEditParamWatch()
+            } else if before == .variant {
+                scheduleLiveMirror()
+            }
+        }
+    }
+
+    /// False when the open content is, as far as the closing can tell, the one that was laid at opening
+    /// (the very test a closing uses to skip the re-bake). Such a closing forks and re-bakes nothing,
+    /// so there is no question to put to anybody about it.
+    var consolidateContentModifiedSinceOpening: Bool {
+        guard let contentID = editingContentRootID, let content = find(id: contentID),
+              let opened = consolidateEditStack.last?.openedSubtree,
+              let sigOpen = subtreeSignature(opened),
+              let sigNow = subtreeSignature(withCapturedPluginStates(content)) else { return true }
+        return sigOpen != sigNow
+    }
+
+    /// The name of a variant: the object's name with its trailing number incremented ("Kick" →
+    /// "Kick 2", "Kick 2" → "Kick 3"), the first free one among the definitions.
+    func variantName(after name: String) -> String {
+        var base = name
+        var n = 2
+        if let r = name.range(of: #" (\d+)$"#, options: .regularExpression),
+           let k = Int(name[r].trimmingCharacters(in: .whitespaces)) {
+            base = String(name[..<r.lowerBound])
+            n = k + 1
+        }
+        let taken = Set(consolidateDefinitions.values.map(\.name))
+        while taken.contains("\(base) \(n)") { n += 1 }
+        return "\(base) \(n)"
+    }
+
+    /// What a closing does when it has been asked for `requested` (nil = the object's own setting):
+    /// `ask` stands for `propagate` here — the box that asks is the UI's (a command never opens one),
+    /// and an object nobody else uses has nothing to ask about.
+    func effectiveCloseMode(requested: ConsolidateCloseMode?, defID: UUID) -> ConsolidateCloseMode {
+        let mode = requested ?? consolidateDefinitions[defID]?.closeMode ?? .ask
+        return mode == .variant ? .variant : .propagate
     }
 
     /// True if the current selection holds at least one consolidated object linked to other
@@ -946,7 +1017,13 @@ extension EditViewModel {
     /// (@see EditViewModel.renderConsolidateContent): the wave lasts as long as the root's window and
     /// its position 0 is the root's start. The stage (the instance's FX, fader, window, sends…) is
     /// not part of it, and is kept on the instance, as it is NOW.
-    func closeConsolidate() {
+    ///
+    /// `mode`: what this closing does to the OTHER instances, when it is not the object's own setting
+    /// (`consolidate.edit_commit {mode}`, the "Ask" box's answer): `propagate` (everywhere: the usual
+    /// re-bake) or `variant` (the opened instance leaves for a NEW consolidated object, a new
+    /// definition with its own wave and sidecar; the others keep the old content and the old
+    /// definition, untouched). nil = the object's setting. A closing with nothing changed forks nothing.
+    func closeConsolidate(mode: ConsolidateCloseMode? = nil) {
         guard let defID = editingConsolidateID, let placementID = editingPlacementID,
               let contentID = editingContentRootID, let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, find(id: placementID) != nil, let content = find(id: contentID),
@@ -984,6 +1061,8 @@ extension EditViewModel {
             return
         }
 
+        let closeMode = mode
+
         // The wave lasts as long as the root's window: nothing to render from it.
         let renderStart = content.startTime
         let renderEnd   = content.startTime + content.duration
@@ -998,8 +1077,13 @@ extension EditViewModel {
         teardownLiveMirroring()
 
         let original = withCapturedPluginStates(content)
-        let nextRevision = def.revision + 1
-        let base = "\(bakeSafeName(find(id: placementID)?.displayName ?? def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
+        // A variant is a NEW definition (fresh id, revision 1, its own wave): the old one is not touched.
+        let variant: (id: UUID, name: String)? =
+            effectiveCloseMode(requested: closeMode, defID: defID) == .variant
+            ? (UUID(), variantName(after: def.name)) : nil
+        let nextRevision = variant == nil ? def.revision + 1 : 1
+        let base = variant.map { "\(bakeSafeName($0.name))_\($0.id.uuidString.prefix(8))_v1" }
+            ?? "\(bakeSafeName(find(id: placementID)?.displayName ?? def.name))_\(defID.uuidString.prefix(8))_v\(nextRevision)"
         let wav  = consolidateRenderURL(base: base, in: folder)
 
         bakingIDs.insert(placementID)
@@ -1011,7 +1095,7 @@ extension EditViewModel {
             self.finishCloseConsolidate(defID: defID, placementID: placementID, ok: ok,
                                         wav: wav, folder: folder, original: original,
                                         nextRevision: nextRevision, oldWaveZero: oldWaveZero,
-                                        renderStart: renderStart, renderEnd: renderEnd)
+                                        renderStart: renderStart, renderEnd: renderEnd, variant: variant)
         }
         engine.renderConsolidateContent(toFileAsync: contentID.uuidString, filePath: wav.path,
                                         start: renderStart, end: renderEnd,
@@ -1083,7 +1167,8 @@ extension EditViewModel {
 
     private func finishCloseConsolidate(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
                                         folder: URL, original: SoundObject, nextRevision: Int,
-                                        oldWaveZero: Double, renderStart: Double, renderEnd: Double) {
+                                        oldWaveZero: Double, renderStart: Double, renderEnd: Double,
+                                        variant: (id: UUID, name: String)? = nil) {
         guard engine != nil else { return }
         guard ok else {
             bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
@@ -1125,33 +1210,55 @@ extension EditViewModel {
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
         // The definition carries no mix: volume/pan/mute belong to each instance.
-        consolidateDefinitions[defID] = ConsolidateDefinition(
-            id: defID, name: stage.displayName, wave: wav.lastPathComponent,
-            revision: nextRevision, wasGroup: original.isGroup, rootIsContent: true,
-            dependsOn: collectConsolidateDependencies(original),
-            closeMode: consolidateDefinitions[defID]?.closeMode ?? .ask)
+        // A variant is a definition of its own: the old one stays exactly as it was, and what is
+        // laid back below points at the new one.
+        let resultDefID = variant?.id ?? defID
+        if let variant {
+            consolidateDefinitions[variant.id] = ConsolidateDefinition(
+                id: variant.id, name: variant.name, wave: wav.lastPathComponent,
+                revision: 1, wasGroup: original.isGroup, rootIsContent: true,
+                dependsOn: collectConsolidateDependencies(original),
+                closeMode: consolidateDefinitions[defID]?.closeMode ?? .ask)
+        } else {
+            consolidateDefinitions[defID] = ConsolidateDefinition(
+                id: defID, name: stage.displayName, wave: wav.lastPathComponent,
+                revision: nextRevision, wasGroup: original.isGroup, rootIsContent: true,
+                dependsOn: collectConsolidateDependencies(original),
+                closeMode: consolidateDefinitions[defID]?.closeMode ?? .ask)
+        }
 
         // The instance level is whatever the stage holds now: the session was where it could be
         // edited, and what it holds is kept (a cancel is what gives the old values back).
         // The new wave's zero is the content root's start; the old one is where the root was laid.
         let delta = renderStart - oldWaveZero
-        let placement = closedInstance(ofStage: stage, wavePath: wav.path, waveLength: waveLen,
-                                       oldWaveZero: oldWaveZero, delta: delta, defID: defID,
+        var placement = closedInstance(ofStage: stage, wavePath: wav.path, waveLength: waveLen,
+                                       oldWaveZero: oldWaveZero, delta: delta, defID: resultDefID,
                                        automationOpen: editingOriginalPlacement?.automationOpen ?? false,
                                        instanceSpeed: consolidateEditStack.last?.instanceSpeed ?? 1.0,
                                        instanceReversed: consolidateEditStack.last?.instanceReversed ?? false)
+        // The variant's name goes on the instance's label too: the name synchronisation follows the
+        // label, and the original's name must not be taken over by the instance that left it.
+        if let variant { placement.label = variant.name }
         layBackClosedInstance(placement, replacing: stage)
 
         // Pops the current session then propagates the new official wave to the OTHER placements.
         // If a parent session remains (a nested edit), it is picked up again; otherwise everything is cut.
         if !consolidateEditStack.isEmpty { consolidateEditStack.removeLast() }
-        propagateConsolidateUpdate(defID: defID, exceptPlacementID: placement.id, delta: delta)
-        markConsolidateResynced(defID)   // a transient ✓ on the OTHER resynchronised instances
+        // A variant spreads nothing: the other instances are already back on the old wave
+        // (`restoreLiveMirrors`) and stay there, no resynchronisation, no cascade.
+        if variant == nil {
+            propagateConsolidateUpdate(defID: defID, exceptPlacementID: placement.id, delta: delta)
+            markConsolidateResynced(defID)   // a transient ✓ on the OTHER resynchronised instances
+        }
         resumeParentObjectEditAfterPop()
 
         selectedIDs = [placement.id]
         isDirty = true
-        NSLog("[OBJECT] definition \(defID) re-baked → \(wav.lastPathComponent) (revision \(nextRevision))")
+        if let variant {
+            NSLog("[OBJECT] definition \(defID) forked → variant \(variant.id) \"\(variant.name)\" (\(wav.lastPathComponent))")
+        } else {
+            NSLog("[OBJECT] definition \(defID) re-baked → \(wav.lastPathComponent) (revision \(nextRevision))")
+        }
     }
 
     /// Cancels the edit under way: restores the open stage to its linked state from BEFORE
@@ -1450,6 +1557,8 @@ extension EditViewModel {
               let contentID = editingContentRootID,
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let live = find(id: contentID) else { return }
+        // `variant`: the others stay on the baked wave, nothing follows the edit.
+        guard consolidateDefinitions[defID]?.closeMode != .variant else { return }
 
         var snapshots: [UUID: SoundObject] = [:]
         for tid in liveMirrorTargets(defID: defID, origin: placementID) {
@@ -1485,6 +1594,7 @@ extension EditViewModel {
               let contentID = editingContentRootID,
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, let live = find(id: contentID) else { return }
+        guard consolidateDefinitions[defID]?.closeMode != .variant else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.

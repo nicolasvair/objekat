@@ -2560,13 +2560,15 @@ struct TimelineView: View {
         guard !viewModel.selectedIDs.isEmpty else { return [] }
         var selectedByDef: [UUID: [UUID]] = [:]
         for id in viewModel.selectedIDs {
-            guard let defID = viewModel.find(id: id)?.consolidateID else { continue }
+            // `consolidateLinkID`: the stage of an object that closes in "variant" is on its way out
+            // of the group, the others do not follow it.
+            guard let o = viewModel.find(id: id), let defID = viewModel.consolidateLinkID(of: o) else { continue }
             selectedByDef[defID, default: []].append(id)
         }
         guard !selectedByDef.isEmpty else { return [] }
         var placements: [UUID: [LaneEntry]] = [:]
         for e in viewModel.laneEntries {
-            guard let defID = e.item.consolidateID, selectedByDef[defID] != nil else { continue }
+            guard let defID = viewModel.consolidateLinkID(of: e.item), selectedByDef[defID] != nil else { continue }
             placements[defID, default: []].append(e)
         }
         var plan: [ConsolidateLink] = []

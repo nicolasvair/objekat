@@ -36,6 +36,10 @@ extension CommandRegistry {
                     "stale": .bool(vm.isConsolidateStale(def.id)),
                     "placements": .array(vm.placementIDs(forConsolidate: def.id)
                         .map { .string($0.uuidString) }),
+                    // The placements the violet link traits join together (the placements, minus the
+                    // stage of a session about to leave for a variant).
+                    "linked": .array(vm.placementIDs(forConsolidate: def.id)
+                        .filter { !vm.isForkingStage($0) }.map { .string($0.uuidString) }),
                 ])
             }
             return .object(["definitions": .array(definitions), "count": .int(definitions.count)])
@@ -180,6 +184,9 @@ extension CommandRegistry {
                 "content_root_id": .stringOrNull(vm.editingContentRootID?.uuidString),
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
+                // What the violet traits join the open instance to (empty while it closes in `variant`).
+                "linked_with": .array((vm.editingPlacementID.flatMap { vm.find(id: $0) }
+                    .map { vm.consolidateLinkMembers(of: $0).map { .string($0.uuidString) } }) ?? []),
                 "close_mode": .stringOrNull(vm.editingConsolidateID.flatMap { vm.consolidateDefinitions[$0]?.closeMode.rawValue }),
                 // Placements (the open one included) + nested definitions using the open content.
                 "instance_count": .int(vm.editingConsolidateID.map { vm.consolidateUserCount($0) } ?? 0),
@@ -210,15 +217,36 @@ extension CommandRegistry {
         }
 
         register("consolidate.edit_commit",
-                 summary: "Commits the edit in progress: re-bakes the definition and propagates it "
-                        + "to every instance (asynchronous). Returns a job_id.",
-                 undo: .handled) { _ in
+                 summary: "Commits the edit in progress (asynchronous). Returns a job_id. By default re-bakes the "
+                        + "definition and propagates it to every instance. `mode` decides for THIS commit what "
+                        + "happens to the other instances: `propagate` (everywhere) or `variant` (the opened "
+                        + "instance leaves for a NEW consolidated object: new definition, revision 1, the others "
+                        + "untouched). Without `mode` the object's setting applies (consolidate.set_close_mode); "
+                        + "setting `ask` with other instances using the content answers invalid_state "
+                        + "\"mode required\" and the session stays open (a command never opens a box). "
+                        + "Nothing changed in the content = nothing forked, nothing re-baked, and no mode needed.",
+                 params: [ParamSpec("mode", "string", required: false, "propagate or variant.")],
+                 undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
-            guard vm.isEditingConsolidate else {
+            guard vm.isEditingConsolidate, let defID = vm.editingConsolidateID else {
                 throw CommandError(code: .invalid_state, message: "no edit in progress")
             }
+            var mode: ConsolidateCloseMode? = nil
+            if p.raw["mode"] != nil {
+                let name = try p.string("mode")
+                guard name == "propagate" || name == "variant", let m = ConsolidateCloseMode(rawValue: name) else {
+                    throw CommandError(code: .bad_params, message: "mode: propagate or variant (got '\(name)')")
+                }
+                mode = m
+            } else if vm.consolidateDefinitions[defID]?.closeMode == .ask,
+                      vm.consolidateContentModifiedSinceOpening,
+                      vm.consolidateUserCount(defID, excluding: vm.editingPlacementID) > 0 {
+                throw CommandError(code: .invalid_state,
+                                   message: "mode required: this consolidated object is set to ask and other "
+                                          + "instances use it (pass mode = propagate or variant)")
+            }
             let jobID = JobRegistry.shared.begin(command: "consolidate.edit_commit")
-            vm.closeConsolidate()
+            vm.closeConsolidate(mode: mode)
             CommandAdapters.followBake(jobID, in: vm) {
                 .object(["editing": .bool(vm.isEditingConsolidate)])
             }

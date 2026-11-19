@@ -188,8 +188,10 @@ def settle():
     cmd("wait_idle", timeout_ms=30000)
 
 
-def commit():
-    r = cmd("consolidate.edit_commit")
+def commit(mode="propagate"):
+    """Commits the open session. `mode`: what this commit does to the other instances (None = the
+    object's own setting, and no `mode` parameter at all)."""
+    r = cmd("consolidate.edit_commit", **({"mode": mode} if mode else {}))
     j = cmd("job.wait", id=r["job_id"], timeout_ms=60000)
     settle()
     return j
@@ -453,6 +455,253 @@ def main():
     st = cmd("consolidate.state")
     check("consolidate.state carries close_mode and instance_count",
           "close_mode" in st and "instance_count" in st, str(st))
+
+    # helpers shared by the sections below
+    def tweak_c2(inst, db=-6.0):
+        """In the open session of `inst` (a group content): c2's gain."""
+        a_root = children(find(inst))[0]["id"]
+        kids = sorted(children(find(a_root)), key=lambda k: k["startTime"])
+        cmd("object.set_gain", ids=[kids[1]["id"]], db=db); settle()
+
+    def halves(wav):
+        dur = duration_of(wav)
+        return rms(wav, 0.0, dur * 0.5), rms(wav, dur * 0.5, dur)
+
+    def state_dump():
+        return json.dumps(sorted(state_items(), key=lambda o: o["id"]), sort_keys=True)
+
+    def def_of(oid):
+        o = find(oid)
+        return o.get("definitionID") if o else None
+
+    # ── 4 — variant ──
+    section("4 — close in VARIANT: a new object, the others untouched (INC 2)")
+    def_id, i1, i2, i3 = build("s4")
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    D0 = dict(defs()[def_id])
+    b1, b2, b3 = (render_instance(x, "s4_before_%d" % n) for n, x in enumerate((i1, i2, i3)))
+    t1 = instance_start_dur(i1)
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    check("variant: the other instances are NOT mirrored while it is open (still closed clips)",
+          clip_of(find(i2)) is not None and clip_of(find(i3)) is not None)
+    st = cmd("consolidate.state")
+    check("variant: the open instance is joined to nobody (violet traits), the others stay joined",
+          st["linked_with"] == [] and sorted(defs()[def_id]["linked"]) == sorted([i2, i3]),
+          "%s %s" % (st["linked_with"], defs()[def_id]["linked"]))
+    tweak_c2(i1)
+    commit(mode=None)
+    ds = defs()
+    new_ids = [d for d in ds if d != def_id]
+    check("variant: two definitions now", len(ds) == 2 and len(new_ids) == 1, str(list(ds)))
+    V = ds[new_ids[0]] if new_ids else {}
+    check("variant: the variant is at revision 1, named like the original plus a number, same setting",
+          V.get("revision") == 1 and V.get("name", "").startswith(D0["name"]) and V.get("name") != D0["name"]
+          and V.get("close_mode") == "variant", str(V))
+    check("variant: the instance that was opened is on the variant, and carries its name",
+          def_of(i1) == V.get("id") and find(i1).get("label") == V.get("name"), str(find(i1).get("label")))
+    check("variant: the original is exactly as it was (revision, wave, name), its two other instances on it",
+          ds[def_id]["revision"] == D0["revision"] and ds[def_id]["wave"] == D0["wave"]
+          and ds[def_id]["name"] == D0["name"] and sorted(ds[def_id]["placements"]) == sorted([i2, i3])
+          and def_of(i2) == def_id and def_of(i3) == def_id, str(ds[def_id]))
+    cons = os.path.join(PROJ, "samples", "consolidate")
+    vw = V.get("wave", "x")
+    check("variant: its own wave and sidecar are on disk, the original's too",
+          os.path.isfile(os.path.join(cons, vw)) and os.path.isfile(os.path.join(cons, os.path.splitext(vw)[0] + "_objectstate.json"))
+          and os.path.isfile(os.path.join(cons, D0["wave"])) and vw != D0["wave"])
+    check("variant: the opened instance keeps its place", instance_start_dur(i1) == t1)
+    a1, a2, a3 = (render_instance(x, "s4_after_%d" % n) for n, x in enumerate((i1, i2, i3)))
+    check("variant: the other two instances sound exactly as before",
+          near(rms(a2, 0, 1.4), rms(b2, 0, 1.4), 1e-4) and near(rms(a3, 0, 1.4), rms(b3, 0, 1.4), 1e-4)
+          and near(duration_of(a2), duration_of(b2), 1e-3))
+    h1b, h1a = halves(b1), halves(a1)
+    check("variant: the variant sounds different — first half the same, second half ~6 dB lower",
+          near(h1a[0], h1b[0], 0.01) and near(h1a[1] / max(1e-9, h1b[1]), lin(-6), 0.08), "%s %s" % (h1b, h1a))
+    for _ in range(10):
+        if not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    check("variant: no cascade, nothing stale, no render running",
+          not cmd("consolidate.state")["renders"] and not any(d["stale"] for d in defs().values())
+          and defs()[def_id]["revision"] == D0["revision"])
+    # a variant with NOTHING changed forks nothing
+    n_defs = len(defs())
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    commit(mode="variant")
+    check("variant: a session with nothing changed forks nothing",
+          len(defs()) == n_defs and def_of(i2) == def_id and clip_of(find(i2)) is not None, str(len(defs())))
+
+    # ── 10 — links (the traits between instances of one object) ──
+    section("10 — links: the instances that share an object, after a variant")
+    check("after the variant, the original's instances are joined to each other only",
+          sorted(defs()[def_id]["linked"]) == sorted([i2, i3]) and defs()[V["id"]]["linked"] == [i1], str(defs()))
+    cmd("object.move", id=i1, lane=6, start=20.0); settle()      # room for a copy
+    i1b = cmd("object.duplicate", ids=[i1])["ids"][0]; settle()
+    check("a copy of the variant's instance joins the variant, not the original",
+          def_of(i1b) == V["id"] and sorted(defs()[V["id"]]["linked"]) == sorted([i1, i1b])
+          and sorted(defs()[def_id]["linked"]) == sorted([i2, i3]), str(defs()))
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    check("in an ask/propagate session the open instance stays joined to the others",
+          sorted(cmd("consolidate.state")["linked_with"]) == [i3], str(cmd("consolidate.state")["linked_with"]))
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    check("...and leaves them the moment the setting says variant (mirrors cut too)",
+          cmd("consolidate.state")["linked_with"] == [] and clip_of(find(i3)) is not None)
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    check("...and comes back when the setting does",
+          sorted(cmd("consolidate.state")["linked_with"]) == [i3])
+    cmd("consolidate.edit_cancel"); settle()
+
+    # ── 5 — everywhere ──
+    section("5 — close EVERYWHERE: the three instances change")
+    def_id, i1, i2, i3 = build("s5")
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    bs = [render_instance(x, "s5_before_%d" % n) for n, x in enumerate((i1, i2, i3))]
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    commit(mode=None)
+    check("everywhere: still one object, revision 1", len(defs()) == 1 and defs()[def_id]["revision"] == 1,
+          str(defs()))
+    for n, x in enumerate((i1, i2, i3)):
+        hb, ha = halves(bs[n]), halves(render_instance(x, "s5_after_%d" % n))
+        check("everywhere: instance %d — first half the same, second ~6 dB lower" % (n + 1),
+              near(ha[0], hb[0], 0.01) and near(ha[1] / max(1e-9, hb[1]), lin(-6), 0.08), "%s %s" % (hb, ha))
+    # the commit's own parameter wins over the setting, both ways
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1, -12.0)
+    commit(mode="propagate")
+    check("everywhere: mode=propagate overrides a `variant` setting for this commit",
+          len(defs()) == 1 and defs()[def_id]["revision"] == 2, str(defs()))
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1, -3.0)
+    commit(mode="variant")
+    check("variant: mode=variant overrides a `propagate` setting for this commit",
+          len(defs()) == 2 and defs()[def_id]["revision"] == 2 and def_of(i1) != def_id, str(defs()))
+
+    # ── 6 — ask ──
+    section("6 — ASK: a command never opens a box")
+    def_id, i1, i2, i3 = build("s6")
+    check("ask is the default", defs()[def_id]["close_mode"] == "ask")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    try:
+        commit(mode=None)
+        check("ask + other instances + a change, no mode: invalid_state 'mode required'", False)
+    except ObjekatError as e:
+        check("ask + other instances + a change, no mode: invalid_state 'mode required'",
+              e.code == "invalid_state" and "mode required" in e.message, "%s %s" % (e.code, e.message))
+    check("...and the session stays open, nothing moved",
+          cmd("consolidate.state")["editing"] and len(defs()) == 1 and defs()[def_id]["revision"] == 0)
+    try:
+        commit(mode="everywhere")
+        check("a mode other than propagate/variant is refused", False)
+    except ObjekatError as e:
+        check("a mode other than propagate/variant is refused", e.code == "bad_params", e.code)
+    commit(mode="propagate")
+    check("...then the same commit with a mode goes through", not cmd("consolidate.state")["editing"]
+          and defs()[def_id]["revision"] == 1)
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    commit(mode=None)
+    check("ask, nothing changed: no question, no mode needed, nothing re-baked",
+          not cmd("consolidate.state")["editing"] and defs()[def_id]["revision"] == 1)
+    # a lone instance has nobody to ask about
+    PROJ_S = os.path.join(ROOT, "s6b"); os.makedirs(PROJ_S, exist_ok=True)
+    globals()["PROJ"] = PROJ_S
+    cmd("project.new")
+    cmd("project.save_as", path=os.path.join(PROJ_S, "p.objekat"))
+    lone = cmd("object.add", path=BIP, lane=3, start=0.0)["id"]
+    r = cmd("consolidate.make", id=lone); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    lone_def = next(iter(defs()))
+    check("a lone instance: ask, count 1", defs()[lone_def]["close_mode"] == "ask" and defs()[lone_def]["instance_count"] == 1)
+    cmd("consolidate.edit_begin", placement=lone); settle()
+    cmd("object.set_gain", ids=[children(find(lone))[0]["id"]], db=-4.0); settle()
+    commit(mode=None)
+    check("a lone instance: ask passes without a mode (propagates, nobody to ask)",
+          defs()[lone_def]["revision"] == 1 and len(defs()) == 1, str(defs()))
+
+    # ── 7 — undo / redo of a variant ──
+    section("7 — undo / redo: ONE point for a variant")
+    def_id, i1, i2, i3 = build("s7")
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    dump0 = state_dump()
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    commit(mode=None)
+    check("variant made: two objects", len(defs()) == 2)
+    dump1 = state_dump()
+    cmd("edit.undo"); settle()
+    check("ONE undo: the variant is gone, the instance is back, closed and linked to the original, "
+          "exactly as before the opening",
+          len(defs()) == 1 and def_of(i1) == def_id and clip_of(find(i1)) is not None
+          and state_dump() == dump0)
+    cmd("edit.redo"); settle()
+    check("redo: the variant is back, the instance on it", len(defs()) == 2 and def_of(i1) != def_id
+          and state_dump() == dump1)
+    cmd("edit.undo"); settle()
+    check("undo again: still the same single step back", len(defs()) == 1 and state_dump() == dump0)
+    r = render_instance(i1, "s7_after_undo")
+    check("the undone instance sounds like the original again",
+          near(rms(r, 0, 1.4), rms(base, 0, 1.4), 1e-3))
+
+    # ── 8 — nesting ──
+    section("8 — nesting: a variant of an object that another object holds")
+    PROJ_N2 = os.path.join(ROOT, "s8"); os.makedirs(PROJ_N2, exist_ok=True)
+    globals()["PROJ"] = PROJ_N2
+    cmd("project.new")
+    pj8 = os.path.join(PROJ_N2, "p.objekat")
+    cmd("project.save_as", path=pj8)
+    xc = cmd("object.add", path=BIP, lane=8, start=0.0)["id"]
+    r = cmd("consolidate.make", id=xc); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    x_def = next(iter(defs()))
+    x2 = cmd("object.duplicate", ids=[xc])["ids"][0]
+    yc = cmd("object.add", path=BIP, lane=9, start=1.0)["id"]
+    gb = cmd("group.create", ids=[x2, yc])["id"]
+    r = cmd("consolidate.make", id=gb); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    b_def = next(d for d in defs() if d != x_def)
+    cmd("consolidate.set_close_mode", id=x_def, mode="variant")
+    x_rev = defs()[x_def]["revision"]
+    cmd("consolidate.edit_begin", placement=gb); settle()
+    nested = next(o["id"] for o in walk([find(gb)]) if o.get("definitionID") == x_def)
+    cmd("consolidate.edit_begin", placement=nested); settle()
+    check("nested session: depth 2", cmd("consolidate.state")["depth"] == 2)
+    cmd("object.set_gain", ids=[children(find(nested))[0]["id"]], db=-6.0); settle()
+    commit(mode=None)
+    nested_def = def_of(nested)
+    check("nested variant: the instance inside B's open content is on a NEW object",
+          nested_def not in (None, x_def) and len(defs()) == 3 and defs()[x_def]["revision"] == x_rev,
+          str(defs().keys()))
+    check("...the top-level instance of the original is intact", def_of(xc) == x_def
+          and clip_of(find(xc)) is not None)
+    check("...B is still open (depth 1)", cmd("consolidate.state")["depth"] == 1)
+    commit(mode="propagate")
+    cmd("project.save"); settle()
+    doc = json.load(open(pj8))
+    b_entry = next(e for e in doc["objectDefinitions"] if e["id"] == b_def)
+    dep = [d["definitionID"] for d in b_entry.get("dependsOn", [])]
+    check("B's dependsOn names the variant, no longer the original",
+          nested_def in dep and x_def not in dep, str(dep))
+    check("nothing is stale", not any(d["stale"] for d in defs().values()), str({k: v["stale"] for k, v in defs().items()}))
+
+    # ── 9 — across tabs ──
+    section("9 — a consolidated object pasted into another tab keeps its setting")
+    def_id, i1, i2, i3 = build("s9")
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    cmd("project.save"); settle()
+    tab_a = cmd("app.info")["active_tab"]
+    cmd("tab.new")
+    tab_b = cmd("app.info")["active_tab"]
+    cmd("project.save_as", path=os.path.join(ROOT, "s9", "other.objekat")); settle()
+    cmd("tab.select", id=tab_a); settle()
+    cmd("selection.set", ids=[i1])
+    copied = cmd("clipboard.copy")
+    cmd("tab.select", id=tab_b); settle()
+    cmd("timesel.set", start=0, end=2, lane=0, lane_count=1)
+    pasted = cmd("clipboard.paste")
+    nid = pasted["ids"][0]
+    nd = def_of(nid)
+    check("pasted: a brand-new object that keeps `variant`",
+          nd is not None and nd != def_id and defs().get(nd, {}).get("close_mode") == "variant",
+          "%s %s" % (nd, defs().get(nd)))
 
     section("done")
     print("\n%d failure(s)" % len(fails))

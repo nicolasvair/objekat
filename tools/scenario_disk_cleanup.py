@@ -98,7 +98,7 @@ def main(cmd):
         cmd("consolidate.edit_begin", placement=placement)
         kids = [o for o in cmd("object.list")["objects"] if o.get("parent") == placement and o["kind"] == "clip"]
         cmd("object.set_gain", ids=[kids[0]["id"]], db=db)
-        job_wait(cmd("consolidate.edit_commit"))
+        job_wait(cmd("consolidate.edit_commit", mode="propagate"))
         idle()
 
     def defs():
