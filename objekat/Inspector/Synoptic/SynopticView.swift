@@ -128,9 +128,14 @@ struct SynopticView: View {
             Canvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
 
-            if let cp = contentPill {
-                contentPillView(cp, rect: d.sourcePill)
-            } else if let mz = d.midiZone {
+            // A consolidated instance: its CONTENT pill hangs in the header row above the frame; the frame's own
+            // head is the audio zone (closed instance — a clip on its wave) or the plain Source pill (open stage).
+            if let cp = contentPill, let hdr = d.contentHeader {
+                contentPillView(cp, rect: CGRect(x: hdr.minX, y: hdr.minY,
+                                                 width: min(SynopticLayout.contentPillW, hdr.width),
+                                                 height: hdr.height))
+            }
+            if let mz = d.midiZone {
                 midiZoneView(mz, slot: d.instrumentSlot)
             } else if let az = d.audioZone, let af = audioFile {
                 audioFileZoneView(az, file: af, folded: d.audioZoneFolded)
@@ -528,7 +533,8 @@ struct SynopticView: View {
                                // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
                                objectFrame: mix != nil,
                                // The session's fold of the clip options (§B.7, folded by default).
-                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
+                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded,
+                               contentHeader: contentPill != nil)
     }
 
     /// A '+''s tooltip: the click alone, and where the channels are chosen (request of 20 October 2026: the

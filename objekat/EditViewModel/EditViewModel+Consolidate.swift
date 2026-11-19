@@ -35,6 +35,12 @@ struct ConsolidateEditSession: Identifiable {
     /// "undo detaches the instance" bug). Closing and cancelling cut the stack back to this depth.
     /// Kept in step by `pushUndo` when the stack's cap drops its oldest entry.
     var undoDepthAtOpen: Int = 0
+    /// The speed the instance had when it was opened (1 for a clip on its wave at speed 1). The session
+    /// plays the content at speed 1 and forwards; what the closing builds goes back to this speed
+    /// (@see SoundObject.closedInstance).
+    var instanceSpeed: Double { originalPlacement?.speedRatio ?? 1.0 }
+    /// Whether the instance played backwards when it was opened.
+    var instanceReversed: Bool { originalPlacement?.isReversed ?? false }
     var id: UUID { placementID }
 }
 
@@ -1024,12 +1030,14 @@ extension EditViewModel {
     /// (@see SoundObject.realignedInstance). Called while the stage is still in the engine.
     func closedInstance(ofStage stage: SoundObject, wavePath: String, waveLength: Double,
                                 oldWaveZero: Double, delta: Double, defID: UUID,
-                                automationOpen: Bool) -> SoundObject {
+                                automationOpen: Bool,
+                                instanceSpeed: Double = 1.0, instanceReversed: Bool = false) -> SoundObject {
         var source = withCapturedPluginStates(stage)
         source.sends = sendsWithLiveStates(of: stage)
         return SoundObject
             .closedInstance(fromStage: source, wavePath: wavePath, waveLength: waveLength,
-                            waveZero: oldWaveZero, definitionID: defID, automationOpen: automationOpen)
+                            waveZero: oldWaveZero, definitionID: defID, automationOpen: automationOpen,
+                            instanceSpeed: instanceSpeed, instanceReversed: instanceReversed)
             .realignedInstance(delta: delta, wavePath: wavePath, waveLength: waveLength)
     }
 
@@ -1106,7 +1114,9 @@ extension EditViewModel {
         let delta = renderStart - oldWaveZero
         let placement = closedInstance(ofStage: stage, wavePath: wav.path, waveLength: waveLen,
                                        oldWaveZero: oldWaveZero, delta: delta, defID: defID,
-                                       automationOpen: editingOriginalPlacement?.automationOpen ?? false)
+                                       automationOpen: editingOriginalPlacement?.automationOpen ?? false,
+                                       instanceSpeed: consolidateEditStack.last?.instanceSpeed ?? 1.0,
+                                       instanceReversed: consolidateEditStack.last?.instanceReversed ?? false)
         layBackClosedInstance(placement, replacing: stage)
 
         // Pops the current session then propagates the new official wave to the OTHER placements.
@@ -1159,7 +1169,9 @@ extension EditViewModel {
            case .clip(let wavePath, _, let waveLen, _, _) = originalPlacement.kind {
             restored = closedInstance(ofStage: current, wavePath: wavePath, waveLength: waveLen,
                                       oldWaveZero: oldWaveZero, delta: 0, defID: defID,
-                                      automationOpen: originalPlacement.automationOpen)
+                                      automationOpen: originalPlacement.automationOpen,
+                                      instanceSpeed: originalPlacement.speedRatio,
+                                      instanceReversed: originalPlacement.isReversed)
         }
         layBackClosedInstance(restored, replacing: current)
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).

@@ -363,6 +363,32 @@ struct Main {
         flow.recordInputWidth = 2
         check(flow.look(.recordInput)?.count == 2 && flow.look(.recordInput)?.isOrange == false, "a stereo pair: two plain wires")
 
+        // MARK: a consolidated instance's header row (docs/plan_consolidate_variant.md, INC 0a)
+        // The content pill hangs ABOVE the frame, outside it, and the frame's head stays the audio zone.
+        func instanceDiagram(header: Bool) -> SynopticLayout.Diagram {
+            SynopticLayout.diagram(for: trunk, audioFile: true, mix: true, stems: true, sends: [], sendsEnabled: true,
+                                   objectFrame: true, clipOptionsExpanded: true, contentHeader: header)
+        }
+        let bare = instanceDiagram(header: false), inst = instanceDiagram(header: true)
+        check(bare.contentHeader == nil, "no header row for an ordinary clip")
+        if let h = inst.contentHeader, let f = inst.objectFrame, let bf = bare.objectFrame, let az = inst.audioZone {
+            check(near(h.minY, SynopticLayout.margin) && near(h.height, SynopticLayout.contentHeaderH),
+                  "the header row is at the top margin and contentHeaderH tall")
+            check(h.maxY < f.minY && near(f.minY - h.maxY, SynopticLayout.contentHeaderGap),
+                  "it lies OUTSIDE the frame, a contentHeaderGap above it")
+            check(h.width >= SynopticLayout.contentHeaderMinW && h.width >= f.width - 1e-6 && near(h.midX, f.midX),
+                  "it is at least as wide as the frame and the min width, centred on the column")
+            let shift = SynopticLayout.contentHeaderH + SynopticLayout.contentHeaderGap
+            check(near(f.minY - bf.minY, shift) && near(f.height, bf.height) && near(f.width, bf.width),
+                  "the frame moves down by the row and keeps its size")
+            check(near(inst.canvasSize.height - bare.canvasSize.height, shift), "the canvas grows by the same amount")
+            check(near(az.width, bf.width) && near(az.minY, f.minY), "the frame's head is the audio zone, as for a wav")
+            check(near(inst.outPill.minY - bare.outPill.minY, shift) && near(inst.clipZone!.minY - bare.clipZone!.minY, shift),
+                  "everything under the head moves down together")
+        } else {
+            check(false, "the header row, the frame and the audio zone are laid")
+        }
+
         print(failures == 0 ? "ALL PASS (\(total) assertions)" : "failures: \(failures) of \(total)")
         exit(failures == 0 ? 0 : 1)
     }

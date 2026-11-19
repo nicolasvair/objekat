@@ -7,46 +7,52 @@
 //     has no material (swapped when reversed), fades bounded, automation / markers / loop shifted
 //     by the head cut, and the Q2 case (no material left: place and length kept, silence).
 //   * SoundObject.consolidateStage / closedInstance: the open form of an instance (a group holding
-//     the content root) and the way back.
+//     the content root) and the way back — including the speed and the direction the instance had when
+//     it was opened, which a session plays at 1 and forwards and the closing puts back (INC 0b of
+//     docs/plan_consolidate_variant.md).
 //
 // Same compile line as `test_consolidate_content_root.swift`, plus the two files under test:
 //
 //     swiftc -parse-as-library \
-//         ../objekat/SoundObject/ConsolidateInstanceStage.swift \
-//         ../objekat/SoundObject/ConsolidateRealign.swift \
-//         ../objekat/SoundObject/SoundObject.swift \
-//         ../objekat/SoundObject/RecordInputs.swift \
+//         ../objekat/App/LaunchArguments.swift \
+//         ../objekat/EditViewModel/EditViewModel+Types.swift \
+//         ../objekat/EditViewModel/SessionSchema.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
-//         ../objekat/SoundObject/ChannelPick.swift \
+//         ../objekat/Shared/BridgeScope.swift \
+//         ../objekat/Shared/LaneEntryIndex.swift \
+//         ../objekat/Shared/Localization.swift \
+//         ../objekat/Shared/LoopRetrim.swift \
+//         ../objekat/Shared/ObjectColorChoice.swift \
+//         ../objekat/Shared/ObjekatPalette.swift \
+//         ../objekat/Shared/ScriptCanvasMemory.swift \
 //         ../objekat/Shared/SendChain.swift \
 //         ../objekat/SoundObject/Automation.swift \
 //         ../objekat/SoundObject/AutomationCurveMath.swift \
 //         ../objekat/SoundObject/AutomationCurveShape.swift \
-//         ../objekat/SoundObject/Marker.swift \
 //         ../objekat/SoundObject/ChannelMode.swift \
-//         ../objekat/Shared/LaneEntryIndex.swift \
-//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
-//         ../objekat/SoundObject/ConsolidateDefinition.swift \
-//         ../objekat/SoundObject/ConsolidateContentRoot.swift \
-//         ../objekat/SoundObject/FadeCurve.swift \
+//         ../objekat/SoundObject/ChannelPick.swift \
 //         ../objekat/SoundObject/ComposedName.swift \
+//         ../objekat/SoundObject/ConsolidateContentRoot.swift \
+//         ../objekat/SoundObject/ConsolidateDefinition.swift \
+//         ../objekat/SoundObject/ConsolidateInstanceStage.swift \
+//         ../objekat/SoundObject/ConsolidateRealign.swift \
+//         ../objekat/SoundObject/CrossProjectImport.swift \
 //         ../objekat/SoundObject/FXLink.swift \
-//         ../objekat/SoundObject/SendPosition.swift \
-//         ../objekat/SoundObject/SendMarkerAudit.swift \
-//         ../objekat/Shared/ObjekatPalette.swift \
-//         ../objekat/Shared/ObjectColorChoice.swift \
-//         ../objekat/Shared/Localization.swift \
+//         ../objekat/SoundObject/FadeCurve.swift \
 //         ../objekat/SoundObject/GainStage.swift \
 //         ../objekat/SoundObject/LegacyGainMigration.swift \
-//         ../objekat/EditViewModel/EditViewModel+Types.swift \
-//         ../objekat/EditViewModel/SessionSchema.swift \
-//         ../objekat/App/LaunchArguments.swift \
-//         ../objekat/SoundObject/CrossProjectImport.swift \
-//         ../objekat/SoundObject/PluginIDUniqueness.swift \
+//         ../objekat/SoundObject/Marker.swift \
+//         ../objekat/SoundObject/MidiSequenceWindow.swift \
 //         ../objekat/SoundObject/PluginIDReport.swift \
-//         ../objekat/Shared/BridgeScope.swift \
-//         ../objekat/Shared/ScriptCanvasMemory.swift \
+//         ../objekat/SoundObject/PluginIDUniqueness.swift \
+//         ../objekat/SoundObject/RecordInputs.swift \
+//         ../objekat/SoundObject/SendMarkerAudit.swift \
+//         ../objekat/SoundObject/SendPosition.swift \
+//         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Timeline/ClipEditZonesOverlay.swift \
+//         ../objekat/SoundObject/InputChains.swift \
+//         ../objekat/Shared/ClipEditZone.swift \
 //         test_consolidate_realign.swift \
 //         -o /tmp/ccra && /tmp/ccra
 //
@@ -274,6 +280,95 @@ enum ConsolidateRealignTest {
               backPlain.startTime == plain.startTime && backPlain.duration == plain.duration
               && so(backPlain) == so(plain) && backPlain.fadeIn == plain.fadeIn
               && backPlain.fadeOut == plain.fadeOut && backPlain.id == plain.id)
+
+        // MARK: - speed and reversal survive a session (INC 0b of plan_consolidate_variant)
+
+        func roundTrip(_ o: SoundObject, delta: Double = 0, edit: (inout SoundObject) -> Void = { _ in }) -> SoundObject {
+            let id = o.consolidateID!
+            var st = SoundObject.consolidateStage(placement: o, content: content, definitionID: id,
+                                                  waveZero: o.consolidateWaveZero)
+            edit(&st)
+            return SoundObject.closedInstance(fromStage: st, wavePath: "old.wav", waveLength: L,
+                                              waveZero: o.consolidateWaveZero, definitionID: id,
+                                              automationOpen: false,
+                                              instanceSpeed: o.speedRatio, instanceReversed: o.isReversed)
+                .realignedInstance(delta: delta, wavePath: "old.wav", waveLength: L)
+        }
+        func spd(_ o: SoundObject) -> Double { if case .clip(_, _, _, let s, _) = o.kind { return s }; return -1 }
+        func rv(_ o: SoundObject) -> Bool { if case .clip(_, _, _, _, let r) = o.kind { return r }; return false }
+
+        var fx2 = inst(start: 10, dur: 3, so: 2, spd: 2, fadeIn: 0.5, fadeOut: 0.25)
+        fx2.automation = [AutomationLane(param: .volume, points: [AutomationPoint(t: 1, v: 0), AutomationPoint(t: 2.5, v: -6)])]
+        fx2.markers = [Marker(time: 1.5, name: "m")]
+        let back2 = roundTrip(fx2)
+        check("speed 2: open then close gives the speed back (a clip, speed 2, forwards)",
+              back2.isClip && near(spd(back2), 2) && !rv(back2), "\(spd(back2)) \(rv(back2))")
+        check("speed 2: window, offset, fades are the same (3 s, so 2, 0.5 / 0.25, start 10)",
+              near(back2.duration, 3) && near(so(back2), 2) && near(back2.fadeIn, 0.5)
+              && near(back2.fadeOut, 0.25) && back2.startTime == 10, "\(back2.duration) \(so(back2))")
+        check("speed 2: automation and markers are the same",
+              back2.automation[0].points.map(\.t) == [1, 2.5] && near(back2.markers[0].time, 1.5),
+              "\(back2.automation[0].points.map(\.t))")
+
+        let slow2 = inst(start: 10, dur: 6, so: 1, spd: 0.5)
+        let backSlow = roundTrip(slow2)
+        check("speed 0.5: the speed and the window come back (6 s)",
+              near(spd(backSlow), 0.5) && near(backSlow.duration, 6) && near(so(backSlow), 1))
+
+        var odd = inst(start: 10, dur: 3.3, so: 1.1, spd: 1.3, fadeIn: 0.2, fadeOut: 0.1)
+        odd.loopRangeStart = nil
+        let backOdd = roundTrip(odd)
+        check("speed 1.3: the same to the nanosecond",
+              near(spd(backOdd), 1.3) && near(backOdd.duration, 3.3) && near(so(backOdd), 1.1)
+              && near(backOdd.fadeIn, 0.2) && near(backOdd.fadeOut, 0.1),
+              "\(backOdd.duration) \(so(backOdd))")
+
+        var revI = inst(start: 10, dur: 4, so: 2, spd: 1, rev: true, fadeIn: 0.5)
+        revI.automation = [AutomationLane(param: .volume, points: [AutomationPoint(t: 1, v: 0), AutomationPoint(t: 3, v: -6)])]
+        revI.markers = [Marker(time: 1, name: "m")]
+        let stRev = SoundObject.consolidateStage(placement: revI, content: content, definitionID: revI.consolidateID!,
+                                                 waveZero: revI.consolidateWaveZero)
+        check("reversed: the stage plays forwards over the same range, its curves and marks turned round",
+              stRev.automation[0].points.map(\.t).sorted() == [1, 3] && near(stRev.markers[0].time, 3)
+              && near(stRev.duration, 4), "\(stRev.automation[0].points.map(\.t)) \(stRev.markers[0].time)")
+        let backRev = roundTrip(revI)
+        check("reversed: open then close gives the direction back (a reversed clip)",
+              backRev.isClip && rv(backRev) && near(spd(backRev), 1) && near(so(backRev), 2)
+              && near(backRev.duration, 4), "\(rv(backRev)) \(so(backRev))")
+        check("reversed: automation and markers come back as they were (turned twice)",
+              backRev.automation[0].points.map(\.t) == [1, 3] && near(backRev.markers[0].time, 1),
+              "\(backRev.automation[0].points.map(\.t)) \(backRev.markers[0].time)")
+
+        var both2 = inst(start: 10, dur: 3, so: 1, spd: 2, rev: true, fadeOut: 0.5)
+        both2.markers = [Marker(time: 0.5, name: "m")]
+        let backBoth = roundTrip(both2)
+        check("speed 2 AND reversed: both come back, the window is 3 s, the mark is where it was",
+              near(spd(backBoth), 2) && rv(backBoth) && near(backBoth.duration, 3) && near(so(backBoth), 1)
+              && near(backBoth.markers[0].time, 0.5) && near(backBoth.fadeOut, 0.5),
+              "\(backBoth.duration) \(backBoth.markers[0].time)")
+
+        // A session that grows the window (the stage's right edge dragged 2 s further, at speed 2): the
+        // closed instance is 1 s longer (2 stage seconds = 1 timeline second), the range of wave it reads grows by 2.
+        let grown = roundTrip(fx2) { $0.duration += 2 }
+        check("speed 2, window lengthened by 2 stage-seconds: +1 s of timeline, same offset",
+              near(grown.duration, 4) && near(so(grown), 2) && near(spd(grown), 2),
+              "\(grown.duration)")
+        // The head dragged 1 s later in the stage: the left edge is where the hand left it, the offset follows.
+        let headMoved = roundTrip(fx2) { $0.startTime += 1; $0.duration -= 1 }
+        check("speed 2, head dragged 1 s later: the left edge stays where it was dragged, so = 3",
+              near(headMoved.startTime, 11) && near(so(headMoved), 3) && near(headMoved.duration, 2.5),
+              "\(headMoved.startTime) \(so(headMoved)) \(headMoved.duration)")
+
+        // The other instances are realigned with their speed: a delta of 3 on a speed-2 instance cuts 0.5 s of head.
+        let otherFast = inst(spd: 2).realignedInstance(delta: 3, wavePath: "n.wav", waveLength: 20)
+        check("another instance at speed 2 keeps its speed through a realignment",
+              near(spd(otherFast), 2) && near(otherFast.startTime, 10.5))
+
+        // A stage with no history (the loading guard): speed 1, forwards — unchanged behaviour.
+        let noHistory = SoundObject.closedInstance(fromStage: stage, wavePath: "n.wav", waveLength: L,
+                                                   waveZero: waveZero, definitionID: defID, automationOpen: false)
+        check("no instance speed given: the old reading (speed 1, forwards, window as it is)",
+              near(spd(noHistory), 1) && !rv(noHistory) && near(noHistory.duration, stage.duration))
 
         finish()
     }

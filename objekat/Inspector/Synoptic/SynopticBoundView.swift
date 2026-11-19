@@ -100,10 +100,12 @@ struct SynopticBoundView: View {
 
         // The 'audio file' zone: audio clips only (MIDI clips keep their MIDI zone;
         // groups / auxes keep the Source pill).
-        // A consolidated INSTANCE has none: it reads a wave the app baked, which has neither a speed
-        // choice of its own nor a channel choice nor an ARA source — its source is the content pill.
+        // A CLOSED consolidated instance has it too: it is a clip on a wave, and takes a speed, a base tempo,
+        // a reversal and a loop like any wav (it keeps them through an opening). It has neither a channel
+        // choice nor an ARA source (`canChooseChannelMode` and the ARA door refuse an instance, and its
+        // `araSource` is nil), so the zone shows neither; the content pill hangs above the frame.
         let isInstance = obj?.isConsolidateInstance ?? false
-        let audioFile: SynopticAudioFile? = ((obj?.isClip ?? false) && !isInstance)
+        let audioFile: SynopticAudioFile? = (obj?.isClip ?? false)
             ? obj.map { SynopticAudioFile(speedRatio: $0.speedRatio, baseBPM: $0.baseBPM, isReversed: $0.isReversed, isLooping: $0.loopEnabled,
                                                        channelMode: viewModel.canChooseChannelMode($0) ? $0.channelMode : nil,
                                                        ara: $0.araSource.map { SynopticARA(name: $0.plugin.name, analysing: araAnalysing,

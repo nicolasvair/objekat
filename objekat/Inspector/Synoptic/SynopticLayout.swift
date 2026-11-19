@@ -663,6 +663,9 @@ enum SynopticLayout {
         /// (`WireSource.recordInput`) runs from it to the head zone. nil for anything that is not a
         /// recordable group.
         var inputZone: CGRect? = nil
+        /// A consolidated instance: the header row above the frame (the content pill, and the edits selector
+        /// beside it), `contentHeaderH` tall, left edge on the frame's. nil for everything else.
+        var contentHeader: CGRect? = nil
         /// One column per outgoing send, stacked BELOW the stems and wired by the LEFT (@see SendCardPlacement).
         var sendCards: [SendCardPlacement] = []
         /// The fixed slots a send card can be dropped on that have no '+' of the trunk: the post-fader one
@@ -872,6 +875,18 @@ enum SynopticLayout {
     /// The wire between the input zone and the head zone.
     static let inputGap: CGFloat = 24
 
+    /// The header row of a consolidated INSTANCE, above its frame and OUTSIDE it (the input zone's way): the
+    /// CONTENT pill the instance reads. Not part of the signal path, so no wire. The frame's head below it is
+    /// the 'audio file' zone of a closed instance (speed, tempo, reverse, loop — the instance is a clip on its
+    /// wave and takes them like a wav), or the plain Source pill of an open stage.
+    static let contentHeaderH: CGFloat = 28
+    /// The header's minimum width (the pill, and the edits selector beside it).
+    static let contentHeaderMinW: CGFloat = 244
+    /// The gap between the header row and the frame.
+    static let contentHeaderGap: CGFloat = 8
+    /// The content pill's own width inside the header row.
+    static let contentPillW: CGFloat = 132
+
     // The 'aux' zone (foot) and the sends received (an aux's head): one row per send, under a title.
     // The width is set by a row's content (arrow + name + dB box + switch): any wider and
     // the box stretched for nothing and imposed its width on the whole signal view.
@@ -966,7 +981,8 @@ enum SynopticLayout {
                         input: Bool = false,
                         sends: [SynopticSend] = [], sendsEnabled: Bool = false, receivedRows: Int = 0,
                         infiniteOption: Bool = false,
-                        objectFrame: Bool = false, clipOptionsExpanded: Bool = true) -> Diagram {
+                        objectFrame: Bool = false, clipOptionsExpanded: Bool = true,
+                        contentHeader: Bool = false) -> Diagram {
         let chainSize = measure(root)
         // A bus's head: the 'Source' pill widens into a box as soon as it carries the infinite
         // option and/or the list of sends received.
@@ -991,19 +1007,29 @@ enum SynopticLayout {
         let boxedClipW = objectFrame ? frameW : clipW
         let boxedFootW = (objectFrame && !mix) ? frameW : (stems ? stemsZoneW : outW)
         let inputW: CGFloat = input ? inputZoneW : 0
+        // The header row of a consolidated instance sits above everything (outside the frame): its width counts
+        // for the column, its height pushes the head down.
+        let headerW: CGFloat = contentHeader ? max(frameW, contentHeaderMinW) : 0
         let contentW = objectFrame
-            ? max(frameW, stems ? stemsZoneW : outW, inputW)
-            : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0, inputW)
+            ? max(frameW, stems ? stemsZoneW : outW, inputW, headerW)
+            : max(chainSize.width, leadW, outW, mix ? clipW : 0, stems ? stemsZoneW : 0, araCardWidth ?? 0, inputW, headerW)
         let sendsArea = sendsEnabled || !sends.isEmpty
         let innerEdge = margin + sendGutterSpace(sends.count)   // the content's left edge (and the send columns')
         let contentLeft = innerEdge
         let centerX = contentLeft + contentW / 2
 
+        // The instance's header row, at the very top: at least as wide as the frame, so its left edge is the
+        // frame's whenever the chain is the wider (the content pill reads as the label of the object below it).
+        let contentHeaderRect: CGRect? = contentHeader
+            ? CGRect(x: centerX - headerW / 2, y: margin, width: headerW, height: contentHeaderH)
+            : nil
+        let top0 = contentHeaderRect.map { $0.maxY + contentHeaderGap } ?? margin
+
         // The 'input' zone, at the very top and outside the frame; the head (and so the frame) starts under it.
         let inputZone: CGRect? = input
-            ? CGRect(x: centerX - inputZoneW / 2, y: margin, width: inputZoneW,
+            ? CGRect(x: centerX - inputZoneW / 2, y: top0, width: inputZoneW,
                      height: inputZoneH) : nil
-        let headTop = inputZone.map { $0.maxY + inputGap } ?? margin
+        let headTop = inputZone.map { $0.maxY + inputGap } ?? top0
 
         // The chain's head: the Source pill, the MIDI zone (instrument) or the audio file zone, AT THE TOP
         // (of the object: under the input zone when there is one).
@@ -1157,6 +1183,7 @@ enum SynopticLayout {
                        midiZone: midiZone, instrumentSlot: instrumentSlot,
                        audioZone: audioZone, audioZoneFolded: audioFile && !clipOptionsExpanded,
                        araCard: araCard, clipZone: clipZone, stemsZone: stemsZone, inputZone: inputZone,
+                       contentHeader: contentHeaderRect,
                        sendCards: sendCards, sendSlotDrops: sendSlotDrops, addSendButton: addSendButton,
                        busHeadZone: busHead ? leadRect : nil,
                        objectFrame: frame, postFaderPlus: postFaderPlus)
