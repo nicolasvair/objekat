@@ -880,12 +880,14 @@ enum SynopticLayout {
     /// the 'audio file' zone of a closed instance (speed, tempo, reverse, loop — the instance is a clip on its
     /// wave and takes them like a wav), or the plain Source pill of an open stage.
     static let contentHeaderH: CGFloat = 28
-    /// The header's minimum width (the pill, and the edits selector beside it).
-    static let contentHeaderMinW: CGFloat = 244
+    /// The header's minimum width: the pill, the gap, and the edits selector beside it.
+    static let contentHeaderMinW: CGFloat = contentPillW + contentHeaderGap + contentSelectorW
     /// The gap between the header row and the frame.
     static let contentHeaderGap: CGFloat = 8
     /// The content pill's own width inside the header row.
     static let contentPillW: CGFloat = 132
+    /// The edits selector's width (3 positions: Ask / Everywhere / Variant), to the right of the pill.
+    static let contentSelectorW: CGFloat = 164
 
     // The 'aux' zone (foot) and the sends received (an aux's head): one row per send, under a title.
     // The width is set by a row's content (arrow + name + dB box + switch): any wider and

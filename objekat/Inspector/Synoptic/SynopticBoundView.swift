@@ -278,7 +278,8 @@ struct SynopticBoundView: View {
                                 guard let defID = o.consolidateID else { return nil }
                                 return SynopticContentPill(
                                     name: viewModel.consolidateDefinitions[defID]?.name ?? o.displayName,
-                                    isOpen: viewModel.isInConsolidateEditStack(o.id))
+                                    isOpen: viewModel.isInConsolidateEditStack(o.id),
+                                    closeMode: viewModel.consolidateDefinitions[defID]?.closeMode ?? .ask)
                             },
                             widthFlow: widthFlow,
                             actions: SynopticActions(
@@ -550,6 +551,13 @@ struct SynopticBoundView: View {
                 } else if !viewModel.isLiveMirror(objectID) {
                     viewModel.openConsolidate(viaPlacementID: objectID)
                 }
+            },
+            onSetCloseMode: { mode in
+                // A setting of the consolidated object (its definition): one undo point, none if unchanged.
+                guard let defID = viewModel.find(id: objectID)?.consolidateID,
+                      viewModel.consolidateDefinitions[defID]?.closeMode != mode else { return }
+                viewModel.pushUndo()
+                viewModel.setConsolidateCloseMode(defID, to: mode)
             },
             onOpenARAEditor: { viewModel.openARAEditor(objectID: objectID) },
             onRemoveARA: { viewModel.removeARASource(objectID: objectID) },

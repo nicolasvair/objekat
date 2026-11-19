@@ -378,6 +378,10 @@ struct Main {
                   "it lies OUTSIDE the frame, a contentHeaderGap above it")
             check(h.width >= SynopticLayout.contentHeaderMinW && h.width >= f.width - 1e-6 && near(h.midX, f.midX),
                   "it is at least as wide as the frame and the min width, centred on the column")
+            check(SynopticLayout.contentHeaderMinW >= SynopticLayout.contentPillW + SynopticLayout.contentHeaderGap
+                  + SynopticLayout.contentSelectorW && h.width >= SynopticLayout.contentPillW
+                  + SynopticLayout.contentHeaderGap + SynopticLayout.contentSelectorW - 1e-6,
+                  "the header row holds the pill, a gap and the edits selector to its right")
             let shift = SynopticLayout.contentHeaderH + SynopticLayout.contentHeaderGap
             check(near(f.minY - bf.minY, shift) && near(f.height, bf.height) && near(f.width, bf.width),
                   "the frame moves down by the row and keeps its size")

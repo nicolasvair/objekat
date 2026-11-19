@@ -11853,19 +11853,19 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Freezes the content into a reusable sound; double-click to reopen and edit it."
+            "value": "Freezes into a sound; double-click to reopen it."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Congela el contenido en un sonido reutilizable; doble clic para reabrirlo y editarlo."
+            "value": "Congela en un sonido; doble clic para reabrirlo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Fige le contenu en un son réutilisable ; double-clic pour le rouvrir et l'éditer."
+            "value": "Fige en un son ; double-clic pour le rouvrir."
           }
         }
       }
@@ -19686,6 +19686,144 @@
           "stringUnit": {
             "state": "translated",
             "value": "Trims : entrée %1$@, sortie %2$@ ; compensation %3$@"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Edits"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambios"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifications"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode.ask": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ask"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preguntar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Demander"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode.propagate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Everywhere"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En todas"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partout"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode.propagate.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reopening and closing updates every instance."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reabrir y cerrar actualiza todas las instancias."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rouvrir puis valider met à jour tous les exemplaires."
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode.variant": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Variant"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Variante"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Variante"
+          }
+        }
+      }
+    },
+    "synoptic.consolidate.closeMode.variant.help": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reopening and closing creates a new object; the other instances stay as they are."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reabrir y cerrar crea un objeto nuevo; las demás instancias no cambian."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rouvrir puis valider crée un nouvel objet ; les autres exemplaires ne changent pas."
           }
         }
       }

@@ -215,6 +215,8 @@ struct SynopticActions {
     /// A double click on the content pill of a consolidated instance: open its content, or validate
     /// it when it is open.
     var onToggleContent: (() -> Void)? = nil
+    /// The selector beside the content pill: what closing an edit does to the other instances.
+    var onSetCloseMode: ((ConsolidateCloseMode) -> Void)? = nil
 
     /// The ARA source of the object this view shows (Melodyne): open its editor / take it off.
     var onOpenARAEditor: (() -> Void)? = nil
@@ -422,6 +424,9 @@ struct SynopticInfinite: Equatable {
 struct SynopticContentPill: Equatable {
     let name: String
     let isOpen: Bool
+    /// What closing an edit does to the object's other instances (@see `ConsolidateCloseMode`): the
+    /// 3-position selector beside the pill shows it and sets it.
+    var closeMode: ConsolidateCloseMode = .ask
 }
 
 /// A group's 'loop' option (the chain head, @see BusHeadZoneView) or a MIDI clip's (the MIDI
