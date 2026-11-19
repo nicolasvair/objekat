@@ -304,7 +304,7 @@ def main():
         app.send("consolidate.edit_begin", {"placement": placement}); app.settle()
         r = drop(app, [w2], insert_row=1, lane=7)
         check("F9 insert is null while a consolidated object is open", r["insert"] is None, str(r["insert"]))
-        app.send("consolidate.edit_commit"); app.settle()
+        app.send("consolidate.edit_commit", {"mode": "propagate"}); app.settle()
         r = drop(app, [w2], insert_row=1, lane=7)
         check("F9 control: the same drop, the session closed, INSERTS", r["insert"] is not None, str(r["insert"]))
 

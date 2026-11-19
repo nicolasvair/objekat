@@ -90,6 +90,13 @@ extension SoundObject {
         s.markers        = p.markers.timeScaled(by: spd)
         s.loopRangeStart = p.loopRangeStart.map { $0 * spd }
         s.loopRangeEnd   = p.loopRangeEnd.map   { $0 * spd }
+        // A REVERSED instance plays its range backwards; the stage plays the content forwards. Its curves and
+        // marks were drawn against the matter as it is heard reversed (@see EditViewModel.applyReversed), so
+        // they turn round to stay opposite the same matter — and `closedInstance` turns them back.
+        if p.isClip, p.isReversed {
+            s.automation = s.automation.mirroredInTime(over: s.duration)
+            s.markers    = s.markers.mirroredInTime(over: s.duration)
+        }
         s.automationOpen = false
         s.consolidateID  = definitionID
         // What only a clip has.
@@ -113,14 +120,37 @@ extension SoundObject {
     ///
     /// `automationOpen`: the band's state comes from the caller (the snapshot taken at opening) —
     /// the stage's is always false.
+    ///
+    /// `instanceSpeed` / `instanceReversed`: the speed and the direction the instance had when it was opened
+    /// (1 / false when it had none, or for a stage with no history). The session played at speed 1 and
+    /// forwards, so the stage's window is `d·speed` long (@see `consolidateStage`); putting the speed back
+    /// divides everything laid in timeline seconds by it — window, fades, curves, marks, loop — and leaves
+    /// the source offset alone, which is in seconds of the WAVE and so does not depend on the speed. The
+    /// window reads the same range of wave; a reversed instance reads it backwards, and its curves and marks
+    /// are turned round with the matter (`mirroredInTime`, the way `applyReversed` does).
     static func closedInstance(fromStage s: SoundObject, wavePath: String, waveLength: Double,
                                waveZero: Double, definitionID: UUID,
-                               automationOpen: Bool) -> SoundObject {
+                               automationOpen: Bool,
+                               instanceSpeed: Double = 1.0, instanceReversed: Bool = false) -> SoundObject {
         var c = s
+        let spd = max(instanceSpeed, 0.0001)
+        if abs(spd - 1) > 1e-12 {
+            c.duration       = s.duration / spd
+            c.fadeIn         = s.fadeIn   / spd
+            c.fadeOut        = s.fadeOut  / spd
+            c.automation     = s.automation.timeScaled(by: 1 / spd)
+            c.markers        = s.markers.timeScaled(by: 1 / spd)
+            c.loopRangeStart = s.loopRangeStart.map { $0 / spd }
+            c.loopRangeEnd   = s.loopRangeEnd.map   { $0 / spd }
+        }
+        if instanceReversed {
+            c.automation = c.automation.mirroredInTime(over: c.duration)
+            c.markers    = c.markers.mirroredInTime(over: c.duration)
+        }
         c.consolidateID   = definitionID
-        c.automationOpen  = automationOpen && !s.automation.isEmpty
+        c.automationOpen  = automationOpen && !c.automation.isEmpty
         c.kind = .clip(filePath: wavePath, sourceOffset: s.startTime - waveZero, fileDuration: waveLength,
-                       speedRatio: 1.0, isReversed: false)
+                       speedRatio: spd, isReversed: instanceReversed)
         return c
     }
 

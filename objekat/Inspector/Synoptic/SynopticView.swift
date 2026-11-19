@@ -128,9 +128,21 @@ struct SynopticView: View {
             Canvas { ctx, _ in draw(ctx, diagram: d) }
                 .frame(width: d.canvasSize.width, height: d.canvasSize.height)
 
-            if let cp = contentPill {
-                contentPillView(cp, rect: d.sourcePill)
-            } else if let mz = d.midiZone {
+            // A consolidated instance: its CONTENT pill hangs in the header row above the frame; the frame's own
+            // head is the audio zone (closed instance — a clip on its wave) or the plain Source pill (open stage).
+            if let cp = contentPill, let hdr = d.contentHeader {
+                contentPillView(cp, rect: CGRect(x: hdr.minX, y: hdr.minY,
+                                                 width: min(SynopticLayout.contentPillW, hdr.width),
+                                                 height: hdr.height))
+                // The edits selector, to the right of the pill: what closing an edit does to the other
+                // instances. Visible open or closed (it is also what decides while the object is open).
+                if hdr.width > SynopticLayout.contentPillW + SynopticLayout.contentHeaderGap {
+                    let x0 = hdr.minX + SynopticLayout.contentPillW + SynopticLayout.contentHeaderGap
+                    closeModeSelector(cp, rect: CGRect(x: x0, y: hdr.minY, width: hdr.maxX - x0,
+                                                       height: hdr.height))
+                }
+            }
+            if let mz = d.midiZone {
                 midiZoneView(mz, slot: d.instrumentSlot)
             } else if let az = d.audioZone, let af = audioFile {
                 audioFileZoneView(az, file: af, folded: d.audioZoneFolded)
@@ -528,7 +540,8 @@ struct SynopticView: View {
                                // The frame is an OBJECT's (D7): a host with a mixer — never a stem / the Main.
                                objectFrame: mix != nil,
                                // The session's fold of the clip options (§B.7, folded by default).
-                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded)
+                               clipOptionsExpanded: SynopticUIState.shared.clipOptionsExpanded,
+                               contentHeader: contentPill != nil)
     }
 
     /// A '+''s tooltip: the click alone, and where the channels are chosen (request of 20 October 2026: the
@@ -755,6 +768,60 @@ struct SynopticView: View {
         .onTapGesture(count: 2) { actions.onToggleContent?() }
         .help(L(cp.isOpen ? "synoptic.consolidate.contentOpen" : "synoptic.consolidate.contentHelp"))
         .position(x: rect.midX, y: rect.midY)
+    }
+
+    // Literal keys, one per case (a key built from the raw value would hide from `xcstrings.py orphans`).
+    private static func closeModeLabel(_ mode: ConsolidateCloseMode) -> String {
+        switch mode {
+        case .ask:       return L("synoptic.consolidate.closeMode.ask")
+        case .propagate: return L("synoptic.consolidate.closeMode.propagate")
+        case .variant:   return L("synoptic.consolidate.closeMode.variant")
+        }
+    }
+    private static func closeModeHelp(_ mode: ConsolidateCloseMode) -> String {
+        switch mode {
+        case .ask:       return L("synoptic.consolidate.closeMode")
+        case .propagate: return L("synoptic.consolidate.closeMode.propagate.help")
+        case .variant:   return L("synoptic.consolidate.closeMode.variant.help")
+        }
+    }
+
+    /// The 3-position selector of what closing an edit does to the other instances: Ask / Everywhere /
+    /// Variant. A setting of the consolidated object, not of this instance.
+    private func closeModeSelector(_ cp: SynopticContentPill, rect: CGRect) -> some View {
+        let modes = ConsolidateCloseMode.allCases
+        return HStack(spacing: 2) {
+            ForEach(modes, id: \.self) { mode in
+                closeModeSegment(mode, on: cp.closeMode == mode,
+                                 enabled: mode != .variant || cp.variantAvailable)
+            }
+        }
+        .padding(2)
+        .frame(width: rect.width, height: rect.height)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.purple.opacity(0.35), lineWidth: 0.5))
+        .position(x: rect.midX, y: rect.midY)
+    }
+
+    private func closeModeSegment(_ mode: ConsolidateCloseMode, on: Bool, enabled: Bool) -> some View {
+        let label = Self.closeModeLabel(mode)
+        let tint: Color = on ? .purple : .secondary
+        let fill: Color = on ? Color.purple.opacity(0.16) : Color.clear
+        let shape = RoundedRectangle(cornerRadius: 7)
+        return Text(label)
+            .font(.system(size: 10, weight: on ? .semibold : .regular))
+            .foregroundStyle(tint)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(shape.fill(fill))
+            .contentShape(shape)
+            .opacity(enabled ? 1 : 0.4)
+            .onTapGesture { if enabled { actions.onSetCloseMode?(mode) } }
+            .help(enabled ? Self.closeModeHelp(mode) : L("synoptic.consolidate.closeMode.variant.disabled"))
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(on ? [.isButton, .isSelected] : [.isButton])
+            .accessibilityHint(enabled ? "" : L("synoptic.consolidate.closeMode.variant.disabled"))
     }
 
     private func pill(_ text: String, rect: CGRect) -> some View {

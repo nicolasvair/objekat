@@ -3176,6 +3176,44 @@ a second one elsewhere. The most exposed points:
   the planned scenarios (`scenario_object_loop_tempo.py`, `scenario_trim_loop.py` L1–L4 + group trim; its T9 changes), the
   non-regression set, and a look at the screen (orange, the markers after a trim, the drag).
 
+- **Consolidated object: leave it, apply everywhere, or fork a variant** (20 November 2026, ON THE BRANCH
+  `feat/consolidate-variant`, from `main` f4c5ad09, NOT merged, nothing pushed; plan `docs/plan_consolidate_variant.md`,
+  Q1-Q13 accepted, vocabulary variant A). Five commits, one per increment. **INC 0**: a CLOSED instance shows its audio zone
+  in the synoptic (speed, BPM, reverse, loop; no channel choice, no ARA) and keeps speed AND reversal through an
+  open/close session (`instanceSpeed`/`instanceReversed` on the session, `closedInstance` gives them back, durations/fades/
+  automation/markers divided by the speed, offset in SOURCE seconds). **INC 1**: `ConsolidateCloseMode` (ask | propagate |
+  variant) on the DEFINITION, key `closeMode` in `objectDefinitions[]`, tolerant decode, default ask; format 37 -> 38;
+  `consolidate.set_close_mode`, `close_mode` / `instance_count` / `linked` in `consolidate.list|state`. **INC 2**: closing in
+  `variant` mode makes a NEW definition D' (fresh id, revision 1, name "Name N" first free, same closeMode, `dependsOn`
+  recomputed), the instance is re-aimed on D' and labelled with its name; no `propagateConsolidateUpdate`, no
+  `markConsolidateResynced`; live mirrors are cut in that mode; ONE undo point (the state with the session cancelled).
+  `consolidate.edit_commit {mode?}`: without mode, closeMode ask and other instances -> `invalid_state` "mode required"
+  (never a modal from a command). The violet link traits follow (`consolidateLinkID(of:)`, `consolidateLinkPlan`): a forked
+  instance is no longer tied to the others, only to the instances of D'. **INC 3**: the "Ask" box (3 buttons Everywhere / New
+  variant / Cancel; Cancel keeps the session open, no undo point), asked only when other instances exist (nested uses
+  count). **INC 4**: 3-position selector "Modifications" in a header row above the synoptic frame, beside the Content pill,
+  visible open or closed; vocabulary of the plan in FR/EN/ES (i18n check: only the 1 pre-existing empty-key line and 3
+  pre-existing orphans). Docs: `command_api.md` (new section), `glossary.md` (rows "modifications", "variante").
+  Verified with no screen (Debug build, no new warning; every suite on its OWN fresh headless instance, no window on the
+  headless pid): `scenario_consolidate_variant.py` 123 ALL PASS (new), `test_consolidate_realign.swift` 49,
+  `test_synoptic_object_frame.swift` 559, `scenario_consolidate.py` 139, `scenario_consolidate_instance_level.py` 150,
+  `scenario_cross_paste.py` 40, `scenario_tabs.py` 106, `scenario_families.py` 313 OK, `scenario_markers.py`, `smoke.jsonl`.
+  Pre-existing and left alone: `test_consolidate_content_root|format26` and `test_cross_project_import.swift` no longer
+  compile with the file list in their header (`MidiSequenceRef`, `LoopRetrim` missing from it).
+  Known limits / choices: a session plays the instance at speed 1 and forward (accepted v1); Dé-consolider cannot keep speed
+  or reversal (a group has no speedRatio); a variant needs ANOTHER instance (decision of 20 November: "Variante grisé si un seul"): with a single
+  one (`variant_available` false, same count as the box and `instance_count`) the "Variant" position is greyed (tooltip
+  "Only one instance: nothing to preserve."), a closing always applies everywhere whatever the stored `closeMode` or the
+  `mode` of `edit_commit` (no error, answer `forked: false`), and the stored setting is NOT rewritten — it shows as stored
+  (even a greyed-out Variant stays the highlighted segment) and takes effect again with a second instance; closing with unchanged content never forks and needs no mode; the "New variant" button cannot be
+  driven by the dialog policy (assume_yes = Everywhere, assume_no = Cancel) so the variant is tested through `mode`;
+  nested uses count in the box but no violet trait can show them. Sessions pinned to format 37 in ~17 scenarios now read 38,
+  and 7 scenarios committing a session pass `mode="propagate"`.
+  **Not seen on screen, not heard**: the selector (width 164, labels 10 pt, tooltips), the 3-button box and its wording,
+  the audio zone next to the Content pill, the violet link traits after a variant (and when selecting a forked instance),
+  speed/reversal of an instance after reopening (by ear), and an observed engine oddity not investigated: a reversed
+  render shows tone also in the 0.8-1.0 s bucket of a test.
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged

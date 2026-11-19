@@ -134,7 +134,8 @@ extension EditViewModel {
               case .clip(let path, _, let length, _, _) = original.kind else { return nil }
         return closedInstance(ofStage: stage, wavePath: path, waveLength: length,
                               oldWaveZero: session.oldWaveZero, delta: 0, defID: session.defID,
-                              automationOpen: original.automationOpen)
+                              automationOpen: original.automationOpen,
+                              instanceSpeed: session.instanceSpeed, instanceReversed: session.instanceReversed)
     }
 
     /// The closed form of `item` when it IS an open stage or a live mirror, nil otherwise.

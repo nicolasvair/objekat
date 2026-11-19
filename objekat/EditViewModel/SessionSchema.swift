@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 37
+    static let formatVersion = 38
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -212,7 +212,7 @@ enum SessionSchema {
         "  (clip on the official wave, the stage's mix / plugins / window); a GROUP that carries a",
         "  definitionID is therefore not a valid file state, and is repaired into a closed instance",
         "  when the project loads. wasGroup false = the content is a lone clip (no wrapper group).",
-        "  An entry is { id, name, wave, revision, wasGroup, rootIsContent, dependsOn }. It holds",
+        "  An entry is { id, name, wave, revision, wasGroup, rootIsContent, dependsOn, closeMode }. It holds",
         "  NO volume / pan / mute (format 26): up to format 25 it carried a shared one, and an",
         "  instance an `independentAttrs` mask saying which of the three had left it. A file from",
         "  before simply has those keys read and dropped; no instance value is rewritten (the old",
@@ -224,6 +224,12 @@ enum SessionSchema {
         "  by an older build, whose root still held the instance's mix and is neutralised when the",
         "  content is read back.",
         "  revision is bumped on every re-bake; dependsOn is what detects stale definitions.",
+        "  closeMode (format 38) — what closing an edit session does when the content changed:",
+        "  \"ask\" (ask first when other instances use the content), \"propagate\" (every instance",
+        "  takes the new content) or \"variant\" (the instance that was opened leaves for a NEW",
+        "  definition, written with a fresh id, revision 1 and its own wave + sidecar; the others keep",
+        "  this one). It belongs to the consolidated object. Absent or unknown = \"ask\", which is every",
+        "  session written before format 38; a build from before ignores it and always propagates.",
         "  Changing a definition updates the content of every one of its instances.",
         "",
         "viewport — timeline zoom and framing. Purely visual, with no effect on the sound.",

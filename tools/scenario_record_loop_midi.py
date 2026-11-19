@@ -215,7 +215,7 @@ try:
         section("M4 format 37")
         c.send("project.save")
         doc = json.load(open(path))
-        check("the file is format 37", doc.get("version") == 37, doc.get("version"))
+        check("the file is format 38", doc.get("version") == 38, doc.get("version"))
         seqs = doc.get("midiSequences") or []
         check("the file keeps ONE sequence of %d notes" % N, len(seqs) == 1 and len(seqs[0]["notes"]) == N,
               [len(s["notes"]) for s in seqs])

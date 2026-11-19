@@ -154,6 +154,57 @@ second reading of the engine. The list is empty once no render runs. It is the e
 `EditRenderer` count (the export's), polled at 10 Hz, so a render shorter than a tick may never
 show a reading at all.
 
+### Closing a consolidated object: everywhere, or as a variant (`consolidate.set_close_mode`, `consolidate.edit_commit`)
+
+A consolidated object carries ONE setting, `close_mode`, that says what closing an edit session does
+when the content changed: `ask` (the default, and what a file written before format 38 reads as),
+`propagate` (every instance takes the new content) or `variant` (the instance that was opened leaves
+for a NEW consolidated object: new definition, new id, revision 1, its own wave and sidecar, named like
+the original with its number incremented — "Kick" → "Kick 2" — and the same name copied onto the
+instance's label; the other instances and the original definition are not touched, nothing is
+re-baked, no cascade). The setting belongs to the object (its definition), not to an instance.
+
+- `consolidate.set_close_mode {id, mode}` — `id` is the definition id (as `consolidate.list` gives it),
+  `mode` is `ask`, `propagate` or `variant`. One undo point, none if nothing changes. Changing it while
+  the object is open acts at once on the other instances: in `variant` they are given back their baked
+  clip (nothing mirrors the edit), otherwise they are mirrored again.
+- `consolidate.list` — every definition gains `close_mode`, `instance_count` (its placements, plus the
+  definitions whose content holds it: an instance nested in another consolidated object counts, though
+  nothing on the timeline shows it), `linked` (the placements the violet link traits join together) and
+  `variant_available` (`instance_count > 1`: a variant needs somebody else to preserve; the selector's
+  "Variant" position is greyed otherwise).
+- `consolidate.state` — gains `close_mode`, `instance_count` and `variant_available` of the open object, and `linked_with`
+  (what the open instance is joined to; EMPTY while the object closes in `variant`: that instance is on
+  its way out of the group).
+- `consolidate.edit_commit {mode?}` — `mode` (`propagate` or `variant`) decides THIS commit and wins over
+  the setting, without changing it. Without it the setting applies; with `ask`, a changed content and
+  other instances using it, the answer is `invalid_state` ("mode required") and the session stays open
+  — a command never opens a box (the interface's box is the one that asks). An object nobody else uses
+  has nothing to ask about (it propagates), and a closing with NOTHING changed forks and re-bakes
+  nothing and needs no mode. **A variant needs another instance**: with a single one
+  (`variant_available` false) the closing applies everywhere whatever the setting or the `mode` says —
+  no error, no fork — and the stored `close_mode` is NOT rewritten (`set_close_mode` still accepts
+  `variant`; it takes effect again as soon as a second instance exists). The answer carries `forked`
+  (`true` only when this commit really leaves for a new object; false when applied everywhere or when
+  nothing changed), in the immediate reply and in the `job.wait` result.
+  One undo point for the whole commit: undoing it gives back the object as it was before the opening,
+  the variant gone; redo brings it back.
+- The interface's own closing (the double click on the open object) with `ask`, a changed content and
+  other instances using it raises ONE box — "Apply the changes to “name”?", the count of the others,
+  Everywhere / New variant / Cancel (Cancel: the session stays open, no undo point; no "don't ask
+  again" box). A script meets it only through the dialogue policy, which answers in its place and
+  records it (`app.dialogs`): `assume_yes` = Everywhere (`answer: "everywhere"`), `assume_no` and a
+  session with no interface = Cancel (`answer: "cancel"`). No box when nothing changed, when the setting
+  is not `ask`, or when nobody else uses the content.
+- Closing a variant INSIDE another consolidated object's open content points that instance at the
+  variant: the parent's `dependsOn` records the new definition when the parent closes.
+- A consolidated object pasted into another tab is a new definition and keeps its `close_mode`.
+- A closed instance takes `object.set_speed` / `object.set_reversed` like any clip, and opening then
+  closing keeps both (the session plays the content at speed 1 and forwards).
+- Session format 37 → 38: `objectDefinitions[].closeMode` (absent or unknown = `ask`).
+
+`tools/scenario_consolidate_variant.py` asserts all of it.
+
 ### `batch`
 
 Runs a sequence under **a single undo**.

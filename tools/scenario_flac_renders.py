@@ -375,7 +375,7 @@ def main(c):
         kids = [o for o in cmd("object.list")["objects"] if o.get("parent") == pl and o["kind"] == "clip"]
         if kids:
             cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-        wait(cmd("consolidate.edit_commit"))
+        wait(cmd("consolidate.edit_commit", mode="propagate"))
         idle()
         nd = {x["id"]: x for x in cmd("consolidate.list")["definitions"]}[old[0]["id"]]
         check("D3 a re-bake of the FLAC-waved definition writes a float WAV revision",

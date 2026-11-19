@@ -413,7 +413,7 @@ def main(c):
     kids = [o for o in cmd("object.list")["objects"] if o.get("parent") == qd["placements"][0] and o["kind"] == "clip"]
     if kids:
         cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-    wait(cmd("consolidate.edit_commit"))
+    wait(cmd("consolidate.edit_commit", mode="propagate"))
     idle()
     nq = next(x for x in cmd("consolidate.list")["definitions"] if x["id"] == dq["id"])
     nw = os.path.join(cons, nq["wave"])

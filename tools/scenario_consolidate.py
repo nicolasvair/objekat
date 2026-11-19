@@ -382,7 +382,7 @@ try:
         check("B4: A's content is one clip", len(kids) == 1, kids)
         if kids:
             cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-        j = job_wait(cmd, cmd("consolidate.edit_commit"))
+        j = job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))
         idle = cmd("wait_idle", timeout_ms=60000)
         check("B4: the commit job ends done, edit closed",
               j["state"] == "done" and j["result"]["editing"] is False, j)
@@ -436,7 +436,7 @@ try:
         doc = read_json(ids["manifest"])
         st = cmd("project.get_state")
         check("B5: version 34 on disk and in get_state",
-              doc.get("version") == 37 and st.get("version") == 37, (doc.get("version"), st.get("version")))
+              doc.get("version") == 38 and st.get("version") == 38, (doc.get("version"), st.get("version")))
         check("B5: key objectDefinitions kept", "objectDefinitions" in doc
               and "consolidateDefinitions" not in doc, list(doc))
         dB = [d for d in doc["objectDefinitions"] if d["id"] == ids["b"]][0]
@@ -512,8 +512,8 @@ try:
         check("B9: definition.list == consolidate.list",
               cmd("definition.list") == cmd("consolidate.list"))
         names = [x["name"] for x in cmd("help")["commands"]]
-        check("B9: help lists consolidate.* (7) and no definition.*",
-              len([n for n in names if n.startswith("consolidate.")]) == 7
+        check("B9: help lists consolidate.* (8) and no definition.*",
+              len([n for n in names if n.startswith("consolidate.")]) == 8
               and not any(n.startswith("definition.") for n in names))
         h = cmd("help", name="definition.make")
         check("B9: help definition.make → alias_of consolidate.make",
@@ -580,7 +580,7 @@ try:
         kids = [o for o in children_of(cmd, ids["pa"]) if o["kind"] == "clip"]
         if kids:
             cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-        j = job_wait(cmd, cmd("consolidate.edit_commit"))
+        j = job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))
         cmd("wait_idle", timeout_ms=60000)
         d12 = defs_by_id(cmd)
         c12 = os.path.join(DST12, "samples", "consolidate")
@@ -626,7 +626,7 @@ try:
             kids = [o for o in children_of(cmd, ids["pa"]) if o["kind"] == "clip"]
             if kids:
                 cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-            j = job_wait(cmd, cmd("consolidate.edit_commit"))
+            j = job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))
             cmd("wait_idle", timeout_ms=60000)
             alive = cmd("app.info")
             dlg = cmd("app.dialogs")
@@ -822,7 +822,7 @@ try:
             cmd("consolidate.edit_begin", placement=placement)
             kids = [o for o in children_of(cmd, placement) if o["kind"] == "clip"]
             cmd("object.set_gain", ids=[kids[0]["id"]], db=-6)
-            j = job_wait(cmd, cmd("consolidate.edit_commit"))
+            j = job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))
             cmd("wait_idle", timeout_ms=60000)
             return j
 
@@ -894,7 +894,7 @@ try:
         check("BUG2 nested: A opened inside B (depth 2)", r["depth"] == 2, r)
         kids = [o for o in children_of(cmd, inner[0]["id"]) if o["kind"] == "clip"]
         cmd("object.set_gain", ids=[kids[0]["id"]], db=-3)
-        j = job_wait(cmd, cmd("consolidate.edit_commit"))
+        j = job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))
         cmd("wait_idle", timeout_ms=60000)
         st = cmd("consolidate.state")
         check("BUG2 nested: the child commit leaves B open",
@@ -912,7 +912,7 @@ try:
         check("BUG2 nested redo inside the parent: the inner A on revision 2",
               inner_row and inner_row.get("definition") == ua
               and inner_row["file"] == os.path.join(UC, d2[ua]["wave"]), inner_row)
-        job_wait(cmd, cmd("consolidate.edit_commit"))       # B's commit
+        job_wait(cmd, cmd("consolidate.edit_commit", mode="propagate"))       # B's commit
         cmd("wait_idle", timeout_ms=60000)
         d3 = defs_by_id(cmd)
         check("BUG2 nested: B committed (revision 2)", d3[ub]["revision"] == 2, d3[ub])
