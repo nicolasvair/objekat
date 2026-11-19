@@ -31,6 +31,9 @@ extension CommandRegistry {
                     "close_mode": .string(def.closeMode.rawValue),
                     // Placements + definitions whose content holds this one (nested instances).
                     "instance_count": .int(vm.consolidateUserCount(def.id)),
+                    // False with a single instance: a variant would have nothing to preserve, so a
+                    // closing applies everywhere whatever `close_mode` says (the setting is kept).
+                    "variant_available": .bool(vm.consolidateVariantAvailable(def.id)),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
                     "stale": .bool(vm.isConsolidateStale(def.id)),
@@ -190,6 +193,7 @@ extension CommandRegistry {
                 "close_mode": .stringOrNull(vm.editingConsolidateID.flatMap { vm.consolidateDefinitions[$0]?.closeMode.rawValue }),
                 // Placements (the open one included) + nested definitions using the open content.
                 "instance_count": .int(vm.editingConsolidateID.map { vm.consolidateUserCount($0) } ?? 0),
+                "variant_available": .bool(vm.editingConsolidateID.map { vm.consolidateVariantAvailable($0) } ?? false),
                 "renders": .array(bakes + rebakes),
             ])
         }
@@ -224,7 +228,9 @@ extension CommandRegistry {
                         + "untouched). Without `mode` the object's setting applies (consolidate.set_close_mode); "
                         + "setting `ask` with other instances using the content answers invalid_state "
                         + "\"mode required\" and the session stays open (a command never opens a box). "
-                        + "Nothing changed in the content = nothing forked, nothing re-baked, and no mode needed.",
+                        + "Nothing changed in the content = nothing forked, nothing re-baked, and no mode needed. "
+                        + "A `variant` (asked or set) with NO other instance applies everywhere instead, with no "
+                        + "error: the answer says `forked` (false then, and when nothing changed).",
                  params: [ParamSpec("mode", "string", required: false, "propagate or variant.")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
@@ -245,12 +251,16 @@ extension CommandRegistry {
                                    message: "mode required: this consolidated object is set to ask and other "
                                           + "instances use it (pass mode = propagate or variant)")
             }
+            // Decided BEFORE the closing tears the session down: does this commit leave for a new object?
+            let forked = vm.consolidateContentModifiedSinceOpening
+                && vm.effectiveCloseMode(requested: mode, defID: defID,
+                                         placementID: vm.editingPlacementID) == .variant
             let jobID = JobRegistry.shared.begin(command: "consolidate.edit_commit")
             vm.closeConsolidate(mode: mode)
             CommandAdapters.followBake(jobID, in: vm) {
-                .object(["editing": .bool(vm.isEditingConsolidate)])
+                .object(["editing": .bool(vm.isEditingConsolidate), "forked": .bool(forked)])
             }
-            return .object(["job_id": .string(jobID)])
+            return .object(["job_id": .string(jobID), "forked": .bool(forked)])
         }
 
         register("consolidate.edit_cancel",

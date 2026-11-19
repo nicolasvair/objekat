@@ -792,7 +792,8 @@ struct SynopticView: View {
         let modes = ConsolidateCloseMode.allCases
         return HStack(spacing: 2) {
             ForEach(modes, id: \.self) { mode in
-                closeModeSegment(mode, on: cp.closeMode == mode)
+                closeModeSegment(mode, on: cp.closeMode == mode,
+                                 enabled: mode != .variant || cp.variantAvailable)
             }
         }
         .padding(2)
@@ -802,7 +803,7 @@ struct SynopticView: View {
         .position(x: rect.midX, y: rect.midY)
     }
 
-    private func closeModeSegment(_ mode: ConsolidateCloseMode, on: Bool) -> some View {
+    private func closeModeSegment(_ mode: ConsolidateCloseMode, on: Bool, enabled: Bool) -> some View {
         let label = Self.closeModeLabel(mode)
         let tint: Color = on ? .purple : .secondary
         let fill: Color = on ? Color.purple.opacity(0.16) : Color.clear
@@ -815,10 +816,12 @@ struct SynopticView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(shape.fill(fill))
             .contentShape(shape)
-            .onTapGesture { actions.onSetCloseMode?(mode) }
-            .help(Self.closeModeHelp(mode))
+            .opacity(enabled ? 1 : 0.4)
+            .onTapGesture { if enabled { actions.onSetCloseMode?(mode) } }
+            .help(enabled ? Self.closeModeHelp(mode) : L("synoptic.consolidate.closeMode.variant.disabled"))
             .accessibilityLabel(label)
             .accessibilityAddTraits(on ? [.isButton, .isSelected] : [.isButton])
+            .accessibilityHint(enabled ? "" : L("synoptic.consolidate.closeMode.variant.disabled"))
     }
 
     private func pill(_ text: String, rect: CGRect) -> some View {

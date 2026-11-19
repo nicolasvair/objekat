@@ -19828,6 +19828,29 @@
         }
       }
     },
+    "synoptic.consolidate.closeMode.variant.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only one instance: nothing to preserve."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una sola instancia: nada que preservar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un seul exemplaire : rien à préserver."
+          }
+        }
+      }
+    },
     "synoptic.consolidate.content": {
       "extractionState": "manual",
       "localizations": {

@@ -186,6 +186,16 @@ extension EditViewModel {
     func isForkingStage(_ id: UUID) -> Bool {
         guard let session = consolidateEditStack.first(where: { $0.placementID == id }) else { return false }
         return consolidateDefinitions[session.defID]?.closeMode == .variant
+            && consolidateVariantAvailable(session.defID)
+    }
+
+    /// True when a variant has something to preserve: the object has at least one OTHER instance
+    /// (same count as the "Ask" box and `instance_count`, nested uses included). With a single
+    /// instance the "Variant" position of the selector is greyed and a closing always applies
+    /// everywhere, whatever the stored setting says (which is left as it is, and takes effect again
+    /// as soon as a second instance exists).
+    func consolidateVariantAvailable(_ defID: UUID) -> Bool {
+        consolidateUserCount(defID) > 1
     }
 
     /// How many things use the content of a definition, `excluding` one placement: its placements on
@@ -249,10 +259,14 @@ extension EditViewModel {
 
     /// What a closing does when it has been asked for `requested` (nil = the object's own setting):
     /// `ask` stands for `propagate` here — the box that asks is the UI's (a command never opens one),
-    /// and an object nobody else uses has nothing to ask about.
-    func effectiveCloseMode(requested: ConsolidateCloseMode?, defID: UUID) -> ConsolidateCloseMode {
+    /// and an object nobody else uses has nothing to ask about. `variant` needs an OTHER instance
+    /// (`placementID` is the one being closed): with none, there is nothing to preserve and it applies
+    /// everywhere — the stored setting is not rewritten.
+    func effectiveCloseMode(requested: ConsolidateCloseMode?, defID: UUID,
+                            placementID: UUID?) -> ConsolidateCloseMode {
         let mode = requested ?? consolidateDefinitions[defID]?.closeMode ?? .ask
-        return mode == .variant ? .variant : .propagate
+        guard mode == .variant, consolidateUserCount(defID, excluding: placementID) > 0 else { return .propagate }
+        return .variant
     }
 
     /// True if the current selection holds at least one consolidated object linked to other
@@ -1089,7 +1103,7 @@ extension EditViewModel {
         let original = withCapturedPluginStates(content)
         // A variant is a NEW definition (fresh id, revision 1, its own wave): the old one is not touched.
         let variant: (id: UUID, name: String)? =
-            effectiveCloseMode(requested: closeMode, defID: defID) == .variant
+            effectiveCloseMode(requested: closeMode, defID: defID, placementID: placementID) == .variant
             ? (UUID(), variantName(after: def.name)) : nil
         let nextRevision = variant == nil ? def.revision + 1 : 1
         let base = variant.map { "\(bakeSafeName($0.name))_\($0.id.uuidString.prefix(8))_v1" }
@@ -1568,7 +1582,7 @@ extension EditViewModel {
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let live = find(id: contentID) else { return }
         // `variant`: the others stay on the baked wave, nothing follows the edit.
-        guard consolidateDefinitions[defID]?.closeMode != .variant else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
 
         var snapshots: [UUID: SoundObject] = [:]
         for tid in liveMirrorTargets(defID: defID, origin: placementID) {
@@ -1604,7 +1618,7 @@ extension EditViewModel {
               let contentID = editingContentRootID,
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, let live = find(id: contentID) else { return }
-        guard consolidateDefinitions[defID]?.closeMode != .variant else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.

@@ -797,6 +797,64 @@ def main():
     cmd("consolidate.edit_cancel"); settle()
     cmd("app.set_dialog_policy", policy="ask")
 
+    # ── 12 — a variant needs somebody else ──
+    section("12 — a single instance: Variant greyed, the closing always applies everywhere")
+    PROJ_V = os.path.join(ROOT, "s12"); os.makedirs(PROJ_V, exist_ok=True)
+    globals()["PROJ"] = PROJ_V
+    cmd("project.new")
+    cmd("project.save_as", path=os.path.join(PROJ_V, "p.objekat"))
+    solo = cmd("object.add", path=BIP, lane=3, start=0.0)["id"]
+    r = cmd("consolidate.make", id=solo); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    sd = next(iter(defs()))
+    check("one instance: variant_available false, count 1", defs()[sd]["variant_available"] is False
+          and defs()[sd]["instance_count"] == 1)
+    r = cmd("consolidate.set_close_mode", id=sd, mode="variant")
+    check("set_close_mode variant stays accepted and is stored as it is",
+          r["close_mode"] == "variant" and defs()[sd]["close_mode"] == "variant")
+    cmd("consolidate.edit_begin", placement=solo); settle()
+    st = cmd("consolidate.state")
+    check("the open session says it too (variant_available false, close_mode variant kept)",
+          st["variant_available"] is False and st["close_mode"] == "variant")
+    cmd("object.set_gain", ids=[children(find(solo))[0]["id"]], db=-4.0); settle()
+    r = cmd("consolidate.edit_commit")
+    j = cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    check("variant stored, no mode, one instance: applies everywhere (no error, forked false)",
+          r["forked"] is False and j["result"]["forked"] is False and len(defs()) == 1
+          and defs()[sd]["revision"] == 1 and def_of(solo) == sd, str((r, j, defs())))
+    check("...the stored setting is NOT rewritten", defs()[sd]["close_mode"] == "variant")
+    cmd("consolidate.edit_begin", placement=solo); settle()
+    cmd("object.set_gain", ids=[children(find(solo))[0]["id"]], db=-6.0); settle()
+    r = cmd("consolidate.edit_commit", mode="variant")
+    j = cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    check("edit_commit mode=variant with one instance: no error, forked false, the object re-baked "
+          "in place, the instance still on it",
+          r["forked"] is False and len(defs()) == 1 and defs()[sd]["revision"] == 2
+          and def_of(solo) == sd, str((r, defs())))
+    # a second instance: the setting takes effect again
+    twin = cmd("object.duplicate", ids=[solo])["ids"][0]; settle()
+    check("a second instance: variant_available true, count 2",
+          defs()[sd]["variant_available"] is True and defs()[sd]["instance_count"] == 2)
+    cmd("consolidate.edit_begin", placement=solo); settle()
+    cmd("object.set_gain", ids=[children(find(solo))[0]["id"]], db=-9.0); settle()
+    r = cmd("consolidate.edit_commit")
+    j = cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    check("with a second instance the stored `variant` forks again (forked true, 2 objects, "
+          "the twin untouched)",
+          r["forked"] is True and len(defs()) == 2 and def_of(solo) != sd and def_of(twin) == sd
+          and defs()[sd]["revision"] == 2, str((r, defs())))
+    # an instance nested in another object counts as somebody else
+    nx = cmd("object.add", path=BIP, lane=8, start=5.0)["id"]
+    r = cmd("consolidate.make", id=nx); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    nd = next(d for d in defs() if d not in (sd, def_of(solo)))
+    check("alone: variant not available", defs()[nd]["variant_available"] is False)
+    nx2 = cmd("object.duplicate", ids=[nx])["ids"][0]
+    ny = cmd("object.add", path=BIP, lane=9, start=7.0)["id"]
+    gn = cmd("group.create", ids=[nx2, ny])["id"]
+    r = cmd("consolidate.make", id=gn); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    check("one on the timeline + one held by another object: available (same count as the box)",
+          defs()[nd]["instance_count"] == 2 and defs()[nd]["variant_available"] is True,
+          str(defs()[nd]))
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0

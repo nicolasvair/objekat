@@ -3195,14 +3195,17 @@ a second one elsewhere. The most exposed points:
   visible open or closed; vocabulary of the plan in FR/EN/ES (i18n check: only the 1 pre-existing empty-key line and 3
   pre-existing orphans). Docs: `command_api.md` (new section), `glossary.md` (rows "modifications", "variante").
   Verified with no screen (Debug build, no new warning; every suite on its OWN fresh headless instance, no window on the
-  headless pid): `scenario_consolidate_variant.py` 113 ALL PASS (new), `test_consolidate_realign.swift` 49,
+  headless pid): `scenario_consolidate_variant.py` 123 ALL PASS (new), `test_consolidate_realign.swift` 49,
   `test_synoptic_object_frame.swift` 559, `scenario_consolidate.py` 139, `scenario_consolidate_instance_level.py` 150,
   `scenario_cross_paste.py` 40, `scenario_tabs.py` 106, `scenario_families.py` 313 OK, `scenario_markers.py`, `smoke.jsonl`.
   Pre-existing and left alone: `test_consolidate_content_root|format26` and `test_cross_project_import.swift` no longer
   compile with the file list in their header (`MidiSequenceRef`, `LoopRetrim` missing from it).
   Known limits / choices: a session plays the instance at speed 1 and forward (accepted v1); Dé-consolider cannot keep speed
-  or reversal (a group has no speedRatio); a variant with ZERO other instances still forks (literal plan reading; leaves D
-  with no placement); closing with unchanged content never forks and needs no mode; the "New variant" button cannot be
+  or reversal (a group has no speedRatio); a variant needs ANOTHER instance (decision of 20 November: "Variante grisé si un seul"): with a single
+  one (`variant_available` false, same count as the box and `instance_count`) the "Variant" position is greyed (tooltip
+  "Only one instance: nothing to preserve."), a closing always applies everywhere whatever the stored `closeMode` or the
+  `mode` of `edit_commit` (no error, answer `forked: false`), and the stored setting is NOT rewritten — it shows as stored
+  (even a greyed-out Variant stays the highlighted segment) and takes effect again with a second instance; closing with unchanged content never forks and needs no mode; the "New variant" button cannot be
   driven by the dialog policy (assume_yes = Everywhere, assume_no = Cancel) so the variant is tested through `mode`;
   nested uses count in the box but no violet trait can show them. Sessions pinned to format 37 in ~17 scenarios now read 38,
   and 7 scenarios committing a session pass `mode="propagate"`.
