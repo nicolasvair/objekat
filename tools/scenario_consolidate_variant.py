@@ -358,6 +358,102 @@ def main():
               and near(rms(ra, *c2_range) / max(1e-9, rms(rb, *c2_range)), lin(-6), 0.08),
               "%s %s %s %s" % (rms(rb, *c1_range), rms(ra, *c1_range), rms(rb, *c2_range), rms(ra, *c2_range)))
 
+    # ── 3 — the setting ──
+    section("3 — the setting: closeMode ask | propagate | variant (INC 1)")
+    def_id, i1, i2, i3 = build("s3")
+    lst = defs()[def_id]
+    check("a fresh consolidated object defaults to ask, and counts its 3 instances",
+          lst["close_mode"] == "ask" and lst["instance_count"] == 3, str(lst))
+    for m in ("propagate", "variant", "ask"):
+        r = cmd("consolidate.set_close_mode", id=def_id, mode=m)
+        check("set_close_mode %s answers and reads back" % m,
+              r["close_mode"] == m and defs()[def_id]["close_mode"] == m, str(r))
+    try:
+        cmd("consolidate.set_close_mode", id=def_id, mode="everywhere")
+        check("an unknown mode is refused (bad_params)", False)
+    except ObjekatError as e:
+        check("an unknown mode is refused (bad_params)", e.code == "bad_params", e.code)
+    try:
+        cmd("consolidate.set_close_mode", id="00000000-0000-0000-0000-000000000000", mode="ask")
+        check("an unknown object is refused (not_found)", False)
+    except ObjekatError as e:
+        check("an unknown object is refused (not_found)", e.code == "not_found", e.code)
+
+    # undo / redo : one point per change, none when nothing changes
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")      # no change: no undo point
+    cmd("edit.undo")
+    check("one undo reverts the change (the unchanged repeat left no point)",
+          defs()[def_id]["close_mode"] == "ask", defs()[def_id]["close_mode"])
+    cmd("edit.redo")
+    check("redo brings it back", defs()[def_id]["close_mode"] == "variant")
+
+    # save / reopen: format 38, the mode survives
+    cmd("project.save"); settle()
+    pj = os.path.join(PROJ, "p.objekat")
+    doc = json.load(open(pj))
+    check("the file is format 38 and writes closeMode",
+          doc.get("version") == 38 and doc["objectDefinitions"][0].get("closeMode") == "variant",
+          str((doc.get("version"), doc["objectDefinitions"][0])))
+    check("the notice describes closeMode", any("closeMode" in l for l in doc.get("_readme", [])))
+    cmd("project.open", path=pj); settle()
+    check("reopened: variant is still there", defs()[def_id]["close_mode"] == "variant")
+
+    # a file from before (37, no key) reads as ask; an unknown value too
+    for e in doc["objectDefinitions"]:
+        e.pop("closeMode", None)
+    doc["version"] = 37
+    json.dump(doc, open(pj, "w"))
+    cmd("project.open", path=pj); settle()
+    check("a format 37 file (no closeMode) opens with ask", defs()[def_id]["close_mode"] == "ask")
+    doc["objectDefinitions"][0]["closeMode"] = "something-new"
+    json.dump(doc, open(pj, "w"))
+    cmd("project.open", path=pj); settle()
+    check("an unknown closeMode reads as ask, without refusing the file", defs()[def_id]["close_mode"] == "ask")
+
+    # the three places that rebuild a definition field by field keep the mode
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    a_root = children(find(i1))[0]["id"]
+    kids = sorted(children(find(a_root)), key=lambda k: k["startTime"])
+    cmd("object.set_gain", ids=[kids[1]["id"]], db=-3.0)
+    commit()
+    check("a commit (re-bake) keeps the mode and bumps the revision",
+          defs()[def_id]["close_mode"] == "propagate" and defs()[def_id]["revision"] == 1,
+          str(defs()[def_id]))
+
+    # the background cascade: X inside B, B = [instance of X, plain clip]
+    PROJ_N = os.path.join(ROOT, "s3n"); os.makedirs(PROJ_N, exist_ok=True)
+    globals()["PROJ"] = PROJ_N
+    cmd("project.new")
+    cmd("project.save_as", path=os.path.join(PROJ_N, "p.objekat"))
+    xc = cmd("object.add", path=BIP, lane=8, start=0.0)["id"]
+    r = cmd("consolidate.make", id=xc); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    x_def = next(iter(defs()))
+    x2 = cmd("object.duplicate", ids=[xc])["ids"][0]
+    yc = cmd("object.add", path=BIP, lane=9, start=1.0)["id"]
+    gb = cmd("group.create", ids=[x2, yc])["id"]
+    r = cmd("consolidate.make", id=gb); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    b_def = next(d for d in defs() if d != x_def)
+    check("a new consolidation (the finishConsolidate site) starts at ask", defs()[b_def]["close_mode"] == "ask")
+    check("X counts its one placement left on the timeline + the definition B that nests it",
+          defs()[x_def]["instance_count"] == 1 + 1, str(defs()[x_def]))
+    cmd("consolidate.set_close_mode", id=b_def, mode="variant")
+    rev0 = defs()[b_def]["revision"]
+    cmd("consolidate.edit_begin", placement=xc); settle()
+    cmd("object.set_gain", ids=[children(find(xc))[0]["id"]], db=-6.0); settle()
+    commit()
+    for _ in range(120):
+        if defs()[b_def]["revision"] > rev0 and not defs()[b_def]["stale"] and not cmd("consolidate.state")["renders"]:
+            break
+        time.sleep(0.5)
+    check("the cascade re-baked B and kept its mode (variant)",
+          defs()[b_def]["revision"] > rev0 and defs()[b_def]["close_mode"] == "variant",
+          str(defs()[b_def]))
+    st = cmd("consolidate.state")
+    check("consolidate.state carries close_mode and instance_count",
+          "close_mode" in st and "instance_count" in st, str(st))
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0

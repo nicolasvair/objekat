@@ -27,6 +27,10 @@ extension CommandRegistry {
                     "revision": .int(def.revision),
                     "was_group": .bool(def.wasGroup),
                     "wave": .string(def.wave),
+                    // What closing an edit session does to the other instances: ask | propagate | variant.
+                    "close_mode": .string(def.closeMode.rawValue),
+                    // Placements + definitions whose content holds this one (nested instances).
+                    "instance_count": .int(vm.consolidateUserCount(def.id)),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
                     "stale": .bool(vm.isConsolidateStale(def.id)),
@@ -35,6 +39,26 @@ extension CommandRegistry {
                 ])
             }
             return .object(["definitions": .array(definitions), "count": .int(definitions.count)])
+        }
+
+        register("consolidate.set_close_mode",
+                 summary: "Sets what closing an edit session does to the OTHER instances of a consolidated "
+                        + "object: `ask` (ask when there are others), `propagate` (everywhere) or `variant` "
+                        + "(the opened instance becomes a new consolidated object). One undo point.",
+                 params: [ParamSpec("id", "uuid", "Consolidated object (definition id, as consolidate.list gives it)."),
+                          ParamSpec("mode", "string", "ask, propagate or variant.")],
+                 undo: .bus) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard vm.consolidateDefinitions[id] != nil else {
+                throw CommandError(code: .not_found, message: "unknown consolidated object: \(id.uuidString)")
+            }
+            let name = try p.string("mode")
+            guard let mode = ConsolidateCloseMode(rawValue: name) else {
+                throw CommandError(code: .bad_params, message: "mode: ask, propagate or variant (got '\(name)')")
+            }
+            vm.setConsolidateCloseMode(id, to: mode)
+            return .object(["id": .string(id.uuidString), "close_mode": .string(mode.rawValue)])
         }
 
         register("consolidate.make",
@@ -156,6 +180,9 @@ extension CommandRegistry {
                 "content_root_id": .stringOrNull(vm.editingContentRootID?.uuidString),
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
+                "close_mode": .stringOrNull(vm.editingConsolidateID.flatMap { vm.consolidateDefinitions[$0]?.closeMode.rawValue }),
+                // Placements (the open one included) + nested definitions using the open content.
+                "instance_count": .int(vm.editingConsolidateID.map { vm.consolidateUserCount($0) } ?? 0),
                 "renders": .array(bakes + rebakes),
             ])
         }

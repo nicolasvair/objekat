@@ -163,6 +163,27 @@ extension EditViewModel {
         return !placementIDs(forConsolidate: defID, excluding: object.id).isEmpty
     }
 
+    /// How many things use the content of a definition, `excluding` one placement: its placements on
+    /// the timeline PLUS the other definitions whose content holds it (`dependsOn`: an instance
+    /// nested inside another consolidated object's content, which the timeline's walk cannot see).
+    /// The number the "Ask" box announces, and `instance_count` of the API.
+    func consolidateUserCount(_ defID: UUID, excluding: UUID? = nil) -> Int {
+        let nested = consolidateDefinitions.values.filter { other in
+            other.id != defID && other.dependsOn.contains { $0.consolidateID == defID }
+        }.count
+        return placementIDs(forConsolidate: defID, excluding: excluding).count + nested
+    }
+
+    /// Sets what closing an edit session does to the other instances (the setting belongs to the
+    /// consolidated object, i.e. to its definition). The undo point is the caller's (the bus, or
+    /// the UI's own `pushUndo` before the call).
+    func setConsolidateCloseMode(_ defID: UUID, to mode: ConsolidateCloseMode) {
+        guard var def = consolidateDefinitions[defID], def.closeMode != mode else { return }
+        def.closeMode = mode
+        consolidateDefinitions[defID] = def
+        isDirty = true
+    }
+
     /// True if the current selection holds at least one consolidated object linked to other
     /// instances → arms the overlay of purple lines in the timeline (LinkOverlay).
     var hasSelectedLinkedObject: Bool {
@@ -415,7 +436,8 @@ extension EditViewModel {
             self.consolidateDefinitions[defID] = ConsolidateDefinition(
                 id: defID, name: prev?.name ?? restored.displayName, wave: wav.lastPathComponent,
                 revision: nextRevision, wasGroup: prev?.wasGroup ?? restored.isGroup, rootIsContent: true,
-                dependsOn: self.collectConsolidateDependencies(restored))
+                dependsOn: self.collectConsolidateDependencies(restored),
+                closeMode: prev?.closeMode ?? .ask)
             // Propagates the new wave to ALL the placements of this definition (model + engine).
             self.propagateConsolidateUpdate(defID: defID, exceptPlacementID: UUID(), delta: 0)
             self.markConsolidateResynced(defID)   // a transient ✓ on the resynchronised placements
@@ -1106,7 +1128,8 @@ extension EditViewModel {
         consolidateDefinitions[defID] = ConsolidateDefinition(
             id: defID, name: stage.displayName, wave: wav.lastPathComponent,
             revision: nextRevision, wasGroup: original.isGroup, rootIsContent: true,
-            dependsOn: collectConsolidateDependencies(original))
+            dependsOn: collectConsolidateDependencies(original),
+            closeMode: consolidateDefinitions[defID]?.closeMode ?? .ask)
 
         // The instance level is whatever the stage holds now: the session was where it could be
         // edited, and what it holds is kept (a cancel is what gives the old values back).

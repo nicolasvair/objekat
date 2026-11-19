@@ -17,6 +17,19 @@ struct ConsolidateDependency: Codable, Equatable {
     }
 }
 
+// MARK: - What closing a session does to the OTHER instances
+
+/// The setting of a consolidated object (carried by its definition, so by the object and not by an
+/// instance): what closing an edit session does when the content changed.
+/// - `ask`: ask when other instances use the content (none ⇒ propagate without asking).
+/// - `propagate`: the new content replaces the old one in every instance (the historical behaviour).
+/// - `variant`: the instance that was opened leaves for a NEW consolidated object; the others keep
+///   the old content.
+/// Written on disk as its raw value; an absent or unknown value reads as `ask` (format 38).
+enum ConsolidateCloseMode: String, Codable, CaseIterable {
+    case ask, propagate, variant
+}
+
 // MARK: - Consolidated object definition
 
 /// The content shared by a 'consolidated object': a group reused at N places on the timeline
@@ -45,10 +58,13 @@ struct ConsolidateDefinition: Codable, Identifiable, Equatable {
     /// Used to detect the staleness of a 'group' definition that itself holds a consolidated object
     /// (`EditViewModel.isStale`).
     var dependsOn: [ConsolidateDependency] = []
+    /// What closing an edit session does to the other instances (format 38). Default `ask`.
+    var closeMode: ConsolidateCloseMode = .ask
 
     init(id: UUID, name: String, wave: String, revision: Int = 0, wasGroup: Bool = false,
          rootIsContent: Bool = false,
-         dependsOn: [ConsolidateDependency] = []) {
+         dependsOn: [ConsolidateDependency] = [],
+         closeMode: ConsolidateCloseMode = .ask) {
         self.id = id
         self.name = name
         self.wave = wave
@@ -56,6 +72,7 @@ struct ConsolidateDefinition: Codable, Identifiable, Equatable {
         self.wasGroup = wasGroup
         self.rootIsContent = rootIsContent
         self.dependsOn = dependsOn
+        self.closeMode = closeMode
     }
 
     // Tolerant decoding: absent fields ⇒ neutral values. The keys `volume`, `pan` and `isMuted`
@@ -63,7 +80,7 @@ struct ConsolidateDefinition: Codable, Identifiable, Equatable {
     // (and dropped at the next save). Nothing is rewritten — an instance already holds its own
     // volume/pan/mute, which the old synchronisation kept equal to them.
     enum CodingKeys: String, CodingKey {
-        case id, name, wave, revision, wasGroup, rootIsContent, dependsOn
+        case id, name, wave, revision, wasGroup, rootIsContent, dependsOn, closeMode
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -74,5 +91,7 @@ struct ConsolidateDefinition: Codable, Identifiable, Equatable {
         wasGroup  = try c.decodeIfPresent(Bool.self, forKey: .wasGroup) ?? false
         rootIsContent = try c.decodeIfPresent(Bool.self, forKey: .rootIsContent) ?? false
         dependsOn = try c.decodeIfPresent([ConsolidateDependency].self, forKey: .dependsOn) ?? []
+        // Tolerant: absent (a file before format 38) or unknown value ⇒ ask.
+        closeMode = (try? c.decodeIfPresent(ConsolidateCloseMode.self, forKey: .closeMode)) ?? .ask
     }
 }
