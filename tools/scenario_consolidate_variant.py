@@ -20,7 +20,7 @@ nesting, cross-tab, links).
 Exit: 0 if every assertion passes, 1 otherwise.
 """
 
-import array, json, os, shutil, struct, subprocess, sys, tempfile, time, traceback
+import array, json, os, re, shutil, struct, subprocess, sys, tempfile, time, traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -702,6 +702,100 @@ def main():
     check("pasted: a brand-new object that keeps `variant`",
           nd is not None and nd != def_id and defs().get(nd, {}).get("close_mode") == "variant",
           "%s %s" % (nd, defs().get(nd)))
+
+    # ── 11 — the ASK box (what the hand sees; the policy answers in its place) ──
+    section("11 — the ask box: Everywhere / New variant / Cancel, by the double click that closes")
+
+    def close_by_hand(inst):
+        """The hand's gesture: a double click on the open instance (EditViewModel.handleCanvasClick → closeConsolidate())."""
+        cmd("selection.click", id=inst, zone="body", double=True)
+
+    def last_dialog():
+        j = cmd("app.dialogs")["dialogs"]
+        return j[-1] if j else None
+
+    def_id, i1, i2, i3 = build("s11")
+    cmd("app.dialogs", clear=True)
+    cmd("app.set_dialog_policy", policy="assume_no")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    dump_open = state_dump()
+    close_by_hand(i1); settle()
+    dlg = last_dialog()
+    check("ask + 2 other instances + a change: the box was put (answered `cancel` by the policy)",
+          dlg is not None and dlg["answer"] == "cancel" and bool(re.search(r"\b2\b", dlg["info"])), str(dlg))
+    check("Cancel: the session stays open, nothing re-baked, no undo point, nothing laid",
+          cmd("consolidate.state")["editing"] and defs()[def_id]["revision"] == 0 and len(defs()) == 1
+          and state_dump() == dump_open)
+    cmd("app.set_dialog_policy", policy="assume_yes")
+    cmd("app.dialogs", clear=True)
+    close_by_hand(i1); settle()
+    for _ in range(100):
+        if not cmd("consolidate.state")["editing"] and not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    dlg = last_dialog()
+    check("Everywhere (the policy's yes): re-baked for the three",
+          dlg is not None and dlg["answer"] == "everywhere" and defs()[def_id]["revision"] == 1
+          and len(defs()) == 1, str(dlg))
+    # no question when nothing changed
+    cmd("app.dialogs", clear=True)
+    cmd("app.set_dialog_policy", policy="assume_no")
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    close_by_hand(i2); settle()
+    check("nothing changed: no box, the session closes",
+          not cmd("consolidate.state")["editing"] and cmd("app.dialogs")["dialogs"] == [])
+    # propagate / variant settings never ask
+    cmd("consolidate.set_close_mode", id=def_id, mode="propagate")
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    tweak_c2(i2, -9.0)
+    close_by_hand(i2); settle()
+    for _ in range(100):
+        if not cmd("consolidate.state")["editing"] and not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    check("a `propagate` setting does not ask", cmd("app.dialogs")["dialogs"] == [] and defs()[def_id]["revision"] == 2)
+    cmd("consolidate.set_close_mode", id=def_id, mode="variant")
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    tweak_c2(i2, -3.0)
+    close_by_hand(i2); settle()
+    for _ in range(100):
+        if not cmd("consolidate.state")["editing"] and not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    check("a `variant` setting does not ask and forks", cmd("app.dialogs")["dialogs"] == [] and len(defs()) == 2)
+
+    # a lone instance: nobody to ask
+    PROJ_L = os.path.join(ROOT, "s11b"); os.makedirs(PROJ_L, exist_ok=True)
+    globals()["PROJ"] = PROJ_L
+    cmd("project.new")
+    cmd("project.save_as", path=os.path.join(PROJ_L, "p.objekat"))
+    lone = cmd("object.add", path=BIP, lane=3, start=0.0)["id"]
+    r = cmd("consolidate.make", id=lone); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    lone_def = next(iter(defs()))
+    cmd("app.dialogs", clear=True)
+    cmd("consolidate.edit_begin", placement=lone); settle()
+    cmd("object.set_gain", ids=[children(find(lone))[0]["id"]], db=-4.0); settle()
+    close_by_hand(lone); settle()
+    for _ in range(100):
+        if not cmd("consolidate.state")["editing"] and not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    check("a lone instance: no box (no one to ask), it re-bakes",
+          cmd("app.dialogs")["dialogs"] == [] and defs()[lone_def]["revision"] == 1)
+    # ... but an instance nested in another object counts: X on the timeline + B holding X
+    xc2 = cmd("object.add", path=BIP, lane=8, start=5.0)["id"]
+    r = cmd("consolidate.make", id=xc2); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    x_def2 = next(d for d in defs() if d != lone_def)
+    xc3 = cmd("object.duplicate", ids=[xc2])["ids"][0]
+    yc2 = cmd("object.add", path=BIP, lane=9, start=7.0)["id"]
+    gb2 = cmd("group.create", ids=[xc3, yc2])["id"]
+    r = cmd("consolidate.make", id=gb2); cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+    cmd("app.dialogs", clear=True)
+    cmd("consolidate.edit_begin", placement=xc2); settle()
+    cmd("object.set_gain", ids=[children(find(xc2))[0]["id"]], db=-5.0); settle()
+    close_by_hand(xc2); settle()
+    dlg = last_dialog()
+    check("an instance nested inside another object counts as one (the box says 1)",
+          dlg is not None and dlg["answer"] == "cancel" and bool(re.search(r"\b1\b", dlg["info"])), str(dlg))
+    cmd("consolidate.edit_cancel"); settle()
+    cmd("app.set_dialog_policy", policy="ask")
 
     section("done")
     print("\n%d failure(s)" % len(fails))

@@ -182,6 +182,13 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
   nothing and needs no mode. In `variant` mode with no other instance the fork happens all the same.
   One undo point for the whole commit: undoing it gives back the object as it was before the opening,
   the variant gone; redo brings it back.
+- The interface's own closing (the double click on the open object) with `ask`, a changed content and
+  other instances using it raises ONE box — "Apply the changes to “name”?", the count of the others,
+  Everywhere / New variant / Cancel (Cancel: the session stays open, no undo point; no "don't ask
+  again" box). A script meets it only through the dialogue policy, which answers in its place and
+  records it (`app.dialogs`): `assume_yes` = Everywhere (`answer: "everywhere"`), `assume_no` and a
+  session with no interface = Cancel (`answer: "cancel"`). No box when nothing changed, when the setting
+  is not `ask`, or when nobody else uses the content.
 - Closing a variant INSIDE another consolidated object's open content points that instance at the
   variant: the parent's `dependsOn` records the new definition when the parent closes.
 - A consolidated object pasted into another tab is a new definition and keeps its `close_mode`.

@@ -214,6 +214,48 @@ extension EditViewModel {
         }
     }
 
+    // MARK: - Ask (close a consolidated object: everywhere / new variant / cancel)
+
+    /// The box a consolidated object set to "ask" raises when its edit is closed with a CHANGED content
+    /// and other instances use it: apply the change everywhere, or leave for a new variant (the others
+    /// stay as they were). nil = cancel — the session stays open, nothing was done. No "don't ask
+    /// again" box: the setting is in the synoptic's header, where the hand chooses it on purpose.
+    ///
+    /// The automatic policies answer like the other questions of this file: `assume_yes` takes the first
+    /// button (everywhere — the historical closing), `assume_no` cancels; a session with no interface
+    /// cancels (nobody to ask, and nothing must be decided in silence).
+    func askConsolidateClose(name: String, others: Int) -> ConsolidateCloseMode? {
+        let title = L("consolidate.close.title", name)
+        let info = Ln("consolidate.close.info", others, others)
+        switch dialogPolicy {
+        case .assumeYes:
+            recordDialog(title, info, answer: "everywhere")
+            return .propagate
+        case .assumeNo:
+            recordDialog(title, info, answer: "cancel")
+            return nil
+        case .ask:
+            guard hasInterface else {
+                recordDialog(title, info, answer: "cancel")
+                return nil
+            }
+            let alert = NSAlert()
+            alert.messageText = title
+            alert.informativeText = info
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: L("consolidate.close.everywhere"))
+            alert.addButton(withTitle: L("consolidate.close.newVariant"))
+            let cancel = alert.addButton(withTitle: L("common.cancel"))
+            cancel.keyEquivalent = "\u{1b}"
+            Diag.log(.dlg, "question affichée : \(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200))")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:  return .propagate
+            case .alertSecondButtonReturn: return .variant
+            default:                       return nil
+            }
+        }
+    }
+
     // MARK: - Ask (a choice from a list)
 
     /// A choice among several titles. Returns the chosen index, or `nil` if cancelled.

@@ -1061,7 +1061,17 @@ extension EditViewModel {
             return
         }
 
-        let closeMode = mode
+        // The content changed. A setting of "ask" with other instances using it puts the question to the
+        // hand — HERE, before anything is torn down: cancelling leaves the session open, no undo point.
+        // (The command API never gets here asking: `consolidate.edit_commit` refuses without a mode.)
+        var closeMode = mode
+        if closeMode == nil, def.closeMode == .ask {
+            let others = consolidateUserCount(defID, excluding: placementID)
+            if others > 0 {
+                guard let answer = askConsolidateClose(name: def.name, others: others) else { return }
+                closeMode = answer
+            }
+        }
 
         // The wave lasts as long as the root's window: nothing to render from it.
         let renderStart = content.startTime
