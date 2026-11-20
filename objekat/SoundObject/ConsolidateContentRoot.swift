@@ -37,6 +37,57 @@ extension SoundObject {
         return (minS, maxE)
     }
 
+    // MARK: - A neutral root
+
+    /// True when this group, as the CONTENT ROOT of a consolidated object, adds nothing of its own to
+    /// what its children already are: it is a mere frame, and can be left out of what is shown (an open
+    /// session lifts its children under the stage) and of what de-consolidating builds (one level of
+    /// group instead of two). Evaluated LIVE on the object as it stands — never stored, so editing the
+    /// root (a plugin, a fade, a marker…) makes it visible again by itself.
+    ///
+    /// Neutral means every one of:
+    ///   • a group, not infinite;
+    ///   • no plugin, no instrument, no ARA source (a gain stage is a plugin: @see GainStage);
+    ///   • volume 0, pan 0, not muted, fades 0, the legacy chain gains at 0, the channel mode as it
+    ///     comes (`.lr`);
+    ///   • no send, no automation, no loop;
+    ///   • no recording input (audio or MIDI);
+    ///   • no MARKER of its own (a marker is something the user laid on it; a timeline COMMENT is not
+    ///     carried by the object, so it never counts);
+    ///   • a window that IS the span its children occupy (the envelope of their `bakeSpan`s): nothing of the children hangs
+    ///     out of it, and it is not wider than them either.
+    ///
+    /// Pure, no engine: @see tools/test_consolidate_neutral_root.swift
+    var isNeutralContentRoot: Bool {
+        guard isGroup, !isInfinite else { return false }
+        guard plugins.isEmpty, instruments.isEmpty, araSource == nil else { return false }
+        guard volume == 0, pan == 0, !isMuted, fadeIn == 0, fadeOut == 0 else { return false }
+        guard legacyChainInGainDb == 0, legacyChainOutGainDb == 0, channelMode == .lr else { return false }
+        guard sends.isEmpty, automation.isEmpty, !loopEnabled else { return false }
+        guard recordInput == nil, recordMidiInput == nil else { return false }
+        guard markers.isEmpty else { return false }
+        // The span of the CHILDREN alone: `bakeSpan` also holds the root's own window, which would
+        // make a window wider than its children look like their span.
+        guard case .group(let kids, _) = kind, !kids.isEmpty else { return false }
+        let lo = kids.map { $0.bakeSpan.start }.min()!
+        let hi = kids.map { $0.bakeSpan.end }.max()!
+        return abs(lo - startTime) < 1e-9 && abs(hi - (startTime + duration)) < 1e-9
+    }
+
+    /// The same stage with its neutral content root left out: the root's children become the stage's
+    /// own, nothing else moves (a child's start is absolute and its lane is in the root's frame, which
+    /// is the stage's once the root sits on lane 0). `self` unchanged when it has no single group
+    /// child that is neutral. One level only: a neutral root below the root is a real group of the
+    /// content and stays.
+    func withNeutralContentRootFlattened() -> SoundObject {
+        guard case .group(let kids, let expanded) = kind, kids.count == 1,
+              kids[0].isNeutralContentRoot, kids[0].lane == 0,
+              case .group(let grandKids, _) = kids[0].kind else { return self }
+        var out = self
+        out.kind = .group(children: grandKids, isExpanded: expanded)
+        return out
+    }
+
     // MARK: - Reading a sidecar
 
     /// The root of a consolidated object's CONTENT, from the subtree its sidecar holds.

@@ -208,6 +208,13 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
 - A consolidated object pasted into another tab is a new definition and keeps its `close_mode`.
 - A closed instance takes `object.set_speed` / `object.set_reversed` like any clip, and opening then
   closing keeps both (the session plays the content at speed 1 and forwards).
+- `consolidate.state` — `content_root_neutral`: whether the open content root is a NEUTRAL frame
+  (a non-infinite group with no plugin / instrument / ARA source, 0 dB, centred, unmuted, no fade, no send,
+  no automation, no loop, no marker, no recording input, and a window equal to the span of its children),
+  read LIVE; null when no session is open.
+- `consolidate.unmake` on an instance whose content root is neutral leaves that root out: the detached
+  group holds the sounds directly (one level, same sound, same mix). A root that is not neutral stays
+  a group below the detached one. No format change.
 - Session format 37 → 38: `objectDefinitions[].closeMode` (absent or unknown = `ask`).
 - **Dropping into an open object whose content is a lone clip** (`debug.file_drop`, `clipboard.paste`,
   `group.reparent`, any door onto `addChild`): the content root A is ENVELOPED in a new neutral group A'

@@ -1777,7 +1777,8 @@ extension EditViewModel {
 
     /// Detaches an instance from its definition (QC-2 of the plan): the instance becomes an ORDINARY
     /// GROUP G holding the content — the same construction as the stage of an editing session
-    /// (@see SoundObject.consolidateStage), with NO link and NO session. G keeps everything that was the
+    /// (@see SoundObject.consolidateStage), with NO link and NO session, except that a NEUTRAL content root
+    /// is left out (its children go directly under G). G keeps everything that was the
     /// instance's — id, FX (their states captured), fader / pan / mute, window, fades, sends, stem, label,
     /// colour, automation, loop — and its one child A is the content root from the sidecar (fresh ids,
     /// its own FX / fader / window / fades / children, a nested instance staying an instance), laid so
@@ -1826,6 +1827,10 @@ extension EditViewModel {
         instance.sends = sendsWithLiveStates(of: placement)
         var group = SoundObject.consolidateStage(placement: instance, content: content,
                                                  definitionID: nil, waveZero: placement.consolidateWaveZero)
+        // A content root that is a mere frame (@see SoundObject.isNeutralContentRoot) is not carried
+        // over as a second level of group: its children go straight under G. Only one level, and only
+        // here — the model of an open session keeps the root.
+        group = group.withNeutralContentRootFlattened()
         if case .group(let kids, _) = group.kind { group.kind = .group(children: kids, isExpanded: false) }
 
         removeFromEngine(placement)

@@ -185,6 +185,10 @@ extension CommandRegistry {
                 // The CONTENT ROOT inside the open stage: the one child of the placement, and the
                 // only thing a commit bakes (@see SoundObject.consolidateStage).
                 "content_root_id": .stringOrNull(vm.editingContentRootID?.uuidString),
+                // Whether that root is a mere frame (@see SoundObject.isNeutralContentRoot), read LIVE; null
+                // when no session is open.
+                "content_root_neutral": vm.editingContentRootID.flatMap { vm.find(id: $0) }
+                    .map { JSONValue.bool($0.isNeutralContentRoot) } ?? .null,
                 // The stack has more than one level when a consolidated object is opened INSIDE another.
                 "depth": .int(vm.consolidateEditStack.count),
                 // What the violet traits join the open instance to (empty while it closes in `variant`).

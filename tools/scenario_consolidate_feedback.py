@@ -373,6 +373,56 @@ def main():
     check("committed: the twin plays the moved sound too (0.5..0.9 s) on top of A's burst (0..0.3 s)",
           peak(tw, 0.5, 0.9) > 0.3 and peak(tw, 0.0, 0.3) > 0.3, "%s %s" % (peak(tw, 0.5, 0.9), peak(tw, 0.0, 0.3)))
 
+    section("4 — a NEUTRAL content root: read live, and left out when detaching (INC 4)")
+
+    # ── 4a: the predicate, read live through consolidate.state ──
+    def_id, i1, twin = group_content("s4a")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    st = cmd("consolidate.state")
+    root_id = st["content_root_id"]
+    check("the content root of a plain group of two sounds is neutral (a mere frame)",
+          st["content_root_neutral"] is True, str(st.get("content_root_neutral")))
+    cmd("object.set_gain", ids=[root_id], db=-6.0); settle()
+    check("a fader on the root makes it visible again (evaluated live)",
+          cmd("consolidate.state")["content_root_neutral"] is False)
+    cmd("object.set_gain", ids=[root_id], db=0.0); settle()
+    check("... and back to 0 dB makes it neutral again", cmd("consolidate.state")["content_root_neutral"] is True)
+    cmd("object.set_mute", ids=[root_id], muted=True); settle()
+    check("a muted root is not neutral", cmd("consolidate.state")["content_root_neutral"] is False)
+    cmd("object.set_mute", ids=[root_id], muted=False); settle()
+    cmd("consolidate.edit_cancel"); settle()
+    check("no session: the field is null", cmd("consolidate.state")["content_root_neutral"] is None)
+
+    # ── 4b: detaching a neutral root — ONE level of group, the same sound ──
+    pre_mix = export_mix("s4b_pre")
+    r = cmd("consolidate.unmake", placement=twin); settle()
+    g = find(twin)
+    kids = children(g)
+    check("the detached instance is a group holding the sounds DIRECTLY (no neutral group between)",
+          is_group(g) and len(kids) == 2 and all(kind(c).get("type") == "clip" for c in kids),
+          json.dumps([kind(c).get("type") for c in kids]))
+    check("it is no longer linked to the definition", not r["still_linked"] and not g.get("definitionID"))
+    post_mix = export_mix("s4b_post")
+    rb, ra = rms(pre_mix, 0.0, duration_of(pre_mix)), rms(post_mix, 0.0, duration_of(post_mix))
+    check("the mix is the same (RMS %.5f / %.5f)" % (rb, ra), rb > 0.001 and abs(rb - ra) < 1e-3 * max(rb, 1e-9) + 1e-5)
+    cmd("edit.undo"); settle()
+    check("one undo brings the linked instance back", find(twin).get("definitionID") == def_id
+          and kind(find(twin)).get("type") == "clip")
+
+    # ── 4c: a root that is NOT neutral keeps its level ──
+    def_id, i1, twin = group_content("s4c")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    root_id = cmd("consolidate.state")["content_root_id"]
+    cmd("object.set_gain", ids=[root_id], db=-6.0); settle()
+    commit("propagate")
+    cmd("consolidate.unmake", placement=twin); settle()
+    g = find(twin)
+    kids = children(g)
+    check("a content root with a fader stays a group under the detached instance",
+          len(kids) == 1 and is_group(kids[0]) and abs(kids[0].get("volume", 0.0) + 6.0) < 1e-6,
+          json.dumps([(kind(c).get("type"), c.get("volume")) for c in kids]))
+    check("... and it still holds its two sounds", len(children(kids[0])) == 2)
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0
