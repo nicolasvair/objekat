@@ -334,11 +334,19 @@ extension EditViewModel {
                               insertion: plan) {
             return FileDropOutcome(refused: true)
         }
+        let dirtyBefore = isDirty
         pushUndo()
         // The same layout computation as the hover's ghost preview (`fileDropLayout`): what is laid
         // down has to be exactly what was shown under the cursor.
         let placed = placeDropEntries(entries, baseLane: baseLane, baseStart: baseStart, mode: mode,
                                       insertion: plan)
+        // A drop that landed NOTHING in the model (a target that could not hold it) leaves no undo
+        // point behind, the project's convention: no empty undo.
+        if !placed.contains(where: { find(id: $0) != nil }) {
+            _ = undoStack.popLast()
+            isDirty = dirtyBefore
+            return FileDropOutcome(placed: [], insertion: plan, refused: false)
+        }
         return FileDropOutcome(placed: placed, insertion: plan, refused: false)
     }
 

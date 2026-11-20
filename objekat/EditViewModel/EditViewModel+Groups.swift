@@ -172,8 +172,17 @@ extension EditViewModel {
 
     func addChild(_ child: SoundObject, toGroupID requestedGroupID: UUID) {
         // Whatever is added to the stage of an open consolidated object goes into its content (E7).
-        let toGroupID = sessionDropTarget(requestedGroupID)
-        guard let group = find(id: toGroupID) else { return }
+        // A content that is a lone clip is first enveloped in a neutral group, which then receives it.
+        var toGroupID = sessionDropTarget(requestedGroupID)
+        if let wrapper = wrapSessionContentInGroup(stageID: requestedGroupID) { toGroupID = wrapper }
+        addChild(child, toResolvedGroupID: toGroupID)
+    }
+
+    /// `addChild` once the target is settled (no session redirection). Never touches the model, the
+    /// engine nor the undo stack when the target is not a group: a clip does not hold children, and
+    /// the engine calls below would otherwise create objects the model does not have.
+    func addChild(_ child: SoundObject, toResolvedGroupID toGroupID: UUID) {
+        guard let group = find(id: toGroupID), case .group = group.kind else { return }
         var child = child
         child.stemID = group.stemID
         // …and its WHOLE sub-tree: a descendant has no bus of its own, it follows the root

@@ -66,9 +66,53 @@ extension EditViewModel {
     }
 
     /// Where a drop aimed at `groupID` lands: whatever is dropped on a stage goes into A (the stage
-    /// has exactly one child, always).
+    /// has exactly one child, always). When A is not a group (a consolidated clip) the stage itself is
+    /// returned: it is `addChild` that envelops A in a neutral group on the first real addition
+    /// (`wrapSessionContentInGroup`), so a pure question like a gate or a refusal check never mutates.
     func sessionDropTarget(_ groupID: UUID) -> UUID {
-        consolidateEditStack.first(where: { $0.placementID == groupID })?.contentRootID ?? groupID
+        guard let session = consolidateEditStack.first(where: { $0.placementID == groupID }) else { return groupID }
+        guard let root = find(id: session.contentRootID), root.isGroup else { return groupID }
+        return root.id
+    }
+
+    /// A consolidated object whose content is a LONE clip (a sound consolidated alone: the content
+    /// root A is a clip, a MIDI clip or an aux) has nowhere to hold a second sound. The first time
+    /// something is added to the open stage, A is ENVELOPED in a new group A' — neutral (volume 0, pan 0,
+    /// no plugin, no fade, the window of A) — which becomes the content root of the session. A stays
+    /// exactly as it was inside it (its own fader, FX, window, fades). Returns A' (the group that
+    /// receives the addition), or nil when there is nothing to wrap: not a stage, or the content is
+    /// already a group.
+    ///
+    /// The instance is NOT enlarged to hold what is added (the existing decision: an instance's window
+    /// is its own). Mirrors of the other instances are laid again by the usual debounce (`isDirty`),
+    /// and the parameter listening is re-armed on the new subtree. The undo point is the caller's
+    /// (a drop, a paste, a move each pushed theirs); a session's own ⌘Z cancels it anyway.
+    @discardableResult
+    func wrapSessionContentInGroup(stageID: UUID) -> UUID? {
+        guard let index = consolidateEditStack.firstIndex(where: { $0.placementID == stageID }),
+              let stage = find(id: stageID), case .group(let kids, _) = stage.kind,
+              let root = kids.first(where: { $0.id == consolidateEditStack[index].contentRootID }),
+              !root.isGroup else { return nil }
+
+        // A leaves the engine first (it is still nested in the stage there), with its plugin state
+        // captured; A' is then laid with A inside, like any group made from a child.
+        var inner = withCapturedPluginStates(root)
+        inner.lane = 0
+        inner.stemID = nil
+        removeFromEngine(root)
+        update(id: stageID) { obj in
+            guard case .group(let children, let isExpanded) = obj.kind else { return }
+            obj.kind = .group(children: children.filter { $0.id != root.id }, isExpanded: isExpanded)
+        }
+        selectedIDs.subtract([root.id])
+        let wrapper = SoundObject(startTime: root.startTime, duration: root.duration, lane: 0,
+                                  kind: .group(children: [inner], isExpanded: true))
+        addChild(wrapper, toResolvedGroupID: stageID)
+        consolidateEditStack[index].contentRootID = wrapper.id
+        if index == consolidateEditStack.count - 1 { armConsolidateEditParamWatch() }
+        isDirty = true
+        NSLog("[OBJECT] content of \(stageID) is a lone clip — enveloped in the group \(wrapper.id)")
+        return wrapper.id
     }
 
     /// The open stage that `id` lies strictly inside (its content), nil when it lies in none.

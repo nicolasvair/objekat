@@ -209,6 +209,13 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
 - A closed instance takes `object.set_speed` / `object.set_reversed` like any clip, and opening then
   closing keeps both (the session plays the content at speed 1 and forwards).
 - Session format 37 → 38: `objectDefinitions[].closeMode` (absent or unknown = `ask`).
+- **Dropping into an open object whose content is a lone clip** (`debug.file_drop`, `clipboard.paste`,
+  `group.reparent`, any door onto `addChild`): the content root A is ENVELOPED in a new neutral group A'
+  (A's window, lane 0) on the first addition, the new material lands inside A', and the session's
+  `content_root_id` of `consolidate.state` becomes A'. A second addition finds A' already a group and
+  wraps nothing. A group content is untouched. No auto-growth: A' keeps A's window. Cancelling the
+  session restores the model exactly (same `export.run` mix as before); a drop that places nothing
+  pushes no undo point and leaves the project unmodified.
 
 `tools/scenario_consolidate_variant.py` asserts all of it.
 

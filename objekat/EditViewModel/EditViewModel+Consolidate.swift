@@ -10,7 +10,11 @@ struct ConsolidateEditSession: Identifiable {
     /// The CONTENT ROOT inside the stage: the one child of the open placement, and the only thing a
     /// closing renders. The placement itself (`placementID`) is the STAGE — the instance level
     /// (@see SoundObject.consolidateStage).
-    let contentRootID: UUID
+    ///
+    /// A `var`: a content that is a lone clip (or MIDI clip, aux) is ENVELOPED in a new neutral group
+    /// the first time a sound is added to it (@see `wrapSessionContentInGroup`), and that group is
+    /// the content root from then on.
+    var contentRootID: UUID
     /// The edit-time instant of the position 0 of the wave the instance read when it was opened:
     /// `startTime − sourceOffset` of the closed placement. The content root was laid to start exactly
     /// there, and a new wave's own zero is measured against it (@see SoundObject.realignedInstance).
@@ -1547,7 +1551,7 @@ extension EditViewModel {
     /// (Re)installs the engine parameter listening for the current session: a LIVE knob
     /// movement does not go through the model, so it would never arm the re-mirroring without this.
     /// Idempotent (called again when plugins have been added).
-    private func armConsolidateEditParamWatch() {
+    func armConsolidateEditParamWatch() {
         // Only the CONTENT is listened to: the stage's own FX are the instance's, and moving one does
         // not change what the other instances play.
         guard let contentID = editingContentRootID, let live = find(id: contentID) else { return }
