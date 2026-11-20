@@ -32,17 +32,54 @@ enum ObjekatPalette {
     // pink/yellow/green imposed, then the rest spread out so that no pair of neighbouring hues
     // on the colour wheel follow one another — stems take their colour automatically in this
     // order as they are created, so two stems created one after the other must never look alike.
-    static let stems: [Color] = [
-        Color(hex: 0x0070EC),   // 0 blue    (Main)
-        Color(hex: 0x6C2DFC),   // 1 purple
-        Color(hex: 0xE50080),   // 2 pink
-        Color(hex: 0xB09300),   // 3 yellow
-        Color(hex: 0x50A600),   // 4 green
-        Color(hex: 0x0093B5),   // 5 cyan
-        Color(hex: 0xEB0E00),   // 6 red
-        Color(hex: 0x009873),   // 7 emerald
-        Color(hex: 0xC200E3),   // 8 magenta
-        Color(hex: 0xE27000)    // 9 amber
+    //
+    // Drawn in Display P3 (@see `displayP3`): the sRGB values below are what the palette was
+    // clipped to, and stay its identity (names, docs, tests).
+    static let stemsHex: [Int] = [
+        0x0070EC,   // 0 blue    (Main)
+        0x6C2DFC,   // 1 purple
+        0xE50080,   // 2 pink
+        0xB09300,   // 3 yellow
+        0x50A600,   // 4 green
+        0x0093B5,   // 5 cyan
+        0xEB0E00,   // 6 red
+        0x009873,   // 7 emerald
+        0xC200E3,   // 8 magenta
+        0xE27000    // 9 amber
+    ]
+
+    static let stems: [Color] = stemsHex.map { color(rgb: $0) }
+
+    // MARK: Display P3
+    //
+    // Nearly every stem and base colour sits ON the edge of sRGB (the Tailwind v4 envelope they come
+    // from is defined in OKLCh, wider than sRGB, and the hex values are its sRGB clip). On a P3
+    // screen they are drawn wider: same OKLCh lightness and hue, the chroma pushed so the colour
+    // stands at the same relative distance from the P3 edge as it did from the sRGB edge. Same
+    // lightness, so the ink chosen from the sRGB channels (`ObjectColorChoice`) stays right; on an
+    // sRGB screen the system clips them back to about the old values.
+    //
+    // Keyed by the sRGB 0xRRGGBB, which stays the stored identity (`SoundObject.colorHex`, the
+    // menu's palette): only the DRAWING changes. A free colour that is not in this table is drawn
+    // exactly as typed, in sRGB. Plugins (the native editor window, tinted on the JUCE side from
+    // `pluginsHex`) and the legacy pastels are left in sRGB.
+    static let displayP3: [Int: (Double, Double, Double)] = [
+        // stems
+        0x0070EC: (0.027, 0.400, 1.000),
+        0x6C2DFC: (0.395, 0.133, 0.988),
+        0xE50080: (0.857, 0.000, 0.495),
+        0xB09300: (0.686, 0.577, 0.000),
+        0x50A600: (0.369, 0.655, 0.000),
+        0x0093B5: (0.000, 0.578, 0.752),
+        0xEB0E00: (0.881, 0.074, 0.000),
+        0x009873: (0.000, 0.612, 0.442),
+        0xC200E3: (0.711, 0.000, 0.886),
+        0xE27000: (0.860, 0.439, 0.000),
+        // the object base colours (`ObjectColorChoice.baseHex`; black, grey and white need nothing)
+        0xFF2D2D: (0.991, 0.000, 0.091),
+        0xFF8A00: (0.973, 0.541, 0.000),
+        0x00FF5A: (0.387, 1.000, 0.380),
+        0x00C8FF: (0.305, 0.776, 1.000)
     ]
 
     /// The 16 pastels in 0xRRGGBB — what a project written before the free colours still points
@@ -99,8 +136,13 @@ enum ObjekatPalette {
     static func stem(_ i: Int) -> Color   { stems[((i % stems.count) + stems.count) % stems.count] }
     static func object(_ i: Int) -> Color { objects[((i % objects.count) + objects.count) % objects.count] }
     static func objectHex(_ i: Int) -> Int { objectsHex[((i % objectsHex.count) + objectsHex.count) % objectsHex.count] }
-    /// An opaque sRGB colour from 0xRRGGBB (an object's free colour, `SoundObject.colorHex`).
-    static func color(rgb: Int) -> Color { Color(hex: UInt32(truncatingIfNeeded: rgb & 0xFFFFFF)) }
+    /// An opaque colour from 0xRRGGBB (an object's free colour, `SoundObject.colorHex`): its Display P3
+    /// version when it is a palette colour (@see `displayP3`), otherwise the sRGB value as typed.
+    static func color(rgb: Int) -> Color {
+        let v = rgb & 0xFFFFFF
+        if let p = displayP3[v] { return Color(.displayP3, red: p.0, green: p.1, blue: p.2, opacity: 1) }
+        return Color(hex: UInt32(truncatingIfNeeded: v))
+    }
     static func plugin(_ i: Int) -> Color { plugins[((i % plugins.count) + plugins.count) % plugins.count] }
     static func pluginHex(_ i: Int) -> Int { pluginsHex[((i % pluginsHex.count) + pluginsHex.count) % pluginsHex.count] }
     static func stemName(_ i: Int) -> String { stemNames[((i % stemNames.count) + stemNames.count) % stemNames.count] }
