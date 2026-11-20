@@ -798,7 +798,7 @@ def main():
     cmd("app.set_dialog_policy", policy="ask")
 
     # ── 12 — a variant needs somebody else ──
-    section("12 — a single instance: Variant greyed, the closing always applies everywhere")
+    section("12 — a single instance: the whole selector greyed (variant_available), the closing always applies everywhere")
     PROJ_V = os.path.join(ROOT, "s12"); os.makedirs(PROJ_V, exist_ok=True)
     globals()["PROJ"] = PROJ_V
     cmd("project.new")
@@ -854,6 +854,107 @@ def main():
     check("one on the timeline + one held by another object: available (same count as the box)",
           defs()[nd]["instance_count"] == 2 and defs()[nd]["variant_available"] is True,
           str(defs()[nd]))
+
+    # ── 13 — « Remember »: the answer becomes the object's setting ──
+    section("13 — remember: edit_commit {mode, remember} stores the answer as the object's setting")
+
+    def mode_of(d):
+        return defs()[d]["close_mode"]
+
+    def commit_remember(mode, remember):
+        r = cmd("consolidate.edit_commit", mode=mode, remember=remember)
+        j = cmd("job.wait", id=r["job_id"], timeout_ms=60000)
+        settle()
+        return r, j
+
+    # variant + remember: D and D' both `variant`, ONE undo gives back the closing AND the setting
+    def_id, i1, i2, i3 = build("s13a")
+    check("ask to start with", mode_of(def_id) == "ask")
+    dump0 = state_dump()
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    r, j = commit_remember("variant", True)
+    ds = defs()
+    new_ids = [d for d in ds if d != def_id]
+    check("variant + remember: forked, remembered, two definitions", r["forked"] is True
+          and r["remembered"] is True and len(ds) == 2 and len(new_ids) == 1, str(r))
+    check("variant + remember: D is now `variant` AND the variant D' inherits it",
+          mode_of(def_id) == "variant" and ds[new_ids[0]]["close_mode"] == "variant", str(ds))
+    cmd("edit.undo"); settle()
+    check("ONE undo: D' gone AND D's setting back to `ask`, the instance as before the opening",
+          len(defs()) == 1 and mode_of(def_id) == "ask" and def_of(i1) == def_id and state_dump() == dump0,
+          str(defs()))
+    cmd("edit.redo"); settle()
+    check("redo: the variant AND the memorised setting come back", len(defs()) == 2
+          and mode_of(def_id) == "variant")
+    cmd("edit.undo"); settle()
+
+    # propagate + remember: everywhere, and the setting is `propagate`
+    def_id, i1, i2, i3 = build("s13b")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    r, j = commit_remember("propagate", True)
+    check("propagate + remember: everywhere (revision 1), the setting is `propagate`, one definition",
+          r["forked"] is False and r["remembered"] is True and len(defs()) == 1
+          and defs()[def_id]["revision"] == 1 and mode_of(def_id) == "propagate", str(defs()))
+    cmd("edit.undo"); settle()
+    check("one undo: revision and setting both back", defs()[def_id]["revision"] == 0 and mode_of(def_id) == "ask")
+
+    # remember:false (or absent) leaves the setting alone
+    def_id, i1, i2, i3 = build("s13c")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    r, j = commit_remember("propagate", False)
+    check("remember false: the setting is untouched", r["remembered"] is False and mode_of(def_id) == "ask")
+
+    # nothing changed: nothing remembered
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    r, j = commit_remember("propagate", True)
+    check("nothing changed: nothing remembered (closes like a cancel)",
+          r["remembered"] is False and mode_of(def_id) == "ask", str(r))
+
+    # remember needs a mode
+    cmd("consolidate.edit_begin", placement=i2); settle()
+    try:
+        cmd("consolidate.edit_commit", remember=True)
+        check("remember without mode refused", False)
+    except ObjekatError as e:
+        check("remember without mode: bad_params", e.code == "bad_params", e.code)
+    cmd("consolidate.edit_cancel"); settle()
+
+    # the policy's yes journals « everywhere » and remembers nothing
+    cmd("app.dialogs", clear=True)
+    cmd("app.set_dialog_policy", policy="assume_yes")
+    cmd("consolidate.edit_begin", placement=i3); settle()
+    tweak_c2(i3, -9.0)   # a content that really differs from the one the commit above laid down
+    cmd("selection.click", id=i3, zone="body", double=True); settle()
+    for _ in range(100):
+        if not cmd("consolidate.state")["editing"] and not cmd("consolidate.state")["renders"]: break
+        time.sleep(0.3)
+    dlg = cmd("app.dialogs")["dialogs"]
+    check("assume_yes: answered `everywhere`, the setting stays `ask`",
+          dlg and dlg[-1]["answer"] == "everywhere" and mode_of(def_id) == "ask", str(dlg))
+    cmd("app.set_dialog_policy", policy="ask")
+
+    # a failed render writes nothing: the folder of the waves made read-only
+    def_id, i1, i2, i3 = build("s13d")
+    cons = os.path.join(PROJ, "samples", "consolidate")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    tweak_c2(i1)
+    os.chmod(cons, 0o555)
+    cmd("app.set_dialog_policy", policy="assume_no")   # the failure alert is journalled, never shown
+    try:
+        cmd("app.dialogs", clear=True)
+        r = cmd("consolidate.edit_commit", mode="variant", remember=True)
+        cmd("job.wait", id=r["job_id"], timeout_ms=60000); settle()
+        check("render failed: the setting is NOT written, no variant made, the session is still open",
+              mode_of(def_id) == "ask" and len(defs()) == 1 and cmd("consolidate.state")["editing"],
+              str((defs(), cmd("consolidate.state"))))
+    finally:
+        os.chmod(cons, 0o755)
+    check("...and the failure was reported", any(d["answer"] == "reported" for d in cmd("app.dialogs")["dialogs"]))
+    cmd("app.set_dialog_policy", policy="ask")
+    cmd("consolidate.edit_cancel"); settle()
 
     section("done")
     print("\n%d failure(s)" % len(fails))

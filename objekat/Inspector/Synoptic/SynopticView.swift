@@ -793,7 +793,7 @@ struct SynopticView: View {
         return HStack(spacing: 2) {
             ForEach(modes, id: \.self) { mode in
                 closeModeSegment(mode, on: cp.closeMode == mode,
-                                 enabled: mode != .variant || cp.variantAvailable)
+                                 enabled: cp.hasOtherInstances)
             }
         }
         .padding(2)
@@ -818,10 +818,12 @@ struct SynopticView: View {
             .contentShape(shape)
             .opacity(enabled ? 1 : 0.4)
             .onTapGesture { if enabled { actions.onSetCloseMode?(mode) } }
-            .help(enabled ? Self.closeModeHelp(mode) : L("synoptic.consolidate.closeMode.variant.disabled"))
+            // The whole selector is greyed with one sentence (the same on all three segments, so
+            // whichever one the pointer rests on says it).
+            .help(enabled ? Self.closeModeHelp(mode) : L("synoptic.consolidate.closeMode.disabled"))
             .accessibilityLabel(label)
             .accessibilityAddTraits(on ? [.isButton, .isSelected] : [.isButton])
-            .accessibilityHint(enabled ? "" : L("synoptic.consolidate.closeMode.variant.disabled"))
+            .accessibilityHint(enabled ? "" : L("synoptic.consolidate.closeMode.disabled"))
     }
 
     private func pill(_ text: String, rect: CGRect) -> some View {

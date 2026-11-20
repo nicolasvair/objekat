@@ -10,7 +10,11 @@ struct ConsolidateEditSession: Identifiable {
     /// The CONTENT ROOT inside the stage: the one child of the open placement, and the only thing a
     /// closing renders. The placement itself (`placementID`) is the STAGE — the instance level
     /// (@see SoundObject.consolidateStage).
-    let contentRootID: UUID
+    ///
+    /// A `var`: a content that is a lone clip (or MIDI clip, aux) is ENVELOPED in a new neutral group
+    /// the first time a sound is added to it (@see `wrapSessionContentInGroup`), and that group is
+    /// the content root from then on.
+    var contentRootID: UUID
     /// The edit-time instant of the position 0 of the wave the instance read when it was opened:
     /// `startTime − sourceOffset` of the closed placement. The content root was laid to start exactly
     /// there, and a new wave's own zero is measured against it (@see SoundObject.realignedInstance).
@@ -35,6 +39,11 @@ struct ConsolidateEditSession: Identifiable {
     /// "undo detaches the instance" bug). Closing and cancelling cut the stack back to this depth.
     /// Kept in step by `pushUndo` when the stack's cap drops its oldest entry.
     var undoDepthAtOpen: Int = 0
+    /// The project's items as they were just BEFORE the opening (the stage's placement still a closed
+    /// clip). What crosses the content's boundary during the session is read against it: an object that
+    /// lies inside the content now and was somewhere else here ENTERED, and goes back there on a cancel
+    /// or a ⌘Z of the commit (@see `sessionTraffic`). A value copy: the arrays share their storage.
+    var itemsAtOpen: [SoundObject] = []
     /// The speed the instance had when it was opened (1 for a clip on its wave at speed 1). The session
     /// plays the content at speed 1 and forwards; what the closing builds goes back to this speed
     /// (@see SoundObject.closedInstance).
@@ -186,15 +195,15 @@ extension EditViewModel {
     func isForkingStage(_ id: UUID) -> Bool {
         guard let session = consolidateEditStack.first(where: { $0.placementID == id }) else { return false }
         return consolidateDefinitions[session.defID]?.closeMode == .variant
-            && consolidateVariantAvailable(session.defID)
+            && consolidateHasOtherInstances(session.defID)
     }
 
-    /// True when a variant has something to preserve: the object has at least one OTHER instance
+    /// True when a closing has somebody else to answer to: the object has at least one OTHER instance
     /// (same count as the "Ask" box and `instance_count`, nested uses included). With a single
-    /// instance the "Variant" position of the selector is greyed and a closing always applies
-    /// everywhere, whatever the stored setting says (which is left as it is, and takes effect again
-    /// as soon as a second instance exists).
-    func consolidateVariantAvailable(_ defID: UUID) -> Bool {
+    /// instance the WHOLE selector is greyed (nothing to ask, nothing to preserve) and a closing
+    /// always applies everywhere, whatever the stored setting says (which is left as it is, and
+    /// takes effect again as soon as a second instance exists).
+    func consolidateHasOtherInstances(_ defID: UUID) -> Bool {
         consolidateUserCount(defID) > 1
     }
 
@@ -977,7 +986,8 @@ extension EditViewModel {
                                                  contentRootID: contentRoot.id, oldWaveZero: waveZero,
                                                  originalPlacement: instance,
                                                  openedSubtree: contentRoot,
-                                                 undoDepthAtOpen: undoDepthAtOpen))
+                                                 undoDepthAtOpen: undoDepthAtOpen,
+                                                 itemsAtOpen: items))
 
         removeFromEngine(placement)
         update(id: placementID) { $0 = stage }
@@ -1037,7 +1047,13 @@ extension EditViewModel {
     /// re-bake) or `variant` (the opened instance leaves for a NEW consolidated object, a new
     /// definition with its own wave and sidecar; the others keep the old content and the old
     /// definition, untouched). nil = the object's setting. A closing with nothing changed forks nothing.
-    func closeConsolidate(mode: ConsolidateCloseMode? = nil) {
+    ///
+    /// `remember`: the closing ALSO stores `mode` as the object's own setting (`closeMode`), as the
+    /// "Remember" box of the Ask dialogue does for the answer given there. It is written by
+    /// `finishCloseConsolidate`, once the render has succeeded, so that one ⌘Z gives back both the
+    /// content and the setting — and nothing is written for a failed render, a Cancel or a closing
+    /// with no modification. Without a `mode` there is nothing to remember.
+    func closeConsolidate(mode: ConsolidateCloseMode? = nil, remember: Bool = false) {
         guard let defID = editingConsolidateID, let placementID = editingPlacementID,
               let contentID = editingContentRootID, let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, find(id: placementID) != nil, let content = find(id: contentID),
@@ -1079,11 +1095,13 @@ extension EditViewModel {
         // hand — HERE, before anything is torn down: cancelling leaves the session open, no undo point.
         // (The command API never gets here asking: `consolidate.edit_commit` refuses without a mode.)
         var closeMode = mode
+        var remembered: ConsolidateCloseMode? = (remember ? mode : nil)
         if closeMode == nil, def.closeMode == .ask {
             let others = consolidateUserCount(defID, excluding: placementID)
             if others > 0 {
                 guard let answer = askConsolidateClose(name: def.name, others: others) else { return }
-                closeMode = answer
+                closeMode = answer.mode
+                if answer.remember { remembered = answer.mode }
             }
         }
 
@@ -1119,7 +1137,8 @@ extension EditViewModel {
             self.finishCloseConsolidate(defID: defID, placementID: placementID, ok: ok,
                                         wav: wav, folder: folder, original: original,
                                         nextRevision: nextRevision, oldWaveZero: oldWaveZero,
-                                        renderStart: renderStart, renderEnd: renderEnd, variant: variant)
+                                        renderStart: renderStart, renderEnd: renderEnd, variant: variant,
+                                        remembered: remembered)
         }
         engine.renderConsolidateContent(toFileAsync: contentID.uuidString, filePath: wav.path,
                                         start: renderStart, end: renderEnd,
@@ -1192,7 +1211,8 @@ extension EditViewModel {
     private func finishCloseConsolidate(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
                                         folder: URL, original: SoundObject, nextRevision: Int,
                                         oldWaveZero: Double, renderStart: Double, renderEnd: Double,
-                                        variant: (id: UUID, name: String)? = nil) {
+                                        variant: (id: UUID, name: String)? = nil,
+                                        remembered: ConsolidateCloseMode? = nil) {
         guard engine != nil else { return }
         guard ok else {
             bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
@@ -1230,6 +1250,15 @@ extension EditViewModel {
         // points (the opening, the edits of the content) go the same way, for the same reason.
         // See `closeSessionUndo`.
         closeSessionUndo(pushing: snapshotWithSessionCancelled())
+
+        // "Remember" (the Ask box's case, or `edit_commit {remember}`): the answer becomes the object's
+        // own setting. Written HERE — after the undo point, which holds the setting as it was, and
+        // before the variant is built, so that D' inherits it — so ONE ⌘Z gives back the closing and
+        // the memorisation together. Not reached by a failed render or a Cancel.
+        if let remembered, var current = consolidateDefinitions[defID], current.closeMode != remembered {
+            current.closeMode = remembered
+            consolidateDefinitions[defID] = current
+        }
 
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
@@ -1318,6 +1347,8 @@ extension EditViewModel {
         // A real cancel gives back the instance exactly as it was opened. A closing with no change of
         // content rebuilds it from the stage, on the wave it already reads (so δ = 0, and the window is
         // only brought back inside the content if it had been dragged outside).
+        // What crossed the content's boundary, read while the stage is still there.
+        let traffic = consolidateEditStack.last.map { Self.sessionTraffic(of: $0, in: items) } ?? SessionTraffic()
         var restored = originalPlacement
         if keepingInstanceLevel, let defID,
            case .clip(let wavePath, _, let waveLen, _, _) = originalPlacement.kind {
@@ -1329,6 +1360,9 @@ extension EditViewModel {
         }
         layBackClosedInstance(restored, replacing: current)
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).
+        // The sounds that left the content go out of the world again (the instance gives the content
+        // back whole), the ones that entered it return to where they were.
+        restoreSessionTraffic(traffic)
 
         // The undo stack: a cancel leaves nothing behind it — the session's points (the opening,
         // the edits of the materialised content) are cut, since restoring one without its session
@@ -1365,7 +1399,12 @@ extension EditViewModel {
     private func snapshotWithSessionCancelled() -> EditSnapshot? {
         guard let placementID = editingPlacementID, let original = editingOriginalPlacement else { return nil }
         let snap = currentSnapshot()
-        return EditSnapshot(items: Self.replacingSubtree(placementID, with: original, in: snap.items),
+        // What crossed the content's boundary goes back where it came from: the sounds that entered
+        // return to their place, the ones that left are taken out of the world (the content, in the
+        // wave it had, holds them again).
+        let traffic = consolidateEditStack.last.map { Self.sessionTraffic(of: $0, in: snap.items) } ?? SessionTraffic()
+        let reverted = Self.revertingTraffic(traffic, in: Self.replacingSubtree(placementID, with: original, in: snap.items))
+        return EditSnapshot(items: reverted,
                             stems: snap.stems, consolidateDefinitions: snap.consolidateDefinitions,
                             tempo: snap.tempo, timeSigNumerator: snap.timeSigNumerator,
                             timeSigDenominator: snap.timeSigDenominator,
@@ -1528,7 +1567,7 @@ extension EditViewModel {
     /// (Re)installs the engine parameter listening for the current session: a LIVE knob
     /// movement does not go through the model, so it would never arm the re-mirroring without this.
     /// Idempotent (called again when plugins have been added).
-    private func armConsolidateEditParamWatch() {
+    func armConsolidateEditParamWatch() {
         // Only the CONTENT is listened to: the stage's own FX are the instance's, and moving one does
         // not change what the other instances play.
         guard let contentID = editingContentRootID, let live = find(id: contentID) else { return }
@@ -1582,7 +1621,7 @@ extension EditViewModel {
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let live = find(id: contentID) else { return }
         // `variant`: the others stay on the baked wave, nothing follows the edit.
-        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateHasOtherInstances(defID)) else { return }
 
         var snapshots: [UUID: SoundObject] = [:]
         for tid in liveMirrorTargets(defID: defID, origin: placementID) {
@@ -1618,7 +1657,7 @@ extension EditViewModel {
               let contentID = editingContentRootID,
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, let live = find(id: contentID) else { return }
-        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateHasOtherInstances(defID)) else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.
@@ -1754,7 +1793,8 @@ extension EditViewModel {
 
     /// Detaches an instance from its definition (QC-2 of the plan): the instance becomes an ORDINARY
     /// GROUP G holding the content — the same construction as the stage of an editing session
-    /// (@see SoundObject.consolidateStage), with NO link and NO session. G keeps everything that was the
+    /// (@see SoundObject.consolidateStage), with NO link and NO session, except that a NEUTRAL content root
+    /// is left out (its children go directly under G). G keeps everything that was the
     /// instance's — id, FX (their states captured), fader / pan / mute, window, fades, sends, stem, label,
     /// colour, automation, loop — and its one child A is the content root from the sidecar (fresh ids,
     /// its own FX / fader / window / fades / children, a nested instance staying an instance), laid so
@@ -1803,6 +1843,10 @@ extension EditViewModel {
         instance.sends = sendsWithLiveStates(of: placement)
         var group = SoundObject.consolidateStage(placement: instance, content: content,
                                                  definitionID: nil, waveZero: placement.consolidateWaveZero)
+        // A content root that is a mere frame (@see SoundObject.isNeutralContentRoot) is not carried
+        // over as a second level of group: its children go straight under G. Only one level, and only
+        // here — the model of an open session keeps the root.
+        group = group.withNeutralContentRootFlattened()
         if case .group(let kids, _) = group.kind { group.kind = .group(children: kids, isExpanded: false) }
 
         removeFromEngine(placement)

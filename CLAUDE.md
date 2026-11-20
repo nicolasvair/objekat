@@ -3214,6 +3214,42 @@ a second one elsewhere. The most exposed points:
   speed/reversal of an instance after reopening (by ear), and an observed engine oddity not investigated: a reversed
   render shows tone also in the 0.8-1.0 s bucket of a test.
 
+- **Consolidated object: feedback lot** (20 November 2026, ON THE BRANCH `feat/consolidate-feedback-2026-11-20`, NOT on
+  `main`; plan `docs/plan_consolidate_feedback_2026-11-20.md`, five increments, one or more commits each). **(1) The
+  "Edits" selector is greyed WHOLE** when the object has a single instance (stored `closeMode` kept and shown, one
+  tooltip, `set_close_mode` still allowed): `consolidateVariantAvailable` became `consolidateHasOtherInstances`.
+  **(2) "Remember"** check box in the Ask box (`NSAlert` suppression button): the answer becomes the object's
+  `closeMode`, written in `finishCloseConsolidate` AFTER `closeSessionUndo` and BEFORE the variant is built, so ONE ⌘Z
+  undoes the closing and the memorising; nothing is written on a failed render or Cancel; Everywhere + Remember gives
+  `propagate`, Variant + Remember sets `variant` on the old definition and the variant inherits it. API:
+  `consolidate.edit_commit {mode, remember}` (`remember` without `mode` is `bad_params`). **(3) Adding a sound to an open
+  content that is a LONE CLIP**: `addChild` is the funnel of the three doors (file drop, ⌘V, reparent); the first
+  addition ENVELOPS A in a new neutral group A' (A's window, lane 0) which becomes `contentRootID` (a `var`), the mirrors
+  are laid again, no auto-growth of the instance's window. `addChild(_:toResolvedGroupID:)` never touches the engine or
+  the undo when the target is not a group, and a file drop that places nothing leaves no undo point and no dirty flag.
+  **(4) Neutral content root** (`SoundObject.isNeutralContentRoot`, pure, evaluated live, `consolidate.state`
+  `content_root_neutral`): a group that is a mere frame (no plugin / gain stage / instrument / ARA, 0 dB, centred,
+  unmuted, no fade, send, automation, loop, marker, recording input, `.lr`, window = the envelope of its children —
+  the root's own `bakeSpan` would hide a window WIDER than the children). `consolidate.unmake` flattens it (one level,
+  same RMS). **NOT DONE: hiding it in the session display** (the plan's option A): `laneEntries.parentID` and the frame
+  helpers (`commentFrameOrigin/Siblings`, `containerGroupEntry`, the drag's `sourceGroupID`, ripple, lane insertion…) take
+  a group's row as its container, so a lifted level needs a decision (see the report of that day), nothing was
+  guessed. **(5) Crossing the content's edge** (Q8 a'/Q9): the gate lets objects leave AND enter; the session reads the
+  traffic against `ConsolidateEditSession.itemsAtOpen` and `openedSubtree` at its end (`EditViewModel+ConsolidateTraffic`,
+  pure `sessionTraffic` / `revertingTraffic`, no recording at the doors): Cancel and the ⌘Z of a commit put the exited
+  sounds out of the world again (the wave holds them: no duplicate) and the entered ones back at their original
+  parent / lane / start — the old build LOST an object dragged in then cancelled (test written first, failed, then
+  passed). The stage and the content root still cannot be taken out of place.
+  Verified headless (Debug build, 0 new warning): `tools/scenario_consolidate_feedback.py` (INC 3, 4 and 5: file drop /
+  ⌘V / `group.reparent` into a lone clip, no second envelope, cancel = same model AND same exported mix, neutral
+  predicate live, unmake one level with the same RMS, enter-then-cancel, enter-commit-undo, exit-cancel, exit-commit-undo,
+  reparent to another group), the "Remember" and greyed-selector sections of `scenario_consolidate_variant.py`,
+  `tools/test_consolidate_neutral_root.swift` (33). **Left to see on screen**: the greyed selector and its tooltip, the
+  "Remember" box in three languages, the envelope appearing in the open content (and its row), dragging a sound in and
+  out of an open object with the mouse then cancelling, and a drop AFTER A's end (A' keeps A's window, so that sound
+  falls outside the bake until the window is extended). Not tested (out of scope): an object dropped into another
+  instance's live MIRROR, which is replaced when the session ends.
+
 ### A parked project
 
 `claude/tracktion-au-seamless-swap-j2t708` — "switching an FX with no seam". One unmerged

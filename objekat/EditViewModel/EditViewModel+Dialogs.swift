@@ -218,19 +218,21 @@ extension EditViewModel {
 
     /// The box a consolidated object set to "ask" raises when its edit is closed with a CHANGED content
     /// and other instances use it: apply the change everywhere, or leave for a new variant (the others
-    /// stay as they were). nil = cancel — the session stays open, nothing was done. No "don't ask
-    /// again" box: the setting is in the synoptic's header, where the hand chooses it on purpose.
+    /// stay as they were). nil = cancel — the session stays open, nothing was done. The "Remember" box
+    /// (an `NSAlert` suppression button) sets the object's own `closeMode` to the chosen answer when
+    /// the closing succeeds (@see `finishCloseConsolidate`), so the box is not asked again; the setting
+    /// stays editable in the synoptic's header selector.
     ///
     /// The automatic policies answer like the other questions of this file: `assume_yes` takes the first
-    /// button (everywhere — the historical closing), `assume_no` cancels; a session with no interface
-    /// cancels (nobody to ask, and nothing must be decided in silence).
-    func askConsolidateClose(name: String, others: Int) -> ConsolidateCloseMode? {
+    /// button (everywhere — the historical closing) and never remembers, `assume_no` cancels; a session
+    /// with no interface cancels (nobody to ask, and nothing must be decided in silence).
+    func askConsolidateClose(name: String, others: Int) -> (mode: ConsolidateCloseMode, remember: Bool)? {
         let title = L("consolidate.close.title", name)
         let info = Ln("consolidate.close.info", others, others)
         switch dialogPolicy {
         case .assumeYes:
             recordDialog(title, info, answer: "everywhere")
-            return .propagate
+            return (.propagate, false)
         case .assumeNo:
             recordDialog(title, info, answer: "cancel")
             return nil
@@ -247,10 +249,14 @@ extension EditViewModel {
             alert.addButton(withTitle: L("consolidate.close.newVariant"))
             let cancel = alert.addButton(withTitle: L("common.cancel"))
             cancel.keyEquivalent = "\u{1b}"
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = L("consolidate.close.remember")
             Diag.log(.dlg, "question affichée : \(Diag.truncated(title, 80)) — \(Diag.truncated(info, 200))")
-            switch alert.runModal() {
-            case .alertFirstButtonReturn:  return .propagate
-            case .alertSecondButtonReturn: return .variant
+            let response = alert.runModal()
+            let remember = alert.suppressionButton?.state == .on
+            switch response {
+            case .alertFirstButtonReturn:  return (.propagate, remember)
+            case .alertSecondButtonReturn: return (.variant, remember)
             default:                       return nil
             }
         }
