@@ -423,6 +423,103 @@ def main():
           json.dumps([(kind(c).get("type"), c.get("volume")) for c in kids]))
     check("... and it still holds its two sounds", len(children(kids[0])) == 2)
 
+    section("5 — leaving the open content, and what a cancel gives back (INC 5)")
+
+    def x_clip(tag_start=3.0, lane=4):
+        return cmd("object.add", path=BIP, lane=lane, start=tag_start)["id"]
+
+    # ── 5c: a sound dragged INTO the open content, then the session CANCELLED (test written FIRST:
+    #        the sound used to be lost — the stage was replaced by the instance as it was opened) ──
+    def_id, i1, twin = group_content("s5c")
+    X = x_clip()
+    settle()
+    pre = state_dump()
+    pre_mix = export_mix("s5c_pre")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    cmd("group.reparent", ids=[X], group=i1, child_lane=1); settle()
+    _, root_id = content_root()
+    check("5c: the sound is now inside the content", parent_of(X) is not None and parent_of(X)["id"] == root_id,
+          str(parent_of(X) and parent_of(X)["id"]))
+    cmd("consolidate.edit_cancel"); settle()
+    x = find(X)
+    check("5c: after Cancel the sound is BACK where it was (the old build: gone)", x is not None, "lost")
+    check("5c: ... at the root, on its lane and at its start",
+          x is not None and parent_of(X) is None and x["lane"] == 4 and near(x["startTime"], 3.0),
+          json.dumps({k: (x or {}).get(k) for k in ("lane", "startTime")}))
+    check("5c: the whole model is exactly what it was before the session", state_dump() == pre)
+    mix = export_mix("s5c_post")
+    check("5c: ... and so is the mix the engine plays (no residue)",
+          abs(rms(pre_mix, 0.0, duration_of(pre_mix)) - rms(mix, 0.0, duration_of(mix))) < 1e-5)
+
+    # ── 5c-undo: entered, committed, then undone: back at its place too ──
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    cmd("group.reparent", ids=[X], group=i1, child_lane=1); settle()
+    commit("propagate")
+    check("5c-undo: committed, the sound is part of the content (no longer a separate object)",
+          find(X) is None)
+    cmd("edit.undo"); settle()
+    x = find(X)
+    check("5c-undo: ONE undo gives the sound back at its place",
+          x is not None and parent_of(X) is None and x["lane"] == 4 and near(x["startTime"], 3.0), "lost" if x is None else "")
+    check("5c-undo: ... and the instance is a linked clip again",
+          find(i1) is not None and kind(find(i1)).get("type") == "clip" and find(i1).get("definitionID") == def_id)
+
+    # ── 5a: a sound taken OUT of the open content, then Cancel: the content is intact, no duplicate ──
+    def_id, i1, twin = group_content("s5a")
+    pre = state_dump()
+    pre_mix = export_mix("s5a_pre")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    root, root_id = content_root()
+    kid = children(root)[0]["id"]
+    r = cmd("group.eject", ids=[kid]); settle()
+    check("5a: taking a sound out of the content is allowed (a')", parent_of(kid) is None and find(kid) is not None,
+          str(parent_of(kid)))
+    cmd("consolidate.edit_cancel"); settle()
+    check("5a: Cancel: the exited sound is not left outside (no duplicate of what the content holds)",
+          find(kid) is None)
+    check("5a: ... and the whole model is exactly what it was", state_dump() == pre)
+    mix = export_mix("s5a_post")
+    check("5a: ... and the mix is the same",
+          abs(rms(pre_mix, 0.0, duration_of(pre_mix)) - rms(mix, 0.0, duration_of(mix))) < 1e-5)
+
+    # ── 5b: exit then COMMIT: the sound lives outside, the content no longer has it ──
+    def_id, i1, twin = group_content("s5b")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    root, root_id = content_root()
+    kid = children(root)[0]["id"]
+    cmd("group.eject", ids=[kid]); settle()
+    commit("propagate")
+    check("5b: committed, the exited sound stays outside as an object", find(kid) is not None and parent_of(kid) is None)
+    tw = render_instance(twin, "s5b_twin")
+    check("5b: the twin plays what stayed in the content (a burst) and no longer the sound that left (its 0.5 s head is silent)",
+          peak(tw, 0.0, 0.5) < 0.02 and peak(tw, 0.5, 1.0) > 0.3, "%s %s" % (peak(tw, 0.0, 0.5), peak(tw, 0.5, 1.0)))
+    cmd("edit.undo"); settle()
+    check("5b-undo: ONE undo takes it out of the world again (it is back in the content)",
+          find(kid) is None and find(i1) is not None and kind(find(i1)).get("type") == "clip")
+
+    # ── 5d: reparent leaving the stage, towards another group ──
+    def_id, i1, twin = group_content("s5d")
+    ya = x_clip(6.0, 5); yb = x_clip(6.5, 6)
+    other = cmd("group.create", ids=[ya, yb])["id"]
+    settle()
+    pre = state_dump()
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    root, root_id = content_root()
+    kid = children(root)[0]["id"]
+    cmd("group.reparent", ids=[kid], group=other, child_lane=0); settle()
+    check("5d: reparent to a group OUTSIDE the content is allowed", parent_of(kid) is not None and parent_of(kid)["id"] == other,
+          str(parent_of(kid) and parent_of(kid)["id"]))
+    cmd("consolidate.edit_cancel"); settle()
+    check("5d: Cancel: the other group is as it was, the model is exactly the original", state_dump() == pre)
+
+    # ── the scaffolding is still protected ──
+    def_id, i1, twin = group_content("s5e")
+    cmd("consolidate.edit_begin", placement=i1); settle()
+    _, root_id = content_root()
+    ok = fails_with("invalid_state", "group.eject", ids=[root_id])
+    check("5e: the content root itself cannot be taken out", ok)
+    cmd("consolidate.edit_cancel"); settle()
+
     section("done")
     print("\n%d failure(s)" % len(fails))
     return 1 if fails else 0

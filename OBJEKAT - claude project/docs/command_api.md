@@ -215,6 +215,13 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
 - `consolidate.unmake` on an instance whose content root is neutral leaves that root out: the detached
   group holds the sounds directly (one level, same sound, same mix). A root that is not neutral stays
   a group below the detached one. No format change.
+- **Crossing the content's edge** (`group.reparent`, `group.eject`, a drag): an object may be taken OUT of the
+  open content (to the root, or to another group) and an object from outside may be dropped INTO it. The stage
+  and the content root themselves still cannot be taken out of place (`invalid_state`). The session reads what
+  crossed, against the project as it was before the opening: **Cancel** puts the sounds that left out of the world
+  again (the instance gives the content back whole, no duplicate) and the sounds that entered back where they were
+  (same parent, lane and start — the old build lost them); the **⌘Z of the commit** does the same. After a commit
+  the sounds that left stay outside as ordinary objects, the content no longer holds them.
 - Session format 37 → 38: `objectDefinitions[].closeMode` (absent or unknown = `ask`).
 - **Dropping into an open object whose content is a lone clip** (`debug.file_drop`, `clipboard.paste`,
   `group.reparent`, any door onto `addChild`): the content root A is ENVELOPED in a new neutral group A'

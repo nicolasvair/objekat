@@ -128,7 +128,7 @@ extension CommandRegistry {
                   case .reparent(let groupID, _) = gated else {
                 throw CommandError(code: .invalid_state,
                                    message: vm.sessionRefusal(.relocate, ids: ids)
-                                       ?? "an open consolidated object keeps its content inside it")
+                                       ?? "the stage and the content root of an open consolidated object cannot be taken out of place")
             }
             // `dt = 0` and anchors taken from the CURRENT positions: that is exactly the drag
             // "dropped without moving". The method stays the sole owner of recomputing relative
@@ -166,7 +166,7 @@ extension CommandRegistry {
                                          decision: .eject(rootLane: lane)) != nil else {
                 throw CommandError(code: .invalid_state,
                                    message: vm.sessionRefusal(.relocate, ids: ids)
-                                       ?? "the content of an open consolidated object cannot leave it")
+                                       ?? "the stage and the content root of an open consolidated object cannot be taken out of place")
             }
             let anchors = CommandAdapters.currentAnchors(ids, in: vm)
             vm.ejectFromGroup(childIDs: ids, groupID: group.id, anchors: anchors,

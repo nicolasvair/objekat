@@ -132,8 +132,8 @@ extension EditViewModel {
     ///   • the STAGE: stays where it is in time, stays in its container, is not copied by an ⌥ drag
     ///     (it may change lane);
     ///   • A: only moves inside the stage (`moveInSource`), never copied;
-    ///   • anything else: dropped ON the stage it goes into A; it never leaves a stage's content
-    ///     (an eject, a reparent to a container outside it); entering one is free.
+    ///   • anything else: dropped ON the stage it goes into A; it may leave a stage's content (an eject,
+    ///     a reparent to a container outside it) and enter one, the session undoing both on a cancel.
     func sessionMoveDropGate(ids: Set<UUID>, sourceGroupID: UUID?, isAltCopy: Bool, dt: Double,
                              decision: MoveDropResolution.Decision) -> MoveDropResolution.Decision? {
         guard !consolidateEditStack.isEmpty, decision != .cancel else { return decision }
@@ -151,21 +151,13 @@ extension EditViewModel {
             if case .moveInSource = decision { return decision }
             return nil
         }
-        // The container the movers come from, and the one they would land in.
-        let from = ids.first.flatMap { sessionStageContaining($0) }
-        switch decision {
-        case .reparent(let g, let lane):
-            let target = sessionDropTarget(g)
-            let to = sessionStageIDs.contains(g) ? g : sessionStageContaining(g)
-            if from != nil && from != to { return nil }
-            return .reparent(groupID: target, lane: lane)
-        case .eject:
-            return from == nil ? decision : nil
-        case .root:
-            return from == nil ? decision : nil
-        default:
-            return decision
+        // Anything else may cross the content's edge, in either direction (the plan's Q8, option a′):
+        // dropped ON the stage it goes into A; taken out it goes where it was dropped. What crossed is
+        // noted by the session itself, which gives it all back on a cancel (@see sessionTraffic).
+        if case .reparent(let g, let lane) = decision {
+            return .reparent(groupID: sessionDropTarget(g), lane: lane)
         }
+        return decision
     }
 
     // MARK: - The closed form of what is open

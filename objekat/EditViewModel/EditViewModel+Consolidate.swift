@@ -39,6 +39,11 @@ struct ConsolidateEditSession: Identifiable {
     /// "undo detaches the instance" bug). Closing and cancelling cut the stack back to this depth.
     /// Kept in step by `pushUndo` when the stack's cap drops its oldest entry.
     var undoDepthAtOpen: Int = 0
+    /// The project's items as they were just BEFORE the opening (the stage's placement still a closed
+    /// clip). What crosses the content's boundary during the session is read against it: an object that
+    /// lies inside the content now and was somewhere else here ENTERED, and goes back there on a cancel
+    /// or a ⌘Z of the commit (@see `sessionTraffic`). A value copy: the arrays share their storage.
+    var itemsAtOpen: [SoundObject] = []
     /// The speed the instance had when it was opened (1 for a clip on its wave at speed 1). The session
     /// plays the content at speed 1 and forwards; what the closing builds goes back to this speed
     /// (@see SoundObject.closedInstance).
@@ -981,7 +986,8 @@ extension EditViewModel {
                                                  contentRootID: contentRoot.id, oldWaveZero: waveZero,
                                                  originalPlacement: instance,
                                                  openedSubtree: contentRoot,
-                                                 undoDepthAtOpen: undoDepthAtOpen))
+                                                 undoDepthAtOpen: undoDepthAtOpen,
+                                                 itemsAtOpen: items))
 
         removeFromEngine(placement)
         update(id: placementID) { $0 = stage }
@@ -1341,6 +1347,8 @@ extension EditViewModel {
         // A real cancel gives back the instance exactly as it was opened. A closing with no change of
         // content rebuilds it from the stage, on the wave it already reads (so δ = 0, and the window is
         // only brought back inside the content if it had been dragged outside).
+        // What crossed the content's boundary, read while the stage is still there.
+        let traffic = consolidateEditStack.last.map { Self.sessionTraffic(of: $0, in: items) } ?? SessionTraffic()
         var restored = originalPlacement
         if keepingInstanceLevel, let defID,
            case .clip(let wavePath, _, let waveLen, _, _) = originalPlacement.kind {
@@ -1352,6 +1360,9 @@ extension EditViewModel {
         }
         layBackClosedInstance(restored, replacing: current)
         // The other instances have already gone back to their baked clip (restoreLiveMirrors, at the head).
+        // The sounds that left the content go out of the world again (the instance gives the content
+        // back whole), the ones that entered it return to where they were.
+        restoreSessionTraffic(traffic)
 
         // The undo stack: a cancel leaves nothing behind it — the session's points (the opening,
         // the edits of the materialised content) are cut, since restoring one without its session
@@ -1388,7 +1399,12 @@ extension EditViewModel {
     private func snapshotWithSessionCancelled() -> EditSnapshot? {
         guard let placementID = editingPlacementID, let original = editingOriginalPlacement else { return nil }
         let snap = currentSnapshot()
-        return EditSnapshot(items: Self.replacingSubtree(placementID, with: original, in: snap.items),
+        // What crossed the content's boundary goes back where it came from: the sounds that entered
+        // return to their place, the ones that left are taken out of the world (the content, in the
+        // wave it had, holds them again).
+        let traffic = consolidateEditStack.last.map { Self.sessionTraffic(of: $0, in: snap.items) } ?? SessionTraffic()
+        let reverted = Self.revertingTraffic(traffic, in: Self.replacingSubtree(placementID, with: original, in: snap.items))
+        return EditSnapshot(items: reverted,
                             stems: snap.stems, consolidateDefinitions: snap.consolidateDefinitions,
                             tempo: snap.tempo, timeSigNumerator: snap.timeSigNumerator,
                             timeSigDenominator: snap.timeSigDenominator,
