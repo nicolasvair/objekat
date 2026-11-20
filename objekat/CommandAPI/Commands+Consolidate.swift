@@ -230,14 +230,24 @@ extension CommandRegistry {
                         + "\"mode required\" and the session stays open (a command never opens a box). "
                         + "Nothing changed in the content = nothing forked, nothing re-baked, and no mode needed. "
                         + "A `variant` (asked or set) with NO other instance applies everywhere instead, with no "
-                        + "error: the answer says `forked` (false then, and when nothing changed).",
-                 params: [ParamSpec("mode", "string", required: false, "propagate or variant.")],
+                        + "error: the answer says `forked` (false then, and when nothing changed). "
+                        + "`remember` (needs `mode`) also stores that mode as the object's own setting, like the "
+                        + "\"Remember\" box of the Ask dialogue: written by the closing itself, so ONE undo gives "
+                        + "back the content and the setting; nothing is written when nothing changed or the "
+                        + "render fails. The answer says `remembered`.",
+                 params: [ParamSpec("mode", "string", required: false, "propagate or variant."),
+                          ParamSpec("remember", "bool", required: false,
+                                    "Also store `mode` as the object's setting (default false).")],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             guard vm.isEditingConsolidate, let defID = vm.editingConsolidateID else {
                 throw CommandError(code: .invalid_state, message: "no edit in progress")
             }
             var mode: ConsolidateCloseMode? = nil
+            let remember = try p.bool("remember", or: false)
+            if remember, p.raw["mode"] == nil {
+                throw CommandError(code: .bad_params, message: "remember needs a mode (propagate or variant)")
+            }
             if p.raw["mode"] != nil {
                 let name = try p.string("mode")
                 guard name == "propagate" || name == "variant", let m = ConsolidateCloseMode(rawValue: name) else {
@@ -256,11 +266,15 @@ extension CommandRegistry {
                 && vm.effectiveCloseMode(requested: mode, defID: defID,
                                          placementID: vm.editingPlacementID) == .variant
             let jobID = JobRegistry.shared.begin(command: "consolidate.edit_commit")
-            vm.closeConsolidate(mode: mode)
+            // Decided now as well: only a closing that changes something writes the setting.
+            let remembered = remember && vm.consolidateContentModifiedSinceOpening
+            vm.closeConsolidate(mode: mode, remember: remember)
             CommandAdapters.followBake(jobID, in: vm) {
-                .object(["editing": .bool(vm.isEditingConsolidate), "forked": .bool(forked)])
+                .object(["editing": .bool(vm.isEditingConsolidate), "forked": .bool(forked),
+                         "remembered": .bool(remembered)])
             }
-            return .object(["job_id": .string(jobID), "forked": .bool(forked)])
+            return .object(["job_id": .string(jobID), "forked": .bool(forked),
+                            "remembered": .bool(remembered)])
         }
 
         register("consolidate.edit_cancel",

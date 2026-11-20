@@ -176,7 +176,12 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
 - `consolidate.state` — gains `close_mode`, `instance_count` and `variant_available` of the open object, and `linked_with`
   (what the open instance is joined to; EMPTY while the object closes in `variant`: that instance is on
   its way out of the group).
-- `consolidate.edit_commit {mode?}` — `mode` (`propagate` or `variant`) decides THIS commit and wins over
+- `consolidate.edit_commit {mode?, remember?}` — `remember` (default false; needs `mode`, otherwise
+  `bad_params`) also stores `mode` as the object's own setting (`close_mode`), as the "Remember" box of the
+  Ask dialogue does. The setting is written by the closing itself, AFTER its undo point and BEFORE a variant
+  is built (so the variant inherits it): one undo gives back the content AND the setting. Nothing is
+  written for a closing with nothing changed, a failed render or a Cancel. The answer (immediate and
+  `job.wait`) carries `remembered`. `mode` (`propagate` or `variant`) decides THIS commit and wins over
   the setting, without changing it. Without it the setting applies; with `ask`, a changed content and
   other instances using it, the answer is `invalid_state` ("mode required") and the session stays open
   — a command never opens a box (the interface's box is the one that asks). An object nobody else uses
@@ -191,9 +196,11 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
   the variant gone; redo brings it back.
 - The interface's own closing (the double click on the open object) with `ask`, a changed content and
   other instances using it raises ONE box — "Apply the changes to “name”?", the count of the others,
-  Everywhere / New variant / Cancel (Cancel: the session stays open, no undo point; no "don't ask
-  again" box). A script meets it only through the dialogue policy, which answers in its place and
-  records it (`app.dialogs`): `assume_yes` = Everywhere (`answer: "everywhere"`), `assume_no` and a
+  Everywhere / New variant / Cancel (Cancel: the session stays open, no undo point). The box carries a
+  "Remember" check box (`NSAlert` suppression button): ticked, the answer (Everywhere or New variant) becomes
+  the object's `close_mode` when the closing succeeds, so the box is not asked again; Cancel remembers
+  nothing. A script meets it only through the dialogue policy, which answers in its place and
+  records it (`app.dialogs`): `assume_yes` = Everywhere (`answer: "everywhere"`, never remembered), `assume_no` and a
   session with no interface = Cancel (`answer: "cancel"`). No box when nothing changed, when the setting
   is not `ask`, or when nobody else uses the content.
 - Closing a variant INSIDE another consolidated object's open content points that instance at the

@@ -2831,6 +2831,29 @@
         }
       }
     },
+    "consolidate.close.remember": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remember"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recordar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mémoriser"
+          }
+        }
+      }
+    },
     "consolidate.close.title": {
       "extractionState": "manual",
       "localizations": {
@@ -19736,6 +19759,29 @@
         }
       }
     },
+    "synoptic.consolidate.closeMode.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only one instance: changes always apply."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una sola instancia: los cambios siempre se aplican."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un seul exemplaire : les modifications s'appliquent toujours."
+          }
+        }
+      }
+    },
     "synoptic.consolidate.closeMode.propagate": {
       "extractionState": "manual",
       "localizations": {
@@ -19824,29 +19870,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Rouvrir puis valider crée un nouvel objet ; les autres exemplaires ne changent pas."
-          }
-        }
-      }
-    },
-    "synoptic.consolidate.closeMode.disabled": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Only one instance: changes always apply."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Una sola instancia: los cambios siempre se aplican."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Un seul exemplaire : les modifications s'appliquent toujours."
           }
         }
       }

@@ -1037,7 +1037,13 @@ extension EditViewModel {
     /// re-bake) or `variant` (the opened instance leaves for a NEW consolidated object, a new
     /// definition with its own wave and sidecar; the others keep the old content and the old
     /// definition, untouched). nil = the object's setting. A closing with nothing changed forks nothing.
-    func closeConsolidate(mode: ConsolidateCloseMode? = nil) {
+    ///
+    /// `remember`: the closing ALSO stores `mode` as the object's own setting (`closeMode`), as the
+    /// "Remember" box of the Ask dialogue does for the answer given there. It is written by
+    /// `finishCloseConsolidate`, once the render has succeeded, so that one ⌘Z gives back both the
+    /// content and the setting — and nothing is written for a failed render, a Cancel or a closing
+    /// with no modification. Without a `mode` there is nothing to remember.
+    func closeConsolidate(mode: ConsolidateCloseMode? = nil, remember: Bool = false) {
         guard let defID = editingConsolidateID, let placementID = editingPlacementID,
               let contentID = editingContentRootID, let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, find(id: placementID) != nil, let content = find(id: contentID),
@@ -1079,11 +1085,13 @@ extension EditViewModel {
         // hand — HERE, before anything is torn down: cancelling leaves the session open, no undo point.
         // (The command API never gets here asking: `consolidate.edit_commit` refuses without a mode.)
         var closeMode = mode
+        var remembered: ConsolidateCloseMode? = (remember ? mode : nil)
         if closeMode == nil, def.closeMode == .ask {
             let others = consolidateUserCount(defID, excluding: placementID)
             if others > 0 {
                 guard let answer = askConsolidateClose(name: def.name, others: others) else { return }
-                closeMode = answer
+                closeMode = answer.mode
+                if answer.remember { remembered = answer.mode }
             }
         }
 
@@ -1119,7 +1127,8 @@ extension EditViewModel {
             self.finishCloseConsolidate(defID: defID, placementID: placementID, ok: ok,
                                         wav: wav, folder: folder, original: original,
                                         nextRevision: nextRevision, oldWaveZero: oldWaveZero,
-                                        renderStart: renderStart, renderEnd: renderEnd, variant: variant)
+                                        renderStart: renderStart, renderEnd: renderEnd, variant: variant,
+                                        remembered: remembered)
         }
         engine.renderConsolidateContent(toFileAsync: contentID.uuidString, filePath: wav.path,
                                         start: renderStart, end: renderEnd,
@@ -1192,7 +1201,8 @@ extension EditViewModel {
     private func finishCloseConsolidate(defID: UUID, placementID: UUID, ok: Bool, wav: URL,
                                         folder: URL, original: SoundObject, nextRevision: Int,
                                         oldWaveZero: Double, renderStart: Double, renderEnd: Double,
-                                        variant: (id: UUID, name: String)? = nil) {
+                                        variant: (id: UUID, name: String)? = nil,
+                                        remembered: ConsolidateCloseMode? = nil) {
         guard engine != nil else { return }
         guard ok else {
             bakeAlert(L("consolidate.error.renderFailed.title"), L("consolidate.error.seeConsole.info"))
@@ -1230,6 +1240,15 @@ extension EditViewModel {
         // points (the opening, the edits of the content) go the same way, for the same reason.
         // See `closeSessionUndo`.
         closeSessionUndo(pushing: snapshotWithSessionCancelled())
+
+        // "Remember" (the Ask box's case, or `edit_commit {remember}`): the answer becomes the object's
+        // own setting. Written HERE — after the undo point, which holds the setting as it was, and
+        // before the variant is built, so that D' inherits it — so ONE ⌘Z gives back the closing and
+        // the memorisation together. Not reached by a failed render or a Cancel.
+        if let remembered, var current = consolidateDefinitions[defID], current.closeMode != remembered {
+            current.closeMode = remembered
+            consolidateDefinitions[defID] = current
+        }
 
         // The definition's old wave/sidecar: no longer referenced, left on disk (no GC).
         let waveLen = audioFileDuration(wav) ?? (renderEnd - renderStart)
