@@ -171,8 +171,8 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
 - `consolidate.list` — every definition gains `close_mode`, `instance_count` (its placements, plus the
   definitions whose content holds it: an instance nested in another consolidated object counts, though
   nothing on the timeline shows it), `linked` (the placements the violet link traits join together) and
-  `variant_available` (`instance_count > 1`: a variant needs somebody else to preserve; the selector's
-  "Variant" position is greyed otherwise).
+  `variant_available` (`instance_count > 1`: a closing needs somebody else to answer to. The name is
+  historical: it now drives the greying of the WHOLE 3-position selector, not the "Variant" position alone).
 - `consolidate.state` — gains `close_mode`, `instance_count` and `variant_available` of the open object, and `linked_with`
   (what the open instance is joined to; EMPTY while the object closes in `variant`: that instance is on
   its way out of the group).
@@ -181,8 +181,8 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
   other instances using it, the answer is `invalid_state` ("mode required") and the session stays open
   — a command never opens a box (the interface's box is the one that asks). An object nobody else uses
   has nothing to ask about (it propagates), and a closing with NOTHING changed forks and re-bakes
-  nothing and needs no mode. **A variant needs another instance**: with a single one
-  (`variant_available` false) the closing applies everywhere whatever the setting or the `mode` says —
+  nothing and needs no mode. **Everything here needs another instance**: with a single one
+  (`variant_available` false, the whole selector greyed) the closing applies everywhere whatever the setting or the `mode` says —
   no error, no fork — and the stored `close_mode` is NOT rewritten (`set_close_mode` still accepts
   `variant`; it takes effect again as soon as a second instance exists). The answer carries `forked`
   (`true` only when this commit really leaves for a new object; false when applied everywhere or when

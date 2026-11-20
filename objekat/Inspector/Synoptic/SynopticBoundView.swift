@@ -280,7 +280,7 @@ struct SynopticBoundView: View {
                                     name: viewModel.consolidateDefinitions[defID]?.name ?? o.displayName,
                                     isOpen: viewModel.isInConsolidateEditStack(o.id),
                                     closeMode: viewModel.consolidateDefinitions[defID]?.closeMode ?? .ask,
-                                    variantAvailable: viewModel.consolidateVariantAvailable(defID))
+                                    hasOtherInstances: viewModel.consolidateHasOtherInstances(defID))
                             },
                             widthFlow: widthFlow,
                             actions: SynopticActions(

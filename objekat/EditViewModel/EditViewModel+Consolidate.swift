@@ -186,15 +186,15 @@ extension EditViewModel {
     func isForkingStage(_ id: UUID) -> Bool {
         guard let session = consolidateEditStack.first(where: { $0.placementID == id }) else { return false }
         return consolidateDefinitions[session.defID]?.closeMode == .variant
-            && consolidateVariantAvailable(session.defID)
+            && consolidateHasOtherInstances(session.defID)
     }
 
-    /// True when a variant has something to preserve: the object has at least one OTHER instance
+    /// True when a closing has somebody else to answer to: the object has at least one OTHER instance
     /// (same count as the "Ask" box and `instance_count`, nested uses included). With a single
-    /// instance the "Variant" position of the selector is greyed and a closing always applies
-    /// everywhere, whatever the stored setting says (which is left as it is, and takes effect again
-    /// as soon as a second instance exists).
-    func consolidateVariantAvailable(_ defID: UUID) -> Bool {
+    /// instance the WHOLE selector is greyed (nothing to ask, nothing to preserve) and a closing
+    /// always applies everywhere, whatever the stored setting says (which is left as it is, and
+    /// takes effect again as soon as a second instance exists).
+    func consolidateHasOtherInstances(_ defID: UUID) -> Bool {
         consolidateUserCount(defID) > 1
     }
 
@@ -1582,7 +1582,7 @@ extension EditViewModel {
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let live = find(id: contentID) else { return }
         // `variant`: the others stay on the baked wave, nothing follows the edit.
-        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateHasOtherInstances(defID)) else { return }
 
         var snapshots: [UUID: SoundObject] = [:]
         for tid in liveMirrorTargets(defID: defID, origin: placementID) {
@@ -1618,7 +1618,7 @@ extension EditViewModel {
               let contentID = editingContentRootID,
               let oldWaveZero = consolidateEditStack.last?.oldWaveZero,
               let engine, let live = find(id: contentID) else { return }
-        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateVariantAvailable(defID)) else { return }
+        guard !(consolidateDefinitions[defID]?.closeMode == .variant && consolidateHasOtherInstances(defID)) else { return }
 
         // An instance may have been born during the session (copy-and-paste of a linked instance): it
         // joins the mirroring, with its own starting snapshot.

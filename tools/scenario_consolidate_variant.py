@@ -798,7 +798,7 @@ def main():
     cmd("app.set_dialog_policy", policy="ask")
 
     # ── 12 — a variant needs somebody else ──
-    section("12 — a single instance: Variant greyed, the closing always applies everywhere")
+    section("12 — a single instance: the whole selector greyed (variant_available), the closing always applies everywhere")
     PROJ_V = os.path.join(ROOT, "s12"); os.makedirs(PROJ_V, exist_ok=True)
     globals()["PROJ"] = PROJ_V
     cmd("project.new")

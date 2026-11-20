@@ -33,7 +33,7 @@ extension CommandRegistry {
                     "instance_count": .int(vm.consolidateUserCount(def.id)),
                     // False with a single instance: a variant would have nothing to preserve, so a
                     // closing applies everywhere whatever `close_mode` says (the setting is kept).
-                    "variant_available": .bool(vm.consolidateVariantAvailable(def.id)),
+                    "variant_available": .bool(vm.consolidateHasOtherInstances(def.id)),
                     // Stale = a definition this one depends on has been re-baked since.
                     // Exposing it saves a script from hearing a sound that is no longer the right one.
                     "stale": .bool(vm.isConsolidateStale(def.id)),
@@ -193,7 +193,7 @@ extension CommandRegistry {
                 "close_mode": .stringOrNull(vm.editingConsolidateID.flatMap { vm.consolidateDefinitions[$0]?.closeMode.rawValue }),
                 // Placements (the open one included) + nested definitions using the open content.
                 "instance_count": .int(vm.editingConsolidateID.map { vm.consolidateUserCount($0) } ?? 0),
-                "variant_available": .bool(vm.editingConsolidateID.map { vm.consolidateVariantAvailable($0) } ?? false),
+                "variant_available": .bool(vm.editingConsolidateID.map { vm.consolidateHasOtherInstances($0) } ?? false),
                 "renders": .array(bakes + rebakes),
             ])
         }

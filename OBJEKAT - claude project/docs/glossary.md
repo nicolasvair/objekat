@@ -21,7 +21,7 @@ source, not a translation.
 | objet consolidé (« consolidé ») | consolidated object | objeto consolidado | the thing consolidating creates: shared content laid down in N instances |
 | définition (d'un consolidé) | definition | definición | the recorded content, shared by every instance |
 | exemplaire | instance | ejemplar | one occurrence of a definition in the timeline |
-| modifications (réglage d'un consolidé) | edits | cambios | the setting of a consolidated object that says what closing an edit does to its other instances: Demander / Partout / Variante — Ask / Everywhere / Variant — Preguntar / En todas / Variante. In code `closeMode` (`ask`, `propagate`, `variant`) |
+| modifications (réglage d'un consolidé) | edits | cambios | the setting of a consolidated object that says what closing an edit does to its other instances: Demander / Partout / Variante — Ask / Everywhere / Variant — Preguntar / En todas / Variante. In code `closeMode` (`ask`, `propagate`, `variant`). The whole selector is greyed (highlighted but dimmed, one tooltip « Un seul exemplaire : les modifications s'appliquent toujours. » — « Only one instance: changes always apply. » — « Una sola instancia: los cambios siempre se aplican. ») when the object has no other instance |
 | variante (d'un consolidé) | variant | variante | the consolidated object an instance leaves for when it is closed in "variant": a new definition (revision 1, "Name 2"), the others unchanged |
 | baker / baké | bake / baked | renderizar / renderizado | the render that freezes a sub-tree into a wave |
 | source ARA | ARA source | fuente ARA | the ARA plugin (Melodyne) an audio object is played THROUGH, ahead of its chain; not an insert. The type `ARASource` |

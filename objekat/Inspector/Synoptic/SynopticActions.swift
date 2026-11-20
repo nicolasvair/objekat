@@ -427,9 +427,10 @@ struct SynopticContentPill: Equatable {
     /// What closing an edit does to the object's other instances (@see `ConsolidateCloseMode`): the
     /// 3-position selector beside the pill shows it and sets it.
     var closeMode: ConsolidateCloseMode = .ask
-    /// False when the object has no other instance: the "Variant" position is greyed (a variant
-    /// would have nothing to preserve). The stored `closeMode` is displayed as it is.
-    var variantAvailable: Bool = true
+    /// False when the object has no other instance: the WHOLE selector is greyed (a closing then
+    /// always applies everywhere, there is nothing to ask or to preserve). The stored `closeMode`
+    /// is displayed as it is, highlighted but dimmed.
+    var hasOtherInstances: Bool = true
 }
 
 /// A group's 'loop' option (the chain head, @see BusHeadZoneView) or a MIDI clip's (the MIDI
