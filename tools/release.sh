@@ -103,6 +103,7 @@ for ARCH in arm64 x86_64; do
     -scheme objekat \
     -configuration Release \
     -archivePath "$ARCHIVE" \
+    -skipMacroValidation \
     ARCHS="$ARCH" ONLY_ACTIVE_ARCH=NO \
     MARKETING_VERSION="$VERSION" \
     CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
