@@ -573,7 +573,17 @@ Checked as still biting: `develop` still had the linear `std::find`.
   (`getDefaultRecordingParameters`). Branch `objekat-record-loop-0050` (`10e6401b937`, NOT published on the fork),
   commit on top of `objekat-group-midi-0049` (`f0648743dc2`). Files: `tracktion_EditPlaybackContext.{h,cpp}`,
   `tracktion_TransportControl.{h,cpp}`, `tracktion_WaveInputDevice.cpp`, `tracktion_MidiInputDevice.cpp`,
-  `tracktion_EditUtilities.cpp`, `tracktion_EngineBehaviour.h`, `tracktion_PlayHead.h`. The next number is `0051`.
+  `tracktion_EditUtilities.cpp`, `tracktion_EngineBehaviour.h`, `tracktion_PlayHead.h`.
+- `0051` — **recording MIDI through a loop: no live play-over of the earlier passes**
+  (`tools/scenario_record_loop_midi_playover.py`). Same switch as `0050` (`EngineBehaviour::recordsThroughLoop()`, so
+  `OBJ_REC_STOCK=1` gives the stock behaviour back). `MidiInputDeviceNode` keeps every note played while its device records
+  through a loop (`liveRecordedMessages`, stamped on the looped timeline) and REPLAYS them at each lap into its own output (the
+  stock overdub of the loop). A MIDI input monitored through an instrument has its own hidden track and node, which sees
+  `isRecording()` true as soon as ONE target of the device records: the player heard every earlier pass again under the new
+  one, cumulatively, while the takes laid were muted as they should be (no clip mute can cut it: the note is not in the model).
+  Under the flag `isLivePlayOverActive()` is false (nothing is kept) and `processSection` never replays what a buffer may hold.
+  Branch `objekat-record-playover-0051` (`c568be26795`, NOT published on the fork), commit on top of `objekat-record-loop-0050`
+  (`10e6401b937`). File: `tracktion_MidiInputDeviceNode.cpp`. The next number is `0052`.
 
 **Not carried over:** the 3.2 series' `0002-wavenode-dynamic-offset-time-for-varispeed` (the
 `.patch` file no longer exists anywhere; the commit it carried survives only on the local engine

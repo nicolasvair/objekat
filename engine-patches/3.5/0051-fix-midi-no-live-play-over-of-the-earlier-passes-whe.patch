@@ -1,0 +1,58 @@
+From c568be26795ca025e327aef9aee807c46ef281cf Mon Sep 17 00:00:00 2001
+From: vair <79313360+nicolasvair@users.noreply.github.com>
+Date: Wed, 25 Nov 2026 12:01:56 +0100
+Subject: [PATCH] fix(midi): no live play-over of the earlier passes when
+ recording through a loop (objekat 0051)
+
+Behind EngineBehaviour::recordsThroughLoop() (same switch as 0050; false in the stock engine, true in objekat unless
+OBJ_REC_STOCK is set).
+
+MidiInputDeviceNode keeps every note played while a device records through a loop (liveRecordedMessages, stamped on the
+looped timeline) and replays them at each lap into its own output: the stock overdub of the loop. A MIDI input that is
+monitored through an instrument (its hidden track has its own MidiInputDeviceNode, and sees isRecording() true because the
+zone's target records) therefore played the previous passes again, cumulatively, under the new one. Objekat's loop
+recording (0050) lays one take per pass and mutes the older ones, so the replay contradicts it.
+
+Under the flag: isLivePlayOverActive() is false (nothing is kept) and processSection never replays what a buffer may
+hold.
+
+Proven by tools/scenario_record_loop_midi_playover.py (input with instrument + monitoring, zone with and without
+instrument, computer keyboard, loop switched on during the recording): silent on the next pass; OBJ_REC_STOCK=1 brings
+the replay back.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../playback/graph/tracktion_MidiInputDeviceNode.cpp     | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/modules/tracktion_engine/playback/graph/tracktion_MidiInputDeviceNode.cpp b/modules/tracktion_engine/playback/graph/tracktion_MidiInputDeviceNode.cpp
+index a033f9e250a..befb27e36b8 100644
+--- a/modules/tracktion_engine/playback/graph/tracktion_MidiInputDeviceNode.cpp
++++ b/modules/tracktion_engine/playback/graph/tracktion_MidiInputDeviceNode.cpp
+@@ -184,7 +184,11 @@ void MidiInputDeviceNode::processSection (ProcessContext& pc, juce::Range<int64_
+     auto& mi = midiInputDevice;
+     const bool createTakes = mi.recordingEnabled && ! (mi.mergeRecordings || mi.replaceExistingClips);
+ 
++    // objekat 0051: never replay the passes already played (see isLivePlayOverActive)
++    const bool recordsThroughLoop = instance.edit.engine.getEngineBehaviour().recordsThroughLoop();
++
+     if ((! createTakes && ! mi.replaceExistingClips)
++        && ! recordsThroughLoop
+         && state->numLiveMessagesToPlay > 0
+         && playHeadState.playHead.isPlaying())
+     {
+@@ -211,6 +215,11 @@ void MidiInputDeviceNode::createProgramChanges (MidiMessageArray& bufferForMidiM
+ 
+ bool MidiInputDeviceNode::isLivePlayOverActive()
+ {
++    // objekat 0051: a recording through a loop lays one take per pass (0050); the passes already played are takes,
++    // never an overdub to hear again under the next one
++    if (instance.edit.engine.getEngineBehaviour().recordsThroughLoop())
++        return false;
++
+     return instance.isRecording()
+         && state->canLoop
+         && instance.context.transport.looping;
+-- 
+2.50.1 (Apple Git-155)
+

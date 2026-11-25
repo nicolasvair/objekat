@@ -474,6 +474,7 @@ struct OBJEngineBehaviour : public te::EngineBehaviour {
     // Engine patch 0050 (docs/plan_enregistrement_audio.md, "rec en boucle"): a recording goes THROUGH the loop.
     // ON for every recording (the loop may be switched on after the press); the environment variable
     // OBJ_REC_STOCK=1 puts the stock behaviour back (test A/B only: tools/scenario_record_loop_proof.py).
+    // The same switch cuts the MIDI live play-over of Tracktion (patch 0051: the earlier passes are never replayed under a new one).
     std::atomic<bool> recordThroughLoop { getenv("OBJ_REC_STOCK") == nullptr };
     bool recordsThroughLoop() override { return recordThroughLoop.load(); }
 

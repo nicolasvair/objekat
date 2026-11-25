@@ -3054,6 +3054,16 @@ a second one elsewhere. The most exposed points:
   contains) stay in the model, silent, shown inactive with their reason. Nothing is deleted by a scope
   change; only a send whose aux was deleted is purged (with its automation, in the same undo point).
 
+- **MIDI recording through a loop: the earlier passes were heard again (engine patch `0051` LOCAL, 25 November 2026).** Tracktion's
+  `MidiInputDeviceNode` has a « live play-over » (overdub of the loop): the notes played while a device records through a loop are kept
+  and replayed at each lap into the node's own output. A MIDI input heard through an instrument (`input.set_instrument` +
+  `input.monitor`, hidden track `_midiInputTracks`) has such a node and sees `isRecording()` true as soon as one target of the device
+  (the zone's) records, so it played passes 1..N-1 again under pass N; the takes laid were muted and no clip mute can cut it (the note is
+  not in the model). Patch `0051` (same switch as `0050`, `OBJ_REC_STOCK=1` brings the replay back) keeps nothing and replays nothing.
+  Branch of the submodule `objekat-record-playover-0051` (`c568be26795`, on `objekat-record-loop-0050`), NOT published. Proven by
+  `tools/scenario_record_loop_midi_playover.py`. TRAP: the old probes put the instrument on the ZONE and never opened the input's
+  monitoring, so they could not hear it; and the DLS rings ~1.8 s after a note-off, a window of silence must start well after.
+  **The next free patch number is `0052`.**
 - **Recording through a loop, audio and MIDI (3-4 November 2026, branch `main`, engine patch `0050` LOCAL, session format 37,
   nothing pushed).** Commits E1..E8 (`7928b677` is E1); plan, decisions and deviations: `docs/plan_enregistrement_audio.md` §6;
   decisions: `architecture_decisions.md`; API: `command_api.md` (`rec.status`, `rec.stop`, "MIDI takes through a loop").

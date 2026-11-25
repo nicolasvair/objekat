@@ -259,6 +259,10 @@ joue pendant tout ça reste UN fichier continu par entrée (UNE séquence par ca
 zone armée reçoit UNE prise par passe qui croise sa fenêtre. Réalisé en étapes E0-E8, un commit chacune, sur `main`, rien poussé
 (le patch `0050` est sur la branche locale du sous-module `objekat-record-loop-0050`, au-dessus de `objekat-group-midi-0049`).
 
+Correctif ultérieur (2026-11-25, patch `0051`) : le « live play-over » de `MidiInputDeviceNode` rejouait les passes déjà jouées dans
+l'instrument de l'entrée écoutée ; il est coupé sous le même interrupteur (`recordsThroughLoop()`), preuve :
+`tools/scenario_record_loop_midi_playover.py`.
+
 ### 6.1 Décisions (utilisateur)
 
 * Boucle et zone sont indépendantes. Une prise par zone armée et par passe. Un seul fichier par entrée ; les prises diffèrent par
