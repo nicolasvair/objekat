@@ -1,3 +1,5 @@
+> **MERGED into `main` (25 November 2026)** by `merge/macos12-into-main` (merge of `feat/macos12-intel`, plus the port of the code `main` had added since): this plan is now history; the rules that stay are in `CLAUDE.md` (« macOS 12 compatibility »).
+
 # Plan — OBJEKAT sur macOS 12 / Intel (MacBook Air 2017)
 
 Branche `feat/macos12-intel`, dépôt `objekat-macos12` (clone APFS). Rédigé le 2026-10-22 par l'architecte,

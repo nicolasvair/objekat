@@ -3270,6 +3270,36 @@ published `main`, so a cherry-pick is the likely tool rather than a merge.
 
 ---
 
+## macOS 12 compatibility (deployment target 12.0, universal arm64 + x86_64)
+
+`main` builds for **macOS 12.0** and ships a universal Release (since the merge of `feat/macos12-intel`, November 2026;
+the study and the decisions D1–D15 are in `OBJEKAT - claude project/docs/plan_macos12_intel.md`). The build refuses what is
+too recent and unguarded; it does NOT see the four traps below, which are silent on a Mac 14+ — so the rules are:
+
+- **Observation is `Perception`** (`import Perception` in the file itself — `MemberImportVisibility` is on): `@Perceptible`,
+  `@PerceptionIgnored`, `@Perception.Bindable`, `withPerceptionTracking`. Never `@Observable` / `@Bindable` /
+  `@ObservationIgnored` / `import Observation`. On 14+ it delegates to Observation, so nothing changes there.
+- **Every `body` that reads a Perceptible object** (the view-model, the session, the workspace, a `.shared` store,
+  `\.synopticLevels`) is `var body: some View { WithPerceptionTracking { … } }` — and so is every closure SwiftUI
+  evaluates OUTSIDE the body: `GeometryReader`, the rows of a `ForEach` in a lazy container, `.popover` / `.sheet` /
+  `.contextMenu` content, `ScrollViewReader`. A miss is silent on 14+ and a view that never refreshes on 12/13 (Debug
+  log: "Perceptible state was accessed"). A `Canvas` captures VALUES only (read in the body, `let x = vm.x`). A
+  `Binding(get:)` handed to a `.popover(isPresented:)` must capture a value read in the body, not read the model.
+- **Never reuse a SwiftUI name that is newer than 12**: use the helpers of `objekat/Shared/Compat/` (`onChangeCompat`,
+  `onKeyPressCompat` + `KeyCompat`, `CompatClock` / `CompatDuration` / `Task.compatSleep`, `scrollDriverCompat` /
+  `ScrollPositionCompat`, `onLocatedTapCompat`, `onContinuousHoverCompat`, `onGeometryChangeCompat`, `CompatSymbols.name`,
+  `UnevenRoundedRectangleCompat`…). A shadowing overload makes the type-checker give up on `TimelineView.body`.
+  `KeyEquivalent` is `Equatable` only from macOS 14: compare `KeyCompat`, never `press.key ==` on a native `KeyPress`.
+  SF Symbols newer than 12 go through `CompatSymbols.name(_, fallback:)`.
+- **Command-line builds pass `-skipMacroValidation`** (the Perception macro; Xcode's GUI asks "Trust & Enable" once).
+  `tools/release.sh` does.
+- **`tools/check_macos12_compat.sh`** greps what the build cannot see (forbidden tokens, `KeyEquivalent ==`, SF symbols newer
+  than 12 against the system's `name_availability.plist`, an unwrapped body reading a Perceptible object — a heuristic with a
+  commented exception list). `tools/release.sh` runs it first and stops on a finding. Run it before committing UI code.
+- Debug a build on a real macOS 12 and read `log stream --predicate 'eventMessage CONTAINS[c] "Perceptible state was accessed"'`
+  while walking the UI before saying "it works on 12": nothing on a dev Mac replaces it. `OBJ_FORCE_LEGACY_BUILD`
+  (Swift flag, Release arm64) forces the fallback paths of the Compat layer on a recent Mac.
+
 ## Permanent points of attention
 
 - **Crash or reported problem: run `python3 tools/diag_latest.py`** (sessions in
