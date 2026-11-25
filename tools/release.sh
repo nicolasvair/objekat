@@ -50,6 +50,14 @@ done
 [ -n "$VERSION" ] || { echo "--version=X.Y.Z is required" >&2; exit 2; }
 [ -n "$LABEL" ] || LABEL="$VERSION"
 
+# ------------------------------------------------- macOS 12 compatibility check
+# What the build cannot see on a recent Mac (Observation tokens, KeyEquivalent compared, SF symbols
+# newer than macOS 12, a Perceptible object read without WithPerceptionTracking). Blocking: nothing
+# is built, signed or sent to Apple before it is clean.
+echo "=== macOS 12 compatibility check"
+tools/check_macos12_compat.sh || { echo "release.sh: check_macos12_compat.sh failed, release stopped." >&2; exit 1; }
+echo
+
 # ---------------------------------------------------------------- preflight
 
 if [ -z "$IDENTITY" ]; then
