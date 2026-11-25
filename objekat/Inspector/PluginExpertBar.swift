@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 /// The bar at the bottom of a plugin's editor window, under the Sidechain strip when there is one,
 /// on every plugin: the TRIMS around it moved by one coupled gesture (+n in, −n out), the COMPENSATION
@@ -17,7 +18,9 @@ struct PluginExpertBar: View {
     /// ⇧ (fine) pressed or released mid-drag re-anchors instead of jumping (@see FineAdjust).
     @State private var dragFine = FineAdjust()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let trims = viewModel.pluginTrims(plugin) ?? (0, 0)
         HStack(spacing: 10) {
             Spacer(minLength: 4)

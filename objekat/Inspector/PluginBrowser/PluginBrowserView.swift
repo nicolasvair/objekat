@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // MARK: - The plugin browser (the sheet opened by the signal view's "+")
 
@@ -156,7 +157,9 @@ struct PluginBrowserView: View {
 
     // MARK: Body
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             header
             Divider()
@@ -188,13 +191,13 @@ struct PluginBrowserView: View {
         .frame(maxWidth: .infinity)
         // The sheet's height follows the page: taller on the "+" page, which lays its palette under the circle.
         .frame(height: PluginBrowserLayout.sheetSize(plusPage: currentPage == .plusShortcuts).height)
-        .onChange(of: searchText) { old, new in
+        .onChangeCompat(of: searchText) { old, new in
             // A search STARTS: back to "All". Only then — a colour picked while searching stays.
             guard PluginBrowserQuery(new).asksForSomething, !PluginBrowserQuery(old).asksForSomething,
                   case .plugins(let tab) = currentPage, tab != .all else { return }
             page = .plugins(.all)
         }
-        .onChange(of: usedCategories) { _, _ in
+        .onChangeCompat(of: usedCategories) { _, _ in
             // The colour of the tab we were on was taken off its last plugin: stay on "All".
             let resolved = currentPage
             if resolved != page { page = resolved }
@@ -250,14 +253,14 @@ struct PluginBrowserView: View {
                 HStack(spacing: 4) {
                     tabCapsule(.all) { Text(L("pluginBrowser.tab.all")) }
                     let tabs = usedCategories
-                    ForEach(Array(tabs.enumerated()), id: \.element) { position, index in
+                    ForEach(Array(tabs.enumerated()), id: \.element) { position, index in WithPerceptionTracking {
                         tabCapsule(.plugins(.category(index)), help: L("pluginBrowser.tab.colour.help")) {
                             Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 9, height: 9)
                         }
                         .offset(x: colourTabOffset(position, count: tabs.count))
                         .zIndex(colourDrag?.from == position ? 1 : 0)
                         .gesture(colourTabDrag(position, tabs: tabs))
-                    }
+                    } }
                 }
             }
             if extraPages.fxLink || extraPages.send || hasPlusPage {
@@ -427,7 +430,7 @@ struct PluginBrowserView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(listedSections, id: \.kind) { section in
+                    ForEach(listedSections, id: \.kind) { section in WithPerceptionTracking {
                         // ONE list for the plugins — built-in or external is what the row's badge
                         // says. Only the ARA sources, which are another gesture, keep a title.
                         if section.kind == .ara { sectionHeader(L("plugins.section.ara")) }
@@ -442,7 +445,7 @@ struct PluginBrowserView: View {
                             }
                         }
                         .padding(.horizontal, 10)
-                    }
+                    } }
                 }
                 .padding(.bottom, 8)
             }
@@ -513,9 +516,9 @@ struct PluginBrowserView: View {
         let indices = categories.colorIndices(format: plugin.formatName, identifier: plugin.identifier)
         if !indices.isEmpty {
             HStack(spacing: 2) {
-                ForEach(indices, id: \.self) { index in
+                ForEach(indices, id: \.self) { index in WithPerceptionTracking {
                     Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 7, height: 7)
-                }
+                } }
             }
         }
     }
@@ -738,7 +741,9 @@ struct PluginBrowserRowLabel: View {
     let plugin: AvailablePlugin
     var categories: PluginCategoryStore = .shared
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 7) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(plugin.name)
@@ -754,9 +759,9 @@ struct PluginBrowserRowLabel: View {
             let indices = categories.colorIndices(format: plugin.formatName, identifier: plugin.identifier)
             if !indices.isEmpty {
                 HStack(spacing: 2) {
-                    ForEach(indices, id: \.self) { index in
+                    ForEach(indices, id: \.self) { index in WithPerceptionTracking {
                         Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 7, height: 7)
-                    }
+                    } }
                 }
             }
             Text(plugin.formatLabel)
@@ -773,7 +778,9 @@ struct PluginBrowserCard<Label: View>: View {
 
     @State private var hovering = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Button(action: action) {
             label()
                 .padding(.horizontal, 10)

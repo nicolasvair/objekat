@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - What the pointer is over
 
@@ -7,7 +8,7 @@ import SwiftUI
 /// axes' own units, and the base image's value there when the image carries one (@see
 /// ScriptCanvasImage.value). Written by the plot, read by the window's bottom bar. Strings, already
 /// formatted (@see CanvasFormat): the bar has nothing to compute.
-@Observable final class ScriptCanvasPointer {
+@Perceptible final class ScriptCanvasPointer {
     var xText = ""
     var yText = ""
     var valueText = ""
@@ -149,7 +150,7 @@ final class ScriptCanvasPlotNSView: NSView {
     private func arm() {
         guard !observing else { return }
         observing = true
-        withObservationTracking {
+        withPerceptionTracking {
             _ = store.canvases[canvasID]
         } onChange: { [weak self] in
             DispatchQueue.main.async {

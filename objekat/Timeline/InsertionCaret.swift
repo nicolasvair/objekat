@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 /// The insertion caret: the line that says where editing begins — and where playback will resume.
 ///
@@ -22,7 +23,9 @@ struct InsertionCaret: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Rectangle()
             .fill(overObject || colorScheme != .dark ? Color.black : .white)
             .frame(width: Self.width, height: height)

@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 import Combine
 import UniformTypeIdentifiers
@@ -24,7 +25,7 @@ import UniformTypeIdentifiers
 /// its own controls in place of the keys glyph (`ComputerKeyboardRowControls`: the mode button, the octave selector under it)
 /// — the mode is what feeds it, @see EditViewModel+ComputerKeyboard.
 struct MidiInputsSection: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// The list this section lives in takes the keyboard when a row is clicked.
     var focusList: () -> Void = {}
 
@@ -59,7 +60,9 @@ struct MidiInputsSection: View {
             .map { (key: $0.key, chain: $0.value) }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Group {
             if !rows.isEmpty || !dormant.isEmpty {
                 VStack(spacing: 0) {
@@ -72,8 +75,8 @@ struct MidiInputsSection: View {
                             .padding(.top, 8).padding(.bottom, 4)
                         Divider()
                     }
-                    ForEach(rows, id: \.id) { row($0) }
-                    ForEach(dormant, id: \.key) { dormantRow(key: $0.key, chain: $0.chain) }
+                    ForEach(rows, id: \.id) { d in WithPerceptionTracking { row(d) } }
+                    ForEach(dormant, id: \.key) { item in WithPerceptionTracking { dormantRow(key: item.key, chain: item.chain) } }
                 }
             }
         }
@@ -92,12 +95,15 @@ struct MidiInputsSection: View {
         let source = RecordSource.midi(d.ref)
         let hasInstrument = viewModel.midiChainKey(for: d).flatMap { viewModel.inputChains.midi[$0]?.instrument } != nil
         let on = heard.contains(d.id)
+        // Read HERE (tracked) and captured by the popover's binding below: its `get` runs outside the body's tracking
+        // on macOS 12/13.
+        let isOpen = viewModel.openInputStrip == source
         return InputStrip(
             tint: viewModel.mainStemColor,
             name: d.displayName,
             badges: viewModel.inputStripBadges(source),
             isSelected: selection.contains(d.id),
-            isOpen: viewModel.openInputStrip == source,
+            isOpen: isOpen,
             isDropTarget: dropTarget == source,
             heard: on,
             canListen: hasInstrument,
@@ -143,10 +149,10 @@ struct MidiInputsSection: View {
                 if hovered { dropTarget = source } else if dropTarget == source { dropTarget = nil }
             }))
         .popover(isPresented: Binding(
-            get: { viewModel.openInputStrip == source },
+            get: { isOpen },
             set: { if !$0 && viewModel.openInputStrip == source { viewModel.openInputStrip = nil } }
         ), arrowEdge: .trailing) {
-            InputStripPopup(viewModel: viewModel, source: source)
+            WithPerceptionTracking { InputStripPopup(viewModel: viewModel, source: source) }
         }
         .padding(.horizontal, InputRowStyle.horizontalPadding).padding(.vertical, InputRowStyle.stripSpacing / 2)
     }
@@ -156,11 +162,13 @@ struct MidiInputsSection: View {
         DormantInputStrip(glyph: .keys, name: viewModel.midiInputName(chain.input), detail: chain.instrument?.name ?? "")
             .padding(.horizontal, InputRowStyle.horizontalPadding).padding(.vertical, InputRowStyle.stripSpacing / 2)
             .contextMenu {
-                if chain.instrument != nil {
-                    Button(L("inputs.instrument.remove")) { viewModel.removeInputInstrument(chainKey: key) }
-                }
-                if !chain.plugins.isEmpty {
-                    Button(L("inputs.fx.removeAll")) { viewModel.clearMidiInputFX(chainKey: key) }
+                WithPerceptionTracking {
+                    if chain.instrument != nil {
+                        Button(L("inputs.instrument.remove")) { viewModel.removeInputInstrument(chainKey: key) }
+                    }
+                    if !chain.plugins.isEmpty {
+                        Button(L("inputs.fx.removeAll")) { viewModel.clearMidiInputFX(chainKey: key) }
+                    }
                 }
             }
     }

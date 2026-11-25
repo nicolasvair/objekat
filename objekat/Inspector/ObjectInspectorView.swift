@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Main inspector (the left panel's "Object" tab)
 //
@@ -44,7 +45,9 @@ struct ObjectInspectorView: View {
     @State private var sendAnchors: [UUID: Float] = [:]
     @State private var sendOrigin: Double = 0
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 0) {
             Group {
                 if viewModel.selectedIDs.count > 1 {
@@ -120,11 +123,11 @@ struct ObjectInspectorView: View {
         // (Re)initialises the slider positions on every change of selection:
         // the shared value if it is uniform (absolute mode), otherwise 0 (relative mode).
         .onAppear { refreshMultiBaselines() }
-        .onChange(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
+        .onChangeCompat(of: viewModel.selectedIDs) { _, _ in refreshMultiBaselines() }
         // What moves the values from ELSEWHERE — v/p + ↑/↓, the wheel, the Pan tool, an undo —
         // is read back into the boxes; the boxes' own writes are recognised and left alone.
-        .onChange(of: volumeSignature) { old, new in resyncVolume(old, new) }
-        .onChange(of: panSignature) { old, new in resyncPan(old, new) }
+        .onChangeCompat(of: volumeSignature) { old, new in resyncVolume(old, new) }
+        .onChangeCompat(of: panSignature) { old, new in resyncPan(old, new) }
     }
 
     /// The width of the single multiple-selection column: the signal view's own zone width and a
@@ -139,12 +142,25 @@ struct ObjectInspectorView: View {
     private static let maxChips = 40
 
     /// The items flow and wrap, a block each; what they are worth is in the tooltip.
+    @ViewBuilder
     private var selectionItems: some View {
+        // `ItemFlowLayout` is a macOS 13 `Layout`; below, the same blocks in an adaptive grid
+        // (they wrap, but no longer pack by their own width).
+        if #available(macOS 13, *) {
+            ItemFlowLayout(spacing: 4) { selectionChips }
+        } else {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 56), spacing: 4)],
+                      alignment: .leading, spacing: 4) { selectionChips }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionChips: some View {
         let snap = self.snap
         let shown = Array(snap.objects.prefix(Self.maxChips))
         let hidden = Array(snap.objects.dropFirst(Self.maxChips))
-        return ItemFlowLayout(spacing: 4) {
-            ForEach(shown) { obj in
+        Group {
+            ForEach(shown) { obj in WithPerceptionTracking {
                 SelectionChip(
                     id: obj.id,
                     name: viewModel.displayName(of: obj),
@@ -159,7 +175,7 @@ struct ObjectInspectorView: View {
                         viewModel.select(id, additive: NSEvent.modifierFlags.contains(.command))
                     })
                 .equatable()
-            }
+            } }
             if !hidden.isEmpty {
                 overflowChip(hidden)
             }
@@ -477,9 +493,9 @@ struct ObjectInspectorView: View {
         zone(dashed: true) {
             VStack(alignment: .leading, spacing: 4) {
                 zoneTitle(L("synoptic.zone.aux"))
-                ForEach(snap.sendAuxes) { aux in
+                ForEach(snap.sendAuxes) { aux in WithPerceptionTracking {
                     multiSendRow(aux)
-                }
+                } }
             }
         }
     }
@@ -578,7 +594,7 @@ struct ObjectInspectorView: View {
             HStack(spacing: 8) {
                 zoneTitle(L("synoptic.zone.stems"))
                 Menu {
-                    ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in
+                    ForEach(Array(viewModel.stems.enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
                         let itemIsMain = stem.id == viewModel.mainStemID
                         let prefix = idx < 9 ? "\(idx + 1)  " : ""
                         let name = itemIsMain ? L("stem.main.name") : stem.name
@@ -591,7 +607,7 @@ struct ObjectInspectorView: View {
                             if current == stem.id { Label(title, systemImage: "checkmark") }
                             else { Text(verbatim: title) }
                         }
-                    }
+                    } }
                 } label: {
                     HStack(spacing: 6) {
                         Text(label)
@@ -824,6 +840,7 @@ private struct SelectionChip: View, Equatable {
 /// The blocks' own sizes are measured ONCE per set of subviews (`makeCache` / `updateCache`):
 /// `sizeThatFits` and `placeSubviews` each used to measure every block again, and SwiftUI asks for
 /// several of the first for one of the second.
+@available(macOS 13, *)
 private struct ItemFlowLayout: Layout {
     var spacing: CGFloat
 

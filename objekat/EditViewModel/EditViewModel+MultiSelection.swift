@@ -1,3 +1,4 @@
+import Perception
 import Foundation
 
 // MARK: - What the inspector reads about a MULTIPLE selection
@@ -13,7 +14,7 @@ import Foundation
 // sends comes from there). The body, `refreshMultiBaselines`, the signatures and the send helpers
 // all read it, so a pass costs a dictionary lookup.
 //
-// The reading is `@ObservationIgnored` state behind a computed property that touches `items`,
+// The reading is `@PerceptionIgnored` state behind a computed property that touches `items`,
 // `selectedIDs` and `stems` itself (@see `find(id:)`): a view that reads the snapshot keeps
 // depending on what the snapshot was made of, cache hit or not.
 

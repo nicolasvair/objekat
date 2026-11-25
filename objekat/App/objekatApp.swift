@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Perception
 import AppKit
 import UniformTypeIdentifiers
 
@@ -137,23 +138,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// No `@main` here: the entry point is main.swift, which routes between the windowed app and
-// the windowless mode. Both together would be a compile error.
-struct objekatApp: App {
-    // The WORKSPACE is owned here (and not in ContentView): it carries the session — hence the
-    // engine, the document and the transport state, all of which have to outlive the window and
-    // stay reachable both from the File menu's commands and from external driving — plus the tab
-    // list (INC 1). `session` stays a shorthand for `workspace.session`: every existing call site
-    // that reads it keeps reading the SAME session, tabs being a matter of what document it is
-    // pointed at, never a second one.
-    @State private var workspace = Workspace()
+// MARK: - Window root, menus, and the two App types
+//
+// The windowed app exists in TWO shapes because `Scene.windowResizability` is macOS 13+ and a
+// SceneBuilder body has no limited-availability branch to lean on: `objekatApp` (macOS 13+, with
+// the resizability) and `objekatAppLegacy` (macOS 12, without it) share EVERYTHING else through
+// the two types below. `main.swift` picks one with `#available`. The menus are NOT a `Commands`
+// type of their own: they are built by a `@CommandsBuilder` property that each App's body calls
+// inside its `.commands { }`, so they are evaluated in the very context the inline block was
+// (the App's body, hence the same observation tracking and the same regreying).
+
+/// The content of the document window — the same on both App types.
+struct ObjekatMainWindowRoot: View {
+    let workspace: Workspace
+    let appDelegate: AppDelegate
     private var session: ObjekatSession { workspace.session }
-    private var engine: OBJEngineCore { session.engine }
     private var viewModel: EditViewModel { session.viewModel }
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    /// The registry of third-party scripts. `@State` on an `@Observable` singleton: the menu
-    /// rebuilds itself after 'Reload the scripts'.
-    @State private var scripts = ScriptPluginRegistry.shared
+
+    var body: some View {
+        WithPerceptionTracking {
+            ContentView(session: session, workspace: workspace)
+                .preferredColorScheme(.dark)
+                .onAppear {
+                    appDelegate.viewModel = viewModel
+                    appDelegate.workspace = workspace
+                    // Command API: the context is always attached (a command arriving with no document
+                    // answers `invalid_state` rather than staying silent), but the server only starts if the
+                    // preference — or `--api` — asks for it.
+                    CommandContext.shared.session = session
+                    CommandContext.shared.workspace = workspace
+                    ObjekatPreferences.shared.applyAPIPreference()
+                }
+                // A session handed over by the Finder goes to THIS window, never to a new one: a
+                // `WindowGroup` otherwise answers an external event by opening another window —
+                // a second `ContentView` on the one session, which tabs exist precisely to avoid
+                // (@see `applicationWillFinishLaunching`). `onOpenURL` is the SwiftUI half of the
+                // opening, the AppDelegate's `application(_:open:)` the AppKit half: whichever of
+                // the two SwiftUI delivers a document to, both feed the same queue, which opens a
+                // file once however many roads it came by (@see Workspace.openFromOutside).
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
+                .onOpenURL { url in
+                    guard url.isFileURL, SessionFile.hasSessionExtension(url) else { return }
+                    workspace.openFromOutside([url])
+                }
+        }
+    }
+}
+
+/// The menu bar — the same on both App types. Holds the helpers the entries call.
+struct ObjekatMenus {
+    let workspace: Workspace
+    /// The registry of third-party scripts (an `@State` of the App, handed over).
+    let scripts: ScriptPluginRegistry
+    private var viewModel: EditViewModel { workspace.session.viewModel }
 
     /// One entry per script, or a submenu when the manifest declares several. Only the entries
     /// with an 'app' context (the default) — an 'object' one has no target here, it lives in the
@@ -247,203 +284,221 @@ struct objekatApp: App {
         workspace.closeWithConfirmation(workspace.activeTabID)
     }
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView(session: session, workspace: workspace)
-                .preferredColorScheme(.dark)
-                .onAppear {
-                    appDelegate.viewModel = viewModel
-                    appDelegate.workspace = workspace
-                    // Command API: the context is always attached (a command arriving with no document
-                    // answers `invalid_state` rather than staying silent), but the server only starts if the
-                    // preference — or `--api` — asks for it.
-                    CommandContext.shared.session = session
-                    CommandContext.shared.workspace = workspace
-                    ObjekatPreferences.shared.applyAPIPreference()
-                }
-                // A session handed over by the Finder goes to THIS window, never to a new one: a
-                // `WindowGroup` otherwise answers an external event by opening another window —
-                // a second `ContentView` on the one session, which tabs exist precisely to avoid
-                // (@see `applicationWillFinishLaunching`). `onOpenURL` is the SwiftUI half of the
-                // opening, the AppDelegate's `application(_:open:)` the AppKit half: whichever of
-                // the two SwiftUI delivers a document to, both feed the same queue, which opens a
-                // file once however many roads it came by (@see Workspace.openFromOutside).
-                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
-                .onOpenURL { url in
-                    guard url.isFileURL, SessionFile.hasSessionExtension(url) else { return }
-                    workspace.openFromOutside([url])
-                }
-        }
-        .windowResizability(.contentMinSize)
-        .commands {
-            // The anti-reentrance guard (step 4): every entry that touches the document, the engine
-            // or the transport is disabled for the span of a load — `isLoadingProject` reads
-            // `viewModel.loadState`, an `@Observable` property, so the menu regreys itself with no
-            // extra plumbing.
-            CommandGroup(replacing: .newItem) {
-                Button(L("menu.file.newProject")) { viewModel.newProject() }
-                    .keyboardShortcut("n", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.file.newTab")) { newTab() }
-                    .keyboardShortcut("t", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.file.open")) { openProjectPanel() }
-                    .keyboardShortcut("o", modifiers: [.command])
-                    .disabled(busy)
-                Menu(L("menu.file.recentProjects")) {
-                    if viewModel.recentProjects.isEmpty {
-                        Button(L("menu.file.noRecentItems")) {}
-                            .disabled(true)
-                    } else {
-                        ForEach(viewModel.recentProjects, id: \.self) { url in
-                            Button(EditViewModel.projectDisplayName(for: url)) {
-                                Task { await workspace.open(url: url, inNewTab: false) }
-                            }
-                        }
-                        Divider()
-                        Button(L("menu.file.clearRecentItems")) {
-                            viewModel.clearRecentProjects()
-                        }
-                    }
-                }
+    @CommandsBuilder var commands: some Commands {
+        // The anti-reentrance guard (step 4): every entry that touches the document, the engine
+        // or the transport is disabled for the span of a load — `isLoadingProject` reads
+        // `viewModel.loadState`, an `@Observable` property, so the menu regreys itself with no
+        // extra plumbing.
+        CommandGroup(replacing: .newItem) {
+            Button(L("menu.file.newProject")) { viewModel.newProject() }
+                .keyboardShortcut("n", modifiers: [.command])
                 .disabled(busy)
-            }
-            CommandGroup(replacing: .saveItem) {
-                Button(L("menu.file.save")) { viewModel.save() }
-                    .keyboardShortcut("s", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.file.saveAs")) { viewModel.saveAs() }
-                    .keyboardShortcut("s", modifiers: [.command, .shift])
-                    .disabled(busy)
-                Button(L("menu.file.saveCopyWithAudio")) {
-                    viewModel.saveCopyWithAudioFiles()
-                }
-                    .disabled(busy)
-                Divider()
-                // Mix export: opens the settings panel; the render that follows runs in the background
-                // (@see EditViewModel+Export).
-                Button(L("menu.file.export")) { viewModel.openExportPanel() }
-                    .keyboardShortcut("e", modifiers: [.command])
-                    .disabled(busy)
-                Divider()
-                // Tabs (INC 1): a single tab falls back on the plain "close window" (whatever
-                // window is key — a plugin editor, Preferences — is exactly what a hand pressing
-                // Cmd+W usually means there), and so does a keypress landing on any window OTHER
-                // than the document's own (`viewModel.titledWindow`, @see `adoptDocumentWindow`).
-                Button(L("menu.file.closeTab")) {
-                    if workspace.tabs.count <= 1 || NSApp.keyWindow !== viewModel.titledWindow {
-                        NSApp.keyWindow?.performClose(nil)
-                    } else {
-                        closeActiveTabWithConfirmation()
-                    }
-                }
-                    .keyboardShortcut("w", modifiers: [.command])
-                    .disabled(busy)
-            }
-            // EDIT: the same actions as the keys (@see EditViewModel+EditMenu). The timeline's key monitor
-            // consumes ⌘Z/⌘X/⌘C/⌘V/⌘A before the menu sees them; these key equivalents only fire while
-            // text is being typed, and then hand the standard selector to the field.
-            CommandGroup(replacing: .undoRedo) {
-                Button(L("menu.edit.undo")) {
-                    viewModel.performEditMenu(Selector(("undo:"))) { viewModel.performUndoShortcut(redo: false) }
-                }
-                    .keyboardShortcut("z", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.edit.redo")) {
-                    viewModel.performEditMenu(Selector(("redo:"))) { viewModel.performUndoShortcut(redo: true) }
-                }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .disabled(busy)
-            }
-            CommandGroup(replacing: .pasteboard) {
-                Button(L("menu.edit.cut")) {
-                    viewModel.performEditMenu(#selector(NSText.cut(_:))) { viewModel.performCutShortcut() }
-                }
-                    .keyboardShortcut("x", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.edit.copy")) {
-                    viewModel.performEditMenu(#selector(NSText.copy(_:))) { viewModel.performCopyShortcut() }
-                }
-                    .keyboardShortcut("c", modifiers: [.command])
-                    .disabled(busy)
-                Button(L("menu.edit.paste")) {
-                    viewModel.performEditMenu(#selector(NSText.paste(_:))) { viewModel.performPasteShortcut() }
-                }
-                    .keyboardShortcut("v", modifiers: [.command])
-                    .disabled(busy)
-                Divider()
-                Button(L("menu.edit.selectAll")) {
-                    viewModel.performEditMenu(#selector(NSText.selectAll(_:))) { viewModel.performSelectAllShortcut() }
-                }
-                    .keyboardShortcut("a", modifiers: [.command])
-                    .disabled(busy)
-            }
-            // OBJEKAT ▸ Diagnostic : le journal (préférence, effet immédiat), « Signaler un problème… »
-            // (une ligne ISSUE dans le journal) et l'ouverture du dossier des journaux.
-            // ⌃⌥⌘I et non ⌃⌥⌘P : le moniteur de touches du timeline avale la lettre P (outil Pan, sans
-            // garde de modificateurs) avant que les équivalents de menu la voient ; « i » est libre.
-            CommandGroup(after: .appSettings) {
-                Menu(L("diag.menu.title")) {
-                    Toggle(L("diag.menu.log"), isOn: Binding(
-                        get: { ObjekatPreferences.shared.diagnosticLog },
-                        set: { ObjekatPreferences.shared.diagnosticLog = $0 }))
-                    Button(L("diag.menu.report")) { DiagIssueReport.askAndMark() }
-                        .keyboardShortcut("i", modifiers: [.control, .option, .command])
-                        .disabled(!ObjekatPreferences.shared.diagnosticLog)
-                    Button(L("diag.menu.openFolder")) { DiagIssueReport.openFolder() }
-                }
-            }
-            // No View menu, no Help menu: emptied here, their top-level items taken off by MainMenuCleanup
-            // (AppKit lays "Enter Full Screen" and the help search back on its own otherwise).
-            CommandGroup(replacing: .toolbar) {}
-            CommandGroup(replacing: .sidebar) {}
-            CommandGroup(replacing: .help) {}
-            // Tabs (INC 1): grouped with the Window menu's own arrangement entries
-            // (Minimise/Zoom/Bring All to Front), which is where a list of open "things" belongs.
-            CommandGroup(after: .windowArrangement) {
-                Divider()
-                Button(L("menu.window.nextTab")) { selectRelativeTab(by: 1) }
-                    .keyboardShortcut(.tab, modifiers: [.control])
-                    .disabled(workspace.tabs.count < 2)
-                Button(L("menu.window.previousTab")) { selectRelativeTab(by: -1) }
-                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
-                    .disabled(workspace.tabs.count < 2)
-                if workspace.tabs.count >= 2 {
-                    Menu(L("menu.window.goToTab")) {
-                        ForEach(Array(workspace.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in
-                            Button(workspace.displayName(for: tab)) { selectTab(tab.id) }
-                                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")),
-                                                 modifiers: [.command])
-                        }
-                    }
-                }
-            }
-            // THE 'SCRIPTS' MENU — entries declared by the manifests in
-            // `~/Library/Application Support/Objekat/Plugins/`. Each entry launches a SEPARATE PROCESS
-            // that connects to the socket; nothing is interpreted inside the app.
-            CommandMenu(L("menu.scripts.title")) {
-                if scripts.plugins.isEmpty {
-                    Button(L("menu.scripts.none")) {}
+            Button(L("menu.file.newTab")) { newTab() }
+                .keyboardShortcut("t", modifiers: [.command])
+                .disabled(busy)
+            Button(L("menu.file.open")) { openProjectPanel() }
+                .keyboardShortcut("o", modifiers: [.command])
+                .disabled(busy)
+            Menu(L("menu.file.recentProjects")) {
+                if viewModel.recentProjects.isEmpty {
+                    Button(L("menu.file.noRecentItems")) {}
                         .disabled(true)
                 } else {
-                    // A script with ONLY object-context entries has nothing to show here.
-                    ForEach(scripts.plugins.filter { !$0.barEntries.isEmpty }) { plugin in
-                        scriptMenu(for: plugin)
+                    ForEach(viewModel.recentProjects, id: \.self) { url in
+                        Button(EditViewModel.projectDisplayName(for: url)) {
+                            Task { await workspace.open(url: url, inNewTab: false) }
+                        }
                     }
-                    .disabled(busy)
+                    Divider()
+                    Button(L("menu.file.clearRecentItems")) {
+                        viewModel.clearRecentProjects()
+                    }
                 }
-                Divider()
-                Button(L("menu.scripts.openFolder")) {
-                    let folder = ScriptPluginRegistry.pluginsDirectory
-                    try? FileManager.default.createDirectory(at: folder,
-                                                             withIntermediateDirectories: true)
-                    NSWorkspace.shared.open(folder)
-                }
+            }
+            .disabled(busy)
+        }
+        CommandGroup(replacing: .saveItem) {
+            Button(L("menu.file.save")) { viewModel.save() }
+                .keyboardShortcut("s", modifiers: [.command])
                 .disabled(busy)
-                Button(L("menu.scripts.reload")) { scripts.reload() }
-                    .disabled(busy)
+            Button(L("menu.file.saveAs")) { viewModel.saveAs() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(busy)
+            Button(L("menu.file.saveCopyWithAudio")) {
+                viewModel.saveCopyWithAudioFiles()
+            }
+                .disabled(busy)
+            Divider()
+            // Mix export: opens the settings panel; the render that follows runs in the background
+            // (@see EditViewModel+Export).
+            Button(L("menu.file.export")) { viewModel.openExportPanel() }
+                .keyboardShortcut("e", modifiers: [.command])
+                .disabled(busy)
+            Divider()
+            // Tabs (INC 1): a single tab falls back on the plain "close window" (whatever
+            // window is key — a plugin editor, Preferences — is exactly what a hand pressing
+            // Cmd+W usually means there), and so does a keypress landing on any window OTHER
+            // than the document's own (`viewModel.titledWindow`, @see `adoptDocumentWindow`).
+            Button(L("menu.file.closeTab")) {
+                if workspace.tabs.count <= 1 || NSApp.keyWindow !== viewModel.titledWindow {
+                    NSApp.keyWindow?.performClose(nil)
+                } else {
+                    closeActiveTabWithConfirmation()
+                }
+            }
+                .keyboardShortcut("w", modifiers: [.command])
+                .disabled(busy)
+        }
+        // EDIT: the same actions as the keys (@see EditViewModel+EditMenu). The timeline's key monitor
+        // consumes ⌘Z/⌘X/⌘C/⌘V/⌘A before the menu sees them; these key equivalents only fire while
+        // text is being typed, and then hand the standard selector to the field.
+        CommandGroup(replacing: .undoRedo) {
+            Button(L("menu.edit.undo")) {
+                viewModel.performEditMenu(Selector(("undo:"))) { viewModel.performUndoShortcut(redo: false) }
+            }
+                .keyboardShortcut("z", modifiers: [.command])
+                .disabled(busy)
+            Button(L("menu.edit.redo")) {
+                viewModel.performEditMenu(Selector(("redo:"))) { viewModel.performUndoShortcut(redo: true) }
+            }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(busy)
+        }
+        CommandGroup(replacing: .pasteboard) {
+            Button(L("menu.edit.cut")) {
+                viewModel.performEditMenu(#selector(NSText.cut(_:))) { viewModel.performCutShortcut() }
+            }
+                .keyboardShortcut("x", modifiers: [.command])
+                .disabled(busy)
+            Button(L("menu.edit.copy")) {
+                viewModel.performEditMenu(#selector(NSText.copy(_:))) { viewModel.performCopyShortcut() }
+            }
+                .keyboardShortcut("c", modifiers: [.command])
+                .disabled(busy)
+            Button(L("menu.edit.paste")) {
+                viewModel.performEditMenu(#selector(NSText.paste(_:))) { viewModel.performPasteShortcut() }
+            }
+                .keyboardShortcut("v", modifiers: [.command])
+                .disabled(busy)
+            Divider()
+            Button(L("menu.edit.selectAll")) {
+                viewModel.performEditMenu(#selector(NSText.selectAll(_:))) { viewModel.performSelectAllShortcut() }
+            }
+                .keyboardShortcut("a", modifiers: [.command])
+                .disabled(busy)
+        }
+        // OBJEKAT ▸ Diagnostic : le journal (préférence, effet immédiat), « Signaler un problème… »
+        // (une ligne ISSUE dans le journal) et l'ouverture du dossier des journaux.
+        // ⌃⌥⌘I et non ⌃⌥⌘P : le moniteur de touches du timeline avale la lettre P (outil Pan, sans
+        // garde de modificateurs) avant que les équivalents de menu la voient ; « i » est libre.
+        CommandGroup(after: .appSettings) {
+            Menu(L("diag.menu.title")) {
+                Toggle(L("diag.menu.log"), isOn: Binding(
+                    get: { ObjekatPreferences.shared.diagnosticLog },
+                    set: { ObjekatPreferences.shared.diagnosticLog = $0 }))
+                Button(L("diag.menu.report")) { DiagIssueReport.askAndMark() }
+                    .keyboardShortcut("i", modifiers: [.control, .option, .command])
+                    .disabled(!ObjekatPreferences.shared.diagnosticLog)
+                Button(L("diag.menu.openFolder")) { DiagIssueReport.openFolder() }
             }
         }
+        // No View menu, no Help menu: emptied here, their top-level items taken off by MainMenuCleanup
+        // (AppKit lays "Enter Full Screen" and the help search back on its own otherwise).
+        CommandGroup(replacing: .toolbar) {}
+        CommandGroup(replacing: .sidebar) {}
+        CommandGroup(replacing: .help) {}
+        // Tabs (INC 1): grouped with the Window menu's own arrangement entries
+        // (Minimise/Zoom/Bring All to Front), which is where a list of open "things" belongs.
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button(L("menu.window.nextTab")) { selectRelativeTab(by: 1) }
+                .keyboardShortcut(.tab, modifiers: [.control])
+                .disabled(workspace.tabs.count < 2)
+            Button(L("menu.window.previousTab")) { selectRelativeTab(by: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(workspace.tabs.count < 2)
+            if workspace.tabs.count >= 2 {
+                Menu(L("menu.window.goToTab")) {
+                    ForEach(Array(workspace.tabs.prefix(9).enumerated()), id: \.element.id) { index, tab in WithPerceptionTracking {
+                        Button(workspace.displayName(for: tab)) { selectTab(tab.id) }
+                            .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")),
+                                             modifiers: [.command])
+                    } }
+                }
+            }
+        }
+        // THE 'SCRIPTS' MENU — entries declared by the manifests in
+        // `~/Library/Application Support/Objekat/Plugins/`. Each entry launches a SEPARATE PROCESS
+        // that connects to the socket; nothing is interpreted inside the app.
+        CommandMenu(L("menu.scripts.title")) {
+            if scripts.plugins.isEmpty {
+                Button(L("menu.scripts.none")) {}
+                    .disabled(true)
+            } else {
+                // A script with ONLY object-context entries has nothing to show here.
+                ForEach(scripts.plugins.filter { !$0.barEntries.isEmpty }) { plugin in
+                    scriptMenu(for: plugin)
+                }
+                .disabled(busy)
+            }
+            Divider()
+            Button(L("menu.scripts.openFolder")) {
+                let folder = ScriptPluginRegistry.pluginsDirectory
+                try? FileManager.default.createDirectory(at: folder,
+                                                         withIntermediateDirectories: true)
+                NSWorkspace.shared.open(folder)
+            }
+            .disabled(busy)
+            Button(L("menu.scripts.reload")) { scripts.reload() }
+                .disabled(busy)
+        }
+    }
+}
+
+// No `@main` here: the entry point is main.swift, which routes between the windowed app and
+// the windowless mode. Both together would be a compile error.
+@available(macOS 13, *)
+struct objekatApp: App {
+    // The WORKSPACE is owned here (and not in ContentView): it carries the session — hence the
+    // engine, the document and the transport state, all of which have to outlive the window and
+    // stay reachable both from the File menu's commands and from external driving — plus the tab
+    // list (INC 1). `session` is `workspace.session`: tabs are a matter of what document it is
+    // pointed at, never a second session.
+    @State private var workspace = Workspace()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// The registry of third-party scripts. `@State` on an `@Observable` singleton: the menu
+    /// rebuilds itself after 'Reload the scripts'.
+    @State private var scripts = ScriptPluginRegistry.shared
+
+    var body: some Scene { WithPerceptionTracking { perceivedBody } }
+
+    @SceneBuilder private var perceivedBody: some Scene {
+        WindowGroup {
+            ObjekatMainWindowRoot(workspace: workspace, appDelegate: appDelegate)
+        }
+        .windowResizability(.contentMinSize)
+        .commands { ObjekatMenus(workspace: workspace, scripts: scripts).commands }
+
+        Settings {
+            PreferencesView()
+        }
+    }
+}
+
+/// macOS 12: the same app without `windowResizability` (the window's minimum size is then
+/// whatever the content asks for, SwiftUI's own default). Keep it in step with `objekatApp`.
+struct objekatAppLegacy: App {
+    @State private var workspace = Workspace()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @State private var scripts = ScriptPluginRegistry.shared
+
+    var body: some Scene { WithPerceptionTracking { perceivedBody } }
+
+    @SceneBuilder private var perceivedBody: some Scene {
+        WindowGroup {
+            ObjekatMainWindowRoot(workspace: workspace, appDelegate: appDelegate)
+        }
+        .commands { ObjekatMenus(workspace: workspace, scripts: scripts).commands }
 
         Settings {
             PreferencesView()

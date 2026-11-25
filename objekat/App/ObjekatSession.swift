@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 /// An Objekat session: the engine, the document, and the TRANSPORT state that ties them.
 ///
@@ -13,7 +13,7 @@ import Observation
 /// OBSERVES it instead of owning it, and the commands call the same methods as the buttons. It
 /// is also what will make a windowless mode possible — the session needs no view at all to run.
 @MainActor
-@Observable
+@Perceptible
 final class ObjekatSession {
 
     let engine: OBJEngineCore

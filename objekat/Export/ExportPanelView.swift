@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // The export panel (File ▸ Export…). A compact sheet: it leaves the timeline visible underneath,
 // which matters — setting IN and OUT here MOVES the ruler's markers, and the view reframes
@@ -16,7 +17,7 @@ import AppKit
 // a render one cannot judge. Ticking "in the background" is what gives the strip its turn.
 
 struct ExportPanelView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     @State private var inText: String = ""
     @State private var outText: String = ""
@@ -92,7 +93,9 @@ struct ExportPanelView: View {
     /// flicker back to editable for the instant the next render takes to start.
     private var isRendering: Bool { job?.isRunning == true || viewModel.exportBatch?.isActive == true }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(L("export.panel.title"))
                 .font(.system(size: 15, weight: .semibold))
@@ -122,10 +125,10 @@ struct ExportPanelView: View {
         .padding(20)
         .frame(width: 460)
         .onAppear(perform: syncTimeFields)
-        .onChange(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
-        .onChange(of: job?.isRunning) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: viewModel.loopRegion) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: job?.isRunning) { _, _ in syncTimeFields() }
         // Changing unit does not touch the bounds: we show the same instants differently.
-        .onChange(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
+        .onChangeCompat(of: settings.timeFieldMode) { _, _ in syncTimeFields() }
         // The listening belongs to this panel: closing it stops the sound. The render, itself,
         // goes on — and the strip under the transport takes it over.
         .onDisappear { viewModel.exportAudition.stop() }
@@ -323,9 +326,9 @@ struct ExportPanelView: View {
                         viewModel.setExportRangeMode(mode)
                         syncTimeFields()
                     })) {
-                    ForEach(ExportSettings.TimeRangeMode.allCases) { mode in
+                    ForEach(ExportSettings.TimeRangeMode.allCases) { mode in WithPerceptionTracking {
                         Text(mode.label).tag(mode)
-                    }
+                    } }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -415,7 +418,7 @@ struct ExportPanelView: View {
                     if let t = parseTime(text.wrappedValue) { commit(t) }
                     syncTimeFields()
                 }
-                .onChange(of: focusedField) { _, now in
+                .onChangeCompat(of: focusedField) { _, now in
                     guard now != field else { return }
                     if let t = parseTime(text.wrappedValue) { commit(t) }
                     syncTimeFields()
@@ -461,9 +464,9 @@ struct ExportPanelView: View {
                         viewModel.exportSettings.format = f
                         viewModel.exportSettings.clampToFormat()
                     })) {
-                    ForEach(ExportSettings.FileFormat.allCases) { f in
+                    ForEach(ExportSettings.FileFormat.allCases) { f in WithPerceptionTracking {
                         Text(f.label).tag(f)
-                    }
+                    } }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -476,9 +479,9 @@ struct ExportPanelView: View {
 
             HStack(spacing: 12) {
                 Picker(noLabel, selection: bound(\.sampleRate)) {
-                    ForEach(settings.format.sampleRates, id: \.self) { hz in
+                    ForEach(settings.format.sampleRates, id: \.self) { hz in WithPerceptionTracking {
                         Text(ExportSettings.sampleRateLabel(hz)).tag(hz)
-                    }
+                    } }
                 }
                 .labelsHidden()
                 .frame(width: 130)

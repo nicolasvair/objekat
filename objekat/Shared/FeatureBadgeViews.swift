@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - The feature badges as views (the rich block views and the sound list)
 //
@@ -41,7 +42,9 @@ struct NameWithFeatureBadges<Name: View>: View {
     var keepsBadges = false
     @ViewBuilder let name: () -> Name
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if badges.isEmpty {
             name()
         } else if keepsBadges {
@@ -53,12 +56,21 @@ struct NameWithFeatureBadges<Name: View>: View {
                     .layoutPriority(1)
             }
         } else {
-            ViewThatFits(in: .horizontal) {
+            if #available(macOS 13, *) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: spacing) {
+                        name().fixedSize()
+                        FeatureBadgeGlyphs(badges: badges, size: size, color: color)
+                    }
+                    name()
+                }
+            } else {
+                // No `ViewThatFits` below macOS 13: the name and the badges side by side, the name
+                // keeping priority for the room (it truncates before the badges are squeezed).
                 HStack(spacing: spacing) {
-                    name().fixedSize()
+                    name().layoutPriority(1)
                     FeatureBadgeGlyphs(badges: badges, size: size, color: color)
                 }
-                name()
             }
         }
     }

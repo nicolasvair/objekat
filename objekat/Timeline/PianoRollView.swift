@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 /// The piano roll for editing a MIDI clip's notes, unfolded INLINE under the clip (in the band
 /// of sub-lanes `SoundObject.expandedSpan` reserves). Rendered as an overlay positioned by
@@ -148,7 +149,9 @@ struct PianoRollView: View {
 
     private var selectedIDs: Set<UUID> { viewModel.selectedMidiNoteIDs }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(spacing: 0) {
             noteArea
                 .frame(width: width, height: noteAreaHeight, alignment: .topLeading)
@@ -177,10 +180,10 @@ struct PianoRollView: View {
 
     private var noteArea: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { ctx, size in drawGrid(ctx, size: size) }
+            PerceivedCanvas { ctx, size in drawGrid(ctx, size: size) }
                 .allowsHitTesting(false)
 
-            ForEach(object.midiNotes) { note in
+            ForEach(object.midiNotes) { note in WithPerceptionTracking {
                 if let r = rect(for: note) {
                     let isSel = selectedIDs.contains(note.id)
                     RoundedRectangle(cornerRadius: 2)
@@ -194,7 +197,7 @@ struct PianoRollView: View {
                         .offset(x: r.minX, y: r.minY)
                         .allowsHitTesting(false)
                 }
-            }
+            } }
 
             // The selection rectangle (rubber band)
             if let rb = rubber {
@@ -209,13 +212,13 @@ struct PianoRollView: View {
             // The interaction layer: it catches taps and drags over the note area.
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { handleTap(at: $0.location) })
+                .spatialTapCompat { handleTap(at: $0) }
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 4)
                         .onChanged { handleDragChanged($0) }
                         .onEnded   { _ in drag = nil; rubber = nil }
                 )
-                .onContinuousHover { phase in
+                .onContinuousHoverCompat { phase in
                     guard drag == nil, rubber == nil else { return }
                     switch phase {
                     // The cursors go through `TimelineCursorKeeper`: it is what has AppKit claim the

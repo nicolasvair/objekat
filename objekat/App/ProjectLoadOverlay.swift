@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 /// The progress overlay shown while a project is loading — step 6 of project_load_progress_plan.
 ///
@@ -15,7 +16,7 @@ import SwiftUI
 /// than a veil held a beat too long — and it fades OUT over 150 ms. There is no blur: tried (the
 /// system material, whole or partial) and dropped as serving no purpose.
 struct ProjectLoadOverlay: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     @State private var showOverlay = false
     @State private var pendingShowWork: DispatchWorkItem?
@@ -24,7 +25,9 @@ struct ProjectLoadOverlay: View {
     private static let minVisible: TimeInterval = 0.3
     private static let fadeDuration: TimeInterval = 0.15
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack {
             if showOverlay {
                 // No blur (user decision, 24 September 2026: it served no purpose) — a clear layer
@@ -38,7 +41,7 @@ struct ProjectLoadOverlay: View {
             }
         }
         .animation(.easeInOut(duration: Self.fadeDuration), value: showOverlay)
-        .onChange(of: viewModel.isLoadingProject) { _, loading in
+        .onChangeCompat(of: viewModel.isLoadingProject) { _, loading in
             if loading {
                 armShow()
             } else {

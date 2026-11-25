@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - A window a script asks the app to show
 
@@ -83,21 +83,21 @@ struct ScriptPanel: Equatable, Sendable {
     var declared: [String: JSONValue] = [:]
 }
 
-@Observable final class ScriptPanelStore {
+@Perceptible final class ScriptPanelStore {
 
     private(set) var panels: [UUID: ScriptPanel] = [:]
 
     /// Set by the window layer (`ScriptPanelWindows`): called after a panel appears / after one
     /// stops being open. The store itself knows nothing about windows.
-    @ObservationIgnored var panelOpened: ((UUID) -> Void)?
-    @ObservationIgnored var panelEnded: ((UUID) -> Void)?
+    @PerceptionIgnored var panelOpened: ((UUID) -> Void)?
+    @PerceptionIgnored var panelEnded: ((UUID) -> Void)?
 
     /// The hand's slider moves at screen speed; the script needs the last value, not 120 of them
     /// a second. `rev` is bumped at most this often, with a trailing bump so the FINAL value is
     /// never left unannounced.
     static let coalesceInterval: TimeInterval = 1.0 / 30.0
-    @ObservationIgnored private var lastBump: [UUID: Date] = [:]
-    @ObservationIgnored private var trailing: Set<UUID> = []
+    @PerceptionIgnored private var lastBump: [UUID: Date] = [:]
+    @PerceptionIgnored private var trailing: Set<UUID> = []
 
     // MARK: Open / close
 
@@ -190,7 +190,7 @@ struct ScriptPanel: Equatable, Sendable {
         trailing.insert(id)
         let wait = Self.coalesceInterval - since
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(Int(wait * 1000) + 1))
+            try? await Task.compatSleep(.milliseconds(Int(wait * 1000) + 1))
             guard let self else { return }
             self.trailing.remove(id)
             self.bump(id)

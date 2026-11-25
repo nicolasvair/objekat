@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Plugin card
 
@@ -54,7 +55,9 @@ struct SynopticCardView: View {
 
     private let toggleW: CGFloat = 26
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Group {
             if let face = plugin.gainStage {
                 SynopticGainStageControls(plugin: plugin, face: face, hovering: hovering,
@@ -242,7 +245,9 @@ struct SynopticCardVULine: View {
     var fallback: Double = 0
     @Environment(\.synopticLevels) private var store
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let vu = store.map { $0.levels[pluginID] ?? 0 } ?? fallback
         VULevelBar(level: vu)
     }
@@ -292,7 +297,9 @@ struct SynopticGainStageControls: View {
 
     // MARK: Body
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let v = values
         VStack(spacing: 0) {
             HStack(spacing: face == .gain ? 4 : 3) {
@@ -321,13 +328,13 @@ struct SynopticGainStageControls: View {
     /// A 2 × 3 grid of dots: the drag handle (reorder / move; ⌥ copies, like a plugin's name).
     private var grip: some View {
         HStack(spacing: 2) {
-            ForEach(0..<2, id: \.self) { _ in
+            ForEach(0..<2, id: \.self) { _ in WithPerceptionTracking {
                 VStack(spacing: 2) {
-                    ForEach(0..<3, id: \.self) { _ in
+                    ForEach(0..<3, id: \.self) { _ in WithPerceptionTracking {
                         Circle().fill(Color.secondary.opacity(0.7)).frame(width: 2.5, height: 2.5)
-                    }
+                    } }
                 }
-            }
+            } }
         }
         .frame(width: 10, height: 18)
         .contentShape(Rectangle())
@@ -480,7 +487,9 @@ struct CableDropView: View {
     @State private var targeted = false
     @State private var dropHintID = UUID()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The target covers the whole `rect` (easy to aim at) but stays invisible; only a
         // card-sized rectangle, laid on the cable at `previewFrame`, lights up on hover —
         // a preview of exactly where the plugin will land.
@@ -518,7 +527,9 @@ struct SendSlotDropView: View {
     @State private var targeted = false
     @State private var dropHintID = UUID()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Color.clear
             .frame(width: zone.rect.width, height: zone.rect.height)
             .contentShape(Rectangle())

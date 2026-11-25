@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Perception
 
 /// Project tabs (INC 1) — ONE `ObjekatSession` (hence one `OBJEngineCore`, one `EditViewModel`),
 /// several project documents taking turns being the active one. See
@@ -15,7 +16,7 @@ import Foundation
 /// three points of contact, all on the view-model, because it alone knows what a document needs
 /// carried between the file and the screen.
 @MainActor
-@Observable
+@Perceptible
 final class Workspace {
 
     let session: ObjekatSession
@@ -552,14 +553,14 @@ final class Workspace {
     /// icon, `open -a`), waiting their turn. A queue and not a `Task` per file: the Finder hands
     /// over a multiple selection in one go, and two loads started side by side would have the
     /// second refused by the first (`tabSwitchBlocker` — a project loading). One at a time, in the
-    /// order given. `@ObservationIgnored`: nothing draws it, and an observed queue would invalidate
+    /// order given. `@PerceptionIgnored`: nothing draws it, and an observed queue would invalidate
     /// the tab bar at every file for nothing.
-    @ObservationIgnored private var outsideOpenQueue: [URL] = []
-    @ObservationIgnored private var isDrainingOutsideOpens = false
+    @PerceptionIgnored private var outsideOpenQueue: [URL] = []
+    @PerceptionIgnored private var isDrainingOutsideOpens = false
     /// The file being opened from outside right now (nil between two), and when the last one
     /// ended — @see `openFromOutside` for why a second arrival of the same file is dropped.
-    @ObservationIgnored private var outsideOpenInFlight: URL?
-    @ObservationIgnored private var lastOutsideOpen: (url: URL, endedAt: Date)?
+    @PerceptionIgnored private var outsideOpenInFlight: URL?
+    @PerceptionIgnored private var lastOutsideOpen: (url: URL, endedAt: Date)?
 
     /// The door `AppDelegate.application(_:open:)` and the window's `onOpenURL` both go through —
     /// both, because which of the two SwiftUI actually calls for a document handed over by the

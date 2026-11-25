@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 struct TimelineWaveformView: View {
     var waveformCache: WaveformCache
@@ -27,10 +28,12 @@ struct TimelineWaveformView: View {
     /// The clip's channel choice — how a STEREO file's two lanes are drawn (@see `ChannelMode`).
     var channelMode: ChannelMode = .lr
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let fileDuration = waveformCache.duration(for: filePath), fileDuration > 0 {
             let _ = fileDuration   // an explicit guard: no drawing without a loaded length.
-            Canvas { ctx, size in
+            PerceivedCanvas { ctx, size in
                 WaveformDrawing.draw(
                     into: ctx, size: size,
                     waveformCache: waveformCache, filePath: filePath,

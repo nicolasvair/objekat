@@ -19,7 +19,8 @@ import os
 @MainActor
 final class FrameRecording: NSObject {
 
-    private var link: CADisplayLink?
+    /// A `CADisplayLink` (macOS 14) held untyped, so that the class itself stays usable below it.
+    private var link: AnyObject?
     private var observer: CFRunLoopObserver?
 
     /// Timestamps of the display link's callbacks (seconds, host time).
@@ -40,9 +41,13 @@ final class FrameRecording: NSObject {
     init(on view: NSView, label: StaticString = "frames") {
         self.label = label
         super.init()
-        let link = view.displayLink(target: self, selector: #selector(tick(_:)))
-        link.add(to: .main, forMode: .common)
-        self.link = link
+        // `NSView.displayLink` is macOS 14: below it no frame is counted (the report says 0 frames),
+        // the main thread's busy time is measured all the same.
+        if #available(macOS 14, *) {
+            let link = view.displayLink(target: self, selector: #selector(tick(_:)))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
 
         let observer = CFRunLoopObserverCreateWithHandler(
             nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeWaiting.rawValue,
@@ -57,6 +62,7 @@ final class FrameRecording: NSObject {
         signpostState = Self.signposter.beginInterval(label)
     }
 
+    @available(macOS 14, *)
     @objc private func tick(_ link: CADisplayLink) {
         ticks.append(link.timestamp)
         let promised = link.targetTimestamp - link.timestamp
@@ -77,7 +83,8 @@ final class FrameRecording: NSObject {
     func stop(includeSamples: Bool = false) -> JSONValue {
         if stoppedAt == nil {
             stoppedAt = CACurrentMediaTime()
-            link?.invalidate(); link = nil
+            if #available(macOS 14, *) { (link as? CADisplayLink)?.invalidate() }
+            link = nil
             if let observer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
             observer = nil
             if let signpostState { Self.signposter.endInterval(label, signpostState) }

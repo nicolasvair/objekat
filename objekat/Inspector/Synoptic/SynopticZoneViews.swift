@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - dB gain control (a parallel branch's gain, the clip's volume)
 
@@ -148,7 +149,7 @@ struct DragValueBox: View {
     /// delete and nothing else, and ⌫ fell through unconsumed. Same family as the ⌥+letter trap:
     /// what a key MEANS and what it TYPES are two different questions.
     /// (Kept out of the body: the view builder could no longer type-check it in reasonable time.)
-    private static func isResetKey(_ press: KeyPress) -> Bool {
+    private static func isResetKey(_ press: KeyPressCompat) -> Bool {
         if press.key == .delete || press.key == .deleteForward { return true }
         return press.characters.first == deleteCharacter
     }
@@ -191,7 +192,9 @@ struct DragValueBox: View {
         DispatchQueue.main.async { focused = true }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Group {
             if typing != nil {
                 TextField(noLabel, text: Binding(get: { typing ?? "" }, set: { typing = $0 }))
@@ -221,14 +224,14 @@ struct DragValueBox: View {
         // Claim the keyboard for THIS box for as long as it shows any focus (container or
         // field), release it the instant neither does. The guard against the A/B race between
         // two boxes' focus changes lives in `KeyboardClaim.release` itself.
-        .onChange(of: isFocused) { _, f in
+        .onChangeCompat(of: isFocused) { _, f in
             if f { KeyboardClaim.shared.claim(.valueField(claimID)) }
             else { KeyboardClaim.shared.release(.valueField(claimID)) }
         }
         // The timeline took the keyboard back (a click on the canvas, Escape…) with no `release`
         // of ours ever called. "Partir, c'est valider": a typed-but-uncommitted entry is
         // committed rather than dropped, then the box lets go of its own visual focus too.
-        .onChange(of: KeyboardClaim.shared.revocation) { _, _ in
+        .onChangeCompat(of: KeyboardClaim.shared.revocation) { _, _ in
             if typing != nil { commitTyping(refocus: false) }
             focused = false
             fieldFocused = false
@@ -251,7 +254,7 @@ struct DragValueBox: View {
         )
         .onTapGesture(count: 2) { onReset?() }
         .onTapGesture { grabKeyFocus() }
-        .onKeyPress(phases: .down) { press in
+        .onKeyPressCompat(phases: .down, focused: isFocused) { press in
             guard typing == nil else { return .ignored }   // typing under way → leave it to the TextField
             if Self.isResetKey(press) { onReset?(); return .handled }
             switch press.key {
@@ -371,7 +374,9 @@ struct AudioFileZoneView: View {
         else { SynopticUIState.shared.toggleClipOptions() }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         zone
             .frame(width: rect.width, height: rect.height)
             .contentShape(RoundedRectangle(cornerRadius: 10))
@@ -379,7 +384,7 @@ struct AudioFileZoneView: View {
             .onTapGesture(count: 2) { toggleFold() }
             .position(x: rect.midX, y: rect.midY)
             .onAppear { syncBaseText() }
-            .onChange(of: file.baseBPM) { _, _ in syncBaseText() }
+            .onChangeCompat(of: file.baseBPM) { _, _ in syncBaseText() }
     }
 
     private var zone: some View {
@@ -410,9 +415,9 @@ struct AudioFileZoneView: View {
             if isFolded {
                 // A hidden setting that is not neutral says so (§B.7). Passive: a double click on one opens
                 // the zone like anywhere else.
-                ForEach(Array(file.hiddenNonNeutralSettings.enumerated()), id: \.offset) { _, setting in
+                ForEach(Array(file.hiddenNonNeutralSettings.enumerated()), id: \.offset) { _, setting in WithPerceptionTracking {
                     hiddenPill(setting)
-                }
+                } }
             }
             Spacer(minLength: 0)
             loopButton
@@ -530,12 +535,12 @@ struct AudioFileZoneView: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.45)))
                 .focused($baseFocused)
                 .onSubmit { commitBase() }
-                .onChange(of: baseFocused) { _, focused in
+                .onChangeCompat(of: baseFocused) { _, focused in
                     if focused { installBaseCommandArrowMonitorIfNeeded() }
                     else { removeBaseCommandArrowMonitor() }
                 }
                 .onDisappear { removeBaseCommandArrowMonitor() }
-                .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                .onKeyPressCompat(keys: [.upArrow, .downArrow], focused: baseFocused) { press in
                     let step: Double = press.modifiers.contains(.command) ? 10
                         : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                         : 1
@@ -612,7 +617,9 @@ struct ClipMixZoneView: View {
         return p < 0 ? "L \(Int((-p * 100).rounded()))%" : "R \(Int((p * 100).rounded()))%"
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             // OPAQUE: the mixer straddles the object frame's lower edge (@see SynopticZoneBox).
             SynopticZoneBox()
@@ -732,7 +739,9 @@ struct BusHeadZoneView: View {
     let received: [SynopticSend]
     let actions: SynopticActions
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color(nsColor: .controlBackgroundColor))
@@ -751,9 +760,9 @@ struct BusHeadZoneView: View {
                     if let inf = infinite { infiniteToggle(inf) }
                 }
                 .frame(height: SynopticLayout.pillH)
-                ForEach(received) { s in
+                ForEach(received) { s in WithPerceptionTracking {
                     SynopticSendRow(send: s, outgoing: false, actions: actions)
-                }
+                } }
             }
             .padding(.horizontal, 10)
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
@@ -830,7 +839,7 @@ struct StemsZoneView: View {
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
                 Menu {
-                    ForEach(Array(stems.enumerated()), id: \.element.id) { idx, stem in
+                    ForEach(Array(stems.enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
                         // The number prefix = the keyboard shortcut (1 = Main, 2 = the 2nd stem…).
                         let prefix = idx < 9 ? "\(idx + 1)  " : ""
                         // A `String` and not a literal: see `ObjectInspectorView`, same trap.
@@ -839,7 +848,7 @@ struct StemsZoneView: View {
                             if stem.isCurrent { Label(title, systemImage: "checkmark") }
                             else { Text(verbatim: title) }
                         }
-                    }
+                    } }
                 } label: {
                     HStack(spacing: 6) {
                         Circle()
@@ -880,7 +889,9 @@ struct RecordInputZoneView: View {
     let input: SynopticRecordInput
     let actions: SynopticActions
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 10)
                 .fill(Color.secondary.opacity(0.06))
@@ -954,7 +965,7 @@ struct RecordInputZoneView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: input.midi != nil ? ObjectKindIcon.recordMidiInput
-                                  : (input.ref?.isStereo == true ? "mic.and.signal.meter" : "mic"))
+                                  : (input.ref?.isStereo == true ? CompatSymbols.name("mic.and.signal.meter", fallback: "mic") : "mic"))
                     .font(.system(size: 9))
                     .foregroundStyle(.secondary)
                 Text(verbatim: currentLabel)

@@ -195,7 +195,7 @@ enum SynopticPlusPresentation {
     /// branch, and the send's turning arrow (the send rows and "+ Send to…") leaving LEFT, as the send does.
     static func symbol(for result: PlusGestureResult) -> String {
         switch result {
-        case .gain, .none:  return "dial.medium"
+        case .gain, .none:  return CompatSymbols.name("dial.medium", fallback: "dial.min")
         case .gainPanMute:  return "slider.horizontal.3"
         case .branch:       return "arrow.triangle.branch"
         case .send:         return FeatureIcons.auxSend

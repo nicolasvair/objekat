@@ -1,5 +1,6 @@
 import Foundation
 import CoreAudio
+import Perception
 
 // MARK: - Output audio device shared by the UI, the engine and the previews
 //
@@ -11,7 +12,7 @@ import CoreAudio
 // CoreAudio (kAudioObjectPropertyName), so matching by name is reliable.
 
 @MainActor
-@Observable
+@Perceptible
 final class AudioOutputDevice {
     static let shared = AudioOutputDevice()
 

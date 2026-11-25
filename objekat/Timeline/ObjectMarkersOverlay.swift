@@ -145,7 +145,7 @@ struct ObjectMarkersOverlay: View {
                                                         context: context)
                     else { continue }
                     context.draw(label
-                                    .foregroundStyle(sel ? Color.accentColor : Color.black.opacity(0.65)),
+                                    .foregroundColor(sel ? Color.accentColor : Color.black.opacity(0.65)),
                                  at: CGPoint(x: x + 7, y: by + 5), anchor: .leading)
                 }
             }

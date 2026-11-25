@@ -102,17 +102,17 @@ final class JobRegistry {
     /// engine completion block that has no notion of the wait in progress, and several clients
     /// can wait on the same job.
     func wait(_ id: String, timeoutMs: Int) async throws -> Job {
-        let started = ContinuousClock.now
-        let budget = Duration.milliseconds(max(0, timeoutMs))
+        let started = CompatClock.now
+        let budget = CompatDuration.milliseconds(max(0, timeoutMs))
         while true {
             let current = try job(id)
             if current.state != .running { return current }
-            guard ContinuousClock.now - started < budget else {
+            guard CompatClock.now - started < budget else {
                 throw CommandError(code: .timeout,
                                    message: "job \(id) still running after \(timeoutMs) ms",
                                    details: current.jsonObject)
             }
-            try? await Task.sleep(for: .milliseconds(20))
+            try? await Task.compatSleep(.milliseconds(20))
         }
     }
 

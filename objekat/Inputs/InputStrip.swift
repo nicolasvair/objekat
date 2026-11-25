@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 
 // MARK: - An input's rectangle (docs/plan_groupes_midi.md, the inputs panel)
@@ -42,7 +43,9 @@ struct InputStrip<Leading: View, Gain: View, Meter: View>: View {
     @ViewBuilder let gain: () -> Gain
     @ViewBuilder let meter: () -> Meter
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The meter ends under the NAME: the speaker and the gain sit at the right, centred on the two lines.
         HStack(alignment: .center, spacing: InputRowStyle.controlSpacing) {
             leading()
@@ -168,7 +171,7 @@ struct DormantInputStrip: View {
 /// its effects, as a MIDI object does; a card input its effects. The chain is held mounted on the engine for as long as the
 /// popup is open (`EditViewModel.openInputStrip`).
 struct InputStripPopup: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     let source: RecordSource
 
     private let popoverWidth: CGFloat = 300
@@ -182,7 +185,9 @@ struct InputStripPopup: View {
         }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 header
@@ -210,20 +215,20 @@ struct InputStripPopup: View {
             if viewModel.renamingInput == ref {
                 // ⌘R while the popup is open (@see RenameShortcutRoute): leaving the field commits what was typed, Esc cancels.
                 MarkerRenameField(initial: viewModel.inputName(ref),
-                                  font: .system(.caption, weight: .semibold),
+                                  font: .caption.weight(.semibold),
                                   commitsOnFocusLoss: true) { value in
                     if let value { viewModel.renameInput(ref, to: value) }
                     if viewModel.renamingInput == ref { viewModel.renamingInput = nil }
                 }
             } else {
                 Text(verbatim: viewModel.inputName(ref))
-                    .font(.system(.caption, weight: .semibold))
+                    .font(.caption.weight(.semibold))
                     .help(L("inputs.rename.help"))
             }
         case .midi(let ref):
             // The device's own name is its name (no rename).
             Text(verbatim: MidiInputResolver.resolve(ref, in: viewModel.midiInputs)?.displayName ?? ref.name)
-                .font(.system(.caption, weight: .semibold))
+                .font(.caption.weight(.semibold))
         }
     }
 }

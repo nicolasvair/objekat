@@ -1,3 +1,4 @@
+import Perception
 import Foundation
 import AppKit
 
@@ -100,7 +101,7 @@ struct FileChangeReport: Sendable {
 
 /// The mutable state of the detection, kept in ONE reference because an extension cannot carry
 /// stored properties. Invisible to the observation (`EditViewModel.fileChanges` is
-/// `@ObservationIgnored`): no view draws any of it.
+/// `@PerceptionIgnored`): no view draws any of it.
 @MainActor
 final class FileChangeTracker {
     /// path → identity as of the last scan that saw it, for the document in front.

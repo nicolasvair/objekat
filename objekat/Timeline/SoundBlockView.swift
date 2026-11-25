@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // MARK: - Sound block
 
@@ -150,7 +151,9 @@ struct SoundBlockView: View {
                         needed: needed, content: content)
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .leading) {
             // A pale background (= white plus a faint tint) so as to carry the colour identity without saturating.
             // With no custom colour: a uniform stem tint, the behaviour unchanged. With a custom
@@ -162,10 +165,10 @@ struct SoundBlockView: View {
                 .mask { OpaqueBaseMask(leading: sharedLeadingPx, trailing: sharedTrailingPx) }
             if let custom = object.customColor {
                 VStack(spacing: 0) {
-                    UnevenRoundedRectangle(topLeadingRadius: cornerRadius, topTrailingRadius: cornerRadius)
+                    UnevenRoundedRectangleCompat(topLeadingRadius: cornerRadius, topTrailingRadius: cornerRadius)
                         .fill(custom.opacity(ObjectColorChoice.bandOpacity(selected: isSelected)))
                         .frame(height: max(3, blockHeight * 0.20))
-                    UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
+                    UnevenRoundedRectangleCompat(bottomLeadingRadius: cornerRadius, bottomTrailingRadius: cornerRadius)
                         .fill(stemColor.opacity(isSelected ? 0.55 : 0.30))
                 }
             } else {
@@ -506,7 +509,7 @@ struct SoundBlockView: View {
                 // takes focus (one had to rename ANOTHER object to steal the focus and unblock this one).
                 // So we reset it on the way out, and set it on the next turn so that the field already
                 // exists when the focus arrives.
-                .onChange(of: isRenaming) { _, now in
+                .onChangeCompat(of: isRenaming) { _, now in
                     if now { beginRename(object.label) } else { renameFocused = false }
                 }
                 }

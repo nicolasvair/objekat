@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - The signal view's session memory (docs/plan_synoptic_rework.md §B.7, §B.9)
 //
@@ -13,7 +13,7 @@ import Observation
 //   the BIN's id (`SynopticFXLink.stateKey`), so a bin folded on one object is folded on every host.
 // - `renamingFXLinkID`: the bin whose header shows the inline rename field (⌘R, the header's menu).
 
-@MainActor @Observable
+@MainActor @Perceptible
 final class SynopticUIState {
     static let shared = SynopticUIState()
 

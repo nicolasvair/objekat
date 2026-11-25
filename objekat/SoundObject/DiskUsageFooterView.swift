@@ -1,6 +1,7 @@
 import SwiftUI
 // `MemberImportVisibility` is on for this target: NSWorkspace is named here, so AppKit is imported here.
 import AppKit
+import Perception
 
 /// The discreet line at the bottom of the sound list: what the project folder weighs and how much
 /// of it nothing reads any more ("1,2 GB · 340 MB unused"), and, behind a click, the popover that
@@ -15,10 +16,12 @@ import AppKit
 /// `project.clean_unused` calls: the same recomputation right before, the same refusals, and the
 /// Trash — nothing here ever deletes.
 struct DiskUsageFooterView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @State private var isOpen = false
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if viewModel.projectFolder != nil, viewModel.projectURL != nil {
             Button {
                 isOpen.toggle()
@@ -40,10 +43,10 @@ struct DiskUsageFooterView: View {
             }
             .buttonStyle(.plain)
             .help(L("diskUsage.help"))
-            .popover(isPresented: $isOpen, arrowEdge: .top) {
+            .popover(isPresented: $isOpen, arrowEdge: .top) { WithPerceptionTracking {
                 DiskUsagePopoverView(viewModel: viewModel)
-            }
-            .onChange(of: isOpen) { _, open in
+            } }
+            .onChangeCompat(of: isOpen) { _, open in
                 // The popover opens on FRESH figures: the line may be minutes old.
                 if open { viewModel.refreshDiskUsage() }
             }
@@ -77,7 +80,7 @@ enum DiskUsageFormat {
 // MARK: - The popover
 
 struct DiskUsagePopoverView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @State private var scope: DiskCleanScope = .session
     /// What the user UNTICKED among the orphans (nobody reads them): they are ticked until said
     /// otherwise, so a list that is recomputed under the pointer never loses or invents a choice.
@@ -104,7 +107,9 @@ struct DiskUsagePopoverView: View {
     }
     private var blockedKey: String? { viewModel.diskUsageBlockedKey }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             Picker("", selection: $scope) {
                 Text(L("diskUsage.scope.session")).tag(DiskCleanScope.session)
@@ -196,9 +201,9 @@ struct DiskUsagePopoverView: View {
                 LazyVStack(alignment: .leading, spacing: 3, pinnedViews: [.sectionHeaders]) {
                     if showOrphans {
                         Section {
-                            ForEach(orphans) { unit in
+                            ForEach(orphans) { unit in WithPerceptionTracking {
                                 row(unit.name, unit.folder, unit.size, nil, shownFolder: folderText(of: unit), tick: tickBinding(unit.id))
-                            }
+                            } }
                         } header: {
                             sectionHeader {
                                 Toggle(isOn: allOrphansTicked) { Text(L("diskUsage.selectAll")).font(.system(size: 11)) }
@@ -213,7 +218,7 @@ struct DiskUsagePopoverView: View {
                     }
                     if !elsewhere.isEmpty {
                         Section {
-                            ForEach(elsewhere) { unit in
+                            ForEach(elsewhere) { unit in WithPerceptionTracking {
                                 let detail = L("diskUsage.held.by", unit.usedBy.joined(separator: ", "))
                                 if scope == .session {
                                     // OFFERED, but unticked: cleaning them makes the OTHER versions miss their files.
@@ -225,7 +230,7 @@ struct DiskUsagePopoverView: View {
                                         shownFolder: folderText(of: unit.candidate), tick: nil)
                                         .opacity(0.55)
                                 }
-                            }
+                            } }
                         } header: {
                             sectionHeader {
                                 if scope == .session {

@@ -109,7 +109,7 @@ struct TimeRulerView: View {
                         if showBarLabel && isMajorBar {
                             let label = Text(verbatim: "\(bar + 1)")
                                 .font(.system(size: 8, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                             context.draw(label, at: CGPoint(x: barX + 3, y: height * 0.55), anchor: .topLeading)
                         }
 
@@ -134,7 +134,7 @@ struct TimeRulerView: View {
                             }
                             let timeLabel = Text(timeStr)
                                 .font(.system(size: 9, design: .monospaced))
-                                .foregroundStyle(Color.secondary.opacity(0.5))
+                                .foregroundColor(Color.secondary.opacity(0.5))
                             context.draw(timeLabel, at: CGPoint(x: barX + 3, y: height * 0.05), anchor: .topLeading)
                         }
 
@@ -249,7 +249,7 @@ struct TimeRulerView: View {
                     }
                     let label = Text(labelStr)
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(isBpm ? Color.secondary.opacity(0.5) : Color.secondary)
+                        .foregroundColor(isBpm ? Color.secondary.opacity(0.5) : Color.secondary)
                     context.draw(label, at: CGPoint(x: x + 3, y: height * 0.05), anchor: .topLeading)
                 }
             }
@@ -311,7 +311,7 @@ struct TimeRulerView: View {
         // The 'I' / 'O' label
         let label = Text(verbatim: isIn ? "I" : "O")
             .font(.system(size: 7, weight: .bold, design: .monospaced))
-            .foregroundStyle(color)
+            .foregroundColor(color)
         let labelX = isIn ? x + flagW + 2 : x - flagW - 2
         context.draw(label, at: CGPoint(x: labelX, y: flagH * 0.25),
                      anchor: isIn ? .leading : .trailing)

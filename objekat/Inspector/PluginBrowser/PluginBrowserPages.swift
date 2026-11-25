@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // MARK: - The two pages of the plugin browser that are not plugin lists
 
@@ -40,7 +41,9 @@ struct PluginBrowserFXLinkPage: View {
     let insertion: PluginBrowserInsertion
     let dismiss: () -> Void
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let rows = viewModel.joinableFXLinkRows(host: objectID)
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
@@ -70,7 +73,7 @@ struct PluginBrowserFXLinkPage: View {
                         .padding(.horizontal, 2)
                         .padding(.top, 2)
                 } else {
-                    ForEach(rows) { row in
+                    ForEach(rows) { row in WithPerceptionTracking {
                         PluginBrowserCard(action: { join(row.id) }) {
                             HStack(spacing: 7) {
                                 Circle().fill(ObjekatPalette.plugin(row.colorIndex)).frame(width: 9, height: 9)
@@ -92,7 +95,7 @@ struct PluginBrowserFXLinkPage: View {
                             }
                         }
                         .help(L("pluginBrowser.fxLink.join.help"))
-                    }
+                    } }
                 }
             }
             .padding(10)
@@ -130,7 +133,9 @@ struct PluginBrowserSendPage: View {
     private var usable: Bool { insertion.isOnTrunk }
     private var slot: SendPosition { EditViewModel.sendPosition(of: .chain(insertion.index)) }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 if !usable {
@@ -147,13 +152,13 @@ struct PluginBrowserSendPage: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 2)
                     }
-                    ForEach(sections, id: \.tier) { section in
+                    ForEach(sections, id: \.tier) { section in WithPerceptionTracking {
                         Text(L(section.titleKey))
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 2)
                             .padding(.top, 4)
-                        ForEach(section.entries, id: \.id) { entry in
+                        ForEach(section.entries, id: \.id) { entry in WithPerceptionTracking {
                             PluginBrowserCard(enabled: usable && entry.isEnabled, action: { create(entry.id) }) {
                                 HStack(spacing: 7) {
                                     Text(entry.name)
@@ -172,8 +177,8 @@ struct PluginBrowserSendPage: View {
                             }
                             .opacity(usable ? 1 : 0.45)
                             .helpIf(entry.disabledReason)
-                        }
-                    }
+                        } }
+                    } }
                 }
                 PluginBrowserCard(enabled: usable, action: chooseOnTimeline) {
                     HStack(spacing: 7) {

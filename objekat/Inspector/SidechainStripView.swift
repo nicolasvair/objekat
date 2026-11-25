@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 /// The strip at the bottom of a plugin's editor window, for a plugin that has a sidechain input:
 /// which source keys it (a picker: none, the stems, the objects playing at the same time as a tree
@@ -16,7 +17,9 @@ struct SidechainStripView: View {
 
     private var picking: Bool { viewModel.sidechainPick == SidechainPick(host: host, plugin: plugin) }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let current = viewModel.sidechainCurrent(host: host, plugin: plugin)
         HStack(spacing: 8) {
             Image(systemName: FeatureIcons.sidechainReception)
@@ -43,9 +46,9 @@ struct SidechainStripView: View {
             .buttonStyle(.plain)
             .layoutPriority(2)
             .help(current?.inactiveReason.map { L("plugin.sidechain.inactive", $0) } ?? L("sidechain.strip.source.help"))
-            .popover(isPresented: $pickerShown, arrowEdge: .bottom) {
+            .popover(isPresented: $pickerShown, arrowEdge: .bottom) { WithPerceptionTracking {
                 SidechainSourcePicker(viewModel: viewModel, host: host, plugin: plugin) { pickerShown = false }
-            }
+            } }
 
             Text(verbatim: "→")
                 .font(.system(size: 11))
@@ -88,7 +91,9 @@ struct SidechainStripIfAny: View {
     let viewModel: EditViewModel
     let plugin: UUID
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let host = viewModel.chainHost(ofPlugin: plugin), viewModel.showsSidechainStrip(host: host, plugin: plugin) {
             SidechainStripView(viewModel: viewModel, host: host, plugin: plugin)
         }
@@ -110,10 +115,12 @@ struct SidechainSourcePicker: View {
     private static let noneID = "none"
 
     var body: some View {
-        TreePickerPopover(sections: { Self.sections(viewModel.sidechainSourceTree(host: host, plugin: plugin)) },
-                          closesOnChoose: true,
-                          onChoose: { choose($0) },
-                          dismiss: dismiss)
+        WithPerceptionTracking {
+            TreePickerPopover(sections: { Self.sections(viewModel.sidechainSourceTree(host: host, plugin: plugin)) },
+                              closesOnChoose: true,
+                              onChoose: { choose($0) },
+                              dismiss: dismiss)
+        }
     }
 
     /// Pure: the picker's content, as the shared component lists it.

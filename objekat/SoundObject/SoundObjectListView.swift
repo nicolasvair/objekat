@@ -1,6 +1,7 @@
 import SwiftUI
 // `MemberImportVisibility` is on for this target: NSWorkspace is named here, so AppKit is imported here.
 import AppKit
+import Perception
 
 /// The left panel's sound list: the project's TABLE OF CONTENTS.
 ///
@@ -15,7 +16,7 @@ import AppKit
 /// carries the explanation (an AppKit LOCAL monitor runs ahead of the responder chain, so a
 /// focused SwiftUI view's `.onKeyPress` never sees an arrow unless the monitor lets it through).
 struct SoundObjectListView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @FocusState private var searchFocused: Bool
     @FocusState private var listFocused: Bool
 
@@ -89,7 +90,9 @@ struct SoundObjectListView: View {
         return (NSApp.keyWindow?.firstResponder as? NSTextView)?.isFieldEditor == true
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // ONE walk of the tree per pass: `rows` was evaluated for the `ForEach` and again for the
         // reveal key.
         let rows = self.rows
@@ -103,10 +106,10 @@ struct SoundObjectListView: View {
 
             Divider()
 
-            ScrollViewReader { scroller in
+            ScrollViewReader { scroller in WithPerceptionTracking {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
+                    ForEach(rows) { row in WithPerceptionTracking {
                         // The relink menu is attached only when it has something to say. An
                         // `.contextMenu` whose builder yields nothing still opens an empty box on
                         // macOS, and a group row with nothing missing anywhere offers exactly
@@ -124,7 +127,7 @@ struct SoundObjectListView: View {
                                 }
                         }
                         Divider()
-                    }
+                    } }
                 }
             }
             .simultaneousGesture(TapGesture().onEnded {
@@ -135,18 +138,18 @@ struct SoundObjectListView: View {
             .focused($listFocused)
             // Everything repaired: the filter goes OFF, not merely dormant. Left on, it would
             // switch itself back in, unasked, the next time a single file went missing.
-            .onChange(of: viewModel.missingFileCount) { _, n in
+            .onChangeCompat(of: viewModel.missingFileCount) { _, n in
                 if n == 0 { showOnlyMissing = false }
             }
             // The timeline's monitor must let the arrows through while this list holds them
             // (@see `KeyboardClaim`), and take them back the moment it does not.
-            .onChange(of: listFocused) { _, f in
+            .onChangeCompat(of: listFocused) { _, f in
                 if f { KeyboardClaim.shared.claim(.soundList) } else { KeyboardClaim.shared.release(.soundList) }
             }
-            .onKeyPress(.upArrow)    { moveCursor(-1);    return .handled }
-            .onKeyPress(.downArrow)  { moveCursor(+1);    return .handled }
-            .onKeyPress(.leftArrow)  { collapseOrParent(); return .handled }
-            .onKeyPress(.rightArrow) { expandOrFirstChild(); return .handled }
+            .onKeyPressCompat(.upArrow, focused: listFocused)    { moveCursor(-1);    return .handled }
+            .onKeyPressCompat(.downArrow, focused: listFocused)  { moveCursor(+1);    return .handled }
+            .onKeyPressCompat(.leftArrow, focused: listFocused)  { collapseOrParent(); return .handled }
+            .onKeyPressCompat(.rightArrow, focused: listFocused) { expandOrFirstChild(); return .handled }
             // SELECTING AN OBJECT ANYWHERE BRINGS IT INTO VIEW HERE. A table of contents that
             // does not follow the hand stops being one: with a project taller than the panel, a
             // click in the timeline highlighted a row nobody could see, and the list said less
@@ -159,7 +162,7 @@ struct SoundObjectListView: View {
             // show, and picking one would be picking for the user. And it never steals the view
             // while one is typing in the search field, where the rows under the hand are the
             // result of the search and not of any selection.
-            .onChange(of: revealKey(in: rows)) { old, new in
+            .onChangeCompat(of: revealKey(in: rows)) { old, new in
                 guard let new else { return }
                 // A click in THIS list on the row that was already the one to show: it is under
                 // the pointer, there is nothing to bring into view.
@@ -170,7 +173,7 @@ struct SoundObjectListView: View {
                 if searchFocused { searchFocused = false }
                 revealRow(new.id, in: scroller)
             }
-            }
+            } }
 
             // The disk line: only for a project that has a folder (@see `DiskUsageFooterView`).
             if viewModel.projectFolder != nil {

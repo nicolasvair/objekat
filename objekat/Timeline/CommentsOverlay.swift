@@ -107,14 +107,14 @@ private struct CommentEditor: View {
     var body: some View {
         TextEditor(text: $text)
             .font(.system(size: 10))
-            .scrollContentBackground(.hidden)
+            .hiddenScrollBackgroundCompat()
             .padding(.horizontal, 2)
             .background(RoundedRectangle(cornerRadius: 4).fill(.regularMaterial))
             .focused($focused)
             // A TextEditor takes Return for itself — a comment has lines — so the commit is on ⌘Return
             // and on losing the focus, and Esc gives up. Same three ways out as anywhere else.
             .onExitCommand { finish(nil) }
-            .onChange(of: focused) { _, now in if !now { finish(text) } }
+            .onChangeCompat(of: focused) { _, now in if !now { finish(text) } }
             // Deselecting takes the editor away (@see EditViewModel.selectedAnnotation) and the
             // focus change above never arrives: the text is committed here instead, rather than
             // lost. The latch is what keeps the two from committing twice.

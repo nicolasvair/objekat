@@ -24,7 +24,7 @@ Everything is fully vibe coded with Claude Code, closely monitored in the first 
 
 ## Technical stack
 
-- **macOS 15.6** (Sequoia) as the deployment target, modern SwiftUI. Built with Xcode 26.2: a Swift 6 compiler, driving the target in language mode 5.
+- **macOS 12.0** (Monterey) as the deployment target, **universal binary (arm64 + x86_64)**, SwiftUI. Observation is backed by [swift-perception](https://github.com/pointfreeco/swift-perception) so the same code runs on macOS 12 and 13, where SwiftUI's own Observation does not exist; newer SwiftUI features have a fallback below macOS 14/15 (`objekat/Shared/Compat/`). Built with Xcode 26.2: a Swift 6 compiler, driving the target in language mode 5.
 - **Audio engine**: Tracktion Engine **3.5** (C++ / JUCE 8.0.13), as a submodule in `tracktion_engine/` — the folder no longer carries a version number, which used to go stale at every bump. The engine carries a series of 29 local patches (`engine-patches/3.5/`, numbered `0001`→`0031` with two holes: `0004` and `0010`, the only JUCE ones, sit in `pending/`).
 - **Swift ↔ C++ bridge**: an Objective-C++ (`.mm`) wrapper exposing a simple API to Swift.
 - **Build**: Xcode (`objekat.xcodeproj`); the engine is compiled as a JUCE module inside the target.
@@ -78,7 +78,7 @@ cd objekat
 xcodebuild -project objekat.xcodeproj -scheme objekat -configuration Debug build
 ```
 
-macOS 15.6 and Xcode 26.2. The `--recurse-submodules` is not optional: it is what brings the
+macOS 12.0 or newer to run (Apple Silicon and Intel), Xcode 26.2 to build. The `--recurse-submodules` is not optional: it is what brings the
 patched engine down. The project signs ad hoc — no Apple account, no development team.
 
 - The detail, and what to do if the clone fails: [INSTALL.md](INSTALL.md).

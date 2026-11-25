@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import Perception
 
 struct TransportView: View {
     @Binding var isPlaying: Bool
@@ -10,7 +11,7 @@ struct TransportView: View {
     /// stopped (@see ObjekatSession.displayedPosition) — so a click answers here at once.
     let displayedPosition: () -> Double
     let totalDuration: Double
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     let onPlay: () -> Void
     let onStop: () -> Void
     let onRecord: () -> Void
@@ -73,7 +74,9 @@ struct TransportView: View {
         if let m = bpmCommandArrowMonitor { NSEvent.removeMonitor(m); bpmCommandArrowMonitor = nil }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 12) {
             // The 'audio settings' icon (device + sample rate + buffer) lives on the RIGHT of the
             // toolbar (after the Spacer, further down). The status label 'audio device —
@@ -196,7 +199,7 @@ struct TransportView: View {
                         commitBPM()
                         bpmFocused = false
                     }
-                    .onChange(of: bpmFocused) { _, focused in
+                    .onChangeCompat(of: bpmFocused) { _, focused in
                         if !focused {
                             commitBPM()
                             removeBpmCommandArrowMonitor()
@@ -209,12 +212,12 @@ struct TransportView: View {
                     // responder to the window's first text field (this one), and the old `if !bpmFocused`
                     // guard then froze '120'; on opening a project, losing focus committed that 120 over
                     // the saved tempo.
-                    .onChange(of: viewModel.tempo) { _, newTempo in
+                    .onChangeCompat(of: viewModel.tempo) { _, newTempo in
                         bpmText = TempoText.display(newTempo)
                     }
                     .onAppear { bpmText = TempoText.display(viewModel.tempo) }
                     .onDisappear { removeBpmCommandArrowMonitor() }
-                    .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+                    .onKeyPressCompat(keys: [.upArrow, .downArrow], focused: bpmFocused) { press in
                         let step: Double = press.modifiers.contains(.command) ? 10
                             : press.modifiers.contains(.shift) ? FineAdjust.step(1, fine: true)
                             : 1
@@ -265,7 +268,7 @@ struct TransportView: View {
             // appear (see AudioSettingsMenu).
             AudioSettingsMenu(viewModel: viewModel)
         }
-        .coordinateSpace(.named(Self.barSpace))
+        .coordinateSpace(name: Self.barSpace)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -297,7 +300,7 @@ struct TransportView: View {
         // clear view flexible in width only is the same gauge with no second axis.
         return Color.clear
             .frame(minWidth: 0, maxWidth: .infinity, maxHeight: 0)
-            .onGeometryChange(for: ToolbarDensityProbe.self, of: { proxy in
+            .onGeometryChangeCompat(for: ToolbarDensityProbe.self, of: { proxy in
                 let frame = proxy.frame(in: .named(Self.barSpace))
                 return ToolbarDensityProbe(minX: frame.minX, maxX: frame.maxX, level: stamp)
             }, action: { probe in
@@ -332,7 +335,7 @@ struct TransportView: View {
 private struct PlayheadTimeText: View {
     let position: () -> Double
     let format: (Double) -> String
-    var body: some View { Text(verbatim: format(position())) }
+    var body: some View { WithPerceptionTracking { Text(verbatim: format(position())) } }
 }
 
 private enum ZoomHandleAxis { case horizontal, vertical }
@@ -440,7 +443,7 @@ private struct LockedDragSurface: NSViewRepresentable {
 }
 
 private struct ZoomDragHandles: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// Level 2 of the bar's density: the waveform pill drops its dB value and takes the width of
     /// its two neighbours. The value stays one drag away — and the waveform itself shows it.
     let waveformIconOnly: Bool
@@ -457,7 +460,9 @@ private struct ZoomDragHandles: View {
     @State private var baseWaveformDB: Double = 0
     @State private var waveformDBAccum: Double = 0   // scroll accumulation → 1 dB steps
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 2) {
             handle(icon: "arrow.left.and.right",
                    axis: .horizontal,
@@ -584,7 +589,7 @@ private struct ZoomDragHandles: View {
 }
 
 private struct ToolPickerButtons: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// Level 1 of the bar's density: each button keeps only its bold initial — which IS the tool's
     /// key, so what is left is still the thing one presses. The Solo button follows: it sits in the
     /// same row and reads as one of them. The tooltips keep naming the tools in full.
@@ -623,9 +628,11 @@ private struct ToolPickerButtons: View {
     /// a target of some 19 pt.
     private var minButtonWidth: CGFloat { initialsOnly ? 26 : 18 }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 2) {
-            ForEach(items, id: \.key) { item in
+            ForEach(items, id: \.key) { item in WithPerceptionTracking {
                 let isActive = viewModel.activeTool == item.tool
                 Button {
                     viewModel.activeTool = item.tool
@@ -648,7 +655,7 @@ private struct ToolPickerButtons: View {
                 }
                 .buttonStyle(.plain)
                 .help(item.help)
-            }
+            } }
 
             // Solo: NOT an `ActiveTool`, but the same button, in the same place. The 'click =
             // listen' mode lives on `soloKeyHeld`, which the keyboard arms with a HELD 's'; the

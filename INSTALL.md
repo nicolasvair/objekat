@@ -8,11 +8,11 @@ Allow 30 to 45 minutes, most of it spent cloning.
 
 ## Prerequisites
 
-- macOS 15.6 (Sequoia) or newer — that is the project's deployment target.
+- macOS 12.0 (Monterey) or newer, Apple Silicon or Intel — that is the project's deployment target. The Release build is universal (arm64 + x86_64).
 - **Xcode 26.2 or newer.** That is the only version the project has been built with; nothing
   lower has been tried, so "or newer" is a fact and the floor is a guess. What the project
   actually asks of it: the macOS 26 SDK, a Swift 6 compiler driving the target in **language
-  mode 5** (`SWIFT_VERSION = 5.0`), and a deployment target of macOS 15.6. If an older Xcode
+  mode 5** (`SWIFT_VERSION = 5.0`), and a deployment target of macOS 12.0. If an older Xcode
   builds it, so much the better — but you will be the first to know.
 - `git`, with an identity configured (`git config --global user.email …`): rebuilding the
   engine makes commits.

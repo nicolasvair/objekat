@@ -1,5 +1,5 @@
 import Foundation
-import Observation
+import Perception
 
 // MARK: - The Finder tab's colour slots
 
@@ -29,7 +29,7 @@ struct FinderSlot: Equatable, Identifiable, Sendable {
 /// Also remembers WHICH slot is shown (`activeID`), so the Finder opens where it was left. A test
 /// never touches the real domain: under `--no-recent` or `--headless` the slots live in this
 /// process only and start as the default row (same discretion as `PluginCategoryStore`).
-@Observable
+@Perceptible
 final class FinderSlotStore {
 
     /// The one store of the app.
@@ -49,8 +49,8 @@ final class FinderSlotStore {
     /// The slot whose folder the Finder is showing, nil = none (a folder chosen outside the slots).
     private(set) var activeID: String?
 
-    @ObservationIgnored private let defaults: UserDefaults
-    @ObservationIgnored private let isEphemeral: Bool
+    @PerceptionIgnored private let defaults: UserDefaults
+    @PerceptionIgnored private let isEphemeral: Bool
 
     init(defaults: UserDefaults = .standard, ephemeral: Bool = PluginCategoryStore.processIsEphemeral) {
         self.defaults = defaults

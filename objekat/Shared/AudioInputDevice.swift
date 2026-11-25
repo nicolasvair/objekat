@@ -1,3 +1,4 @@
+import Perception
 import Foundation
 
 // MARK: - The input card chosen by the user (when it is not the output card)
@@ -11,7 +12,7 @@ import Foundation
 // is reset when the card is gone (@see EditViewModel+AudioInput), so the two meet again.
 
 @MainActor
-@Observable
+@Perceptible
 final class AudioInputDevice {
     static let shared = AudioInputDevice()
 

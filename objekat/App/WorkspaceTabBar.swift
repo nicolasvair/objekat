@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 /// The project-tabs strip (INC 1) — shown by `ContentView` only once there are two tabs or more
 /// (@see `ContentView.body`): with a single project open it simply is not there, costing nothing
@@ -36,15 +37,17 @@ struct WorkspaceTabBar: View {
         }
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: Self.spacing) {
-                ForEach(workspace.tabs) { tab in
+                ForEach(workspace.tabs) { tab in WithPerceptionTracking {
                     let isDragged = drag?.id == tab.id
                     let offset = drag?.offset(for: tab.id) ?? 0
                     TabCapsule(workspace: workspace, tab: tab)
-                        .onGeometryChange(for: CGRect.self,
-                                          of: { $0.frame(in: .named(Self.coordinateSpaceName)) }) { frame in
+                        .onGeometryChangeCompat(for: CGRect.self,
+                                                of: { $0.frame(in: .named(Self.coordinateSpaceName)) }) { frame in
                             liveFrames[tab.id] = frame
                         }
                         .offset(x: offset)
@@ -53,7 +56,7 @@ struct WorkspaceTabBar: View {
                         .animation(isDragged ? nil : Animation.easeOut(duration: 0.15), value: offset)
                         .zIndex(isDragged ? 1 : 0)
                         .gesture(tabDragGesture(for: tab))
-                }
+                } }
 
                 Button {
                     // A refusal is said, as a switch's is (@see TabCapsule): dropped, the button
@@ -71,7 +74,7 @@ struct WorkspaceTabBar: View {
                 .helpIf(L("tabs.new.help"))
             }
             .padding(.horizontal, 8)
-            .coordinateSpace(.named(Self.coordinateSpaceName))
+            .coordinateSpace(name: Self.coordinateSpaceName)
         }
         .frame(height: Self.barHeight)
         .background(Color(nsColor: .underPageBackgroundColor))
@@ -123,7 +126,9 @@ private struct TabCapsule: View {
     // can share the view (@see WorkspaceTabBar.tabDragGesture) — the same reason
     // `StemStripButton` made the same change. The ✕ stays a real `Button`: a child's gesture
     // wins over its parent's tap.
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
             HStack(spacing: 5) {
                 Text(workspace.displayName(for: tab))
                     .font(.system(size: 11, weight: isActive ? .semibold : .regular))

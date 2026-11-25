@@ -14,13 +14,14 @@ import SwiftUI
 import AppKit
 import Combine
 import CoreAudio
+import Perception
 
 // MARK: - Watching the CoreAudio devices
 
 /// Watches the system's list of audio devices and bumps `generation` on every change (a device
 /// plugged in or out, an aggregate created…). Any view that reads `generation` in its `body` is
 /// therefore rebuilt when something is plugged in — with no periodic polling.
-@Observable
+@Perceptible
 @MainActor
 final class AudioDeviceWatcher {
     static let shared = AudioDeviceWatcher()
@@ -54,26 +55,30 @@ final class AudioDeviceWatcher {
 // the lists (supplied by the engine) always reflect the real state, freshly plugged devices included.
 
 struct AudioSettingsMenu: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     @State private var shown = false
     /// Why the last choice of an input card was refused (a recording is running…): said under the rows
     /// until the popover is closed or a choice succeeds.
     @State private var inputError: String? = nil
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Button { shown.toggle() } label: {
             Image(systemName: "wrench.and.screwdriver")
         }
         .buttonStyle(.borderless)
         .frame(width: 26)
         .help(L("audio.menu.help"))
-        .onChange(of: shown) { _, now in if !now { inputError = nil } }
+        .onChangeCompat(of: shown) { _, now in if !now { inputError = nil } }
         .popover(isPresented: $shown, arrowEdge: .bottom) {
-            TreePickerPopover(sections: { Self.sections(engine: viewModel.engine, inputError: inputError) },
-                              closesOnChoose: false, minWidth: 260,
-                              accordion: true, opensCheckedBranches: false,
-                              onChoose: { choose($0) },
-                              dismiss: { shown = false })
+            WithPerceptionTracking {
+                TreePickerPopover(sections: { Self.sections(engine: viewModel.engine, inputError: inputError) },
+                                  closesOnChoose: false, minWidth: 260,
+                                  accordion: true, opensCheckedBranches: false,
+                                  onChoose: { choose($0) },
+                                  dismiss: { shown = false })
+            }
         }
     }
 

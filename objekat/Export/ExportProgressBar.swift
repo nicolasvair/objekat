@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // The export progress bar — a FULL-WIDTH strip under the transport bar.
 //
@@ -21,9 +22,11 @@ import SwiftUI
 //   • Done / Failed — the strip stays a few seconds, with access to the file.
 
 struct ExportProgressBar: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let job = viewModel.exportJob, !viewModel.exportPanelPresented {
             VStack(spacing: 0) {
                 Divider()

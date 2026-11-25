@@ -1,3 +1,4 @@
+import Perception
 import AppKit
 import Carbon   // TIS* / UCKeyTranslate: an Apple system framework, so the AGPL rule is unaffected
 
@@ -7,7 +8,7 @@ import Carbon   // TIS* / UCKeyTranslate: an Apple system framework, so the AGPL
 ///
 /// Refreshed at creation and whenever the system says the selected input source changed (the menu bar's
 /// switcher), so a name read through observation renames itself live. Nothing is polled.
-@MainActor @Observable
+@MainActor @Perceptible
 final class KeyboardLayoutWatcher {
     static let shared = KeyboardLayoutWatcher()
 
@@ -17,7 +18,7 @@ final class KeyboardLayoutWatcher {
     /// keyCode → the character that key types, lowercased, for every key the computer keyboard input uses.
     private var characters: [UInt16: String] = [:]
 
-    @ObservationIgnored private var observer: NSObjectProtocol?
+    @PerceptionIgnored private var observer: NSObjectProtocol?
 
     private init() {
         refresh()

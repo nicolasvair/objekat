@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 // The region picker of the export window (the `regions` scope): every region of the project, a
 // checkbox on each, and — the point of the thing — no doubt about which ones will be written.
@@ -19,14 +20,16 @@ import SwiftUI
 // reports its own outcome. @see EditViewModel+ExportRegions
 
 struct ExportRegionPicker: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// The settings the window is showing (the running job's own while a render runs).
     let settings: ExportSettings
 
     private var batch: ExportBatch? { viewModel.exportBatch }
     private var frozen: Bool { batch?.isActive == true }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let groups = viewModel.exportRegionGroups
         let total = groups.reduce(0) { $0 + $1.entries.count }
         let names = viewModel.exportRegionFileNames
@@ -42,12 +45,12 @@ struct ExportRegionPicker: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(groups) { group in
+                        ForEach(groups) { group in WithPerceptionTracking {
                             header(group)
-                            ForEach(group.entries) { entry in
+                            ForEach(group.entries) { entry in WithPerceptionTracking {
                                 row(entry, names: names, warnings: warnings[entry.id] ?? [])
-                            }
-                        }
+                            } }
+                        } }
                     }
                     .padding(4)
                 }
@@ -134,12 +137,12 @@ struct ExportRegionPicker: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            ForEach(warnings, id: \.rawValue) { w in
+            ForEach(warnings, id: \.rawValue) { w in WithPerceptionTracking {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 9))
                     .foregroundStyle(.orange)
                     .help(warningHelp(w))
-            }
+            } }
 
             Spacer(minLength: 4)
 

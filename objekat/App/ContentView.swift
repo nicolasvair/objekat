@@ -5,11 +5,12 @@
 
 import SwiftUI
 import Combine
+import Perception
 
 struct ContentView: View {
     /// The view OBSERVES the session, it does not own it: the transport state has to outlive the
     /// view and stay readable from outside (see ObjekatSession).
-    @Bindable var session: ObjekatSession
+    @Perception.Bindable var session: ObjekatSession
     /// Project tabs (INC 1) — observed for the tab strip alone; every gesture beneath it keeps
     /// reading `session`/`viewModel` exactly as before, a tab switch being nothing more than the
     /// SAME session pointed at a different document.
@@ -41,7 +42,12 @@ struct ContentView: View {
     /// definition to another set.
     @State private var listMadeSelection: Set<UUID>? = nil
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
+        // Read here, inside the tracked body: a `Binding(get:)` is evaluated by SwiftUI OUTSIDE it,
+        // where the Perception backport would see nothing and never refresh the sheet.
+        let exportPanelPresented = viewModel.exportPanelPresented
         VStack(spacing: 0) {
             TransportView(
                 isPlaying: $session.isPlaying,
@@ -132,27 +138,27 @@ struct ContentView: View {
         // underneath, which is what lets you SEE the I/O markers move as you set the range.
         // An explicit binding: `viewModel` is a computed shorthand on the session here, and you
         // cannot project a `$` from it.
-        .sheet(isPresented: Binding(get: { session.viewModel.exportPanelPresented },
-                                    set: { session.viewModel.exportPanelPresented = $0 })) {
+        .sheet(isPresented: Binding(get: { exportPanelPresented },
+                                    set: { session.viewModel.exportPanelPresented = $0 })) { WithPerceptionTracking {
             ExportPanelView(viewModel: session.viewModel)
-        }
+        } }
         // An export rendering directly suspends playback on the engine side: the SESSION's transport
         // state has to follow, otherwise the button would stay on 'stop' and the playhead would
         // freeze while claiming to play. @see EditViewModel.pendingPlaybackStop
-        .onChange(of: viewModel.pendingPlaybackStop) { _, stopRequested in
+        .onChangeCompat(of: viewModel.pendingPlaybackStop) { _, stopRequested in
             guard stopRequested else { return }
             viewModel.pendingPlaybackStop = false
             if session.isPlaying { session.stop() }
         }
         // A NEW, non-empty object selection brings the inspector forward — unless the list made
         // it (@see `listMadeSelection`). An emptied selection leaves the panel where it is.
-        .onChange(of: viewModel.selectedIDs) { old, new in
+        .onChangeCompat(of: viewModel.selectedIDs) { old, new in
             let fromList = listMadeSelection == new
             listMadeSelection = nil
             guard !new.isEmpty, new != old, !fromList else { return }
             leftPanelTab = .objet
         }
-        .onChange(of: viewModel.seekRequest) { _, _ in
+        .onChangeCompat(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
         }
         .onDisappear {

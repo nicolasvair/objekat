@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 /// An object's AUTOMATION band, unfolded INLINE under it (in the band of sub-lanes
 /// `SoundObject.expandedSpan` reserves). Rendered as an overlay positioned by `TimelineView`,
@@ -231,9 +232,11 @@ struct AutomationBandView: View {
         var live: AutomationTransform.Request? = nil
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { ctx, _ in
+            PerceivedCanvas { ctx, _ in
                 for (i, ref) in rows.enumerated() { draw(row: i, ref: ref, in: &ctx) }
                 // The zone and the transform box, above every row and below the badge: they
                 // BELONG to no row — the rectangle is traced across them and the box spans as many
@@ -248,7 +251,7 @@ struct AutomationBandView: View {
             // The interaction layer: it catches taps and drags over the whole band.
             Color.clear
                 .contentShape(Rectangle())
-                .gesture(SpatialTapGesture().onEnded { handleTap(at: $0.location) })
+                .spatialTapCompat { handleTap(at: $0) }
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 3)
                         .onChanged { dropWheelReadout(); handleDragChanged($0) }
@@ -258,7 +261,7 @@ struct AutomationBandView: View {
                             drag = nil; readout = nil; clearHover(); dropWheelReadout()
                         }
                 )
-                .onContinuousHover { phase in
+                .onContinuousHoverCompat { phase in
                     guard drag == nil else { return }
                     switch phase {
                     case .active(let p): updateCursor(at: p)
@@ -282,13 +285,13 @@ struct AutomationBandView: View {
         .frame(width: max(1, bandWidth), height: geo.interactiveHeight, alignment: .topLeading)
         // ⌘ pressed or released WITHOUT moving the mouse: the gesture under way is replayed in place,
         // so that the snap flips before one's eyes instead of waiting for the next pixel travelled.
-        .onChange(of: viewModel.cmdKeyHeld) { _, _ in
+        .onChangeCompat(of: viewModel.cmdKeyHeld) { _, _ in
             if let d = drag { applyDrag(at: d.last) }
         }
         // The value of a PLUGIN parameter on the offered row: an engine query, so read here — when the
         // row changes — and never from the drawing (@see refreshPluginParamValue).
         .onAppear { if let pending { viewModel.refreshPluginParamValue(pending) } }
-        .onChange(of: pending) { _, ref in
+        .onChangeCompat(of: pending) { _, ref in
             if let ref { viewModel.refreshPluginParamValue(ref) }
         }
     }
@@ -301,14 +304,14 @@ struct AutomationBandView: View {
     private func pencils(visibleX: Double, visibleWidth: Double) -> some View {
         let g = geo
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { i, ref in
+            ForEach(Array(rows.enumerated()), id: \.offset) { i, ref in WithPerceptionTracking {
                 if let r = AutomationWritePencil.rect(row: i, geo: g, visibleX: visibleX,
                                                       visibleWidth: visibleWidth) {
                     pencil(row: i, ref: ref, rect: r)
                         .padding(.leading, r.minX)
                         .padding(.top, r.minY)
                 }
-            }
+            } }
         }
         .frame(width: max(1, bandWidth), height: g.interactiveHeight, alignment: .topLeading)
     }
@@ -331,7 +334,7 @@ struct AutomationBandView: View {
         .frame(width: r.width, height: r.height)
         .contentShape(Rectangle())
         .help(L("automation.pencil.help"))
-        .onContinuousHover { phase in
+        .onContinuousHoverCompat { phase in
             guard drag == nil, pencilPress == nil else { return }
             if case .active = phase {
                 clearHover()
@@ -393,22 +396,22 @@ struct AutomationBandView: View {
     /// its own accord onto the 'future automation' row.
     @ViewBuilder
     private var newLaneMenu: some View {
-        ForEach(viewModel.automatableParams(for: object), id: \.self) { ref in
+        ForEach(viewModel.automatableParams(for: object), id: \.self) { ref in WithPerceptionTracking {
             Button(viewModel.automationLabel(ref, on: object)) {
                 viewModel.beginAutomationLane(objectID: object.id, param: ref)
             }
-        }
+        } }
         let byPlugin = viewModel.automatablePluginParams(for: object)
         if !byPlugin.isEmpty { Divider() }
-        ForEach(byPlugin, id: \.plugin.id) { entry in
+        ForEach(byPlugin, id: \.plugin.id) { entry in WithPerceptionTracking {
             Menu(entry.plugin.name) {
-                ForEach(entry.params, id: \.ref) { p in
+                ForEach(entry.params, id: \.ref) { p in WithPerceptionTracking {
                     Button(p.name) {
                         viewModel.beginAutomationLane(objectID: object.id, param: p.ref)
                     }
-                }
+                } }
             }
-        }
+        } }
     }
 
     // MARK: - Access to the model
@@ -577,7 +580,7 @@ struct AutomationBandView: View {
         }()
         let text = Text(title)
             .font(.system(size: 10, weight: isFuture ? .regular : .medium))
-            .foregroundStyle(Color.primary.opacity(isFuture ? 0.45 : 0.62))
+            .foregroundColor(Color.primary.opacity(isFuture ? 0.45 : 0.62))
         ctx.draw(ctx.resolve(text), at: CGPoint(x: 6, y: top + 3), anchor: .topLeading)
 
         // A row with NO point: the dotted line above IS its line — it already carries the value the
@@ -805,7 +808,7 @@ struct AutomationBandView: View {
         let rect = CGRect(x: 0, y: geo.rowTop(r.row), width: max(1, bandWidth), height: rowHeight)
         let text = Text(r.text)
             .font(.system(size: 9, weight: .semibold).monospacedDigit())
-            .foregroundStyle(Color.white.opacity(0.9))
+            .foregroundColor(Color.white.opacity(0.9))
         let resolved = ctx.resolve(text)
         let size = resolved.measure(in: CGSize(width: 200, height: 20))
         let off = drag == nil ? Self.readoutOffset.hover : Self.readoutOffset.drag

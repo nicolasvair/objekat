@@ -25,7 +25,7 @@ enum Quiescence {
 
     /// Polling interval. Short enough not to add any noticeable latency to a run of commands,
     /// long enough not to saturate the main loop during a wait of several seconds.
-    private static let pollInterval: Duration = .milliseconds(20)
+    private static let pollInterval: CompatDuration = .milliseconds(20)
 
     /// What is still in flight, in plain words. The list is the content of a `timeout`'s `details`:
     /// a wait that expires without saying what it was waiting for cannot be diagnosed.
@@ -95,22 +95,22 @@ enum Quiescence {
     ///     unobservable deferred work (see the note at the head of this file).
     /// - Throws: a `CommandError` of code `timeout`, with the list of what is still in flight.
     static func waitIdle(timeoutMs: Int, settleMs: Int = 0) async throws -> JSONValue {
-        let started = ContinuousClock.now
-        let budget = Duration.milliseconds(max(0, timeoutMs))
+        let started = CompatClock.now
+        let budget = CompatDuration.milliseconds(max(0, timeoutMs))
 
         while true {
             let pending = inFlight()
             if pending.isEmpty { break }
-            guard ContinuousClock.now - started < budget else {
+            guard CompatClock.now - started < budget else {
                 throw CommandError(code: .timeout,
                                    message: "still busy after \(timeoutMs) ms",
                                    details: .object(["in_flight": .array(pending.map { .string($0) })]))
             }
-            try? await Task.sleep(for: pollInterval)
+            try? await Task.compatSleep(pollInterval)
         }
 
         if settleMs > 0 {
-            try? await Task.sleep(for: .milliseconds(settleMs))
+            try? await Task.compatSleep(.milliseconds(settleMs))
         }
 
         // One turn of the main loop: work posted with `DispatchQueue.main.async` by the last
@@ -123,11 +123,10 @@ enum Quiescence {
 
         // That turn may have re-armed something: we say so rather than lie about the calm.
         let residual = inFlight()
-        let elapsed = ContinuousClock.now - started
+        let elapsed = CompatClock.now - started
         return .object([
             "idle": .bool(residual.isEmpty),
-            "waited_ms": .int(Int(elapsed.components.seconds * 1000
-                                  + elapsed.components.attoseconds / 1_000_000_000_000_000)),
+            "waited_ms": .int(elapsed.ms),
             "in_flight": .array(residual.map { .string($0) }),
         ])
     }

@@ -1,5 +1,5 @@
 import AppKit
-import Observation
+import Perception
 
 // MARK: - The band at the bottom of the timeline while a plugin card is being dragged
 //
@@ -16,7 +16,7 @@ import Observation
 //
 // Shared (not on the view-model): the synoptic's drop targets have no view-model at hand.
 
-@MainActor @Observable
+@MainActor @Perceptible
 final class PluginDropHint {
     static let shared = PluginDropHint()
 
@@ -48,12 +48,12 @@ final class PluginDropHint {
 
     private(set) var state: State?
 
-    @ObservationIgnored private var targets: [String: Context] = [:]
+    @PerceptionIgnored private var targets: [String: Context] = [:]
     /// Follows ⌥ without the mouse moving: `dropUpdated` only speaks on a movement, and the
     /// expected gesture is to stop, read the band, press a key. Same probe as the file drop's
     /// (@see EditViewModel.fileDropModifierWatch): `Task.sleep` resumes in the drag's tracking
     /// run-loop mode, where a `.default` Timer would not.
-    @ObservationIgnored private var watch: Task<Void, Never>?
+    @PerceptionIgnored private var watch: Task<Void, Never>?
 
     func present(_ key: String, context: Context) {
         if targets[key] != context { targets[key] = context }

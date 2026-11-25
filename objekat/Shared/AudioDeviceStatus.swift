@@ -1,4 +1,5 @@
 import Foundation
+import Perception
 
 /// What the engine decided about the card's own sample rate — the Swift mirror of
 /// `OBJRateDecisionKind` (`Shared/OBJSampleRatePolicy.h`), raw values included, since
@@ -93,7 +94,7 @@ struct AudioDeviceSnapshot: Equatable {
 /// carry nothing new touches no observable and repaints nothing — the rule "Polls qui repeignent
 /// à vide" applies here even though this is not a poll.
 @MainActor
-@Observable
+@Perceptible
 final class AudioDeviceStatus {
     static let shared = AudioDeviceStatus()
 
@@ -112,12 +113,12 @@ final class AudioDeviceStatus {
 
     /// Called right after every WRITE (never after a no-op refresh) — the title bar's own hook,
     /// so it re-lays itself exactly when there is something new to show.
-    @ObservationIgnored var onChange: (() -> Void)?
+    @PerceptionIgnored var onChange: (() -> Void)?
     /// A second reader of the same moment: the project's input chains, which re-register when the card changes.
-    @ObservationIgnored var onSnapshotChange: (() -> Void)?
+    @PerceptionIgnored var onSnapshotChange: (() -> Void)?
 
-    @ObservationIgnored private weak var engine: OBJEngineCore?
-    @ObservationIgnored private var pendingConfirmations = 0
+    @PerceptionIgnored private weak var engine: OBJEngineCore?
+    @PerceptionIgnored private var pendingConfirmations = 0
 
     private init() {}
 

@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 import AppKit
 
@@ -30,9 +31,11 @@ struct RecordDropGhostOverlay: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         ZStack(alignment: .topLeading) {
-            ForEach(Array(viewModel.recordDropGhosts.enumerated()), id: \.offset) { _, g in
+            ForEach(Array(viewModel.recordDropGhosts.enumerated()), id: \.offset) { _, g in WithPerceptionTracking {
                 let refused = g.kind == .refused
                 let w = max(refused ? 24 : 3, (g.end - g.start) * pixelsPerSecond)
                 let colour: Color = refused ? .red : .accentColor
@@ -56,7 +59,7 @@ struct RecordDropGhostOverlay: View {
                     }
                     .frame(width: w, height: blockHeight)
                     .offset(x: g.start * pixelsPerSecond, y: rulerHeight + Double(g.displayLane) * laneStep)
-            }
+            } }
         }
     }
 }
@@ -72,13 +75,15 @@ struct RecordingProgressOverlay: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // The picture inside the blocks moves with the recording's tick (30 Hz), not only with the playhead.
         let _ = viewModel.recordingLiveRevision
         let head = position()
         let blocks = viewModel.recordProgressBlocks(head: head)
         ZStack(alignment: .topLeading) {
-            ForEach(blocks) { b in
+            ForEach(blocks) { b in WithPerceptionTracking {
                 // The pass being recorded, and — through a loop — the ghost of each finished one under it: the same red,
                 // fainter, with a dashed edge (it is not a take yet, it is the place one will take). Inside each, what that
                 // pass drew so far: the notes played, or the loudness of the input (@see RecordLivePicture).
@@ -93,7 +98,7 @@ struct RecordingProgressOverlay: View {
                     }
                     .frame(width: max(1, (b.end - b.start) * pixelsPerSecond), height: blockHeight)
                     .offset(x: b.start * pixelsPerSecond, y: rulerHeight + Double(b.displayLane) * laneStep)
-            }
+            } }
         }
         .allowsHitTesting(false)
     }
@@ -185,18 +190,20 @@ struct ArmedRecordZonesOverlay: View {
     let laneStep: Double
     let blockHeight: Double
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // Nothing armed: no view at all (and `armedRecordZones` answers at once).
         let armed = viewModel.armedRecordZones
         ZStack(alignment: .topLeading) {
-            ForEach(armed, id: \.self) { id in
+            ForEach(armed, id: \.self) { id in WithPerceptionTracking {
                 if let e = viewModel.laneEntry(forID: id) {
                     BlinkingZoneView(cornerRadius: e.item.blockCornerRadius)
                         .frame(width: max(2, e.item.duration * pixelsPerSecond), height: blockHeight)
                         .offset(x: e.absStart * pixelsPerSecond,
                                 y: rulerHeight + Double(e.displayLane) * laneStep)
                 }
-            }
+            } }
         }
         .allowsHitTesting(false)
     }

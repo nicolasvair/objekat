@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 
 /// The plugin browser as a sheet/popover content, sized the way every picker of the app is. The synoptic's '+'
@@ -19,7 +20,9 @@ struct PluginPickerSheet: View {
     let dismiss: () -> Void
     let onSelect: (AvailablePlugin) -> Void
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let size = PluginBrowserLayout.sheetSize()
         PluginBrowserView(
             viewModel: viewModel,

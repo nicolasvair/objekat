@@ -51,14 +51,14 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let engine = try CommandContext.shared.requireEngine()
             let id = try p.uuid("id")
-            let budget = Duration.milliseconds(max(0, try p.int("timeout_ms", or: 120_000)))
+            let budget = CompatDuration.milliseconds(max(0, try p.int("timeout_ms", or: 120_000)))
             guard let current = vm.find(id: id)?.araSource else {
                 throw CommandError(code: .invalid_state, message: "the object has no ARA source")
             }
             guard current.plugin.isEnabled else {
                 throw CommandError(code: .invalid_state, message: "the ARA source is switched off")
             }
-            let started = ContinuousClock.now
+            let started = CompatClock.now
             while true {
                 guard let source = vm.find(id: id)?.araSource else {
                     throw CommandError(code: .invalid_state, message: "the ARA source went away while waiting")
@@ -74,15 +74,15 @@ extension CommandRegistry {
                 }
                 if valid && !analysing && regions >= 1 {
                     var out = CommandAdapters.araStatus(source, objectID: id, in: vm)
-                    let ms = (ContinuousClock.now - started) / .milliseconds(1)
+                    let ms = (CompatClock.now - started) / .milliseconds(1)
                     out["waited_ms"] = .number(Double(ms))
                     return .object(out)
                 }
-                guard ContinuousClock.now - started < budget else {
+                guard CompatClock.now - started < budget else {
                     throw CommandError(code: .timeout, message: "the analysis did not finish in time",
                                        details: .object(["analysing": .bool(analysing), "valid": .bool(valid)]))
                 }
-                try? await Task.sleep(for: .milliseconds(50))
+                try? await Task.compatSleep(.milliseconds(50))
             }
         }
 

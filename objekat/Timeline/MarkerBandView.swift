@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Perception
 
 // MARK: - Geometry of the marker band
 //
@@ -183,7 +184,7 @@ struct MarkerBandView: View {
         else { return }
         context.drawLayer { inner in
             inner.clip(to: shape)
-            inner.draw(label.foregroundStyle(Color.primary.opacity(0.85)),
+            inner.draw(label.foregroundColor(Color.primary.opacity(0.85)),
                        at: CGPoint(x: rect.minX + 4, y: rect.midY), anchor: .leading)
         }
     }
@@ -217,7 +218,7 @@ struct MarkerBandView: View {
         // read as belonging to it.
         guard let label = fitted(m.name, weight: sel ? .semibold : .regular,
                                  maxWidth: limitX - (x + 8) - 3, context: context) else { return }
-        context.draw(label.foregroundStyle(sel ? Color.accentColor : Color.primary.opacity(0.8)),
+        context.draw(label.foregroundColor(sel ? Color.accentColor : Color.primary.opacity(0.8)),
                      at: CGPoint(x: x + 8, y: y + rowHeight / 2 + 2), anchor: .leading)
     }
 }
@@ -253,7 +254,7 @@ struct MarkerRenameField: View {
             .background(RoundedRectangle(cornerRadius: 3).fill(.regularMaterial))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.accentColor, lineWidth: 1))
             .focused($focused)
-            .onChange(of: focused) { was, now in
+            .onChangeCompat(of: focused) { was, now in
                 if commitsOnFocusLoss, was, !now { finish(text) }
             }
             .onSubmit { finish(text) }
@@ -353,7 +354,9 @@ struct MarkerLaneHeaderView: View {
         return min(Self.nameMaxWidth, max(0, wall - Self.nameX - 5 - 3))
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(lanes) { lane in

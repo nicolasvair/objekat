@@ -97,7 +97,7 @@ extension CommandRegistry {
             // the only end-of-scan observable without touching the view-model.
             Task { @MainActor in
                 while vm.isScanning {
-                    try? await Task.sleep(for: .milliseconds(100))
+                    try? await Task.compatSleep(.milliseconds(100))
                 }
                 JobRegistry.shared.finish(jobID, result: .object([
                     "plugin_count": .int(vm.availablePlugins.count)

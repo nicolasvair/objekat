@@ -1,5 +1,5 @@
 import SwiftUI
-import Observation
+import Perception
 
 /// The plugin cards' VU levels (0...1), kept OUTSIDE `SynopticBoundView`'s `@State`.
 ///
@@ -8,14 +8,14 @@ import Observation
 /// line. Here only `SynopticCardVULine` reads `levels` (through the environment), so SwiftUI
 /// invalidates those lines alone — the view that owns the store never reads it in its `body`.
 @MainActor
-@Observable
+@Perceptible
 final class SynopticLevelStore {
     /// pluginID → level after the ballistics. A missing id reads 0.
     var levels: [UUID: Double] = [:]
 
     /// The last tick's time, to scale the release to the REAL interval. Not observed: a write to it
     /// must not invalidate anything.
-    @ObservationIgnored var lastTick: CFTimeInterval = 0
+    @PerceptionIgnored var lastTick: CFTimeInterval = 0
 }
 
 private struct SynopticLevelStoreKey: EnvironmentKey {

@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 
 /// The controls of the « Computer Keyboard » row of the Inputs tab: the mode (the keys play notes) and the octave they
@@ -6,7 +7,7 @@ import SwiftUI
 /// is the view-model's (`computerKeyboardOn`, `computerKeyboardOctave`); this is now the only button that drives them
 /// (the transport bar has none since 4 November 2026), `midi.keyboard.set` being the machine's door.
 struct ComputerKeyboardRowControls: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     private var range: ClosedRange<Int> { ComputerKeyboardMap.octaveRange }
 
@@ -25,7 +26,9 @@ struct ComputerKeyboardRowControls: View {
         KeyboardLayoutWatcher.shared.label(forKeyCode: ComputerKeyboardMap.octaveUpKeyCode).lowercased()
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let on = viewModel.computerKeyboardOn
         // A vertical column (the strip's leading column, `InputRowStyle.leadingWidth` wide): the mode as a BUTTON that
         // reads as one — filled with the accent when on, a pale chip with a border when off — and under it the

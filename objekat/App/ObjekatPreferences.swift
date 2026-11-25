@@ -1,8 +1,9 @@
 import Foundation
 import SwiftUI
+import Perception
 
 @MainActor
-@Observable
+@Perceptible
 final class ObjekatPreferences {
     static let shared = ObjekatPreferences()
 
@@ -117,7 +118,9 @@ final class ObjekatPreferences {
 struct PreferencesView: View {
     @State private var prefs = ObjekatPreferences.shared
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Form {
             Section(L("prefs.api.section")) {
                 Toggle(L("prefs.api.enable"), isOn: $prefs.apiEnabled)
@@ -127,7 +130,7 @@ struct PreferencesView: View {
                     .textSelection(.enabled)
             }
         }
-        .formStyle(.grouped)
+        .groupedFormStyleCompat()
         .padding()
         .frame(width: 380, height: 280)
     }

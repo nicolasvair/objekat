@@ -293,10 +293,10 @@ enum GroupBlocksCanvas {
                 let bottom = CGRect(x: rect.minX, y: rect.minY + bandH,
                                     width: rect.width, height: rect.height - bandH)
                 batches[k].band[custom, default: Path()].addPath(
-                    UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius)
+                    UnevenRoundedRectangleCompat(topLeadingRadius: radius, topTrailingRadius: radius)
                         .path(in: top))
                 batches[k].tint[g.stem, default: Path()].addPath(
-                    UnevenRoundedRectangle(bottomLeadingRadius: radius, bottomTrailingRadius: radius)
+                    UnevenRoundedRectangleCompat(bottomLeadingRadius: radius, bottomTrailingRadius: radius)
                         .path(in: bottom))
             } else {
                 batches[k].tint[g.stem, default: Path()].addPath(shape)

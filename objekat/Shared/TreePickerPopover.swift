@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - The model (pure: no view, no engine, no view-model)
 
@@ -162,7 +163,11 @@ struct TreePickerPopover: View {
     @State private var sectionOverrides: [String: Bool] = [:]
     @State private var seeded = false
 
-    var body: some View {
+    // `sections()` reads perceptible state (the audio watcher, the sidechain's view-model) in THIS body:
+    // on macOS 12/13 that read is only tracked inside `WithPerceptionTracking`.
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         let list = sections()
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {

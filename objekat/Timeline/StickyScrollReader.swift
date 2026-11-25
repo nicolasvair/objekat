@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 /// Hands its content the EXACT horizontal scroll, read in the body of this small view and nowhere
 /// else — the one way a layer may follow the scroll to the pixel without dragging the timeline's
@@ -12,5 +13,5 @@ struct StickyScrollReader<Content: View>: View {
     let anchor: TimelineScrollAnchor
     @ViewBuilder let content: (CGFloat) -> Content
 
-    var body: some View { content(anchor.x) }
+    var body: some View { WithPerceptionTracking { content(anchor.x) } }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - WHO OWNS THE KEYBOARD, project-wide.
 //
@@ -23,7 +24,7 @@ import SwiftUI
 // unconditionally AFTER B's claim, the owner would be wiped out from under B and the flag would
 // die right when it is needed. Checking identity first makes a late, stale release a no-op.
 @MainActor
-@Observable
+@Perceptible
 final class KeyboardClaim {
     static let shared = KeyboardClaim()
 
@@ -46,7 +47,7 @@ final class KeyboardClaim {
     /// What ⌘A does while `.inputs` holds the claim: the Inputs tab registers it while it is on screen.
     /// ⌘A is not a key the monitor lets through (it reaches `performSelectAllShortcut` by the monitor or by
     /// the Edit menu), so the claimant is asked THERE, not in `owns(_:)`.
-    @ObservationIgnored var inputsSelectAll: (() -> Void)?
+    @PerceptionIgnored var inputsSelectAll: (() -> Void)?
 
     private init() {}
 

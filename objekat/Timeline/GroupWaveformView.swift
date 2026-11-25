@@ -1,4 +1,5 @@
 import SwiftUI
+import Perception
 
 struct GroupWaveformView: View {
     var waveformCache: WaveformCache
@@ -31,8 +32,10 @@ struct GroupWaveformView: View {
     /// Seconds per beat (60 / tempo): a MIDI child's notes are in beats.
     let secPerBeat: Double
 
-    var body: some View {
-        Canvas { ctx, size in
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
+        PerceivedCanvas { ctx, size in
             GroupWaveformDrawing.draw(
                 into: ctx, size: size, waveformCache: waveformCache, children: children,
                 groupStartTime: groupStartTime, pixelsPerSecond: pixelsPerSecond,

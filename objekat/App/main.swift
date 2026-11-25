@@ -35,5 +35,9 @@ OBJEngineCore.setVirtualMidi(launchArguments.virtualMidi)
 if launchArguments.headless {
     MainActor.assumeIsolated { HeadlessRunner.run(launchArguments) }
 } else {
-    objekatApp.main()
+    if #available(macOS 13, *) {
+        objekatApp.main()
+    } else {
+        objekatAppLegacy.main()
+    }
 }

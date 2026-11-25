@@ -1,3 +1,4 @@
+import Perception
 import Foundation
 
 // The extent of the top-level objects — where the matter ends, and the lowest model lane — read by
@@ -10,7 +11,7 @@ import Foundation
 // change when `items` does. They are worked out once per change of `items` and read from here.
 //
 // Same contract as `crossfadePartners` / `findIndex`: `items` is READ on every call, cache hit or not
-// — that read is what registers the dependency for a view body — and the cache is @ObservationIgnored
+// — that read is what registers the dependency for a view body — and the cache is @PerceptionIgnored
 // and emptied by `items.didSet`, so it can never be older than the array it describes.
 
 extension EditViewModel {

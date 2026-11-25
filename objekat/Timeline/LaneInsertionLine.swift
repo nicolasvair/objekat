@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 
 /// The line drawn in the gap between two rows where something is about to be INSERTED (@see
@@ -34,7 +35,9 @@ struct LaneInsertionLine: View {
         return (0, fullWidth)
     }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         Capsule()
             .fill(Color.accentColor)
             .frame(width: width, height: 3)

@@ -1,3 +1,4 @@
+import Perception
 import SwiftUI
 import Combine
 import UniformTypeIdentifiers
@@ -25,7 +26,7 @@ import UniformTypeIdentifiers
 /// plugin cards' (@see VULevelBar, on the -60...+6 dBFS `VUScale`), fed with the PER-CHANNEL peaks of the
 /// card.
 struct InputsPanelView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
 
     @State private var open = false
     /// Smoothed bar position 0...1 (`VUScale`, -60...+6 dBFS) of each CARD channel.
@@ -43,7 +44,9 @@ struct InputsPanelView: View {
     @FocusState private var listFocused: Bool
     @State private var poll = Timer.publish(every: 0.07, on: .main, in: .common).autoconnect()
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             if open {
                 list
@@ -120,7 +123,7 @@ struct InputsPanelView: View {
 
     private var list: some View {
         let monos = monoRows, pairs = stereoRows
-        return ScrollViewReader { proxy in
+        return ScrollViewReader { proxy in WithPerceptionTracking {
             ScrollView {
                 // A VStack and not a LazyVStack: a rectangle that is not built cannot anchor its popup (`input.strip`,
                 // a popup opened by a script) nor take a drop; a card has a few dozen inputs at most.
@@ -129,17 +132,17 @@ struct InputsPanelView: View {
                     MidiInputsSection(viewModel: viewModel, focusList: { listFocused = true })
                     if !pairs.isEmpty {
                         sectionHeader(L("inputs.section.stereo"))
-                        ForEach(pairs, id: \.self) { ref in row(ref) }
+                        ForEach(pairs, id: \.self) { ref in WithPerceptionTracking { row(ref) } }
                     }
                     if !monos.isEmpty {
                         sectionHeader(L("inputs.section.mono"))
-                        ForEach(monos, id: \.self) { ref in row(ref) }
+                        ForEach(monos, id: \.self) { ref in WithPerceptionTracking { row(ref) } }
                     }
                     // Chains whose input is not on the card now (a smaller card, a pair taken apart): kept, greyed.
                     let absent = absentAudioChains
                     if !absent.isEmpty {
                         sectionHeader(L("inputs.section.absent"))
-                        ForEach(absent, id: \.key) { absentRow(key: $0.key, count: $0.count) }
+                        ForEach(absent, id: \.key) { item in WithPerceptionTracking { absentRow(key: item.key, count: item.count) } }
                     }
                     // The void under the rows: a click there empties the selection and ends a rename
                     // (committing it), like a click on the canvas. Not an ancestor gesture, which would
@@ -155,14 +158,14 @@ struct InputsPanelView: View {
             .focused($listFocused)
             // The timeline's key monitor must let ↑ / ↓ through while this list holds them, and take
             // them back the moment it does not (@see `KeyboardClaim`).
-            .onChange(of: listFocused) { _, f in
+            .onChangeCompat(of: listFocused) { _, f in
                 if f { KeyboardClaim.shared.claim(.inputs) } else { KeyboardClaim.shared.release(.inputs) }
             }
-            .onKeyPress(keys: [.upArrow, .downArrow]) { press in
+            .onKeyPressCompat(keys: [.upArrow, .downArrow], focused: listFocused) { press in
                 step(press.key == .upArrow ? -1 : 1, extend: press.modifiers.contains(.shift), proxy: proxy)
                 return .handled
             }
-        }
+        } }
     }
 
     /// The FX chains of inputs that are not listed now: (key, number of cards), in key order.
@@ -264,7 +267,7 @@ struct InputsPanelView: View {
             select(ref)
             viewModel.applyInputStripClick(source, shift: flags.contains(.shift), command: flags.contains(.command))
         }
-        .contextMenu { contextMenu(for: ref) }
+        .contextMenu { WithPerceptionTracking { contextMenu(for: ref) } }
         // An effect (or a whole chain's card) dropped on the rectangle joins the input's chain; the popup is not opened by
         // it (@see PluginStripDropDelegate, EditViewModel.acceptPluginDrop).
         .onDrop(of: [.plainText], delegate: PluginStripDropDelegate(
@@ -274,10 +277,11 @@ struct InputsPanelView: View {
                 if hovered { dropTarget = source } else if dropTarget == source { dropTarget = nil }
             }))
         .popover(isPresented: Binding(
-            get: { viewModel.openInputStrip == source },
+            // `isOpen` was read above, in the tracked row: this `get` runs outside the body's tracking on macOS 12/13.
+            get: { isOpen },
             set: { if !$0 && viewModel.openInputStrip == source { viewModel.openInputStrip = nil } }
         ), arrowEdge: .trailing) {
-            InputStripPopup(viewModel: viewModel, source: source)
+            WithPerceptionTracking { InputStripPopup(viewModel: viewModel, source: source) }
         }
         .padding(.horizontal, InputRowStyle.horizontalPadding).padding(.vertical, InputRowStyle.stripSpacing / 2)
         .id(ref)

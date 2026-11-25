@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import Combine
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - FX link block (header card)
 
@@ -39,7 +40,9 @@ struct FXBlockHeaderView: View {
     private let toggleW: CGFloat = 26
     private var help: String { Ln("fxlink.help.members", link.memberCount, link.memberCount) }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         HStack(spacing: 0) {
             // on/off — a REAL button, full height, square edges (the bin's colour = on)
             Button { actions.onFXToggleEnabled?(link.blockID) } label: {
@@ -77,7 +80,7 @@ struct FXBlockHeaderView: View {
                             .focused($fieldFocused)
                             .onSubmit { endRename(commit: true) }
                             .onExitCommand { endRename(commit: false) }
-                            .onChange(of: fieldFocused) { _, focused in if !focused { endRename(commit: true) } }
+                            .onChangeCompat(of: fieldFocused) { _, focused in if !focused { endRename(commit: true) } }
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(link.name)
@@ -176,7 +179,7 @@ struct FXBlockHeaderView: View {
         .contextMenu { menuItems }
         // The one line of a FOLDED block, written under the header card (outside its frame, after the clip).
         .overlay(alignment: .topLeading) { foldedSummary }
-        .onChange(of: isRenaming, initial: true) { _, on in
+        .onChangeCompat(of: isRenaming, initial: true) { _, on in
             guard on else { return }
             draft = link.name
             DispatchQueue.main.async { fieldFocused = true }

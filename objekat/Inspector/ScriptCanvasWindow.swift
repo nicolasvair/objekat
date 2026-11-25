@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Perception
 
 // MARK: - The panel
 
@@ -61,7 +62,7 @@ final class ScriptCanvasPanel: NSPanel {
 
 /// Which modifier keys the canvas window shows a state for. Today only ⌘ (the Draw / Erase flip).
 /// UI only: what a gesture carries is read by the plot from the event at mouseDown.
-@Observable final class ScriptCanvasModifiers {
+@Perceptible final class ScriptCanvasModifiers {
     private(set) var commandHeld = false
 
     func set(command: Bool) { if commandHeld != command { commandHeld = command } }
@@ -146,7 +147,7 @@ final class ScriptCanvasWindows: NSObject, NSWindowDelegate {
                                                                modifiers: modifier))
         // The window's size is ours (1100 × 660, 720 × 420 at the least); the SwiftUI content must
         // not push constraints of its own onto it.
-        hosting.sizingOptions = []
+        if #available(macOS 13, *) { hosting.sizingOptions = [] }
         let frame = NSRect(origin: .zero, size: Self.windowSize)
         hosting.frame = frame
 
@@ -245,7 +246,9 @@ struct ScriptCanvasView: View {
     /// the clicked segment; bumping this rebuilds it from the store.
     @State private var reread = 0
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         if let c = store.canvases[canvasID] {
             VStack(spacing: 0) {
                 toolbar(c)
@@ -294,9 +297,9 @@ struct ScriptCanvasView: View {
         return HStack(spacing: 10) {
             // The script's tools (there is no Hand: navigation is the wheel, ⇧-wheel, pinch and Fit).
             HStack(spacing: 4) {
-                ForEach(c.tools, id: \.id) { t in
+                ForEach(c.tools, id: \.id) { t in WithPerceptionTracking {
                     toolToggle(c, id: t.id, label: t.label, icon: symbol(for: t))
-                }
+                } }
             }
             if c.modes {
                 Divider().frame(height: 18)
@@ -347,11 +350,11 @@ struct ScriptCanvasView: View {
                 }
             }
             // The playhead's time: read at 10 Hz, never observed — the transport is a clock.
-            SwiftUI.TimelineView(.periodic(from: .now, by: 0.1)) { context in
+            SwiftUI.TimelineView(.periodic(from: .now, by: 0.1)) { context in WithPerceptionTracking {
                 Text(verbatim: CanvasFormat.time(store.position(of: canvasID, at: context.date), decimals: 1))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
-            }
+            } }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)

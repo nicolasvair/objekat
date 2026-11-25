@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import AppKit
 import UniformTypeIdentifiers
+import Perception
 
 // MARK: - Stem mixer in the toolbar (INC 1 VU + INC 2 FX)
 //
@@ -13,7 +14,7 @@ import UniformTypeIdentifiers
 // is open — a click on the title no longer does) and detaching it from the Main (the 'route to main' checkbox).
 
 struct StemStripsToolbarView: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     /// The toolbar's LAST degradation step on a narrow window (@see TransportView): each strip
     /// keeps only its number and its VU dot, and the whole bar — '+' included — goes inside a
     /// horizontal scroll view that can be squeezed below its natural width. The stem's name is
@@ -53,7 +54,7 @@ struct StemStripsToolbarView: View {
     // every scrolled frame, the Bools only when an edge is reached or left.
     @State private var contentSize: CGSize = .zero
     @State private var overflow = StemBarOverflow()
-    @State private var scrollPosition = ScrollPosition()
+    @State private var scrollPosition = ScrollPositionCompat()
 
     /// The narrowest a compact bar is squeezed to: about one compact strip (the Main's), so the
     /// bar never collapses to nothing and still says there is a mixer there to scroll.
@@ -72,7 +73,9 @@ struct StemStripsToolbarView: View {
     // Blinking at ~2 Hz: it flips every ~6 ticks (6 × 0.07 s ≈ 0.42 s).
     private var blinkOn: Bool { (pollTick / 6) % 2 == 0 }
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         // ONE view carries the VU poll whatever the mode: `bar` is a single conditional view, so
         // the `onReceive` below is attached once and survives a switch between the two modes
         // (the timer itself being @State).
@@ -120,14 +123,17 @@ struct StemStripsToolbarView: View {
     /// space laid on the scroll view itself would move the frames under the pointer as it scrolls.
     private var stripsRow: some View {
         HStack(spacing: 4) {
-            ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in
+            ForEach(Array((previewOrder ?? viewModel.stems).enumerated()), id: \.element.id) { idx, stem in WithPerceptionTracking {
+                // Read HERE, in the tracked row, and captured by the popover's binding: its `get` runs
+                // outside the body's tracking on macOS 12/13.
+                let popoverIsOpen = viewModel.openStemPopoverID == stem.id
                 StemStripButton(
                     stem: stem,
                     isMain: stem.id == viewModel.mainStemID,
                     number: idx < 9 ? idx + 1 : nil,
                     displayIndex: idx + 1,
                     level: levels[stem.id] ?? 0,
-                    isOpen: viewModel.openStemPopoverID == stem.id,
+                    isOpen: popoverIsOpen,
                     isClipping: clippedStems.contains(stem.id),
                     blinkOn: blinkOn,
                     isDropTarget: dropTargetStemID == stem.id,
@@ -137,8 +143,8 @@ struct StemStripsToolbarView: View {
                 ) {
                     viewModel.openStemPopoverID = (viewModel.openStemPopoverID == stem.id) ? nil : stem.id
                 }
-                .onGeometryChange(for: CGRect.self,
-                                   of: { $0.frame(in: .named("stemBar")) }) { frame in
+                .onGeometryChangeCompat(for: CGRect.self,
+                                         of: { $0.frame(in: .named("stemBar")) }) { frame in
                     liveFrames[stem.id] = frame
                 }
                 // The Main never moves and is never a target (@see EditViewModel.moveStem): a
@@ -171,14 +177,14 @@ struct StemStripsToolbarView: View {
                         }
                     }))
                 .popover(isPresented: Binding(
-                    get: { viewModel.openStemPopoverID == stem.id },
+                    get: { popoverIsOpen },
                     set: { if !$0 && viewModel.openStemPopoverID == stem.id { viewModel.openStemPopoverID = nil } }
-                ), arrowEdge: .bottom) {
+                ), arrowEdge: .bottom) { WithPerceptionTracking {
                     StemFXPopover(viewModel: viewModel, stem: stem,
                                   isMain: stem.id == viewModel.mainStemID,
                                   number: idx < 9 ? idx + 1 : nil)
-                }
-            }
+                } }
+            } }
 
             // '+': creates a new stem (Main = stem 1 → the first addition = 'Stem 2'). The signal
             // popover does NOT open in its wake: creating a bus is a routing gesture, not an act of
@@ -197,7 +203,7 @@ struct StemStripsToolbarView: View {
             .buttonStyle(.plain)
             .help(L("stem.add.help"))
         }
-        .coordinateSpace(.named("stemBar"))
+        .coordinateSpace(name: "stemBar")
         .animation(.easeInOut(duration: 0.15), value: previewOrder)
     }
 
@@ -220,18 +226,18 @@ struct StemStripsToolbarView: View {
     /// is narrow. The height is the row's own, a horizontal scroll view being otherwise free to
     /// grow vertically too.
     private var compactBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        let scrollDriver = ScrollDriverCompat(position: $scrollPosition, onGeometry: { geometry in
+            let newValue = StemBarOverflow(geometry: geometry)
+            if newValue != overflow { overflow = newValue }
+        })
+        return ScrollView(.horizontal, showsIndicators: false) {
             stripsRow
-                .onGeometryChange(for: CGSize.self, of: { $0.size }) { size in
+                .onGeometryChangeCompat(for: CGSize.self, of: { $0.size }) { size in
                     contentSize = size
                 }
+                .scrollBridgeCompat(scrollDriver)
         }
-        .scrollPosition($scrollPosition)
-        .onScrollGeometryChange(for: StemBarOverflow.self, of: { geometry in
-            StemBarOverflow(geometry: geometry)
-        }, action: { _, newValue in
-            overflow = newValue
-        })
+        .scrollDriverCompat(scrollDriver)
         // The row's own height, and never more: a horizontal scroll view is otherwise greedy on
         // BOTH axes, and before the first measurement it would take height from the timeline.
         .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +250,7 @@ struct StemStripsToolbarView: View {
         }
         // A stem just created lands at the END of the bar, beside the '+': bring that end into
         // view, so the gesture's result is seen and the '+' stays under the hand for the next one.
-        .onChange(of: viewModel.stems.count) { oldCount, newCount in
+        .onChangeCompat(of: viewModel.stems.count) { oldCount, newCount in
             guard newCount > oldCount else { return }
             withAnimation(.easeInOut(duration: 0.2)) { scrollPosition.scrollTo(edge: .trailing) }
         }
@@ -333,7 +339,7 @@ private nonisolated struct StemBarOverflow: Equatable, Sendable {
 
     init() {}
 
-    init(geometry: ScrollGeometry) {
+    init(geometry: ScrollGeometryCompat) {
         let offset = geometry.contentOffset.x
         leading = offset > 0.5
         trailing = offset + geometry.containerSize.width < geometry.contentSize.width - 0.5
@@ -395,8 +401,8 @@ private struct StemStripButton: View {
                 // rather than the secondary grey of a shortcut reminder.
                 Text(verbatim: "\(displayIndex)")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
-                    .lineLimit(1)
                     .strikethrough(stem.muted, color: .secondary)
+                    .lineLimit(1)
             } else {
                 if let number {
                     Text(verbatim: "\(number)")
@@ -405,8 +411,8 @@ private struct StemStripButton: View {
                 }
                 Text(isMain ? L("stem.main.name") : stem.name)
                     .font(.system(size: 11, weight: isMain ? .semibold : .medium))
-                    .lineLimit(1)
                     .strikethrough(stem.muted, color: .secondary)
+                    .lineLimit(1)
             }
             // A muted bus (the 'N + M' shortcut): the dot is replaced by a 'muted' icon.
             if stem.muted {
@@ -458,7 +464,7 @@ private struct StemStripButton: View {
 // MARK: - A bus's FX chain popover (the signal view, reused)
 
 private struct StemFXPopover: View {
-    @Bindable var viewModel: EditViewModel
+    @Perception.Bindable var viewModel: EditViewModel
     let stem: Stem
     let isMain: Bool
     /// The keyboard shortcut's number (a reminder of the key → stem link). nil beyond 9.
@@ -469,7 +475,9 @@ private struct StemFXPopover: View {
     // A width fitted to the VERTICAL signal view (the old 540 was sized for the horizontal one).
     private let popoverWidth: CGFloat = 300
 
-    var body: some View {
+    var body: some View { WithPerceptionTracking { perceivedBody } }
+
+    @ViewBuilder private var perceivedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 if let number {
@@ -480,19 +488,19 @@ private struct StemFXPopover: View {
 
                 if isMain {
                     Text(L("stem.main.subtitle"))
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                 } else if viewModel.renamingStemID == stem.id {
                     // ⌘R while the popover is open (@see RenameShortcutRoute): leaving the field commits what was
                     // typed, Esc cancels. A click on the name does nothing any more.
                     MarkerRenameField(initial: stem.name,
-                                      font: .system(.caption, weight: .semibold),
+                                      font: .caption.weight(.semibold),
                                       commitsOnFocusLoss: true) { value in
                         if let value { viewModel.renameStem(id: stem.id, name: value) }
                         if viewModel.renamingStemID == stem.id { viewModel.renamingStemID = nil }
                     }
                 } else {
                     Text(stem.name)
-                        .font(.system(.caption, weight: .semibold))
+                        .font(.caption.weight(.semibold))
                         .help(L("stem.rename.help"))
                 }
 
