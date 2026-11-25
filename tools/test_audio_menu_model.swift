@@ -1,6 +1,6 @@
 // The pure half of the audio menu (`Shared/AudioMenuModel.swift`): its rows, its ticks, what a click means.
 //
-//     swiftc -parse-as-library ../objekat/Shared/TreePickerPopover.swift ../objekat/Shared/AudioMenuModel.swift \
+//     swiftc -parse-as-library ../objekat/Shared/TreePickerModel.swift ../objekat/Shared/AudioMenuModel.swift \
 //         test_audio_menu_model.swift -o /tmp/amm && /tmp/amm
 //
 // Exit: 0 if every assertion passes, 1 otherwise.

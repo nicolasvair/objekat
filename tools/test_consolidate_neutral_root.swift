@@ -24,6 +24,7 @@
 //         ../objekat/SoundObject/ChannelMode.swift \
 //         ../objekat/Shared/LaneEntryIndex.swift \
 //         ../objekat/Timeline/ClipEditZonesOverlay.swift \
+//         ../objekat/Shared/Compat/CompatPolicy.swift \
 //         ../objekat/SoundObject/ConsolidateDefinition.swift \
 //         ../objekat/SoundObject/ConsolidateContentRoot.swift \
 //         ../objekat/SoundObject/FadeCurve.swift \

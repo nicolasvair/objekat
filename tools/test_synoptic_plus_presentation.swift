@@ -15,7 +15,7 @@ import Foundation
 //         ../objekat/Inspector/Synoptic/SynopticPlusShortcuts.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/Inspector/Synoptic/SynopticLayout.swift \
-//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift test_synoptic_plus_presentation.swift \
+//         ../objekat/Inspector/Synoptic/SynopticPlusPresentation.swift ../objekat/Shared/FeatureIcons.swift ../objekat/Shared/Compat/CompatSymbols.swift test_synoptic_plus_presentation.swift \
 //         && /tmp/t_plus_pres
 
 func L(_ key: String, _ args: CVarArg...) -> String { key }

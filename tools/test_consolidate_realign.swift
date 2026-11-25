@@ -51,6 +51,7 @@
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/SoundObject/SoundObject.swift \
 //         ../objekat/Timeline/ClipEditZonesOverlay.swift \
+//         ../objekat/Shared/Compat/CompatPolicy.swift \
 //         ../objekat/SoundObject/InputChains.swift \
 //         ../objekat/Shared/ClipEditZone.swift \
 //         test_consolidate_realign.swift \

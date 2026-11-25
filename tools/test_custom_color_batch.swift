@@ -6,7 +6,8 @@
 // with no gap and no overlap.
 //
 //     swiftc -parse-as-library \
-//         ../objekat/Timeline/CustomColorBatch.swift test_custom_color_batch.swift \
+//         ../objekat/Timeline/CustomColorBatch.swift ../objekat/Shared/Compat/CompatShapes.swift \
+//         test_custom_color_batch.swift \
 //         -o /tmp/ccb && /tmp/ccb
 //
 // Exit: 0 if every assertion passes, 1 otherwise.

@@ -3098,7 +3098,7 @@ a second one elsewhere. The most exposed points:
   decides the frequency (the input aligns or the choice is refused with both rates named). A Bluetooth microphone goes through a
   state machine (`stabilising`, `audio.status.inputs_state`) and AirPods' separate microphone is opened as that card instead of
   refused; a card that disappears (judged by UID after a quiet second) closes the inputs, keeps a running take and resets the
-  choice. Pure units: `Shared/OBJInputCardPolicy.h`, `Shared/AudioMenuModel.swift`, `Shared/TreePickerPopover.swift` (the sidechain
+  choice. Pure units: `Shared/OBJInputCardPolicy.h`, `Shared/AudioMenuModel.swift`, `Shared/TreePickerModel.swift` (the sidechain
   picker and the audio menu share it). **Traps**: JUCE hands PACKED active channels and Tracktion indexes by packed position (an
   aggregate with J > 0 describes its outputs over the packed range); `OBJEngineCore.mm` is MRC (blocks stored in C++ need
   `Block_copy`, dispatch objects `dispatch_release`: one crash came from there); **anything that touches a real card goes under

@@ -1,7 +1,7 @@
-// The pure half of the tree picker (`Shared/TreePickerPopover.swift`): what is choosable, what opens
+// The pure half of the tree picker (`Shared/TreePickerModel.swift`): what is choosable, what opens
 // at first sight, how wide the list must be. No view is built.
 //
-//     swiftc -parse-as-library ../objekat/Shared/TreePickerPopover.swift test_tree_picker_model.swift -o /tmp/tpm && /tmp/tpm
+//     swiftc -parse-as-library ../objekat/Shared/TreePickerModel.swift test_tree_picker_model.swift -o /tmp/tpm && /tmp/tpm
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
 
