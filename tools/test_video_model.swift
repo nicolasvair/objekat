@@ -40,6 +40,13 @@
 //         ../objekat/SoundObject/ConsolidateFolders.swift \
 //         ../objekat/Video/VideoFacet.swift \
 //         ../objekat/SoundObject/InputChains.swift \
+//         ../objekat/SoundObject/MidiSequenceWindow.swift \
+//         ../objekat/Shared/LoopRetrim.swift \
+//         ../objekat/Shared/ClipEditZone.swift \
+//         ../objekat/Shared/Compat/CompatPolicy.swift \
+//         ../objekat/Shared/VideoTimeMap.swift \
+//         ../objekat/Shared/WaveformShaping.swift \
+//         ../objekat/Video/VideoObjectIndex+Items.swift \
 //         test_video_model.swift -o /tmp/vmodel && /tmp/vmodel
 //
 // Exit: 0 if every assertion passes, 1 otherwise.
@@ -107,6 +114,27 @@ enum VideoModelTest {
         let gb = try dec.decode(SoundObject.self, from: enc.encode(group))
         if case .group(let kids, _) = gb.kind { check("the picture survives inside its group", kids.count == 1 && kids[0].video == facet) }
         else { check("the group decodes as a group", false) }
+
+        // The index the resolver reads, built from the model (VideoObjectIndex+Items)
+        var inner = clip(video: facet)
+        inner.startTime = 2; inner.duration = 5; inner.lane = 1
+        var other = clip()                                    // an ordinary clip: not in the index
+        other.lane = 0
+        let g = SoundObject(id: UUID(), startTime: 10, duration: 20, lane: 3,
+                            kind: .group(children: [inner, other], isExpanded: true))
+        var outer = SoundObject(id: UUID(), startTime: 0, duration: 100, lane: 2,
+                                kind: .group(children: [g], isExpanded: true))
+        var rootPic = clip(video: facet); rootPic.lane = 5
+        let idx = VideoObjectIndex(items: [outer, rootPic])
+        check("the index holds the two pictures and nothing else", idx.entries.count == 2)
+        let deep = idx.entries.first { $0.id == inner.id }
+        check("a picture carries its ancestors, root first",
+              deep?.ancestors.map(\.lane) == [2, 3] && deep?.ancestors.map(\.start) == [0, 10])
+        check("a picture keeps its own window", deep?.start == 2 && deep?.duration == 5 && deep?.lane == 1)
+        check("a picture at the root has no ancestors", idx.entries.first { $0.id == rootPic.id }?.ancestors.isEmpty == true)
+        outer.isInfinite = true
+        check("an infinite group is flagged as such in the index",
+              VideoObjectIndex(items: [outer]).entries.first?.ancestors.first?.isInfinite == (outer.isInfiniteBus))
 
         // Format and notice
         check("session format is 39", SessionSchema.formatVersion == 39)
