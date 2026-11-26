@@ -82,8 +82,18 @@ final class VideoPreviewWindow: NSObject, NSWindowDelegate {
         if let view = p.contentView as? VideoMetalView {
             view.layoutSubtreeIfNeeded()
             controller.attach(layer: view.metalLayer)
+            followScreen()
         }
     }
+
+    /// Tells the legacy display link which screen the panel is on (it paces itself on that screen).
+    private func followScreen() {
+        guard let id = panel?.screen?.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        else { return }
+        controller?.setDisplayID(CGDirectDisplayID(id.uint32Value))
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) { followScreen() }
 
     func close() {
         panel?.close()

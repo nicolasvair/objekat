@@ -123,4 +123,10 @@ final class VideoPreviewController {
     // MARK: For the commands
 
     var displayStats: (ticks: Int, presented: Int, skipped: Int, layers: Int)? { display?.stats }
+
+    /// "metal", "cv" or "none" (no window): which driver feeds the preview.
+    var displayMode: String { display?.mode ?? "none" }
+
+    /// The screen the window is on: the legacy link (CVDisplayLink) follows it.
+    func setDisplayID(_ id: CGDirectDisplayID) { display?.setDisplayID(id) }
 }

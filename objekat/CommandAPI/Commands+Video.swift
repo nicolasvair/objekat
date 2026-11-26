@@ -202,7 +202,8 @@ extension CommandRegistry {
                             "players": .int(preview.engine.activeSlotCount),
                             "ticks": .int(stats?.ticks ?? 0),
                             "presented": .int(stats?.presented ?? 0),
-                            "skipped": .int(stats?.skipped ?? 0)])
+                            "skipped": .int(stats?.skipped ?? 0),
+                            "display_mode": .string(preview.displayMode)])
         }
 
         register("video.preview",
