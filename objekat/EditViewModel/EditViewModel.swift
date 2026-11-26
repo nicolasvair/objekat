@@ -55,6 +55,7 @@ final class EditViewModel {
             multiSelectionCache = nil
             featureBadgeMapCache = nil
             chainSilencedCache = nil
+            videoObjectIndexCache = nil
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
             // pass per run-loop turn, and an unchanged topology costs one comparison.
@@ -105,6 +106,9 @@ final class EditViewModel {
     /// @see chainSilencedIDs — the objects whose chain's mutes cut every path to the output, with the
     /// off-bins it was computed for. `nil` = to rebuild on the next read. Dropped by `items`.
     @PerceptionIgnored var chainSilencedCache: (offBins: Set<UUID>, ids: Set<UUID>)? = nil
+    /// @see videoObjectIndex — the picture objects with their groups' windows, `nil` = to rebuild on
+    /// the next read. Dropped by `items`.
+    @PerceptionIgnored var videoObjectIndexCache: VideoObjectIndex? = nil
     /// The `didSet` holds the exclusivity with `selectedAnnotation` HERE rather than at each site,
     /// because selecting objects is written some twenty different ways across the drag and tap
     /// handlers (`selectedIDs = …` outright as often as through `selectIDs`). A single one of them
@@ -228,6 +232,14 @@ final class EditViewModel {
     var bakingIDs: Set<UUID> = [] {
         didSet { updateRenderProgressPolling() }
     }
+    /// Video imports under way (@see EditViewModel+VideoImport): the audio of a movie is extracted OFF
+    /// the model, so the document must stay in place for as long as one runs (`tabSwitchBlocker`,
+    /// `Quiescence`). The cancel switches are kept by job so that `video.import_cancel` stops them all.
+    var videoImportsInFlight = 0
+    var videoImportCancels: [UUID: VideoImportCancel] = [:]
+    /// What the hand's HUD would show: the file being imported and how far its audio has got (0...1).
+    var videoImportName: String? = nil
+    var videoImportFraction: Double = 0
     /// The dialogue policy: what the view-model does when it has to ask a question or
     /// report something. `.ask` (the default) = the historical behaviour, the modal shows.
     /// External driving switches it for the length of a command. See EditViewModel+Dialogs.
@@ -1260,7 +1272,8 @@ final class EditViewModel {
     private var referencedAudioPathsCache: Set<String>?
     var referencedAudioPaths: Set<String> {
         if let cached = referencedAudioPathsCache { return cached }
-        let paths = Set(allClips.compactMap { $0.filePath.isEmpty ? nil : $0.filePath })
+        // A picture's path is a MOVIE, not audio: left out (the cache would decode it as sound).
+        let paths = Set(allClips.compactMap { $0.filePath.isEmpty || $0.isPicture ? nil : $0.filePath })
         referencedAudioPathsCache = paths
         return paths
     }
@@ -2327,6 +2340,10 @@ final class EditViewModel {
         guard let engine,
               case .clip(let filePath, let sourceOffset, _, let speedRatio, let isReversed) = object.kind
         else { return }
+        // A PICTURE (an imported video's image) never reaches the engine: it makes no sound, and the
+        // engine would read the movie's audio or refuse the format. It lives in the model alone — the
+        // engine-side twin of a missing file's ghost, which every site already tolerates.
+        guard !object.isPicture else { return }
         let data = OBJSoundObjectData()
         data.lane         = lane ?? object.lane
         data.filePath     = filePath
@@ -2469,6 +2486,8 @@ final class EditViewModel {
     func syncAdd(_ object: SoundObject) {
         guard let engine else { return }
         switch object.kind {
+        case .clip where object.isPicture:
+            break   // a picture has no engine object (@see engineAddClip)
         case .clip:
             engineAddClip(object)
             if let sid = object.stemID {

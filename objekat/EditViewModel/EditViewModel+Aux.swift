@@ -210,7 +210,7 @@ extension EditViewModel {
     /// dictionary, the parents from one `parentIDMap()`, the main stem is read once, and a pair
     /// costs a couple of comparisons. Senders with nothing to send to have no entry in the answer.
     func sendToolAuxes(forObjects senders: [SoundObject]) -> [UUID: [SoundObject]] {
-        let senders = senders.filter { !$0.isAux }
+        let senders = senders.filter { !$0.isAux && !$0.isPicture }
         guard !senders.isEmpty else { return [:] }
         let auxes = allAuxes
         guard !auxes.isEmpty else { return [:] }
@@ -385,6 +385,7 @@ extension EditViewModel {
     /// The inspector's toggle: turns the send on/off while keeping its level.
     /// Enabling with no existing entry creates a silent send (-∞) until the level is raised.
     func setSendEnabled(from objectID: UUID, to auxID: UUID, enabled: Bool) {
+        if find(id: objectID)?.isPicture == true { return }   // a picture makes no sound: nothing to send
         update(id: objectID) { obj in
             if let i = obj.sends.firstIndex(where: { $0.auxID == auxID }) {
                 obj.sends[i].enabled = enabled
@@ -422,6 +423,7 @@ extension EditViewModel {
     /// EXACT, and it stays so: it is the machine's door (`object.set_send_level`) and the one an
     /// automation writes its own static value through.
     func setSendLevel(from objectID: UUID, to auxID: UUID, levelDb: Float) {
+        if find(id: objectID)?.isPicture == true { return }   // a picture makes no sound: nothing to send
         let lv = levelDb.clamped(to: sendMinDb...sendMaxDb)
         update(id: objectID) { obj in
             if let i = obj.sends.firstIndex(where: { $0.auxID == auxID }) {

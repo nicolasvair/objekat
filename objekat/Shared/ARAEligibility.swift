@@ -64,6 +64,7 @@ enum ARAEligibility {
     /// since the disk is not this unit's business.
     static func refusal(for object: SoundObject, ancestors: [SoundObject], isFileMissing: Bool) -> ARARefusal? {
         guard case .clip(_, _, _, let speed, let reversed) = object.kind else { return .notAClip }
+        if object.isPicture { return .notAClip }   // an imported video's picture: no audio file to analyse
         if object.isConsolidateInstance { return .consolidatedInstance }
         if object.araSource != nil { return .alreadySource }
         if abs(speed - 1.0) > speedTolerance { return .speedNotOne }

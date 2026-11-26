@@ -325,7 +325,7 @@ extension EditViewModel {
         var sizes: [String: Int64] = [:]
         for clip in allClips {
             guard case .clip(let path, _, _, _, _) = clip.kind, !path.isEmpty,
-                  clip.consolidateID == nil else { continue }
+                  clip.consolidateID == nil, !clip.isPicture else { continue }   // a picture's movie is not audio
             objectPaths.append(path)
             if sizes[path] == nil, let size = clip.fileSize { sizes[path] = size }
         }
@@ -354,7 +354,7 @@ extension EditViewModel {
         var araSkipped = 0
         for clip in allClips {
             guard case .clip(let path, _, _, _, _) = clip.kind, changedSet.contains(path),
-                  clip.consolidateID == nil else { continue }
+                  clip.consolidateID == nil, !clip.isPicture else { continue }
             if clip.araSource != nil { araSkipped += 1; continue }
             idsByPath[path, default: []].append(clip.id)
         }

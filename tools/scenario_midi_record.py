@@ -504,7 +504,7 @@ try:
                         raw += open(os.path.join(dp, f), errors="ignore").read()
                     except OSError:
                         pass
-        check("the file is session format 38", "OBJEKAT session — format 38." in raw)
+        check("the file is session format 39", "OBJEKAT session — format 39." in raw)
         check("... with recordMidiInput on the zone", '"recordMidiInput"' in raw)
         check("... and the zone's instrument under zoneInstruments", '"zoneInstruments"' in raw)
         c.send("project.open", {"path": path})

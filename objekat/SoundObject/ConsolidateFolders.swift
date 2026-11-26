@@ -27,6 +27,11 @@ nonisolated enum ConsolidateFolders {
     /// (`ProjectPaths`), so a moved or duplicated project finds its own takes.
     static let recordingsFolderName = "rec"
 
+    /// The sub-folder the audio extracted from an imported VIDEO goes to, under `samples/` (format 37).
+    /// Same reason as `rec`: a clip pointing into it is recorded as a RELATIVE path, so a moved or
+    /// duplicated project finds its own extracted audio. The video itself is never copied here.
+    static let videoFolderName = "video"
+
     /// The extension of the wave a NEW render writes: WAV, 32-bit floating point, so a render never
     /// clips (the FLAC renders of 18 October 2026 were taken back: an integer file clips what goes
     /// past 0 dBFS). Only NEW writes: a definition records its wave by file NAME
@@ -45,6 +50,12 @@ nonisolated enum ConsolidateFolders {
     static func recordingsFolder(projectFolder: URL) -> URL {
         projectFolder.appendingPathComponent("samples", isDirectory: true)
             .appendingPathComponent(recordingsFolderName, isDirectory: true)
+    }
+
+    /// `<projectFolder>/samples/video` — where the audio extracted from imported videos is written.
+    static func videoFolder(projectFolder: URL) -> URL {
+        projectFolder.appendingPathComponent("samples", isDirectory: true)
+            .appendingPathComponent(videoFolderName, isDirectory: true)
     }
 
     /// `<projectFolder>/samples/objects` — the legacy folder, read-only from here on.
@@ -82,9 +93,9 @@ nonisolated enum ConsolidateFolders {
     // The project folder's audio sub-folders, in resolution order: `consolidate` wins a
     // collision (cas E18), `objects` stays readable, `sources` is a capsule's embedded sources
     // (@see `EditViewModel+SaveCopy.swift`) and has nothing to do with consolidation, `rec` holds
-    // the recordings (format 33).
+    // the recordings (format 33), `video` the audio extracted from imported videos (format 37).
     static let audioSubfolders = ["samples/\(folderName)", "samples/\(legacyFolderName)", "samples/sources",
-                                  "samples/\(recordingsFolderName)"]
+                                  "samples/\(recordingsFolderName)", "samples/\(videoFolderName)"]
 
     /// "samples/objects/x.wav" → "samples/consolidate/x.wav". `nil` for anything else: only a
     /// relative path that explicitly names the LEGACY folder is worth trying under the new one

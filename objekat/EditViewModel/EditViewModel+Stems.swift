@@ -143,7 +143,7 @@ extension EditViewModel {
     }
 
     func assignStem(objectID: UUID, stemID: UUID) {
-        guard let obj = find(id: objectID) else { return }
+        guard let obj = find(id: objectID), !obj.isPicture else { return }   // a picture makes no sound: no bus
         // A CHILD of a group has no stem assignment of its own: its output feeds the
         // group's submix, and it is the group (the root) that belongs to a stem. (Routing a
         // child directly to a stem while staying in the group = a future "edit group",

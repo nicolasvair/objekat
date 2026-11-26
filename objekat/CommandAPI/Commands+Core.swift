@@ -642,6 +642,16 @@ extension CommandRegistry {
             guard FileManager.default.fileExists(atPath: path) else {
                 throw CommandError(code: .not_found, message: "file not found: \(path)")
             }
+            // A video is imported through `video.import` (a group: the picture and its sounds). An
+            // audio-only MP4/MOV is just a sound and goes on.
+            if EditViewModel.isVideoDropCandidate(url) {
+                switch await VideoProbe.probe(url) {
+                case .audioOnly: break
+                default:
+                    throw CommandError(code: .bad_params,
+                                       message: "\(url.lastPathComponent) is a video: use video.import")
+                }
+            }
             let fileDuration = await CommandAdapters.audioDuration(url: url)
             let duration = try p.double("duration", or: fileDuration)
             guard duration > 0 else {

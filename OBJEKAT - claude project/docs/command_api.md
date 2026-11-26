@@ -495,6 +495,12 @@ threads, audio thread included, `worker_threads` = what the engine pool really g
 `tools/cpu_threads.py` gives the matching per-thread view of the process (see its header for the `sample` /
 `xctrace` recipes).
 
+`perf.xruns` returns `count`, the audio xrun counter (callbacks whose processing outlasted the block duration,
+cumulative since the output device was last opened; `null` without an open device) and `device_generation`
+(`AudioDeviceStatus.generation`: a reopen zeroes the count and moves it, so only compare two readings with the
+same generation). Needs no probe. A budget-overrun count, not a hardware dropout detector: JUCE's CoreAudio
+backend reports no native count.
+
 `perf.waveforms` snapshots the waveform cache's own counters (mipmaps computed vs. read from
 disk, bytes written, region decodes/evictions, in-flight/peak concurrency), plus the current
 densities, sample-mode threshold, `.wfc` format version and the project's `waveforms/` folder.
@@ -2333,6 +2339,36 @@ and an **inherited** solo opens nothing — soloing a group or a stem is asking 
 window included. The cost: while a child is soloed, its ancestors' own fades are not heard, a fade
 belonging to the edge the solo has lifted. `tools/scenario_export_preview.py` re-reads the rendered
 files to prove the engine followed.
+
+### Video: the picture (`video.*`)
+
+`video.import` lays a video file down as a group (the picture object, which has no engine clip, plus one audio
+clip per audio track) in one undo; `video.import_status` / `video.import_cancel` follow and stop the extraction.
+The rest of the family reads the picture back, and none of it needs a window:
+
+- `video.probe {path}` reads a file WITHOUT importing it: `kind` is `video` (size, fps, codec, durations, audio
+  tracks), `audio_only`, or `refused` with the same `reason` codes `video.import` gives (`unsupported_container`,
+  `unreadable`, `undecodable_codec`, `empty_picture`).
+- `video.layers {t}` answers which pictures are visible at timeline second `t` (default: the displayed position),
+  BOTTOM first, the front-most last, at most two. Each: `object_id`, `file`, `source_time` (the instant of the
+  FILE shown), `rate` (the object's speed), `reversed`, `fps`, `opacity` (always 1 in V1). It is the pure resolver
+  the preview and `video.render_frame` call (`Shared/VideoTimeMap.swift`): a group's window cuts, a group's and an
+  object's loop fold, speed and offset apply, and the front-most picture is the one on the highest lane (the
+  smallest lane number, compared along the path from the root).
+- `video.render_frame {time, path, width?, height?}` writes the picture at `time` as a PNG through the SAME
+  CoreImage graph as the preview window (black background, each layer fitted and centred, bottom to top, exact
+  frames, sRGB). The default size is the front-most picture's. With no picture at that instant the frame is
+  black (`layers: 0`); `decoded` below `layers` means a file could not be decoded. It uses short-lived players
+  of its own, so it never disturbs the preview.
+- `video.clock {av_offset?}` takes one sample of the clock the picture follows: `audible` (the engine's audible
+  position), `output_latency`, `av_offset`, the anchor (`anchor_position`, `anchor_advancing`, `epoch`),
+  `position_now` (the anchor extrapolated to now) and the preview's counters (`players`, `ticks`, `presented`,
+  `skipped`). `av_offset` (seconds, positive moves the picture shown FORWARD) is a runtime setting, not saved in V1.
+- `video.preview {action}` shows, hides or toggles the preview window (`show|hide|toggle`). Under `--headless` it
+  opens nothing and answers `open: false`.
+
+The preview window itself is a floating panel (Window menu, "Video Preview"; it also appears when a picture
+first shows up in a project). The audio is the master clock; the picture never commands the engine.
 
 ### The audio device (`audio.*`)
 

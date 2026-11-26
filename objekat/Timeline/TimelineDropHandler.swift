@@ -252,7 +252,15 @@ extension TimelineView {
 
         guard !fileProviders.isEmpty else { return true }
         Task { @MainActor in
-            let urls = await Self.loadDroppedURLs(from: fileProviders).compactMap { $0 }
+            var urls = await Self.loadDroppedURLs(from: fileProviders).compactMap { $0 }
+            // A video (MP4/MOV) is not an audio file: it has its own door, which lays a group (the
+            // picture and its sounds) or says why not. What it hands back — an audio-only MP4/MOV,
+            // anything else — goes on through the ordinary audio path. @see EditViewModel+VideoImport
+            if urls.contains(where: EditViewModel.isVideoDropCandidate) {
+                let lane  = max(0, Int((location.y - rulerHeight) / laneStep))
+                let start = max(0, viewModel.snappedTimePure(location.x / pixelsPerSecond))
+                urls = await viewModel.importDroppedVideos(urls, baseLane: lane, start: start)
+            }
             // Files are measured, folders are read down to their leaves (off the main thread, the
             // lengths a few at a time): both come back in the order they were dropped.
             let load = await EditViewModel.loadDropEntries(from: urls)

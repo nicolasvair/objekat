@@ -75,6 +75,8 @@ extension EditViewModel {
         if isEditingConsolidate || !consolidateEditStack.isEmpty {
             return "tabs.switch.refused.consolidateEdit"
         }
+        // A video's audio is being extracted for THIS document (@see EditViewModel+VideoImport).
+        if isImportingVideo { return "tabs.switch.refused.videoImport" }
         return nil
     }
 

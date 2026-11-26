@@ -20,10 +20,10 @@ import Foundation
 
 enum CompatPolicy {
     #if OBJ_FORCE_LEGACY_BUILD
-    static let forceLegacy: Bool = true
+    nonisolated static let forceLegacy: Bool = true
     #elseif DEBUG
-    static let forceLegacy: Bool = ProcessInfo.processInfo.environment["OBJ_FORCE_LEGACY_UI"] == "1"
+    nonisolated static let forceLegacy: Bool = ProcessInfo.processInfo.environment["OBJ_FORCE_LEGACY_UI"] == "1"
     #else
-    static let forceLegacy: Bool = false
+    nonisolated static let forceLegacy: Bool = false
     #endif
 }

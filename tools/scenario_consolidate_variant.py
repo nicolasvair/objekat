@@ -390,12 +390,12 @@ def main():
     cmd("edit.redo")
     check("redo brings it back", defs()[def_id]["close_mode"] == "variant")
 
-    # save / reopen: format 38, the mode survives
+    # save / reopen: format 39, the mode survives
     cmd("project.save"); settle()
     pj = os.path.join(PROJ, "p.objekat")
     doc = json.load(open(pj))
-    check("the file is format 38 and writes closeMode",
-          doc.get("version") == 38 and doc["objectDefinitions"][0].get("closeMode") == "variant",
+    check("the file is format 39 and writes closeMode",
+          doc.get("version") == 39 and doc["objectDefinitions"][0].get("closeMode") == "variant",
           str((doc.get("version"), doc["objectDefinitions"][0])))
     check("the notice describes closeMode", any("closeMode" in l for l in doc.get("_readme", [])))
     cmd("project.open", path=pj); settle()

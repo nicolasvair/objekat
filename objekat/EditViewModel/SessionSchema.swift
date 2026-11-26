@@ -18,7 +18,7 @@ enum SessionSchema {
 
     /// Version of the session format. THIS is where it gets bumped, along with the text that
     /// describes it.
-    static let formatVersion = 38
+    static let formatVersion = 39
 
     /// One entry per line: JSON has no multi-line string, and an array stays readable in the raw
     /// file where one long string full of `\n` does not.
@@ -29,7 +29,8 @@ enum SessionSchema {
         "share: samples/ (imported sounds), samples/consolidate/ (baked consolidated objects plus",
         "their sidecars *_objectstate.json — a project saved before format 16 keeps them in",
         "samples/objects/ instead, which the app still reads), samples/rec/ (audio recorded from the",
-        "sound card, format 33), waveforms/ (display caches, throwaway).",
+        "sound card, format 33), samples/video/ (the audio extracted from imported videos, format 39),",
+        "waveforms/ (display caches, throwaway).",
         "File paths are RELATIVE to that folder when the file lives in it: the folder can be",
         "moved. A path outside the folder stays absolute.",
         "",
@@ -38,6 +39,15 @@ enum SessionSchema {
         "kind.type — clip (filePath, sourceOffset, fileDuration, speedRatio, isReversed),",
         "  group (children, isExpanded), aux (only receives sends, holds no file),",
         "  midiClip (notes, lengthBeats; the virtual instrument lives in `instruments`).",
+        "video (format 39) — on a CLIP only: the PICTURE of an imported video file. { pixelSize: { width, height },",
+        "  nominalFPS }. The clip's `filePath` is the MOVIE (an .mp4 or .mov, referenced where it is: never",
+        "  copied into the project), its window and `sourceOffset` are the picture's own. Such a clip makes no",
+        "  sound and has no engine clip, no plugin, no send, no stem: it is a picture, shown in the preview",
+        "  window. An import is a GROUP holding that picture and one ordinary audio clip per audio track of the",
+        "  file (extracted to samples/video/, an .m4a kept from the file or a .wav; a track disabled or alternate",
+        "  in the file is imported muted). A file with no audio is the picture alone. WRITTEN ONLY on a picture:",
+        "  no key = an ordinary clip, which is every session written before format 39. A build from before",
+        "  format 39 ignores the key and would show the picture as a clip of a file it cannot play.",
         "fileSize — the source file's size in bytes, on a clip only, written when it is known.",
         "  It settles which of two files carrying the same name is the right one when a broken",
         "  link is repaired. Absent = unknown (a session written before format 14), and a repair",

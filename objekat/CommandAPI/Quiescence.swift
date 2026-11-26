@@ -64,6 +64,9 @@ enum Quiescence {
             if vm.isRecording {
                 reasons.append("recording")
             }
+            if vm.isImportingVideo {
+                reasons.append("video import running (\(vm.videoImportsInFlight))")
+            }
             if vm.isScanning {
                 reasons.append("plugin scan")
             }

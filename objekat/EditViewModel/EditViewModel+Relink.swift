@@ -116,7 +116,7 @@ extension EditViewModel {
         let targets = ids.filter { id in
             guard seen.insert(id).inserted,
                   let object = find(id: id), case .clip(let oldPath, _, _, _, _) = object.kind,
-                  object.consolidateID == nil, oldPath != path else { return false }
+                  object.consolidateID == nil, !object.isPicture, oldPath != path else { return false }
             return true
         }
         guard !targets.isEmpty else { return false }
@@ -407,6 +407,16 @@ extension EditViewModel {
                       capturingLiveState: Bool) -> Bool {
         guard let before = find(id: id),
               case .clip(_, let sourceOffset, let oldLength, let speed, let reversed) = before.kind else { return false }
+        // A PICTURE has no engine clip and no audio length to fit: repairing a missing movie only
+        // points it at the file again (the picture's window and offset are the movie's own).
+        if before.isPicture {
+            update(id: id) { obj in
+                obj.kind = .clip(filePath: newPath, sourceOffset: sourceOffset, fileDuration: oldLength,
+                                 speedRatio: speed, isReversed: reversed)
+                obj.fileSize = size
+            }
+            return true
+        }
 
         var length = oldLength
         if let fileLength, fileLength > 0 { length = fileLength }

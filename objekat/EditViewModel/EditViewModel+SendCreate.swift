@@ -46,7 +46,7 @@ extension EditViewModel {
     /// within its scope (the Aux tool's offer), with their tier, the plan's refusal worded, and whether
     /// a send to them already exists. `retargeting`: the aux of the send being re-aimed, left out.
     func sendTargetCandidates(for sender: UUID, retargeting: UUID? = nil) -> [SendTargetMenu.Candidate] {
-        guard let obj = find(id: sender), !obj.isAux else { return [] }
+        guard let obj = find(id: sender), !obj.isAux, !obj.isPicture else { return [] }
         let auxes = sendToolAuxes(for: sender).filter { $0.id != retargeting }
         let refusals = sendRefusals(from: sender, among: Set(auxes.map(\.id)))
         let existing = Set(obj.sends.map(\.auxID))
@@ -72,7 +72,7 @@ extension EditViewModel {
     /// creation beeps and changes nothing (Q-U10).
     @discardableResult
     func createSendFromHand(from sender: UUID, to aux: UUID, at position: SendPosition) -> Bool {
-        guard let obj = find(id: sender), !obj.isAux, handMayCreateSend(from: sender, to: aux) else { return false }
+        guard let obj = find(id: sender), !obj.isAux, !obj.isPicture, handMayCreateSend(from: sender, to: aux) else { return false }
         pushUndo()
         if !obj.sends.contains(where: { $0.auxID == aux }) {
             setSendEnabled(from: sender, to: aux, enabled: true)     // a silent entry, -inf

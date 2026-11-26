@@ -89,8 +89,8 @@ enum ConsolidateFoldersTest {
 
     // MARK: - audioSubfolders: consolidate first, objects still there, sources untouched
 
-    check("audioSubfolders lists consolidate before objects before sources, then the recordings",
-          ConsolidateFolders.audioSubfolders == ["samples/consolidate", "samples/objects", "samples/sources", "samples/rec"])
+    check("audioSubfolders lists consolidate before objects before sources, then the recordings, then the video audio",
+          ConsolidateFolders.audioSubfolders == ["samples/consolidate", "samples/objects", "samples/sources", "samples/rec", "samples/video"])
     check("the recordings folder is <project>/samples/rec",
           ConsolidateFolders.recordingsFolder(projectFolder: URL(fileURLWithPath: "/p")).path == "/p/samples/rec")
 

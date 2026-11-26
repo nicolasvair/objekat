@@ -84,7 +84,9 @@ extension EditViewModel {
     /// A send's mini-chain is a host too (INC 3, @see EditViewModel+SendChain): its plugins.
     func chainPlugins(_ hostID: UUID) -> [ObjectPlugin]? {
         if let i = stemIndex(hostID) { return stems[i].plugins }
-        if let o = find(id: hostID) { return o.plugins }
+        // A PICTURE (an imported video's image) has no chain: nil is "no such host", which is the answer
+        // every door that would put a plugin on it (add, drop, transfer, paste) already refuses on.
+        if let o = find(id: hostID) { return o.isPicture ? nil : o.plugins }
         if let chain = inputChainPlugins(hostID) { return chain }       // an input's chain (E9)
         if let k = sendChainKey(hostID) { return sendEntry(from: k.sender, to: k.aux)?.plugins }
         return nil
@@ -112,6 +114,7 @@ extension EditViewModel {
             }
             return written
         }
+        if find(id: hostID)?.isPicture == true { return false }
         return update(id: hostID) { f(&$0.plugins); Self.settlingChannelPicks(&$0.plugins) }
     }
 

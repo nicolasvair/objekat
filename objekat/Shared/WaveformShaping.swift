@@ -28,7 +28,7 @@ enum WaveformShaping {
 
     /// Source time (s) for a local timeline time (s), with speed and reverse.
     /// reverse: the source is read from the end of the clip's range.
-    static func sourceTime(localTime t: Double, sourceOffset: Double, duration: Double,
+    nonisolated static func sourceTime(localTime t: Double, sourceOffset: Double, duration: Double,
                            speedRatio: Double, isReversed: Bool) -> Double {
         let mapped = isReversed ? (duration - t) : t
         return sourceOffset + mapped * speedRatio

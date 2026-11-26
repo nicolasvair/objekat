@@ -13158,6 +13158,29 @@
         }
       }
     },
+    "menu.window.videoPreview": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video Preview"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vista previa de vídeo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu vidéo"
+          }
+        }
+      }
+    },
     "midi.all_inputs": {
       "extractionState": "manual",
       "localizations": {
@@ -22634,6 +22657,29 @@
         }
       }
     },
+    "tabs.switch.refused.videoImport": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't switch tabs while a video is being imported."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se puede cambiar de pestaña: se está importando un vídeo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossible de changer d'onglet : une vidéo est en cours d'import."
+          }
+        }
+      }
+    },
     "timeline.outsideContent": {
       "extractionState": "manual",
       "localizations": {
@@ -23274,6 +23320,305 @@
           "stringUnit": {
             "state": "translated",
             "value": "Zoom waveform — drag / scroll / double-clic = 0 dB"
+          }
+        }
+      }
+    },
+    "video.import.cancelled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video import cancelled."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Importación del vídeo cancelada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import de la vidéo annulé."
+          }
+        }
+      }
+    },
+    "video.import.failed.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@”: sound track %d (%@) could not be extracted (%@). Nothing was added."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@»: la pista de sonido %d (%@) no se pudo extraer (%@). No se añadió nada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %@ » : la piste son %d (%@) n'a pas pu être extraite (%@). Rien n'a été ajouté."
+          }
+        }
+      }
+    },
+    "video.import.needsSave.info": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The video's sound is extracted into the project's folder: save the project, then import the video."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El sonido del vídeo se extrae en la carpeta del proyecto: guarda el proyecto y luego importa el vídeo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le son de la vidéo est extrait dans le dossier du projet : enregistrez le projet, puis importez la vidéo."
+          }
+        }
+      }
+    },
+    "video.import.needsSave.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save the project first"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda primero el proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrez d'abord le projet"
+          }
+        }
+      }
+    },
+    "video.import.projectChanged": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project changed during the import: nothing was added."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proyecto cambió durante la importación: no se añadió nada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le projet a changé pendant l'import : rien n'a été ajouté."
+          }
+        }
+      }
+    },
+    "video.import.refused.audioOnly": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file holds sound only."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este archivo solo contiene sonido."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce fichier ne contient que du son."
+          }
+        }
+      }
+    },
+    "video.import.refused.codec": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@”: the picture is encoded in %@, which this machine cannot decode."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@»: la imagen está codificada en %@, que este equipo no sabe decodificar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %@ » : l'image est codée en %@, que cette machine ne sait pas décoder."
+          }
+        }
+      }
+    },
+    "video.import.refused.container": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@”: the %@ container is not supported. Only MP4 and MOV are accepted."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@»: el contenedor %@ no es compatible. Solo se aceptan MP4 y MOV."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %@ » : le conteneur %@ n'est pas pris en charge. Seuls MP4 et MOV sont acceptés."
+          }
+        }
+      }
+    },
+    "video.import.refused.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@” has no usable picture."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» no contiene ninguna imagen utilizable."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %@ » ne contient aucune image exploitable."
+          }
+        }
+      }
+    },
+    "video.import.refused.instrumentGroup": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This group carries an instrument: it takes no video."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este grupo lleva un instrumento: no admite vídeo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce groupe porte un instrument : il n'accepte pas de vidéo."
+          }
+        }
+      }
+    },
+    "video.import.refused.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video not imported"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vídeo no importado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vidéo non importée"
+          }
+        }
+      }
+    },
+    "video.import.refused.unreadable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@” cannot be read (%@)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» no se puede leer (%@)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "« %@ » ne peut pas être lu (%@)."
+          }
+        }
+      }
+    },
+    "videopreview.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video preview"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vista previa de vídeo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aperçu vidéo"
           }
         }
       }
