@@ -223,6 +223,8 @@ re-baked, no cascade). The setting belongs to the object (its definition), not t
   (same parent, lane and start — the old build lost them); the **⌘Z of the commit** does the same. After a commit
   the sounds that left stay outside as ordinary objects, the content no longer holds them.
 - Session format 37 → 38: `objectDefinitions[].closeMode` (absent or unknown = `ask`).
+- Session format 38 → 39: `video` on a clip (the picture of an imported movie: `pixelSize`, `nominalFPS`); absent = an
+  ordinary clip, which is every session written before 39. See "Video: the picture" below.
 - **Dropping into an open object whose content is a lone clip** (`debug.file_drop`, `clipboard.paste`,
   `group.reparent`, any door onto `addChild`): the content root A is ENVELOPED in a new neutral group A'
   (A's window, lane 0) on the first addition, the new material lands inside A', and the session's
@@ -2351,10 +2353,25 @@ The rest of the family reads the picture back, and none of it needs a window:
   `unreadable`, `undecodable_codec`, `empty_picture`).
 - `video.layers {t}` answers which pictures are visible at timeline second `t` (default: the displayed position),
   BOTTOM first, the front-most last, at most two. Each: `object_id`, `file`, `source_time` (the instant of the
-  FILE shown), `rate` (the object's speed), `reversed`, `fps`, `opacity` (always 1 in V1). It is the pure resolver
-  the preview and `video.render_frame` call (`Shared/VideoTimeMap.swift`): a group's window cuts, a group's and an
-  object's loop fold, speed and offset apply, and the front-most picture is the one on the highest lane (the
-  smallest lane number, compared along the path from the root).
+  FILE shown), `rate` (the object's speed), `reversed`, `fps`, `opacity` (0…1: the product of the fades from the
+  root to the picture, see below). It is the pure resolver the preview and `video.render_frame` call
+  (`Shared/VideoTimeMap.swift`): a group's window cuts, a group's and an object's loop fold, speed and offset
+  apply, and the front-most picture is the one on the highest lane (the smallest lane number, compared along the
+  path from the root).
+
+  **The picture is an object like a sound for fades and silence.** FADES are opacity, with the audio's own curve
+  (`WaveformShaping.fadeEnvelope`, `FadeCurve`): `object.set_fade` / `object.set_fade_curve` on the picture, and on
+  each group above it (their fades multiply; an infinite bus has none). A group's fade is read on the group's window
+  time before its loop folds, the picture's own on its window time before its own loop folds (a reversed picture
+  fades at its entry). A layer whose opacity falls under 1/255 is not a layer and does not count towards the cap of
+  two. Two groups cross-faded add up to full opacity at every instant (the mix is made in the encoded colour space,
+  and two layers whose opacities sum to 1 or less are added: no dip towards black). SILENCE hides the picture
+  exactly where a sound object at its place would be silenced (`AudibilitySnapshot.isSilenced`, the rule the
+  engine's faders and the timeline's veil read): its own mute, its group's mute, its STEM's mute (a picture follows
+  its group's stem), and a solo elsewhere. The solo of its group keeps it; the solo of its audio child, of another
+  object or of another group hides it; the solo of the picture itself keeps it; the mute of the audio child
+  leaves it alone. `object.set_mute`, `object.set_fade`, `object.set_fade_curve`, `solo.*` and `stem.mute` therefore
+  all show up in `video.layers`; `crossfade.open` on a picture is refused (`bad_params`).
 - `video.render_frame {time, path, width?, height?}` writes the picture at `time` as a PNG through the SAME
   CoreImage graph as the preview window (black background, each layer fitted and centred, bottom to top, exact
   frames, sRGB). The default size is the front-most picture's. With no picture at that instant the frame is
@@ -2363,9 +2380,12 @@ The rest of the family reads the picture back, and none of it needs a window:
 - `video.clock {av_offset?}` takes one sample of the clock the picture follows: `audible` (the engine's audible
   position), `output_latency`, `av_offset`, the anchor (`anchor_position`, `anchor_advancing`, `epoch`),
   `position_now` (the anchor extrapolated to now) and the preview's counters (`players`, `ticks`, `presented`,
-  `skipped`). `av_offset` (seconds, positive moves the picture shown FORWARD) is a runtime setting, not saved in V1.
+  `skipped`) and `display_mode`: `metal` (a `CAMetalDisplayLink`, macOS 14+), `cv` (a `CVDisplayLink`: below
+  macOS 14, or under `OBJ_FORCE_LEGACY_UI` / a build with `OBJ_FORCE_LEGACY_BUILD`) or `none` (no window).
+  `av_offset` (seconds, positive moves the picture shown FORWARD) is a runtime setting, not saved in V1.
 - `video.preview {action}` shows, hides or toggles the preview window (`show|hide|toggle`). Under `--headless` it
-  opens nothing and answers `open: false`.
+  opens nothing and answers `open: false`. Below macOS 14 the window draws through a `CVDisplayLink` (same
+  composer, same clock): `video.clock` says `display_mode: "cv"` and the counters are those of that link.
 
 The preview window itself is a floating panel (Window menu, "Video Preview"; it also appears when a picture
 first shows up in a project). The audio is the master clock; the picture never commands the engine.

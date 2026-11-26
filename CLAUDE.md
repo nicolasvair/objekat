@@ -3299,6 +3299,10 @@ too recent and unguarded; it does NOT see the four traps below, which are silent
 - Debug a build on a real macOS 12 and read `log stream --predicate 'eventMessage CONTAINS[c] "Perceptible state was accessed"'`
   while walking the UI before saying "it works on 12": nothing on a dev Mac replaces it. `OBJ_FORCE_LEGACY_BUILD`
   (Swift flag, Release arm64) forces the fallback paths of the Compat layer on a recent Mac.
+- **Video preview** (`objekat/Video/`): `CAMetalDisplayLink` is macOS 14+, so below it — and under `CompatPolicy.forceLegacy` — the
+  preview runs on a `CVDisplayLink` (`VideoDisplay`, `CVLinkClock`); never `Synchronization` / `Atomic` (macOS 15: the clock's
+  anchor is an `os_unfair_lock`, and `otool -L` must show no `libswiftSynchronization`); a Metal TEXTURE is `.managed` + a blit
+  `synchronize`, never `.shared` (invalid on Intel GPUs). The picture's fades and silence follow the sound's (`video.layers`).
 
 ## Permanent points of attention
 
