@@ -165,6 +165,18 @@ enum VideoModelTest {
               && draggedGroup.entries.first?.ancestors.first?.fadeIn == 3)
         check("previewing: an unknown id changes nothing, and the source index is a value",
               base.previewing(id: UUID(), fadeIn: 1) == base && base.entries.first?.fadeIn == 1.5)
+        // SEVERAL objects in one pass (a fade dragged over a selection): every one shows, none erases another.
+        var otherPic = clip(video: facet); otherPic.startTime = 40; otherPic.fadeOut = 0.5
+        let two = VideoObjectIndex(items: [fadedGroup, otherPic])
+        let both = two.previewing(fades: [fadedPic.id: VideoFadePatch(fadeIn: 2.5),
+                                          otherPic.id: VideoFadePatch(fadeOut: 4, fadeOutCurve: bend)])
+        let bothPic = both.entries.first(where: { $0.id == fadedPic.id }), bothOther = both.entries.first(where: { $0.id == otherPic.id })
+        check("previewing(fades:): two objects at once, each keeps its own patch and the sides not named",
+              bothPic?.fadeIn == 2.5 && bothPic?.fadeOut == 0.75 && bothOther?.fadeOut == 4
+              && bothOther?.fadeOutCurve == bend && bothOther?.fadeIn == 0)
+        let oneByOne = two.previewing(id: fadedPic.id, fadeIn: 2.5).previewing(id: otherPic.id, fadeOut: 4, fadeOutCurve: bend)
+        check("previewing(fades:) = the same patches applied one after the other on the result", both == oneByOne)
+        check("previewing(fades:) of nothing is the index itself", two.previewing(fades: [:]) == two)
         check("through the model, the picture's opacity is group fade x object fade",
               abs((VideoResolver.layer(of: fx!, at: 1.75)?.opacity ?? -1)
                   - (1.75 / 3) * bend.gain(0.5)) < 1e-12)

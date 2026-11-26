@@ -138,26 +138,44 @@ nonisolated struct VideoObjectIndex: Equatable, Sendable {
     /// curve). An infinite group has no fade and is left alone.
     func previewing(id: UUID, fadeIn: Double? = nil, fadeOut: Double? = nil,
                     fadeInCurve: FadeCurve? = nil, fadeOutCurve: FadeCurve? = nil) -> VideoObjectIndex {
+        previewing(fades: [id: VideoFadePatch(fadeIn: fadeIn, fadeOut: fadeOut,
+                                              fadeInCurve: fadeInCurve, fadeOutCurve: fadeOutCurve)])
+    }
+
+    /// The same for SEVERAL objects at once, in ONE pass: a fade dragged over a selection of pictures
+    /// must show every one of them. (Applied one object at a time through a call per object, each call
+    /// started again from the model's index and the last one erased the others.)
+    func previewing(fades: [UUID: VideoFadePatch]) -> VideoObjectIndex {
+        guard !fades.isEmpty else { return self }
         var out = self
         for i in out.entries.indices {
-            if out.entries[i].id == id {
+            if let f = fades[out.entries[i].id] {
                 let d = max(0, out.entries[i].duration)
-                if let fadeIn { out.entries[i].fadeIn = min(max(0, fadeIn), d) }
-                if let fadeOut { out.entries[i].fadeOut = min(max(0, fadeOut), d) }
-                if let fadeInCurve { out.entries[i].fadeInCurve = fadeInCurve }
-                if let fadeOutCurve { out.entries[i].fadeOutCurve = fadeOutCurve }
+                if let fadeIn = f.fadeIn { out.entries[i].fadeIn = min(max(0, fadeIn), d) }
+                if let fadeOut = f.fadeOut { out.entries[i].fadeOut = min(max(0, fadeOut), d) }
+                if let c = f.fadeInCurve { out.entries[i].fadeInCurve = c }
+                if let c = f.fadeOutCurve { out.entries[i].fadeOutCurve = c }
             }
-            for j in out.entries[i].ancestors.indices where out.entries[i].ancestors[j].id == id {
-                guard !out.entries[i].ancestors[j].isInfinite else { continue }
+            for j in out.entries[i].ancestors.indices {
+                guard let gid = out.entries[i].ancestors[j].id, let f = fades[gid],
+                      !out.entries[i].ancestors[j].isInfinite else { continue }
                 let d = max(0, out.entries[i].ancestors[j].duration)
-                if let fadeIn { out.entries[i].ancestors[j].fadeIn = min(max(0, fadeIn), d) }
-                if let fadeOut { out.entries[i].ancestors[j].fadeOut = min(max(0, fadeOut), d) }
-                if let fadeInCurve { out.entries[i].ancestors[j].fadeInCurve = fadeInCurve }
-                if let fadeOutCurve { out.entries[i].ancestors[j].fadeOutCurve = fadeOutCurve }
+                if let fadeIn = f.fadeIn { out.entries[i].ancestors[j].fadeIn = min(max(0, fadeIn), d) }
+                if let fadeOut = f.fadeOut { out.entries[i].ancestors[j].fadeOut = min(max(0, fadeOut), d) }
+                if let c = f.fadeInCurve { out.entries[i].ancestors[j].fadeInCurve = c }
+                if let c = f.fadeOutCurve { out.entries[i].ancestors[j].fadeOutCurve = c }
             }
         }
         return out
     }
+}
+
+/// What a fade drag changes of ONE object, per side: a nil field leaves that side as it is.
+nonisolated struct VideoFadePatch: Equatable, Sendable {
+    var fadeIn: Double? = nil
+    var fadeOut: Double? = nil
+    var fadeInCurve: FadeCurve? = nil
+    var fadeOutCurve: FadeCurve? = nil
 }
 
 /// What the display draws for ONE picture.

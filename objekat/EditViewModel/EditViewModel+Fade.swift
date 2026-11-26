@@ -131,28 +131,63 @@ extension EditViewModel {
     /// something nobody is going to get.
     func previewFade(id: UUID, fadeIn: Double? = nil, fadeOut: Double? = nil,
                      curve: FadeCurve? = nil) {
-        guard let obj = find(id: id) else { return }
+        previewFades([FadePreviewItem(id: id, fadeIn: fadeIn, fadeOut: fadeOut, curve: curve)])
+    }
+
+    /// What a fade gesture makes of ONE object on one frame: the length of the side it holds and the
+    /// shape it is giving it.
+    struct FadePreviewItem {
+        let id: UUID
+        var fadeIn: Double? = nil
+        var fadeOut: Double? = nil
+        var curve: FadeCurve? = nil
+    }
+
+    /// The picture's side of one frame of a fade drag — ONE index for the whole frame, however many
+    /// objects the hand holds. `previewFade` used to hand the preview window an index per object, each
+    /// started again from the model's, so with several pictures selected the last one erased the others
+    /// and only one followed the hand. Here every fade of the frame lands in the same index, and the
+    /// objects whose fade has spilled onto a neighbour (a crossfade being made: @see
+    /// `crossfadeSpillCopies`) are replaced by their copies — window, fades and curves of the zone the
+    /// release will lay down — instead of the plain fade, which is bounded by the window they still have.
+    func videoFadeFrameIndex(_ items: [FadePreviewItem], spilling copies: [SoundObject] = []) -> VideoObjectIndex {
+        var index = videoObjectIndex
+        if !copies.isEmpty { index = index.previewing(replacing: copies) }
+        let replaced = Set(copies.map(\.id))
+        var patches: [UUID: VideoFadePatch] = [:]
+        for item in items where !replaced.contains(item.id) {
+            patches[item.id] = VideoFadePatch(fadeIn: item.fadeIn, fadeOut: item.fadeOut,
+                                              fadeInCurve: item.fadeIn != nil ? item.curve : nil,
+                                              fadeOutCurve: item.fadeOut != nil ? item.curve : nil)
+        }
+        return index.previewing(fades: patches)
+    }
+
+    /// One frame of a fade drag, every object it holds: the picture first (one index, one sending), then
+    /// the engine, object by object.
+    func previewFades(_ items: [FadePreviewItem], spilling copies: [SoundObject] = []) {
         // The picture follows the hand like the sound does (plan-video, fades): the preview window is
-        // handed the index as it would be with this fade, the model still untouched. Where no window is
+        // handed the index as it would be with these fades, the model still untouched. Where no window is
         // open nobody listens, and the engine below is the whole of it.
         if let sink = videoFadePreviewSink {
-            sink(videoObjectIndex.previewing(id: id, fadeIn: fadeIn, fadeOut: fadeOut,
-                                             fadeInCurve: fadeIn != nil ? curve : nil,
-                                             fadeOutCurve: fadeOut != nil ? curve : nil))
+            sink(videoFadeFrameIndex(items, spilling: copies))
         }
         guard let engine else { return }
-        let D  = max(0, obj.duration)
-        let fi = min(fadeIn  ?? obj.fadeIn,  D)
-        let fo = min(fadeOut ?? obj.fadeOut, D)
-        engine.previewFades(in: max(0, fi), out: max(0, fo), forID: id.uuidString)
-        if let curve {
-            let inCurve  = fadeIn  != nil ? curve : obj.fadeInCurve
-            let outCurve = fadeOut != nil ? curve : obj.fadeOutCurve
-            engine.updateFadeCurves(in: inCurve.shape.engineCode,
-                                    amountIn: Float(inCurve.amount),
-                                    out: outCurve.shape.engineCode,
-                                    amountOut: Float(outCurve.amount),
-                                    forID: id.uuidString)
+        for item in items {
+            guard let obj = find(id: item.id) else { continue }
+            let D  = max(0, obj.duration)
+            let fi = min(item.fadeIn  ?? obj.fadeIn,  D)
+            let fo = min(item.fadeOut ?? obj.fadeOut, D)
+            engine.previewFades(in: max(0, fi), out: max(0, fo), forID: item.id.uuidString)
+            if let curve = item.curve {
+                let inCurve  = item.fadeIn  != nil ? curve : obj.fadeInCurve
+                let outCurve = item.fadeOut != nil ? curve : obj.fadeOutCurve
+                engine.updateFadeCurves(in: inCurve.shape.engineCode,
+                                        amountIn: Float(inCurve.amount),
+                                        out: outCurve.shape.engineCode,
+                                        amountOut: Float(outCurve.amount),
+                                        forID: item.id.uuidString)
+            }
         }
     }
 
