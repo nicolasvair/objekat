@@ -970,6 +970,91 @@ struct OBJEditorHolder : public juce::Component {
     }
 };
 
+// La description JUCE d'un AUv3 (appex), bâtie SANS l'instancier.
+//
+// `findAllTypesForFile` ne rend RIEN pour un AUv3 appelé du thread principal : JUCE refuse de le
+// créer de façon synchrone (`requiresUnblockedMessageThreadDuringCreation`) et rend une liste vide
+// en silence. On restait alors sur la description de notre propre scan — identifiant
+// « aufx,Msur,Nvai » SANS le préfixe « AudioUnit: », uid à nous. Avec elle, Tracktion ne voit pas
+// un AUv3 (`requiresAsyncInstantiation` lit l'identifiant), tente une création synchrone que JUCE ne
+// sait pas faire faute de pouvoir lire l'identifiant : aucune instance, donc aucun son, et l'éditeur
+// attend son instance puis abandonne — un double-clic qui n'ouvre rien.
+//
+// On produit ici ce que JUCE aurait produit (`fillInPluginDescription`) : identifiant
+// « AudioUnit:Effects/aufx,Msur,Nvai », uid = type ^ subType ^ manufacturer. Tracktion la
+// reconnaît comme AUv3 et la crée en asynchrone, ce qui marche. Rend false pour un AUv2 (ou un
+// composant introuvable) : pour ceux-là, `findAllTypesForFile` reste la seule source.
+// L'appelant l'ajoute à knownPluginList : `ExternalPlugin::findMatchingPlugin` y relit la
+// description à chaque chargement, l'entrée de notre scan ne doit pas reprendre le dessus.
+static bool objAUv3Description(const juce::String& idStr, juce::PluginDescription& out) {
+    const juce::String bare = idStr.fromLastOccurrenceOf(":", false, false)
+                                   .fromLastOccurrenceOf("/", false, false);
+    juce::StringArray tok;
+    tok.addTokens(bare, ",", juce::StringRef());
+    if (tok.size() != 3) return false;
+    auto fourCC = [](const juce::String& s) -> OSType {
+        if (s.length() != 4) return 0;
+        OSType v = 0;
+        for (int i = 0; i < 4; ++i) v = (v << 8) | (OSType) (s[i] & 0xFF);
+        return v;
+    };
+    AudioComponentDescription cd {};
+    cd.componentType         = fourCC(tok[0]);
+    cd.componentSubType      = fourCC(tok[1]);
+    cd.componentManufacturer = fourCC(tok[2]);
+    if (!cd.componentType || !cd.componentSubType || !cd.componentManufacturer) return false;
+
+    AudioComponent comp = AudioComponentFindNext(nullptr, &cd);
+    if (!comp || AudioComponentGetDescription(comp, &cd) != noErr) return false;
+    if ((cd.componentFlags & kAudioComponentFlag_IsV3AudioUnit) == 0) return false;
+
+    // « Fabricant: Nom », comme le découpe JUCE (getNameAndManufacturer).
+    juce::String name = bare, maker = tok[2];
+    CFStringRef cfName = nullptr;
+    if (AudioComponentCopyName(comp, &cfName) == noErr && cfName) {
+        const juce::String full = juce::String::fromCFString(cfName);
+        CFRelease(cfName);
+        if (full.containsChar(':')) {
+            maker = full.upToFirstOccurrenceOf(":", false, false).trim();
+            name  = full.fromFirstOccurrenceOf(":", false, false).trim();
+        } else {
+            name = full;
+        }
+    }
+    UInt32 version = 0;
+    AudioComponentGetVersion(comp, &version);
+
+    juce::String folder;
+    switch (cd.componentType) {
+        case kAudioUnitType_MusicDevice:   folder = "Synths/";      break;
+        case kAudioUnitType_MusicEffect:
+        case kAudioUnitType_Effect:        folder = "Effects/";     break;
+        case kAudioUnitType_Generator:     folder = "Generators/";  break;
+        case kAudioUnitType_Panner:        folder = "Panners/";     break;
+        case kAudioUnitType_Mixer:         folder = "Mixers/";      break;
+        case kAudioUnitType_MIDIProcessor: folder = "MidiEffects/"; break;
+        default: break;
+    }
+
+    juce::PluginDescription d;
+    d.name             = name;
+    d.descriptiveName  = name;
+    d.manufacturerName = maker;
+    d.pluginFormatName = "AudioUnit";
+    d.fileOrIdentifier = "AudioUnit:" + folder + tok[0] + "," + tok[1] + "," + tok[2];
+    d.uniqueId = d.deprecatedUid = (int) cd.componentType ^ (int) cd.componentSubType
+                                 ^ (int) cd.componentManufacturer;
+    d.version = juce::String((version >> 16) & 0xFFFF) + "." + juce::String((version >> 8) & 0xFF)
+              + "." + juce::String(version & 0xFF);
+    d.isInstrument      = (cd.componentType == kAudioUnitType_MusicDevice);
+    d.category          = d.isInstrument ? "Synth" : "Effect";
+    d.numInputChannels  = d.isInstrument ? 0 : 2;
+    d.numOutputChannels = 2;
+    d.lastInfoUpdateTime = juce::Time::getCurrentTime();
+    out = d;
+    return true;
+}
+
 // Fenêtre JUCE autonome pour les éditeurs VST3/AU.
 // Gère sa propre destruction : le bouton de fermeture appelle onClose,
 // qui supprime le unique_ptr dans _editorWindows.
@@ -3986,6 +4071,11 @@ static void configureFreshClip(const te::WaveAudioClip::Ptr& clip, const te::Cli
                 foundDesc = *realTypes[0];
                 juce::String targetName(juce::String::fromUTF8([pluginName UTF8String]));
                 for (auto* rd : realTypes) if (rd->name == targetName) { foundDesc = *rd; break; }
+                kl.addType(foundDesc);
+                [self savePluginCache];
+                found = true;
+            } else if (fmtStr == "AudioUnit" && objAUv3Description(idStr, foundDesc)) {
+                // AUv3 : JUCE ne rend rien sur ce thread (@see objAUv3Description).
                 kl.addType(foundDesc);
                 [self savePluginCache];
                 found = true;
@@ -8207,6 +8297,15 @@ static void objClearARAState(te::WaveAudioClip& clip) {
                     kl.addType(foundDesc);
                     [self savePluginCache];
                     found = true;
+                } else if (fmtStr == "AudioUnit" && objAUv3Description(idStr, foundDesc)) {
+                    // AUv3 : JUCE ne rend rien sur ce thread (@see objAUv3Description).
+                    NSLog(@"[OBJ] addPlugin: AUv3 — description bâtie id='%s'",
+                          foundDesc.fileOrIdentifier.toRawUTF8());
+                    OBJ_DIAG_PLUG(@"pont : AUv3 « %@ » → %s", pluginName,
+                                  foundDesc.fileOrIdentifier.toRawUTF8());
+                    kl.addType(foundDesc);
+                    [self savePluginCache];
+                    found = true;
                 }
                 break;
             }
@@ -10048,6 +10147,10 @@ static bool objPrepareForEditor(te::ExternalPlugin& ext, te::Engine& engine) {
     if (!ext->getAudioPluginInstance()) {
         if (attempt >= 20) {
             NSLog(@"[OBJ] openPluginEditor: timeout — instance jamais chargée pour %@", pluginKey);
+            // Au journal aussi : sans ça, un plugin qui ne se charge pas donne un double-clic
+            // qui n'ouvre rien et AUCUNE trace dans ~/Library/Logs/Objekat.
+            OBJ_DIAG_PLUG(@"éditeur : abandon, instance jamais chargée — %@ (erreur : %s)",
+                          pluginKey, ext->getLoadError().toRawUTF8());
             return;
         }
         NSLog(@"[OBJ] openPluginEditor: instance en cours de chargement, retry %d/20…", attempt + 1);
@@ -10403,6 +10506,11 @@ static bool objPrepareForEditor(te::ExternalPlugin& ext, te::Engine& engine) {
                 foundDesc = *realTypes[0];
                 juce::String targetName(juce::String::fromUTF8([pluginName UTF8String]));
                 for (auto* rd : realTypes) if (rd->name == targetName) { foundDesc = *rd; break; }
+                kl.addType(foundDesc);
+                [self savePluginCache];
+                found = true;
+            } else if (fmtStr == "AudioUnit" && objAUv3Description(idStr, foundDesc)) {
+                // AUv3 : JUCE ne rend rien sur ce thread (@see objAUv3Description).
                 kl.addType(foundDesc);
                 [self savePluginCache];
                 found = true;
