@@ -44,7 +44,7 @@ extension VideoObjectIndex {
             case .group(let children, _):
                 var loop: VideoLoopRange? = nil
                 if let r = o.loopMarkerLocalRange { loop = VideoLoopRange(start: r.start, end: r.end) }
-                let window = VideoGroupWindow(lane: o.lane, start: o.startTime, duration: o.duration,
+                let window = VideoGroupWindow(id: o.id, lane: o.lane, start: o.startTime, duration: o.duration,
                                               isInfinite: o.isInfiniteBus, loop: loop,
                                               isMuted: audibility.isSilenced(o),
                                               fadeIn: o.fadeIn, fadeOut: o.fadeOut,

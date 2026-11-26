@@ -40,6 +40,9 @@ import Foundation
 
 /// One group between the root and a picture: only what the resolver reads of it.
 nonisolated struct VideoGroupWindow: Equatable, Sendable {
+    /// The group's object, when the index was built from the model: what lets a fade being dragged be
+    /// carried onto the window it belongs to (@see `VideoObjectIndex.previewing`).
+    var id: UUID? = nil
     var lane: Int
     var start: Double
     var duration: Double
@@ -59,11 +62,11 @@ nonisolated struct VideoGroupWindow: Equatable, Sendable {
     var fadeInCurve: FadeCurve = .linear
     var fadeOutCurve: FadeCurve = .linear
 
-    init(lane: Int, start: Double, duration: Double, isInfinite: Bool = false,
+    init(id: UUID? = nil, lane: Int, start: Double, duration: Double, isInfinite: Bool = false,
          loop: VideoLoopRange? = nil, isMuted: Bool = false,
          fadeIn: Double = 0, fadeOut: Double = 0,
          fadeInCurve: FadeCurve = .linear, fadeOutCurve: FadeCurve = .linear) {
-        self.lane = lane; self.start = start; self.duration = duration
+        self.id = id; self.lane = lane; self.start = start; self.duration = duration
         self.isInfinite = isInfinite; self.loop = loop; self.isMuted = isMuted
         self.fadeIn = fadeIn; self.fadeOut = fadeOut
         self.fadeInCurve = fadeInCurve; self.fadeOutCurve = fadeOutCurve
@@ -127,6 +130,34 @@ nonisolated struct VideoPictureEntry: Equatable, Sendable {
 nonisolated struct VideoObjectIndex: Equatable, Sendable {
     var entries: [VideoPictureEntry] = []
     var isEmpty: Bool { entries.isEmpty }
+
+    /// The index as it would be with the fades of object `id` (a picture, or a group above pictures)
+    /// replaced: what the preview shows WHILE a fade is being dragged, before the gesture commits it to
+    /// the model. A nil length / curve leaves that side as it is. The fade is bounded by the object's own
+    /// duration, as the engine's preview is (a fade longer than its window would open part-way down its
+    /// curve). An infinite group has no fade and is left alone.
+    func previewing(id: UUID, fadeIn: Double? = nil, fadeOut: Double? = nil,
+                    fadeInCurve: FadeCurve? = nil, fadeOutCurve: FadeCurve? = nil) -> VideoObjectIndex {
+        var out = self
+        for i in out.entries.indices {
+            if out.entries[i].id == id {
+                let d = max(0, out.entries[i].duration)
+                if let fadeIn { out.entries[i].fadeIn = min(max(0, fadeIn), d) }
+                if let fadeOut { out.entries[i].fadeOut = min(max(0, fadeOut), d) }
+                if let fadeInCurve { out.entries[i].fadeInCurve = fadeInCurve }
+                if let fadeOutCurve { out.entries[i].fadeOutCurve = fadeOutCurve }
+            }
+            for j in out.entries[i].ancestors.indices where out.entries[i].ancestors[j].id == id {
+                guard !out.entries[i].ancestors[j].isInfinite else { continue }
+                let d = max(0, out.entries[i].ancestors[j].duration)
+                if let fadeIn { out.entries[i].ancestors[j].fadeIn = min(max(0, fadeIn), d) }
+                if let fadeOut { out.entries[i].ancestors[j].fadeOut = min(max(0, fadeOut), d) }
+                if let fadeInCurve { out.entries[i].ancestors[j].fadeInCurve = fadeInCurve }
+                if let fadeOutCurve { out.entries[i].ancestors[j].fadeOutCurve = fadeOutCurve }
+            }
+        }
+        return out
+    }
 }
 
 /// What the display draws for ONE picture.

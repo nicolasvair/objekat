@@ -1096,6 +1096,7 @@ extension TimelineView {
             }
 
             if phase == .ended {
+                viewModel.endFadePreview()
                 viewModel.pushUndo()
                 let final = state.finalFade
                 for id in state.ids {

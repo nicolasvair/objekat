@@ -153,6 +153,18 @@ enum VideoModelTest {
         check("a group's fades and curves reach its window",
               gw?.fadeIn == 3 && gw?.fadeOut == 2 && gw?.fadeOutCurve == FadeCurve(shape: .sCurve, amount: 1)
               && gw?.fadeInCurve == .linear)
+        // The index as the preview sees it while a fade is being dragged (the model untouched).
+        let base = VideoObjectIndex(items: [fadedGroup])
+        let dragged = base.previewing(id: fadedPic.id, fadeIn: 2.5, fadeInCurve: .linear)
+        check("previewing: the picture's dragged fade replaces its own, the other side stays",
+              dragged.entries.first?.fadeIn == 2.5 && dragged.entries.first?.fadeOut == 0.75
+              && dragged.entries.first?.fadeInCurve == .linear)
+        let draggedGroup = base.previewing(id: fadedGroup.id, fadeOut: 99)
+        check("previewing: a group's fade lands on its window, bounded by its duration",
+              draggedGroup.entries.first?.ancestors.first?.fadeOut == 30
+              && draggedGroup.entries.first?.ancestors.first?.fadeIn == 3)
+        check("previewing: an unknown id changes nothing, and the source index is a value",
+              base.previewing(id: UUID(), fadeIn: 1) == base && base.entries.first?.fadeIn == 1.5)
         check("through the model, the picture's opacity is group fade x object fade",
               abs((VideoResolver.layer(of: fx!, at: 1.75)?.opacity ?? -1)
                   - (1.75 / 3) * bend.gain(0.5)) < 1e-12)

@@ -111,11 +111,13 @@ final class VideoPreviewController {
         let d = VideoDisplay(layer: layer, composer: composer, engine: engine, anchor: clock.anchor)
         d.setIndex(session.viewModel.videoObjectIndex)
         display = d
+        session.viewModel.videoFadePreviewSink = { [weak self] index in self?.display?.setIndex(index) }
         clock.start()
         d.start()
     }
 
     func detach() {
+        session.viewModel.videoFadePreviewSink = nil
         display?.stop()
         display = nil
         clock.stop()

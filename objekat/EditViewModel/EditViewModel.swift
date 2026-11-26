@@ -486,6 +486,10 @@ final class EditViewModel {
     /// Bumped each time `audibility` is replaced: what the preview's 10 Hz watch compares, beside
     /// `itemsWriteCount`, to know the picture index must be carried across again.
     @PerceptionIgnored var videoAudibilityRevision = 0
+    /// Where the picture preview receives the index of a fade BEING DRAGGED (@see `previewFade`): installed
+    /// by `VideoPreviewController` while its window is open, nil otherwise. The revision above, bumped by
+    /// `endFadePreview`, makes the controller carry the model's own index across again.
+    @PerceptionIgnored var videoFadePreviewSink: ((VideoObjectIndex) -> Void)? = nil
 
     var engine: OBJEngineCore? = nil {
         didSet {

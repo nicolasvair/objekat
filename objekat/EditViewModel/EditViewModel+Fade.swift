@@ -131,7 +131,16 @@ extension EditViewModel {
     /// something nobody is going to get.
     func previewFade(id: UUID, fadeIn: Double? = nil, fadeOut: Double? = nil,
                      curve: FadeCurve? = nil) {
-        guard let engine, let obj = find(id: id) else { return }
+        guard let obj = find(id: id) else { return }
+        // The picture follows the hand like the sound does (plan-video, fades): the preview window is
+        // handed the index as it would be with this fade, the model still untouched. Where no window is
+        // open nobody listens, and the engine below is the whole of it.
+        if let sink = videoFadePreviewSink {
+            sink(videoObjectIndex.previewing(id: id, fadeIn: fadeIn, fadeOut: fadeOut,
+                                             fadeInCurve: fadeIn != nil ? curve : nil,
+                                             fadeOutCurve: fadeOut != nil ? curve : nil))
+        }
+        guard let engine else { return }
         let D  = max(0, obj.duration)
         let fi = min(fadeIn  ?? obj.fadeIn,  D)
         let fo = min(fadeOut ?? obj.fadeOut, D)
@@ -145,6 +154,14 @@ extension EditViewModel {
                                     amountOut: Float(outCurve.amount),
                                     forID: id.uuidString)
         }
+    }
+
+    /// The fade gesture is over (committed or not): the picture goes back to what the MODEL says. A
+    /// commit that writes nothing (a fade dragged back to where it was) would otherwise leave the
+    /// preview index of the last frame on the screen.
+    func endFadePreview() {
+        guard videoFadePreviewSink != nil else { return }
+        videoAudibilityRevision &+= 1
     }
 
     /// Pushes the fade to the engine: the clip's native fade, or the folder's window+fade
