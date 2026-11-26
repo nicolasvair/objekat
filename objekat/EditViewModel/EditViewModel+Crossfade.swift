@@ -284,6 +284,10 @@ extension EditViewModel {
         case notSiblings
         /// A gap separates them: there is no join to take hold of.
         case gap
+        /// A picture against a sound (neither being a group): the picture has an opacity and the sound
+        /// a gain, so the sound would fade against nothing. A picture crossfades with a picture, or
+        /// with a group (whose pictures it then carries along with its sound).
+        case mixedMedia
         /// One of the two is a looping container — its window is a porthole onto a pattern, and
         /// widening it would change every repeat at once (the same rule as the ripple's).
         case porthole
@@ -292,6 +296,14 @@ extension EditViewModel {
         /// The width asked for is more than the two objects can give without one of them falling
         /// below the floor the overwrite policy itself uses.
         case tooWide
+    }
+
+    /// A picture facing a sound: the one pairing a crossfade refuses by NATURE (@see
+    /// `SeamRefusal.mixedMedia`). A group is neutral — it carries both a sound and, possibly, pictures,
+    /// and a crossfade between two groups is the one that has always existed.
+    static func isMixedMedia(_ a: SoundObject, _ b: SoundObject) -> Bool {
+        guard !a.isGroup, !b.isGroup else { return false }
+        return a.isPicture != b.isPicture
     }
 
     /// The two objects meeting at a seam on `lane`, nearest to `time`, among `container`'s
@@ -503,6 +515,10 @@ extension EditViewModel {
         var left = leftIn, right = rightIn
         guard left.lane == right.lane, leftParent == rightParent
         else { return .failure(.notSiblings) }
+        // A picture crossfades with a picture (or a group), never with a bare sound. Only the OPENING
+        // is refused: a pair already laid down (an old project) stays what it is — `isCrossfadePair`
+        // and the refit read the geometry alone.
+        guard !Self.isMixedMedia(left, right) else { return .failure(.mixedMedia) }
 
         // Put them the right way round: the caller may name them either way.
         if left.startTime > right.startTime { swap(&left, &right) }

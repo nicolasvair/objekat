@@ -41,15 +41,44 @@ extension CommandRegistry {
 
         /// The refusals, turned into the machine contract. Each one names what the hand would be
         /// shown, since a seam that will not open has to say so rather than do nothing.
-        func refuse(_ reason: EditViewModel.SeamRefusal) -> CommandError {
+        func refuse(_ reason: EditViewModel.SeamRefusal,
+                    pair: (left: UUID, right: UUID)? = nil,
+                    vm: EditViewModel? = nil) -> CommandError {
             switch reason {
             case .notSiblings:
+                // Two PICTURES that sit in two different groups: the refusal names the groups, which is
+                // where the answer is (the groups crossfade, and carry their pictures with them — the
+                // sound as well). Nothing is switched on the caller's behalf: that would fade the
+                // sound too without saying so.
+                if let pair, let vm,
+                   let l = vm.find(id: pair.left), let r = vm.find(id: pair.right),
+                   l.isPicture, r.isPicture,
+                   let gl = vm.parentGroup(for: pair.left), let gr = vm.parentGroup(for: pair.right),
+                   gl.id != gr.id {
+                    let neighbours = gl.lane == gr.lane
+                        && vm.parentGroup(for: gl.id)?.id == vm.parentGroup(for: gr.id)?.id
+                    return CommandError(
+                        code: .bad_params,
+                        message: "the two pictures sit in two different groups, '\(gl.displayName)' and "
+                               + "'\(gr.displayName)': a crossfade lives between siblings of one lane"
+                               + (neighbours ? " — crossfade the two groups instead (they are neighbours; "
+                                             + "their sound fades with them)" : ""),
+                        details: .object(["left_group": .string(gl.id.uuidString),
+                                          "right_group": .string(gr.id.uuidString),
+                                          "left_group_name": .string(gl.displayName),
+                                          "right_group_name": .string(gr.displayName),
+                                          "groups_are_neighbours": .bool(neighbours)]))
+                }
                 return CommandError(code: .bad_params,
                                     message: "the two objects are not neighbours: a crossfade "
                                            + "lives between siblings of one lane")
             case .gap:
                 return CommandError(code: .invalid_state,
                                     message: "the two objects do not meet: there is no seam to open")
+            case .mixedMedia:
+                return CommandError(code: .bad_params,
+                                    message: "a picture crossfades only with a picture (or a group): "
+                                           + "a sound has no opacity to fade against it")
             case .porthole:
                 return CommandError(code: .invalid_state,
                                     message: "a looping container refuses it: its window is a "
@@ -142,7 +171,7 @@ extension CommandRegistry {
             switch vm.openCrossfade(leftID: pair.left, rightID: pair.right, width: width,
                                     idealStart: idealStart, pin: pin, approach: approach) {
             case .failure(let reason):
-                throw refuse(reason)
+                throw refuse(reason, pair: pair, vm: vm)
             case .success(let zone):
                 // A zone asked for and a zone obtained are not the same thing: the width is
                 // clamped by what the two objects can give. The caller is told what it GOT.
@@ -165,7 +194,7 @@ extension CommandRegistry {
             let vm = try CommandContext.shared.requireViewModel()
             let pair = try resolvePair(p, vm)
             if case .failure(let reason) = vm.closeCrossfade(leftID: pair.left, rightID: pair.right) {
-                throw refuse(reason)
+                throw refuse(reason, pair: pair, vm: vm)
             }
             return .object(["left": .string(pair.left.uuidString),
                             "right": .string(pair.right.uuidString)])

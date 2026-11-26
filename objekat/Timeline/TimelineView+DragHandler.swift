@@ -865,10 +865,18 @@ extension TimelineView {
                     side == .in ? -ZeroFloor.trimLimit(start: obj.startTime, room: obj.contentRoomBefore)
                                 : obj.contentRoomAfter
                 }
+                /// The neighbours the seam refuses by NATURE (a picture against a sound,
+                /// `SeamRefusal.mixedMedia`): not a seam to spill onto but a WALL. The edge may close
+                /// the gap up to them and no further — run over them, `resolveOverlaps` would eat them.
+                var walls: [UUID: Double] = [:]
                 for obj in objs {
                     guard let n = viewModel.seamNeighbourAndGap(of: obj.id, onRight: side == .out,
                                                                 within: ownRoom(obj))
                     else { continue }
+                    if let other = viewModel.find(id: n.id), EditViewModel.isMixedMedia(obj, other) {
+                        walls[obj.id] = n.gap
+                        continue
+                    }
                     neighbours[obj.id] = n.id
                     gaps[obj.id] = n.gap
                     let pair = side == .out ? (obj.id, n.id) : (n.id, obj.id)
@@ -880,7 +888,9 @@ extension TimelineView {
                 // well give — which is the whole "if the matter is missing on one side, open on
                 // the other".
                 let room = objs.map { obj -> Double in
-                    guard let n = neighbours[obj.id] else { return ownRoom(obj) }
+                    guard let n = neighbours[obj.id] else {
+                        return walls[obj.id].map { min(ownRoom(obj), $0) } ?? ownRoom(obj)
+                    }
                     let g = gaps[obj.id] ?? 0
                     let pair = side == .out ? (obj.id, n) : (n, obj.id)
                     let approach: EditViewModel.SeamApproach =
