@@ -210,6 +210,12 @@ extension CommandRegistry {
         }
 
         #if DEBUG
+        let videoTDoc: String = """
+            Timeline instants at which the PICTURES are read: `video_layers_preview` is \
+            what the preview window would show on the last frame, BEFORE the release \
+            (the index of the gesture's copies), `video_layers_after` what the model \
+            says once released (`video.layers`).
+            """
         register("debug.crossfade_drag",
                  summary: """
                  DEBUG. A crossfade DRAG with no mouse: the very per-frame function the gesture \
@@ -237,7 +243,8 @@ extension CommandRegistry {
                           ParamSpec("legacy", "bool", required: false,
                                     "Lay the frames on the model, one frame at a time, as before the copies (default false)."),
                           ParamSpec("batched", "bool", required: false,
-                                    "With `legacy`: the frame's writes in ONE batch (default true).")],
+                                    "With `legacy`: the frame's writes in ONE batch (default true)."),
+                          ParamSpec("video_t", "array<number>", required: false, videoTDoc)],
                  undo: .handled) { p in
             let vm = try CommandContext.shared.requireViewModel()
             let lefts = try p.uuids("lefts"), rights = try p.uuids("rights")
@@ -292,6 +299,13 @@ extension CommandRegistry {
                 else { vm.driveCrossfadeFrame(&state, shift: dx) }
             }
             let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+            // The pictures as the preview window would show them NOW — the hand is still down.
+            var videoTimes: [Double] = []
+            if case .array(let rawT)? = p.raw["video_t"] {
+                videoTimes = rawT.compactMap { if case .number(let d) = $0 { return d } else { return nil } }
+            }
+            let previewIndex: VideoObjectIndex? = videoTimes.isEmpty ? nil
+                : (state.shadow.flatMap { vm.crossfadePreviewIndex($0) } ?? vm.videoObjectIndex)
             let dragWrites = vm.itemsWriteCount - w0, dragRebuilds = vm.laneEntriesRebuildCount - r0
             let dragUndo = vm.undoPushCount - u0
             // The release: ONE undo point and ONE write (nothing at all for the legacy path, which
@@ -302,7 +316,12 @@ extension CommandRegistry {
             let commitMs = (CFAbsoluteTimeGetCurrent() - tc) * 1000
             let frames = max(1, dxs.count)
             let writes = vm.itemsWriteCount - w0, rebuilds = vm.laneEntriesRebuildCount - r0
-            return .object(["frames": .int(dxs.count),
+            var video: [String: JSONValue] = [:]
+            if let previewIndex {
+                video["video_layers_preview"] = debugLayersPayload(previewIndex, videoTimes)
+                video["video_layers_after"] = debugLayersPayload(vm.videoObjectIndex, videoTimes)
+            }
+            var answer: [String: JSONValue] = ["frames": .int(dxs.count),
                             "zones": .int(tracks.count),
                             "legacy": .bool(legacy),
                             "did_change": .bool(state.didChange),
@@ -318,8 +337,88 @@ extension CommandRegistry {
                             "rebuilds_per_frame": .number(Double(dragRebuilds) / Double(frames)),
                             "ms_total": .number(ms + commitMs),
                             "ms_per_frame": .number(ms / Double(frames)),
-                            "commit_ms": .number(commitMs)])
+                            "commit_ms": .number(commitMs)]
+            for (key, value) in video { answer[key] = value }
+            return .object(answer)
+        }
+
+        register("debug.crossfade_spill_preview",
+                 summary: """
+                 DEBUG. The picture preview of a crossfade being CREATED — a fade pulled out onto its \
+                 neighbour (`TimelineView`'s fade drag, phase `changed`) — with no mouse: the very \
+                 function the gesture calls (`EditViewModel.crossfadeSpillCopies`), then the index the \
+                 preview window would be handed (`videoFadeFrameIndex`). Nothing is written (`items_writes` \
+                 must be 0). `side` is the edge the hand pulls: `out` (the LEFT object's fade-out, the zone \
+                 anchored on the right object's start) or `in` (the RIGHT object's fade-in, anchored on the \
+                 left object's end). `layers` reads the resolver at each `t`; `objects` are the two copies. \
+                 Compare it with `crossfade.open` (`start` = the anchor, same `width`) applied afterwards. \
+                 Not present in Release builds.
+                 """,
+                 params: [ParamSpec("left", "uuid", "Left-hand object."),
+                          ParamSpec("right", "uuid", "Right-hand object."),
+                          ParamSpec("width", "number", "The zone the hand asks for, in seconds."),
+                          ParamSpec("side", "string", required: false, "out (default) | in."),
+                          ParamSpec("t", "array<number>", required: false, "Instants at which the pictures are read."),
+                          ParamSpec("curve", "string", required: false,
+                                    "linear (default) | convex | concave: the shape the hand gives the pulled fade "
+                                  + "(the facing one is its mirror).")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let left = try p.uuid("left"), right = try p.uuid("right")
+            guard let l = vm.find(id: left), let r = vm.find(id: right) else {
+                throw CommandError(code: .not_found, message: "unknown object")
+            }
+            let width = try p.double("width")
+            let side = try p.string("side", or: "out")
+            let anchor: EditViewModel.ZonePin
+            switch side {
+            case "out": anchor = .start(r.startTime)
+            case "in":  anchor = .end(l.startTime + l.duration)
+            default: throw CommandError(code: .bad_params, message: "'side' is out | in")
+            }
+            let drawn: FadeCurve
+            switch try p.string("curve", or: "linear") {
+            case "linear":  drawn = .linear
+            case "convex":  drawn = FadeCurve(shape: .convex, amount: 0.5)
+            case "concave": drawn = FadeCurve(shape: .concave, amount: 0.5)
+            default: throw CommandError(code: .bad_params, message: "'curve' is linear | convex | concave")
+            }
+            var times: [Double] = []
+            if case .array(let raw)? = p.raw["t"] {
+                times = raw.compactMap { if case .number(let d) = $0 { return d } else { return nil } }
+            }
+            let w0 = vm.itemsWriteCount, u0 = vm.undoPushCount
+            guard let copies = vm.crossfadeSpillCopies(
+                leftID: left, rightID: right, width: width, anchor: anchor, approach: .none,
+                outCurve: side == "out" ? drawn : drawn.mirrored,
+                inCurve: side == "in" ? drawn : drawn.mirrored) else {
+                throw CommandError(code: .invalid_state, message: "the seam refuses this zone")
+            }
+            let index = vm.videoFadeFrameIndex([], spilling: copies)
+            return .object(["layers": debugLayersPayload(index, times),
+                            "objects": .array(copies.map { o in
+                                .object(["id": .string(o.id.uuidString), "start": .number(o.startTime),
+                                         "duration": .number(o.duration), "fade_in": .number(o.fadeIn),
+                                         "fade_out": .number(o.fadeOut)])
+                            }),
+                            "items_writes": .int(vm.itemsWriteCount - w0),
+                            "undo_pushes": .int(vm.undoPushCount - u0)])
         }
         #endif
     }
 }
+
+#if DEBUG
+/// The resolver's answer at each of `times`, for the debug commands that compare a preview index with
+/// the model's: bottom layer first, as `video.layers` answers.
+func debugLayersPayload(_ index: VideoObjectIndex, _ times: [Double]) -> JSONValue {
+    .array(times.map { t in
+        .object(["t": .number(t),
+                 "layers": .array(VideoResolver.layers(at: t, in: index).map { l in
+                     .object(["object_id": .string(l.objectID.uuidString),
+                              "opacity": .number(l.opacity),
+                              "source_time": .number(l.sourceTime)])
+                 })])
+    })
+}
+#endif
