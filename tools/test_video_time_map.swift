@@ -5,7 +5,8 @@
 // What it pins: a group's WINDOW (nested ones included), the LOOP fold of a group (IN negative too,
 // the right half of a cut looped group), speed and offset, a negative start, an infinite group, the
 // picture's own loop, the front-most-lane order on the PATH of lanes (not on a display lane), the
-// cap of two layers applied AFTER the window filtering, and the fact that V1 ignores `isMuted`.
+// cap of two layers applied AFTER the window filtering, and the silence (`isMuted`: the picture's own
+// or any ancestor's, at any depth) that hides a picture before it counts in the cap.
 //
 // From `tools/`:
 //
@@ -55,7 +56,7 @@ enum VideoTimeMapTest {
           near(VideoResolver.layer(of: a, at: 5)?.sourceTime, 2))
     check("inside: offset + local time", near(VideoResolver.layer(of: a, at: 8)?.sourceTime, 5))
     check("the end is EXCLUDED", VideoResolver.layer(of: a, at: 15) == nil)
-    check("opacity is 1 in V1", VideoResolver.layer(of: a, at: 8)?.opacity == 1)
+    check("opacity is 1 without any fade", VideoResolver.layer(of: a, at: 8)?.opacity == 1)
 
     // MARK: - Speed, offset in SOURCE seconds
 
@@ -156,12 +157,34 @@ enum VideoTimeMapTest {
     check("own loop at speed 2 folds the LOCAL time, then reads at speed",
           near(VideoResolver.layer(of: ownLoopFast, at: 4)?.sourceTime, 2))
 
-    // MARK: - Mute is ignored in V1 (Q7), opacity is 1 (Q6)
+    // MARK: - Silence hides the picture (Q7): the object's own, any ancestor's, at any depth
 
+    let okG = VideoGroupWindow(lane: 0, start: 0, duration: 10)
     let mutedG = VideoGroupWindow(lane: 0, start: 0, duration: 10, isMuted: true)
-    let mutedP = pic(16, start: 0, duration: 10, muted: true, ancestors: [mutedG])
-    check("a muted picture in a muted group is still resolved (V1)",
-          VideoResolver.layer(of: mutedP, at: 5) != nil)
+    check("a picture with nothing muted is shown", VideoResolver.layer(of: pic(16, ancestors: [okG]), at: 5) != nil)
+    check("a muted picture shows nothing", VideoResolver.layer(of: pic(16, muted: true), at: 5) == nil)
+    check("a muted picture at the root shows nothing, whatever the instant",
+          VideoResolver.layer(of: pic(16, start: 0, duration: 10, muted: true), at: 0) == nil)
+    check("a picture under a muted parent shows nothing",
+          VideoResolver.layer(of: pic(17, ancestors: [mutedG]), at: 5) == nil)
+    check("a muted ROOT group hides a picture two levels down",
+          VideoResolver.layer(of: pic(18, ancestors: [mutedG, okG]), at: 5) == nil)
+    check("a muted MIDDLE group hides it too",
+          VideoResolver.layer(of: pic(18, ancestors: [okG, mutedG, okG]), at: 5) == nil)
+    let mutedInf = VideoGroupWindow(lane: 0, start: 0, duration: 0, isInfinite: true, isMuted: true)
+    check("a muted INFINITE group hides its picture", VideoResolver.layer(of: pic(19, ancestors: [mutedInf]), at: 5) == nil)
+    check("the same infinite group, not muted, shows it",
+          VideoResolver.layer(of: pic(19, ancestors: [VideoGroupWindow(lane: 0, start: 0, duration: 0, isInfinite: true)]), at: 5) != nil)
+    check("a muted picture in a muted group shows nothing",
+          VideoResolver.layer(of: pic(16, muted: true, ancestors: [mutedG]), at: 5) == nil)
+
+    // A silenced picture does not take a place among the two layers (Q-F8): the filtering comes first.
+    let front = pic(50, lane: 0, muted: true)
+    let secondP = pic(51, lane: 1)
+    let thirdP = pic(52, lane: 2)
+    let capped = VideoResolver.layers(at: 5, in: VideoObjectIndex(entries: [front, secondP, thirdP]))
+    check("a silenced front picture is filtered BEFORE the cap of two: the other two are kept",
+          ids(capped) == ["/v52.mov", "/v51.mov"], "\(ids(capped))")
 
     // MARK: - Order: front-most first on the PATH of lanes, bottom-first in the answer
 

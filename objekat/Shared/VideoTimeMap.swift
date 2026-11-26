@@ -24,10 +24,11 @@ import Foundation
 //   stays valid, there is no clamp at zero here (a picture may begin before 0, @see the negative
 //   start convention) — then its own loop, then speed / offset (`WaveformShaping.sourceTime`).
 //
-// What this file deliberately does NOT do (V1): no fades, no mute. Q6 (an image fade) and Q7 (what a
-// muted object does to its picture) are not decided, so opacity is 1 and `isMuted` is carried but
-// never read. The single place that will read them is `VideoResolver.Presence` — both questions
-// are answered there and nowhere else.
+// Silence (Q7): a picture is HIDDEN exactly when a sound at its place would be reduced to silence —
+// its own mute, its stem's mute, a solo elsewhere — or when a group above it would be. The resolver
+// reads none of those rules: the index builder has already folded them into `isMuted` (@see
+// `VideoObjectIndex.init(items:audibility:)`), and `VideoResolver.Presence` is the one place that acts
+// on it. Fades (Q6) act at the same place.
 //
 // Two layers at most, the FRONT-most ones (§2.7), chosen AFTER the window filtering: after
 // `windowOnly` cuts many picture objects overlap in time without being visible.
@@ -41,7 +42,9 @@ nonisolated struct VideoGroupWindow: Equatable, Sendable {
     var isInfinite: Bool
     /// The loop's IN/OUT, in seconds LOCAL to the group (0 = its start); nil when the loop is off.
     var loop: VideoLoopRange?
-    /// Carried for Q7, never read in V1 (@see `VideoResolver.Presence`).
+    /// The group is reduced to silence by the listening composition (its mute, its stem's, a solo
+    /// that filters it out): the pictures below it are hidden (@see `VideoResolver.Presence`). The
+    /// index builder fills it from `AudibilitySnapshot.isSilenced`, never from the object's flag alone.
     var isMuted: Bool = false
 
     init(lane: Int, start: Double, duration: Double, isInfinite: Bool = false,
@@ -72,6 +75,8 @@ nonisolated struct VideoPictureEntry: Equatable, Sendable {
     /// The object's own loop (a slice of itself, local to the object); nil when off.
     var loop: VideoLoopRange?
     var nominalFPS: Double
+    /// The picture object is reduced to silence by the listening composition, as a sound at its place
+    /// would be: hidden (@see `VideoGroupWindow.isMuted`).
     var isMuted: Bool = false
     /// Root → direct parent. Empty for a picture at the root.
     var ancestors: [VideoGroupWindow]
@@ -107,7 +112,7 @@ nonisolated struct VideoLayer: Equatable, Sendable {
     /// The rate the file advances at while the timeline plays (the object's speed).
     var rate: Double
     var nominalFPS: Double
-    /// 1 in V1 (@see the header).
+    /// The product of the fades from the root to the picture (@see `Presence`); 1 without any.
     var opacity: Double
     /// The file is read backwards (the object is reversed): the player cannot run it, so the display
     /// seeks to every instant instead of following a rate.
@@ -125,13 +130,16 @@ nonisolated enum VideoResolver {
 
     // MARK: Q6 / Q7 — the one place
 
-    /// Where a fade (Q6) and a mute (Q7) will act on a picture, once decided. V1: everything is
-    /// visible, fully opaque. `nil` hides the picture; the number is a factor multiplied along the
-    /// way down. Called with the time as seen BY the group (before its fold), the way the plan's
-    /// pseudo-code orders it.
+    /// Where a mute (Q7) and a fade (Q6) act on a picture. `nil` hides the picture; the number is a
+    /// factor multiplied along the way down. Called with the time as seen BY the group (before its
+    /// fold), the way the plan's pseudo-code orders it.
     enum Presence {
-        static func group(_ g: VideoGroupWindow, at localTime: Double) -> Double? { 1 }
-        static func picture(_ p: VideoPictureEntry, at localTime: Double) -> Double? { 1 }
+        static func group(_ g: VideoGroupWindow, at localTime: Double) -> Double? {
+            g.isMuted ? nil : 1
+        }
+        static func picture(_ p: VideoPictureEntry, at localTime: Double) -> Double? {
+            p.isMuted ? nil : 1
+        }
     }
 
     // MARK: The fold of a looping group

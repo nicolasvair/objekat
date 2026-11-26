@@ -475,7 +475,17 @@ final class EditViewModel {
     /// The listening state frozen into values (solo + bus mutes), the single source of the silence rule.
     /// Rebuilt by `refreshAudibility` (EditViewModel+Audibility); readable from a context
     /// not MainActor-isolated, which a call to the view model would not be.
-    var audibility = AudibilitySnapshot()
+    var audibility = AudibilitySnapshot() {
+        // The picture follows the listening like a sound does (solo, stem mute, mute): the index of the
+        // pictures (@see `videoObjectIndex`) is rebuilt on the next read, and the preview is told.
+        didSet {
+            videoObjectIndexCache = nil
+            videoAudibilityRevision &+= 1
+        }
+    }
+    /// Bumped each time `audibility` is replaced: what the preview's 10 Hz watch compares, beside
+    /// `itemsWriteCount`, to know the picture index must be carried across again.
+    @PerceptionIgnored var videoAudibilityRevision = 0
 
     var engine: OBJEngineCore? = nil {
         didSet {

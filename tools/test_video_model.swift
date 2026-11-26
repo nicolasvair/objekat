@@ -46,6 +46,7 @@
 //         ../objekat/Shared/Compat/CompatPolicy.swift \
 //         ../objekat/Shared/VideoTimeMap.swift \
 //         ../objekat/Shared/WaveformShaping.swift \
+//         ../objekat/Shared/AudibilitySnapshot.swift \
 //         ../objekat/Video/VideoObjectIndex+Items.swift \
 //         test_video_model.swift -o /tmp/vmodel && /tmp/vmodel
 //
@@ -135,6 +136,56 @@ enum VideoModelTest {
         outer.isInfinite = true
         check("an infinite group is flagged as such in the index",
               VideoObjectIndex(items: [outer]).entries.first?.ancestors.first?.isInfinite == (outer.isInfiniteBus))
+
+        // Silence: the picture follows the SAME rule a sound does (`AudibilitySnapshot.isSilenced`) —
+        // its mute, its stem's, a solo elsewhere — and so do the groups above it.
+        let stem1 = UUID()
+        var pic1 = clip(video: facet); pic1.stemID = stem1          // propagated from its group, as `assignStem` does
+        var aud1 = clip(); aud1.stemID = stem1
+        var grp1 = SoundObject(id: UUID(), startTime: 0, duration: 10, lane: 0,
+                               kind: .group(children: [pic1, aud1], isExpanded: true))
+        grp1.stemID = stem1
+        let pic2 = clip(video: facet)
+        let grp2 = SoundObject(id: UUID(), startTime: 20, duration: 10, lane: 1,
+                               kind: .group(children: [pic2], isExpanded: true))
+        func silence(_ items: [SoundObject], _ snap: AudibilitySnapshot) -> (p1: Bool, g1: Bool, p2: Bool) {
+            let ix = VideoObjectIndex(items: items, audibility: snap)
+            return (ix.entries.first { $0.id == pic1.id }?.isMuted == true,
+                    ix.entries.first { $0.id == pic1.id }?.ancestors.first?.isMuted == true,
+                    ix.entries.first { $0.id == pic2.id }?.isMuted == true)
+        }
+        let tree = [grp1, grp2]
+        var r = silence(tree, AudibilitySnapshot())
+        check("silence: nothing muted, nothing hidden", !r.p1 && !r.g1 && !r.p2)
+        var mutedPic = grp1; if case .group(var kids, let e) = mutedPic.kind { kids[0].isMuted = true; mutedPic.kind = .group(children: kids, isExpanded: e) }
+        r = silence([mutedPic, grp2], AudibilitySnapshot())
+        check("silence: the picture's own mute hides it, not its group", r.p1 && !r.g1 && !r.p2)
+        var mutedGrp = grp1; mutedGrp.isMuted = true
+        r = silence([mutedGrp, grp2], AudibilitySnapshot())
+        check("silence: a muted group is flagged (its pictures are hidden by the resolver)", r.g1 && !r.p2)
+        r = silence(tree, AudibilitySnapshot(mutedStemIDs: [stem1]))
+        check("silence: a muted STEM hides the picture and its group (the picture inherits the stem)",
+              r.p1 && r.g1 && !r.p2)
+        r = silence(tree, AudibilitySnapshot(mutedStemIDs: [stem1]))
+        check("silence: a picture on the Main is never stem-muted", !r.p2)
+        r = silence(tree, AudibilitySnapshot(soloRoots: [grp1.id], soloActive: true,
+                                             soloAudible: [grp1.id, pic1.id, aud1.id]))
+        check("silence: the solo of a group keeps its picture, hides the other group's",
+              !r.p1 && !r.g1 && r.p2)
+        r = silence(tree, AudibilitySnapshot(soloRoots: [aud1.id], soloActive: true,
+                                             soloAudible: [aud1.id, grp1.id]))
+        check("silence: the solo of the group's AUDIO child hides its picture (a non-soloed sibling), not the group",
+              r.p1 && !r.g1 && r.p2)
+        r = silence(tree, AudibilitySnapshot(soloRoots: [pic1.id], soloActive: true,
+                                             soloAudible: [pic1.id, grp1.id]))
+        check("silence: the solo of the picture itself shows it", !r.p1 && !r.g1 && r.p2)
+        r = silence([mutedPic, grp2], AudibilitySnapshot(soloRoots: [pic1.id], soloActive: true,
+                                                         soloAudible: [pic1.id, grp1.id]))
+        check("silence: a direct solo lifts the picture's own mute", !r.p1)
+        r = silence([mutedGrp, grp2], AudibilitySnapshot(soloRoots: [pic1.id], soloActive: true,
+                                                         soloAudible: [pic1.id, grp1.id],
+                                                         soloRootAncestors: [grp1.id]))
+        check("silence: a direct solo below a muted group reopens the group's window", !r.g1 && !r.p1)
 
         // Format and notice
         check("session format is 39", SessionSchema.formatVersion == 39)

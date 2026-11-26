@@ -33,6 +33,7 @@ final class VideoPreviewController {
     private var watchTimer: Timer?
 
     private var lastWrites = -1
+    private var lastAudibility = -1
     private var lastToken = -1
     private var wasLoading = false
     private var hadPicture = false
@@ -81,11 +82,13 @@ final class VideoPreviewController {
             lastToken = vm.projectLoadToken
             engine.flush()
             lastWrites = -1
+            lastAudibility = -1
             hadPicture = false
             clock.reset()
         }
-        guard vm.itemsWriteCount != lastWrites else { return }
+        guard vm.itemsWriteCount != lastWrites || vm.videoAudibilityRevision != lastAudibility else { return }
         lastWrites = vm.itemsWriteCount
+        lastAudibility = vm.videoAudibilityRevision
         let index = vm.videoObjectIndex
         display?.setIndex(index)
         let has = !index.isEmpty
