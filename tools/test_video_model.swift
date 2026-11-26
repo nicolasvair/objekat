@@ -169,6 +169,66 @@ enum VideoModelTest {
               abs((VideoResolver.layer(of: fx!, at: 1.75)?.opacity ?? -1)
                   - (1.75 / 3) * bend.gain(0.5)) < 1e-12)
 
+        // The index as the preview sees it while a CROSSFADE is being dragged or made: objects REPLACED by
+        // their edited copies. It must be what `init(items:)` builds over the edited tree — never a second
+        // arithmetic — whatever the object is: a picture, the group above it, a picture with its own loop.
+        func editedTree(_ items: [SoundObject], _ edit: (inout SoundObject) -> Void, ids: Set<UUID>) -> [SoundObject] {
+            items.map { o in
+                var c = o
+                if ids.contains(o.id) { edit(&c) }
+                if case .group(let kids, let e) = c.kind { c.kind = .group(children: editedTree(kids, edit, ids: ids), isExpanded: e) }
+                return c
+            }
+        }
+        func flatten(_ items: [SoundObject]) -> [SoundObject] {
+            items.flatMap { o -> [SoundObject] in
+                if case .group(let kids, _) = o.kind { return [o] + flatten(kids) }
+                return [o]
+            }
+        }
+        var loopedPic = clip(video: facet)
+        loopedPic.startTime = 3; loopedPic.duration = 6; loopedPic.lane = 1
+        loopedPic.loopEnabled = true; loopedPic.loopRangeStart = 1; loopedPic.loopRangeEnd = 3
+        var sidePic = clip(video: facet); sidePic.startTime = 12; sidePic.duration = 5; sidePic.lane = 0
+        let pgrp = SoundObject(id: UUID(), startTime: 0, duration: 30, lane: 2,
+                               kind: .group(children: [loopedPic, sidePic], isExpanded: true))
+        var rootPic2 = clip(video: facet); rootPic2.startTime = 2; rootPic2.duration = 9; rootPic2.lane = 4
+        let tree2 = [pgrp, rootPic2]
+        let base2 = VideoObjectIndex(items: tree2)
+        func edit(_ o: inout SoundObject) {
+            o.startTime += 0.75; o.duration -= 1.25; o.fadeIn = 0.5; o.fadeOut = 1.5
+            o.fadeInCurve = FadeCurve(shape: .convex, amount: 0.4); o.fadeOutCurve = FadeCurve(shape: .sCurve, amount: 0.8)
+            if case .clip(let f, let off, let fd, let sp, let rev) = o.kind {
+                o.kind = .clip(filePath: f, sourceOffset: off + 0.5, fileDuration: fd, speedRatio: sp * 1.25, isReversed: rev)
+            }
+        }
+        func equivalent(_ label: String, ids: Set<UUID>) {
+            let edited = editedTree(tree2, edit, ids: ids)
+            let want = VideoObjectIndex(items: edited)
+            let got = base2.previewing(replacing: flatten(edited).filter { ids.contains($0.id) })
+            check("previewing(replacing:) = the index rebuilt over the edited tree: " + label, got == want)
+            check("... and it changed something (the test is not vacuous): " + label, got != base2)
+        }
+        equivalent("a picture at the root", ids: [rootPic2.id])
+        equivalent("a picture inside a group, with its own loop", ids: [loopedPic.id])
+        equivalent("the group above the pictures", ids: [pgrp.id])
+        equivalent("the picture, its sibling and the group together", ids: [pgrp.id, loopedPic.id, sidePic.id])
+        check("previewing(replacing:) of nothing is the index itself", base2.previewing(replacing: []) == base2)
+        check("previewing(replacing:) of an unknown object changes nothing", base2.previewing(replacing: [clip(video: facet)]) == base2)
+        check("previewing(replacing:) of an ordinary clip (no picture) changes nothing", base2.previewing(replacing: [clip()]) == base2)
+        check("touches: a picture, a group above a picture, and a stranger",
+              base2.touches([loopedPic.id]) && base2.touches([pgrp.id]) && !base2.touches([UUID()]))
+        // The listening state is KEPT: the copies know nothing of the stems nor of the solo.
+        let stemP = UUID()
+        var stemmed = tree2; stemmed[1].stemID = stemP
+        let mutedSnap = AudibilitySnapshot(mutedStemIDs: [stemP])
+        let mutedBase = VideoObjectIndex(items: stemmed, audibility: mutedSnap)
+        let mutedEdited = editedTree(stemmed, edit, ids: [rootPic2.id])
+        let previewed = mutedBase.previewing(replacing: flatten(mutedEdited).filter { $0.id == rootPic2.id })
+        check("previewing(replacing:) keeps isMuted (a half muted by its stem stays muted while it is dragged)",
+              previewed.entries.first { $0.id == rootPic2.id }?.isMuted == true
+              && previewed == VideoObjectIndex(items: mutedEdited, audibility: mutedSnap))
+
         // Silence: the picture follows the SAME rule a sound does (`AudibilitySnapshot.isSilenced`) —
         // its mute, its stem's, a solo elsewhere — and so do the groups above it.
         let stem1 = UUID()
