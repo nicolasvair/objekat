@@ -99,9 +99,16 @@ nonisolated final class VideoComposer: @unchecked Sendable {
         let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h,
                                                             mipmapped: false)
         desc.usage = [.renderTarget, .shaderWrite, .shaderRead]
-        desc.storageMode = .shared
+        // `.managed`, never `.shared`: on macOS a shared-storage TEXTURE is only accepted by Apple-silicon
+        // GPUs (an Intel one fails `makeTexture` or the Metal validation). Managed is valid on both; the
+        // CPU copy is brought up to date by the blit below, before `getBytes` reads it.
+        desc.storageMode = .managed
         guard let tex = device.makeTexture(descriptor: desc), let cb = queue.makeCommandBuffer() else { return nil }
         encode(inputs, into: tex, commandBuffer: cb)
+        if let blit = cb.makeBlitCommandEncoder() {
+            blit.synchronize(resource: tex)
+            blit.endEncoding()
+        }
         cb.commit()
         cb.waitUntilCompleted()
         guard cb.status == .completed else { return nil }
