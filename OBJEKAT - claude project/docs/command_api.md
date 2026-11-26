@@ -1793,6 +1793,49 @@ that looks as though it had grown, the object's edge having come to meet it.
 `resolveOverlaps` leaves such a zone alone — it recognises it by that same geometry, so a drop that
 merely LANDS on an object, having no matching fades, still overwrites.
 
+#### Crossfade between pictures
+
+Two **picture** objects (video objects, `.clip` carrying a picture facet) side by side on one lane
+crossfade exactly as two sounds do — same geometry, same commands, same undo — and what the zone
+means is **opacity**: each half fades with the audio's own curve, so the two opacities add up to full
+at every instant, `video.layers` answers two layers across the zone and `video.render_frame` composes
+them. Rules a script has to expect:
+
+- **Siblings only.** The two pictures must be neighbours of one lane inside one container (both at
+  the root, or both children of one group). The pair of a group's picture and a picture of ANOTHER
+  group is refused (`bad_params`): the message names both groups, and `details` carries `left_group`,
+  `right_group`, `left_group_name`, `right_group_name` and `groups_are_neighbours` — crossfade the two
+  GROUPS instead (a group's own fade multiplies its picture's). No switch changes that.
+- **A picture against a sound is refused** (`bad_params`, reason `mixedMedia`, both orders): nothing
+  can cross-fade a picture into a sound. A picture against a **group** is accepted — the group's
+  fade multiplies whatever it holds. A pair already in that mixed state (a session written before
+  this rule) is left as it is: neither the refusal nor any command rewrites it.
+- **The incoming picture is in front**: through the whole zone the later-starting object is drawn
+  over the other one (at an equal lane path the object that starts later wins; it used to be the
+  outgoing one). Last layer of `video.layers` = front-most.
+- **The matter is re-exposed** like a sound's: both halves read the source at the same instant at the
+  seam (`source_time` is continuous), nothing is fabricated.
+- **Mute** of one half leaves the other ALONE at its own opacity (0.25 a quarter of the way in, not 1):
+  the silence of one side does not turn the survivor opaque. Solo and stem mute follow the sound's rules.
+- **Curves** follow the sound's mirror rule: pulling a fade out onto a neighbour gives the facing
+  fade the MIRROR of the shape drawn (convex ↔ concave of the same bend). `object.set_fade_curve`
+  alone sets ONE side. The sum of the two opacities is 1 for straight fades; shaped ones keep each
+  side's own gain, exactly like the sound.
+- **At most two layers** at an instant: `video.layers` keeps the two front-most (maxLayers = 2). A
+  third picture under a crossfade is not drawn there; this is the preview's cap and is not lifted.
+- The **live preview** follows the hand: dragging an existing zone, or pulling a fade out onto a
+  neighbour (which CREATES the crossfade), shows the pictures as they will be at the drop, the model
+  untouched until the release (one write, one undo point). A fade dragged over several selected
+  pictures shows them all.
+
+Two debug-build commands (absent from Release) make the preview assertable with no mouse:
+`debug.crossfade_drag` now takes `video_t` (array of instants) and answers `video_layers_preview` (the
+layers the preview window would show on the last frame, before the release) and `video_layers_after`
+(what `video.layers` says once released — they must agree); `debug.crossfade_spill_preview {left,
+right, width, side?, t?, curve?}` answers the layers a fade pulled onto its neighbour would show
+(`side` `out` anchors the zone on the right object's start, `in` on the left object's end), with
+`items_writes` and `undo_pushes` at 0. `tools/scenario_video_fade_mute.py` asserts all of it.
+
 ### Markers, regions and comments
 
 Purely visual, all of it: not one command in these families changes a sample of what is heard. A
@@ -2371,7 +2414,7 @@ The rest of the family reads the picture back, and none of it needs a window:
   its group's stem), and a solo elsewhere. The solo of its group keeps it; the solo of its audio child, of another
   object or of another group hides it; the solo of the picture itself keeps it; the mute of the audio child
   leaves it alone. `object.set_mute`, `object.set_fade`, `object.set_fade_curve`, `solo.*` and `stem.mute` therefore
-  all show up in `video.layers`; `crossfade.open` on a picture is refused (`bad_params`).
+  all show up in `video.layers`. A crossfade between two pictures is the ordinary one, see "Crossfade between pictures" under `crossfade.*`.
 - `video.render_frame {time, path, width?, height?}` writes the picture at `time` as a PNG through the SAME
   CoreImage graph as the preview window (black background, each layer fitted and centred, bottom to top, exact
   frames, sRGB). The default size is the front-most picture's. With no picture at that instant the frame is

@@ -3302,7 +3302,7 @@ too recent and unguarded; it does NOT see the four traps below, which are silent
 - **Video preview** (`objekat/Video/`): `CAMetalDisplayLink` is macOS 14+, so below it — and under `CompatPolicy.forceLegacy` — the
   preview runs on a `CVDisplayLink` (`VideoDisplay`, `CVLinkClock`); never `Synchronization` / `Atomic` (macOS 15: the clock's
   anchor is an `os_unfair_lock`, and `otool -L` must show no `libswiftSynchronization`); a Metal TEXTURE is `.managed` + a blit
-  `synchronize`, never `.shared` (invalid on Intel GPUs). The picture's fades and silence follow the sound's (`video.layers`).
+  `synchronize`, never `.shared` (invalid on Intel GPUs). The picture's fades and silence follow the sound's (`video.layers`). A crossfade between two pictures is opacity (incoming one in front); picture against sound is refused (`mixedMedia`).
 
 ## Permanent points of attention
 
