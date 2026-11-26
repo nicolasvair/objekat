@@ -1095,14 +1095,33 @@ extension TimelineView {
                 // Nothing of the model moves here (@see EditViewModel.previewFade) — the gesture
                 // goes on owning the value and commits it below, once, with its undo point. What
                 // is pushed is what the veil draws: the same length, the same shape, per object.
+                //
+                // The picture gets ONE index for the whole frame (every object the hand holds), and
+                // the objects whose fade has reached a neighbour are shown as the crossfade the release
+                // will lay down (@see EditViewModel.crossfadeSpillCopies): same plan, same shapes.
                 let previewed = state.finalFade
+                var items: [EditViewModel.FadePreviewItem] = []
+                var spilled: [SoundObject] = []
                 for id in state.ids {
                     let curve = state.curve(for: id)
-                    switch state.side {
-                    case .in:  viewModel.previewFade(id: id, fadeIn:  previewed, curve: curve)
-                    case .out: viewModel.previewFade(id: id, fadeOut: previewed, curve: curve)
+                    items.append(EditViewModel.FadePreviewItem(
+                        id: id,
+                        fadeIn:  state.side == .in  ? previewed : nil,
+                        fadeOut: state.side == .out ? previewed : nil,
+                        curve: curve))
+                    // (Only where a picture window listens: the copies are worked out for nobody else.)
+                    if viewModel.videoFadePreviewSink != nil, let sp = seamSpill(state, for: id) {
+                        let pair = state.side == .out ? (id, sp.neighbour) : (sp.neighbour, id)
+                        if let copies = viewModel.crossfadeSpillCopies(
+                            leftID: pair.0, rightID: pair.1, width: sp.width, anchor: sp.anchor,
+                            approach: sp.approach,
+                            outCurve: state.side == .out ? curve : curve.mirrored,
+                            inCurve:  state.side == .in  ? curve : curve.mirrored) {
+                            spilled += copies
+                        }
                     }
                 }
+                viewModel.previewFades(items, spilling: spilled)
             }
 
             if phase == .ended {

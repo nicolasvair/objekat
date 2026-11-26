@@ -638,6 +638,33 @@ extension EditViewModel {
                                       containerID: hem.containerID))
     }
 
+    /// The two objects of a crossfade AS `openCrossfade` WOULD LEAVE THEM, worked out on copies —
+    /// nothing written. It is what lets a gesture that is still making the zone (a fade pulled out
+    /// onto its neighbour) show the picture the release will lay down: the same plan, then the same
+    /// operations in the same order as `openCrossfade` (the two trims, the two fades) and as the
+    /// release's two `updateFadeCurve` — `applyTrim` / `applyFade…` being what the `update…` doors
+    /// themselves run, and what a crossfade drag already lays on its own copies (@see CrossfadeShadow).
+    /// `nil` when the seam refuses (the gesture then shows what it showed before).
+    func crossfadeSpillCopies(leftID: UUID, rightID: UUID, width: Double,
+                              anchor: ZonePin?, approach: SeamApproach,
+                              outCurve: FadeCurve, inCurve: FadeCurve) -> [SoundObject]? {
+        guard case .success(let plan) = plannedCrossfade(leftID: leftID, rightID: rightID, width: width,
+                                                        anchor: anchor, approach: approach),
+              var left = find(id: plan.leftID), var right = find(id: plan.rightID) else { return nil }
+        applyTrim(to: &right, newStart: plan.start, newDuration: plan.rightEnd - plan.start)
+        applyTrim(to: &left, newStart: plan.leftStart,
+                  newDuration: (plan.start + plan.width) - plan.leftStart)
+        applyFadeOut(to: &left, fadeOut: plan.width)
+        applyFadeIn(to: &right, fadeIn: plan.width)
+        // The shapes go by ROLE, as the release names them (the fade-out of the pair's left, the
+        // fade-in of its right).
+        if left.id == leftID { applyFadeCurve(to: &left, fadeIn: nil, fadeOut: outCurve) }
+        else { applyFadeCurve(to: &right, fadeIn: nil, fadeOut: outCurve) }
+        if right.id == rightID { applyFadeCurve(to: &right, fadeIn: inCurve, fadeOut: nil) }
+        else { applyFadeCurve(to: &left, fadeIn: inCurve, fadeOut: nil) }
+        return [left, right]
+    }
+
     /// Shuts the zone back to a butt joint, both edges coming back onto its middle. The objects
     /// keep the matter the crossfade had re-exposed — it goes back behind their edges, where a
     /// trim always leaves it.

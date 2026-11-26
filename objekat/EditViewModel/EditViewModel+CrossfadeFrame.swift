@@ -316,6 +316,18 @@ extension EditViewModel {
             applyCrossfadeFrame(frames[i], to: &t, state: state, store: shadow)
             state.tracks[i] = t
         }
+        // The pictures follow the zone under the hand, as the sound will: the preview window is handed
+        // the index as the copies stand, the model still untouched (@see crossfadePreviewIndex).
+        if let sink = videoFadePreviewSink, let preview = crossfadePreviewIndex(shadow) { sink(preview) }
+    }
+
+    /// The picture index as a crossfade drag's copies stand — the preview of the zone being dragged. nil
+    /// when none of the copies is a picture, or sits above one (a crossfade between sounds has nothing
+    /// to show, and costs nothing here).
+    func crossfadePreviewIndex(_ shadow: CrossfadeShadow) -> VideoObjectIndex? {
+        let index = videoObjectIndex
+        guard index.touches(Set(shadow.order)) else { return nil }
+        return index.previewing(replacing: shadow.order.compactMap { shadow.objects[$0] })
     }
 
     /// The release of a crossfade drag: ONE undo point (pushed BEFORE the first write, as the
@@ -328,6 +340,9 @@ extension EditViewModel {
     /// offset, the two fades and their shapes, the automation, a MIDI clip's notes), and that is
     /// what is pushed — the very calls `updateTrim` / `updateFade…` end with.
     func commitCrossfadeDrag(_ state: CrossfadeDragState) {
+        // Whatever the release does — a gesture that asked for nothing included — the picture goes back
+        // to what the MODEL says (the preview index of the last frame must not stay on the screen).
+        defer { endFadePreview() }
         guard state.didChange, let shadow = state.shadow else { return }
         pushUndo()
         batchItemsMutation {
