@@ -6,7 +6,10 @@
 // the right half of a cut looped group), speed and offset, a negative start, an infinite group, the
 // picture's own loop, the front-most-lane order on the PATH of lanes (not on a display lane), the
 // cap of two layers applied AFTER the window filtering, and the silence (`isMuted`: the picture's own
-// or any ancestor's, at any depth) that hides a picture before it counts in the cap.
+// or any ancestor's, at any depth) that hides a picture before it counts in the cap. And the CROSSFADE
+// between pictures: two siblings (or two groups) adding up to full opacity, the bent curves leaving
+// one, the incoming picture (later start) in front on an equal lane path, an overlay above taking one
+// of the two places, a muted half leaving the other alone.
 //
 // From `tools/`:
 //
@@ -305,6 +308,85 @@ enum VideoTimeMapTest {
     check("a tie falls back on the index order", ids(VideoResolver.layers(at: 1, in: idx)) == ["/v41.mov", "/v40.mov"])
 
     check("an empty index answers nothing", VideoResolver.layers(at: 1, in: VideoObjectIndex()).isEmpty)
+
+    // MARK: - A crossfade between PICTURES (two siblings of one lane, linear or bent)
+
+    // A lives 0..10 and fades out over 8..10, B lives 8..18 and fades in over 8..10: the zone is 8..10.
+    let xa = pic(90, lane: 0, start: 0, duration: 10, fadeOut: 2)
+    let xb = pic(91, lane: 0, start: 8, duration: 10, fadeIn: 2)
+    var sums: [Double] = []
+    var twoLayers = true
+    for k in 0..<20 {
+        let tk = 8.05 + 0.1 * Double(k)
+        let ls = VideoResolver.layers(at: tk, in: VideoObjectIndex(entries: [xa, xb]))
+        if ls.count != 2 { twoLayers = false }
+        sums.append(ls.map(\.opacity).reduce(0, +))
+    }
+    check("two sibling pictures, linear: two layers on the 20 points of the zone", twoLayers)
+    check("two sibling pictures, linear: the opacities add up to 1 on the 20 points",
+          sums.allSatisfy { abs($0 - 1) < 1e-9 }, "\(sums)")
+    let xMid = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [xa, xb]))
+    check("... half and half in the middle of the zone", xMid.count == 2 && xMid.allSatisfy { near($0.opacity, 0.5) })
+
+    // The sound's own rule for bent curves: the facing side is the MIRROR (FadeCurve.mirrored), which is
+    // not the complement to one — the sum leaves one, nothing crashes, the opacities stay in [0, 1].
+    let bent = FadeCurve(shape: .convex, amount: 1)
+    let ba = pic(92, lane: 0, start: 0, duration: 10, fadeOut: 2, curveOut: bent)
+    let bb = pic(93, lane: 0, start: 8, duration: 10, fadeIn: 2, curveIn: bent.mirrored)
+    var offOne = false, boundsOK = true
+    for k in 0..<20 {
+        let tk = 8.05 + 0.1 * Double(k)
+        let ls = VideoResolver.layers(at: tk, in: VideoObjectIndex(entries: [ba, bb]))
+        if ls.count > 2 || ls.contains(where: { $0.opacity < 0 || $0.opacity > 1 }) { boundsOK = false }
+        if abs(ls.map(\.opacity).reduce(0, +) - 1) > 1e-3 { offOne = true }
+    }
+    check("a bent crossfade: the opacities stay in [0, 1], at most two layers", boundsOK)
+    check("a bent crossfade: the sum leaves 1 somewhere (the mirror is not the complement)", offOne)
+
+    // The ORDER on an equal lane path (Q4): the picture that starts later is in front, whatever the
+    // order of the index.
+    let xFront1 = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [xa, xb]))
+    let xFront2 = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [xb, xa]))
+    check("the incoming picture (later start) is in front: the LAST layer is B",
+          ids(xFront1).last == "/v91.mov" && ids(xFront2).last == "/v91.mov", "\(ids(xFront1)) \(ids(xFront2))")
+    // An equal start keeps the index order (the tie rule above).
+    check("equal path and equal start: the index order still decides",
+          ids(VideoResolver.layers(at: 1, in: VideoObjectIndex(entries: [t1, t2]))) == ["/v41.mov", "/v40.mov"])
+    // A lane above still wins over the start: the order of lanes comes first.
+    let lateLow = pic(94, lane: 1, start: 8, duration: 10)
+    let earlyHigh = pic(95, lane: 0, start: 0, duration: 10)
+    check("the lane path still comes before the start: the picture on the higher lane stays in front",
+          ids(VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [earlyHigh, lateLow]))) == ["/v94.mov", "/v95.mov"])
+
+    // Two GROUPS cross-faded: their pictures share the lane path, and the later group is in front.
+    let gA = VideoGroupWindow(lane: 0, start: 0, duration: 10, fadeOut: 2)
+    let gB = VideoGroupWindow(lane: 0, start: 8, duration: 10, fadeIn: 2)
+    let pgA = pic(96, lane: 0, start: 0, duration: 10, ancestors: [gA])
+    let pgB = pic(97, lane: 0, start: 8, duration: 10, ancestors: [gB])
+    let gl = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [pgA, pgB]))
+    check("two cross-faded groups: both pictures, the later group's in front, opacities adding up to 1",
+          ids(gl) == ["/v96.mov", "/v97.mov"] && near(gl.map(\.opacity).reduce(0, +), 1), "\(ids(gl))")
+
+    // Q6 — the ceiling of two layers with an overlay above a crossfade: the two FRONT-most win, which
+    // is the overlay and the incoming picture; the outgoing one drops out for the length of the zone.
+    // Documented as a limit (V1), not an accident.
+    let overlay = pic(98, lane: 0, start: 0, duration: 20)
+    let xa1 = pic(90, lane: 1, start: 0, duration: 10, fadeOut: 2)
+    let xb1 = pic(91, lane: 1, start: 8, duration: 10, fadeIn: 2)
+    let withOverlay = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [xa1, xb1, overlay]))
+    check("an overlay above a crossfade: only two layers, the incoming picture and the overlay",
+          ids(withOverlay) == ["/v91.mov", "/v98.mov"], "\(ids(withOverlay))")
+    check("... outside the zone the overlay does not hide anything of the crossfade's sides",
+          ids(VideoResolver.layers(at: 5, in: VideoObjectIndex(entries: [xa1, xb1, overlay]))) == ["/v90.mov", "/v98.mov"])
+
+    // Q8 — one half silenced: the other one stays ALONE at its own opacity (a dip, as with the sound).
+    let mutedA = pic(90, lane: 0, start: 0, duration: 10, muted: true, fadeOut: 2)
+    let aloneB = VideoResolver.layers(at: 9, in: VideoObjectIndex(entries: [mutedA, xb]))
+    check("a muted half: the other picture alone, at its fade's opacity",
+          ids(aloneB) == ["/v91.mov"] && near(aloneB.first?.opacity, 0.5), "\(aloneB.map { ($0.filePath, $0.opacity) })")
+    let mutedB = pic(91, lane: 0, start: 8, duration: 10, muted: true, fadeIn: 2)
+    let aloneA = VideoResolver.layers(at: 9.5, in: VideoObjectIndex(entries: [xa, mutedB]))
+    check("... and the other way round", ids(aloneA) == ["/v90.mov"] && near(aloneA.first?.opacity, 0.25), "\(aloneA.map { ($0.filePath, $0.opacity) })")
 
     print("\n\(total - fails.count)/\(total) passed")
     if !fails.isEmpty {

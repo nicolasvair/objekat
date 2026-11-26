@@ -267,19 +267,26 @@ nonisolated enum VideoResolver {
 
     /// The pictures visible at `t`, BOTTOM first (the order they are composed in), at most
     /// `maxLayers`. The front-most is the one on the HIGHEST lane — the smallest lane number, the
-    /// path compared from the root down (§2.7).
+    /// path compared from the root down (§2.7). On an EQUAL path — which is what two pictures of one
+    /// crossfade are, and two groups of one crossfade as well, their pictures sharing the lane path —
+    /// the one that STARTS LATER is in front: the incoming one, as a montage has it. The start is the
+    /// picture's own, absolute (a child's start is already in the timeline's time). With the fades of
+    /// a linear crossfade the choice does not show (the opacities add to one); it shows when a curve
+    /// is bent and the sum is no longer one. Last, the index order, so that the answer stays a function
+    /// of the document and never of an unstable sort.
     static func layers(at t: Double, in index: VideoObjectIndex) -> [VideoLayer] {
         var visible: [(entry: VideoPictureEntry, layer: VideoLayer, order: Int)] = []
         for (i, e) in index.entries.enumerated() {
             if let l = layer(of: e, at: t), l.opacity > invisibleOpacity { visible.append((e, l, i)) }
         }
         guard !visible.isEmpty else { return [] }
-        // Front first: lane path ascending; a prefix before its extension; then the index order, so
-        // that the answer is a function of the document and never of an unstable sort.
+        // Front first: lane path ascending; a prefix before its extension; the later start (the
+        // incoming picture of a crossfade); then the index order.
         visible.sort { a, b in
             let pa = a.entry.lanePath, pb = b.entry.lanePath
             for (x, y) in zip(pa, pb) where x != y { return x < y }
             if pa.count != pb.count { return pa.count < pb.count }
+            if abs(a.entry.start - b.entry.start) > 1e-9 { return a.entry.start > b.entry.start }
             return a.order < b.order
         }
         return visible.prefix(maxLayers).reversed().map(\.layer)
