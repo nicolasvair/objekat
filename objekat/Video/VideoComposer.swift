@@ -16,8 +16,15 @@ import UniformTypeIdentifiers
 // `cacheIntermediates = false`; the layers composed BOTTOM first; CoreImage renders into a texture
 // UPSIDE DOWN, so the finished image is flipped once, here, and nowhere else.
 //
-// V1 has no colour curves and no opacity other than 1 (Q6/Q7 are open), but a layer carries its
-// opacity and a value under 1 is honoured, so the extension point stays in one place.
+// OPACITY (Q6, fades of the picture objects) is honoured here and nowhere else, in the ENCODED space
+// (sRGB numbers, what an editor's dissolve does: a mid-grey 128 at 0.5 over black is 64) and not in
+// CoreImage's linear working space (which would give ~93): the layers are brought to the encoded
+// values (`matchedFromWorkingSpace`), mixed there, and brought back for the context's own output
+// conversion — so colours and scale stay as V0 measured, only the weighting of the mix is chosen.
+// Two layers whose opacities sum to 1 or less — a CROSSFADE — are ADDED, each weighted by its own
+// opacity: the weights sum to 1 over the whole zone and the picture never dips towards black (a plain
+// "over" of two partial layers would leave 25 % of black at mid-fade). Past 1 it is the ordinary "over",
+// the layer behind weighted so that its share stays what its own opacity says.
 
 nonisolated final class VideoComposer: @unchecked Sendable {
 
@@ -43,29 +50,53 @@ nonisolated final class VideoComposer: @unchecked Sendable {
         context = CIContext(mtlCommandQueue: q, options: [.cacheIntermediates: false])
     }
 
+    /// A layer fitted (aspect kept) and centred in the canvas, then brought to the ENCODED values the
+    /// mix is done in, its alpha scaled by `opacity`.
+    private func fitted(_ input: Input, size: CGSize, opacity: Double) -> CIImage? {
+        var img = CIImage(cvPixelBuffer: input.buffer).oriented(input.orientation)
+        let e = img.extent
+        guard e.width > 0, e.height > 0, size.width > 0, size.height > 0 else { return nil }
+        let s = min(size.width / e.width, size.height / e.height)
+        let w = e.width * s, h = e.height * s
+        img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
+                 .transformed(by: CGAffineTransform(scaleX: s, y: s))
+                 .transformed(by: CGAffineTransform(translationX: (size.width - w) / 2,
+                                                    y: (size.height - h) / 2))
+        img = img.matchedFromWorkingSpace(to: colorSpace) ?? img
+        if opacity < 0.999 {
+            img = img.applyingFilter("CIColorMatrix", parameters: [
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(max(0, opacity)))])
+        }
+        return img
+    }
+
     /// The finished image in a `size` canvas, black behind, layers fitted (aspect kept) and centred,
-    /// already flipped for a texture.
+    /// already flipped for a texture. `inputs` are BOTTOM first.
     func image(for inputs: [Input], size: CGSize) -> CIImage {
         let canvas = CGRect(origin: .zero, size: size)
-        var out = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 1)).cropped(to: canvas)
-        for input in inputs {
-            var img = CIImage(cvPixelBuffer: input.buffer).oriented(input.orientation)
-            let e = img.extent
-            guard e.width > 0, e.height > 0, size.width > 0, size.height > 0 else { continue }
-            let s = min(size.width / e.width, size.height / e.height)
-            let w = e.width * s, h = e.height * s
-            img = img.transformed(by: CGAffineTransform(translationX: -e.minX, y: -e.minY))
-                     .transformed(by: CGAffineTransform(scaleX: s, y: s))
-                     .transformed(by: CGAffineTransform(translationX: (size.width - w) / 2,
-                                                        y: (size.height - h) / 2))
-            if input.opacity < 0.999 {
-                img = img.applyingFilter("CIColorMatrix", parameters: [
-                    "inputAVector": CIVector(x: 0, y: 0, z: 0, w: CGFloat(max(0, input.opacity)))])
+        let black = CIImage(color: CIColor(red: 0, green: 0, blue: 0, alpha: 1)).cropped(to: canvas)
+        var out = black
+        if inputs.count == 2, inputs[0].opacity + inputs[1].opacity <= 1 + 1e-9 {
+            // A crossfade: add the two weighted layers (premultiplied), over black.
+            if let back = fitted(inputs[0], size: size, opacity: inputs[0].opacity),
+               let front = fitted(inputs[1], size: size, opacity: inputs[1].opacity) {
+                out = front.applyingFilter("CIAdditionCompositing", parameters: [kCIInputBackgroundImageKey: back])
+                           .composited(over: black)
             }
-            out = img.composited(over: out)
+        } else {
+            for (i, input) in inputs.enumerated() {
+                var opacity = input.opacity
+                // Behind a partial front layer, the share of this one must still be its own opacity.
+                if inputs.count == 2, i == 0, inputs[1].opacity < 1 {
+                    opacity = min(1, input.opacity / max(1e-6, 1 - inputs[1].opacity))
+                }
+                guard let img = fitted(input, size: size, opacity: opacity) else { continue }
+                out = img.composited(over: out)
+            }
         }
-        // CoreImage draws into a texture upside down (V0, measured): one flip, here.
-        return out.cropped(to: canvas)
+        // Back to the working space (the context's output conversion re-encodes it), and CoreImage draws
+        // into a texture upside down (V0, measured): one flip, here.
+        return (out.cropped(to: canvas).matchedToWorkingSpace(from: colorSpace) ?? out.cropped(to: canvas))
             .transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height))
     }
 
