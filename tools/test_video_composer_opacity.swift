@@ -7,7 +7,10 @@
 // ~93 CoreImage's linear working space would give); two partial layers whose opacities sum to 1 are
 // a CROSSFADE and are added, with no dip towards black (128 at 0.5 over 128 at 0.5 stays 128, where
 // a plain "over" gives 96); an opaque front layer hides the one behind; a partial front over an
-// opaque back is the ordinary "over"; the bands of a letterboxed layer show the layer behind.
+// opaque back is the ordinary "over"; the bands of a letterboxed layer show the layer behind; and the
+// crossfade of two PICTURES (two halves of one shot, a fade pulled onto its neighbour): the same
+// colour on both halves is the same colour whatever the split (0.5/0.5 at another value, 0.7/0.7 where
+// the sum passes 1 and the plain "over" takes the relay, no overshoot above the colour).
 //
 // From `tools/`:
 //
@@ -96,6 +99,24 @@ enum VideoComposerOpacityTest {
         let v = pixel(early, 32, 18)
         check("early in a crossfade: 0.9 x 50 + 0.1 x 200 = 65", near(v, 65), "\(v)")
     } else { check("an early crossfade renders", false) }
+
+    // The crossfade of two pictures (plan_xfade_image): same colour on both sides, any split.
+    if let flat200 = render([L(200, 0.5), L(200, 0.5)]) {
+        let v = pixel(flat200, 32, 18)
+        check("200 at 0.5 crossed with 200 at 0.5 stays 200", near(v, 200), "\(v)")
+    } else { check("a flat crossfade at 200 renders", false) }
+    if let seven = render([L(50, 0.7), L(200, 0.7)]) {
+        let v = pixel(seven, 32, 18)
+        check("weights summing to 1.4 (past a crossfade): the plain over, 0.7 x 200 + 0.3 x 50 = 155", near(v, 155), "\(v)")
+    } else { check("a 0.7/0.7 stack renders", false) }
+    if let flat7 = render([L(128, 0.7), L(128, 0.7)]) {
+        let v = pixel(flat7, 32, 18)
+        check("128 at 0.7 over 128 at 0.7: still 128 (no overshoot above the colour)", near(v, 128), "\(v)")
+    } else { check("a flat 0.7/0.7 stack renders", false) }
+    if let third = render([L(128, 0.3), L(128, 0.3)]) {
+        let v = pixel(third, 32, 18)
+        check("128 at 0.3 and 128 at 0.3 (sum 0.6, the rest black): 77", near(v, 77), "\(v)")
+    } else { check("a 0.3/0.3 stack renders", false) }
 
     // Opaque front hides the back; a partial front over an opaque back is the usual "over".
     if let opaque = render([L(50, 1), L(200, 1)]) {
