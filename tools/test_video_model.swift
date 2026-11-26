@@ -63,6 +63,8 @@ func check(_ label: String, _ ok: Bool, _ detail: String = "") {
     else { fails.append(label); print("FAIL  \(label)  \(detail)") }
 }
 
+func fadeOutSet(_ o: inout SoundObject, _ v: Double) { o.fadeOut = v }
+
 func clip(video: VideoFacet? = nil) -> SoundObject {
     var o = SoundObject(id: UUID(), startTime: 1, duration: 4, lane: 0,
                         kind: .clip(filePath: "/tmp/movie.mp4", sourceOffset: 0, fileDuration: 10,
@@ -136,6 +138,24 @@ enum VideoModelTest {
         outer.isInfinite = true
         check("an infinite group is flagged as such in the index",
               VideoObjectIndex(items: [outer]).entries.first?.ancestors.first?.isInfinite == (outer.isInfiniteBus))
+
+        // The fades travel from the model to the index: the picture's own, and each group's
+        let bend = FadeCurve(shape: .convex, amount: 0.6)
+        var fadedPic = clip(video: facet)
+        fadedPic.fadeIn = 1.5; fadeOutSet(&fadedPic, 0.75); fadedPic.fadeInCurve = bend
+        var fadedGroup = SoundObject(id: UUID(), startTime: 0, duration: 30, lane: 0,
+                                     kind: .group(children: [fadedPic], isExpanded: true))
+        fadedGroup.fadeIn = 3; fadedGroup.fadeOut = 2; fadedGroup.fadeOutCurve = FadeCurve(shape: .sCurve, amount: 1)
+        let fx = VideoObjectIndex(items: [fadedGroup]).entries.first
+        check("a picture's fades and curves reach the index",
+              fx?.fadeIn == 1.5 && fx?.fadeOut == 0.75 && fx?.fadeInCurve == bend && fx?.fadeOutCurve == .linear)
+        let gw = fx?.ancestors.first
+        check("a group's fades and curves reach its window",
+              gw?.fadeIn == 3 && gw?.fadeOut == 2 && gw?.fadeOutCurve == FadeCurve(shape: .sCurve, amount: 1)
+              && gw?.fadeInCurve == .linear)
+        check("through the model, the picture's opacity is group fade x object fade",
+              abs((VideoResolver.layer(of: fx!, at: 1.75)?.opacity ?? -1)
+                  - (1.75 / 3) * bend.gain(0.5)) < 1e-12)
 
         // Silence: the picture follows the SAME rule a sound does (`AudibilitySnapshot.isSilenced`) —
         // its mute, its stem's, a solo elsewhere — and so do the groups above it.

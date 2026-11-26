@@ -38,13 +38,17 @@ extension VideoObjectIndex {
                     id: o.id, filePath: filePath, lane: o.lane, start: o.startTime, duration: o.duration,
                     sourceOffset: sourceOffset, speedRatio: speed, isReversed: reversed,
                     fileDuration: fileDuration, loop: loop, nominalFPS: facet.nominalFPS,
-                    isMuted: audibility.isSilenced(o), ancestors: ancestors))
+                    isMuted: audibility.isSilenced(o),
+                    fadeIn: o.fadeIn, fadeOut: o.fadeOut,
+                    fadeInCurve: o.fadeInCurve, fadeOutCurve: o.fadeOutCurve, ancestors: ancestors))
             case .group(let children, _):
                 var loop: VideoLoopRange? = nil
                 if let r = o.loopMarkerLocalRange { loop = VideoLoopRange(start: r.start, end: r.end) }
                 let window = VideoGroupWindow(lane: o.lane, start: o.startTime, duration: o.duration,
                                               isInfinite: o.isInfiniteBus, loop: loop,
-                                              isMuted: audibility.isSilenced(o))
+                                              isMuted: audibility.isSilenced(o),
+                                              fadeIn: o.fadeIn, fadeOut: o.fadeOut,
+                                              fadeInCurve: o.fadeInCurve, fadeOutCurve: o.fadeOutCurve)
                 collect(children, ancestors: ancestors + [window], audibility: audibility, into: &out)
             case .aux, .midiClip:
                 continue

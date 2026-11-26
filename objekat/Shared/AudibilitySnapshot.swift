@@ -12,7 +12,7 @@ import Foundation
 /// the audible closure, the muted stems). A value, and not a call to the view model, because the rendering
 /// of a `Canvas` is not MainActor-isolated and cannot query it — without this the rule would be
 /// rewritten alongside, and that is exactly what is to be avoided.
-struct AudibilitySnapshot {
+nonisolated struct AudibilitySnapshot {
     /// The objects DIRECTLY soloed (confirmed ∪ temporary) — not the closure by ancestor.
     var soloRoots: Set<UUID> = []
     /// Is any solo filtering the listening?

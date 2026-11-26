@@ -35,11 +35,14 @@ func near(_ a: Double?, _ b: Double, _ eps: Double = 1e-9) -> Bool {
 
 func pic(_ n: Int, lane: Int = 0, start: Double = 0, duration: Double = 10, offset: Double = 0,
          speed: Double = 1, fileDuration: Double = 100, loop: VideoLoopRange? = nil,
-         muted: Bool = false, ancestors: [VideoGroupWindow] = []) -> VideoPictureEntry {
+         muted: Bool = false, fadeIn: Double = 0, fadeOut: Double = 0,
+         curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear, reversed: Bool = false,
+         ancestors: [VideoGroupWindow] = []) -> VideoPictureEntry {
     VideoPictureEntry(id: UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", n))!,
                       filePath: "/v\(n).mov", lane: lane, start: start, duration: duration,
-                      sourceOffset: offset, speedRatio: speed, fileDuration: fileDuration,
-                      loop: loop, nominalFPS: 30, isMuted: muted, ancestors: ancestors)
+                      sourceOffset: offset, speedRatio: speed, isReversed: reversed, fileDuration: fileDuration,
+                      loop: loop, nominalFPS: 30, isMuted: muted, fadeIn: fadeIn, fadeOut: fadeOut,
+                      fadeInCurve: curveIn, fadeOutCurve: curveOut, ancestors: ancestors)
 }
 
 func ids(_ ls: [VideoLayer]) -> [String] { ls.map { $0.filePath } }
@@ -185,6 +188,77 @@ enum VideoTimeMapTest {
     let capped = VideoResolver.layers(at: 5, in: VideoObjectIndex(entries: [front, secondP, thirdP]))
     check("a silenced front picture is filtered BEFORE the cap of two: the other two are kept",
           ids(capped) == ["/v52.mov", "/v51.mov"], "\(ids(capped))")
+
+    // MARK: - Fades are opacity (Q6): the sound's own curve, the gain IS the opacity
+
+    func op(_ e: VideoPictureEntry, _ t: Double) -> Double? { VideoResolver.layer(of: e, at: t)?.opacity }
+    let fin = pic(60, start: 10, duration: 10, fadeIn: 1)
+    check("fade-in: 0 at the very start", near(op(fin, 10), 0))
+    check("fade-in 1 s linear, half-way: 0.5", near(op(fin, 10.5), 0.5))
+    check("fade-in: 1 once over", near(op(fin, 11), 1) && near(op(fin, 15), 1))
+    let fout = pic(61, start: 10, duration: 10, fadeOut: 2)
+    check("fade-out 2 s linear, 1 s before the end: 0.5", near(op(fout, 19), 0.5))
+    check("fade-out: untouched before it begins", near(op(fout, 17.9), 1))
+    let convex = FadeCurve(shape: .convex, amount: 1)
+    let sCurve = FadeCurve(shape: .sCurve, amount: 1)
+    let shaped = pic(62, start: 0, duration: 10, fadeIn: 2, fadeOut: 2, curveIn: convex, curveOut: sCurve)
+    check("a convex fade-in is FadeCurve.gain, to the digit", near(op(shaped, 0.5), convex.gain(0.25), 1e-12))
+    check("an S fade-out reads the PROGRESS of the edge, as the sound does", near(op(shaped, 9), sCurve.gain(0.5), 1e-12))
+    check("the picture's curve equals WaveformShaping.fadeEnvelope (one definition)",
+          near(op(shaped, 1.3), WaveformShaping.fadeEnvelope(localTime: 1.3, duration: 10, fadeIn: 2, fadeOut: 2,
+                                                              curveIn: convex, curveOut: sCurve), 1e-12))
+    let rev = pic(63, start: 0, duration: 10, offset: 0, fileDuration: 100, fadeIn: 2, reversed: true)
+    check("a reversed picture still fades in at the entry of its window", near(op(rev, 1), 0.5))
+    let loopedPic = pic(64, start: 0, duration: 30, loop: VideoLoopRange(start: 1, end: 4), fadeIn: 2)
+    check("an own loop does not replay the fade-in at each turn", near(op(loopedPic, 4.5), 1) && near(op(loopedPic, 7.2), 1))
+    let negFade = pic(65, start: -2, duration: 6, fadeIn: 2)
+    check("a negative start: the fade runs from the object's own start", near(op(negFade, -1), 0.5) && near(op(negFade, 0), 1))
+
+    // The groups' fades multiply into the opacity, root to object.
+    let gHalf = VideoGroupWindow(lane: 0, start: 0, duration: 20, fadeIn: 2)
+    let pHalf = pic(66, start: 0, duration: 20, fadeIn: 2, ancestors: [gHalf])
+    check("group fade 0.5 x object fade 0.5 = 0.25", near(op(pHalf, 1), 0.25))
+    let gOnly = pic(67, start: 0, duration: 20, ancestors: [gHalf])
+    check("a group fade alone dims the picture below it", near(op(gOnly, 1), 0.5))
+    let gOut = VideoGroupWindow(lane: 0, start: 0, duration: 20, fadeOut: 4)
+    check("a group fade-out reads the group's end", near(op(pic(68, start: 0, duration: 20, ancestors: [gOut]), 18), 0.5))
+    let gLoop = VideoGroupWindow(lane: 0, start: 0, duration: 30, loop: VideoLoopRange(start: 0, end: 5), fadeIn: 4)
+    let pLoop = pic(69, start: 0, duration: 5, ancestors: [gLoop])
+    check("a looping group fades in once (first turn)", near(op(pLoop, 2), 0.5))
+    check("...and does not replay it at the second turn", near(op(pLoop, 7), 1))
+    let gInf = VideoGroupWindow(lane: 0, start: 0, duration: 0, isInfinite: true, fadeIn: 4, fadeOut: 4)
+    check("an infinite group has no window: its fades are ignored",
+          near(op(pic(70, start: 0, duration: 20, ancestors: [gInf]), 1), 1))
+    let gMid = VideoGroupWindow(lane: 0, start: 0, duration: 20, fadeIn: 2)
+    let gTop = VideoGroupWindow(lane: 0, start: 0, duration: 20, fadeIn: 4)
+    check("nested groups multiply: 0.25 x 0.5 = 0.125",
+          near(op(pic(71, start: 0, duration: 20, ancestors: [gTop, gMid]), 1), 0.125))
+
+    // A transparent picture is not drawn and takes no place among the two layers (Q-F8).
+    let invisibleFront = pic(72, lane: 0, start: 0, duration: 10, fadeIn: 5)
+    let vis1 = pic(73, lane: 1, start: 0, duration: 10), vis2 = pic(74, lane: 2, start: 0, duration: 10)
+    let atZero = VideoResolver.layers(at: 0, in: VideoObjectIndex(entries: [invisibleFront, vis1, vis2]))
+    check("a picture at opacity 0 is filtered BEFORE the cap: the two others are drawn",
+          ids(atZero) == ["/v74.mov", "/v73.mov"], "\(ids(atZero))")
+    let atTick = VideoResolver.layers(at: 0.5 / 255 * 5, in: VideoObjectIndex(entries: [invisibleFront, vis1, vis2]))
+    check("below 1/255 still counts as invisible", ids(atTick) == ["/v74.mov", "/v73.mov"], "\(ids(atTick))")
+    let atOne = VideoResolver.layers(at: 1, in: VideoObjectIndex(entries: [invisibleFront, vis1, vis2]))
+    check("once visible it takes its place in front (and the rearmost is dropped)",
+          ids(atOne) == ["/v73.mov", "/v72.mov"], "\(ids(atOne))")
+
+    // A crossfade: two pictures of one lane overlapping, linear fades over the overlap.
+    let cfA = pic(80, lane: 0, start: 0, duration: 10, fadeOut: 2)
+    let cfB = pic(81, lane: 0, start: 8, duration: 10, fadeIn: 2)
+    var allSum = true
+    var seen = 0
+    var t = 8.0
+    while t < 9.95 {
+        let ls = VideoResolver.layers(at: t, in: VideoObjectIndex(entries: [cfA, cfB]))
+        if ls.count == 2 { seen += 1; if abs(ls.map(\.opacity).reduce(0, +) - 1) > 1e-9 { allSum = false } }
+        else if t > 8.0 + 1e-9 { allSum = false }
+        t += 0.1
+    }
+    check("a crossfade: the opacities of the two pictures sum to 1 over the whole overlap", allSum && seen > 15, "seen \(seen)")
 
     // MARK: - Order: front-most first on the PATH of lanes, bottom-first in the answer
 

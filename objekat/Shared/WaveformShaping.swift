@@ -17,7 +17,7 @@ enum WaveformShaping {
     /// `ObjWindowFadePlugin::curveGain`): the argument is the fade's PROGRESS, so the outgoing edge
     /// passes the time it has LEFT. The drawn waveform and what is heard then come from one single
     /// definition — a display that flattered a hollowed fade would be a lie one could not hear.
-    static func fadeEnvelope(localTime t: Double, duration dur: Double,
+    nonisolated static func fadeEnvelope(localTime t: Double, duration dur: Double,
                              fadeIn fi: Double, fadeOut fo: Double,
                              curveIn: FadeCurve = .linear, curveOut: FadeCurve = .linear) -> Double {
         var g = 1.0

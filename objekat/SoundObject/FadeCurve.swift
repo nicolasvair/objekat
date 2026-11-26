@@ -13,7 +13,7 @@ import Foundation
 /// fade OUT therefore reads it backwards (`(end - t) / fadeOut`), so one single family of formulas
 /// serves both edges and a shape means the same thing on either — "bulged" is the curve that
 /// stands ABOVE the diagonal, whichever way round it is drawn.
-enum FadeShape: String, Codable, CaseIterable, Sendable {
+nonisolated enum FadeShape: String, Codable, CaseIterable, Sendable {
     /// The straight line. The default, and what every project made before 9 September 2026 has.
     case linear
     /// "Bulged" — above the diagonal: the level rises at once, then flattens.
@@ -85,7 +85,7 @@ enum FadeShape: String, Codable, CaseIterable, Sendable {
 /// and the ear read as an even progression: doubling the exponent is one same step of curvature
 /// whether one starts at 1 or at 4, whereas an exponent growing by equal slices would run through
 /// everything visible in its first quarter and then barely move.
-struct FadeCurve: Codable, Equatable, Sendable {
+nonisolated struct FadeCurve: Codable, Equatable, Sendable {
     var shape: FadeShape
     /// How far from the straight line, 0…1. Kept clamped by every way in, so that no caller — the
     /// command API included — can hand the engine a gain that leaves [0, 1].

@@ -24,13 +24,18 @@ import Foundation
 //   stays valid, there is no clamp at zero here (a picture may begin before 0, @see the negative
 //   start convention) — then its own loop, then speed / offset (`WaveformShaping.sourceTime`).
 //
+// Fades (Q6): the fades of the picture and of every group above it multiply into its OPACITY, by the
+// sound's own curve. A group's fade runs over the group's window at the time the group sees (before
+// its loop fold: no new fade-in at each turn), the picture's over its own window before its own loop
+// fold. Nothing below 1/255 is drawn or counted in the cap of two.
+//
 // Silence (Q7): a picture is HIDDEN exactly when a sound at its place would be reduced to silence —
 // its own mute, its stem's mute, a solo elsewhere — or when a group above it would be. The resolver
 // reads none of those rules: the index builder has already folded them into `isMuted` (@see
 // `VideoObjectIndex.init(items:audibility:)`), and `VideoResolver.Presence` is the one place that acts
 // on it. Fades (Q6) act at the same place.
 //
-// Two layers at most, the FRONT-most ones (§2.7), chosen AFTER the window filtering: after
+// Two layers at most, the FRONT-most ones (§2.7), chosen AFTER the window and opacity filtering: after
 // `windowOnly` cuts many picture objects overlap in time without being visible.
 
 /// One group between the root and a picture: only what the resolver reads of it.
@@ -46,11 +51,22 @@ nonisolated struct VideoGroupWindow: Equatable, Sendable {
     /// that filters it out): the pictures below it are hidden (@see `VideoResolver.Presence`). The
     /// index builder fills it from `AudibilitySnapshot.isSilenced`, never from the object's flag alone.
     var isMuted: Bool = false
+    /// The group's own fades, over ITS window (lengths in seconds, with their shapes): they multiply the
+    /// opacity of every picture below it, as `ObjWindowFade` multiplies the sound. An infinite group has
+    /// no window, hence no fade.
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+    var fadeInCurve: FadeCurve = .linear
+    var fadeOutCurve: FadeCurve = .linear
 
     init(lane: Int, start: Double, duration: Double, isInfinite: Bool = false,
-         loop: VideoLoopRange? = nil, isMuted: Bool = false) {
+         loop: VideoLoopRange? = nil, isMuted: Bool = false,
+         fadeIn: Double = 0, fadeOut: Double = 0,
+         fadeInCurve: FadeCurve = .linear, fadeOutCurve: FadeCurve = .linear) {
         self.lane = lane; self.start = start; self.duration = duration
         self.isInfinite = isInfinite; self.loop = loop; self.isMuted = isMuted
+        self.fadeIn = fadeIn; self.fadeOut = fadeOut
+        self.fadeInCurve = fadeInCurve; self.fadeOutCurve = fadeOutCurve
     }
 }
 
@@ -78,6 +94,12 @@ nonisolated struct VideoPictureEntry: Equatable, Sendable {
     /// The picture object is reduced to silence by the listening composition, as a sound at its place
     /// would be: hidden (@see `VideoGroupWindow.isMuted`).
     var isMuted: Bool = false
+    /// The picture's own fades over its window: its OPACITY goes with them (Q6), by the same curve as
+    /// the sound's gain (`WaveformShaping.fadeEnvelope`).
+    var fadeIn: Double = 0
+    var fadeOut: Double = 0
+    var fadeInCurve: FadeCurve = .linear
+    var fadeOutCurve: FadeCurve = .linear
     /// Root → direct parent. Empty for a picture at the root.
     var ancestors: [VideoGroupWindow]
 
@@ -88,11 +110,15 @@ nonisolated struct VideoPictureEntry: Equatable, Sendable {
     init(id: UUID, filePath: String, lane: Int, start: Double, duration: Double,
          sourceOffset: Double = 0, speedRatio: Double = 1, isReversed: Bool = false,
          fileDuration: Double = 0, loop: VideoLoopRange? = nil, nominalFPS: Double = 0,
-         isMuted: Bool = false, ancestors: [VideoGroupWindow] = []) {
+         isMuted: Bool = false, fadeIn: Double = 0, fadeOut: Double = 0,
+         fadeInCurve: FadeCurve = .linear, fadeOutCurve: FadeCurve = .linear,
+         ancestors: [VideoGroupWindow] = []) {
         self.id = id; self.filePath = filePath; self.lane = lane; self.start = start
         self.duration = duration; self.sourceOffset = sourceOffset; self.speedRatio = speedRatio
         self.isReversed = isReversed; self.fileDuration = fileDuration; self.loop = loop
         self.nominalFPS = nominalFPS; self.isMuted = isMuted; self.ancestors = ancestors
+        self.fadeIn = fadeIn; self.fadeOut = fadeOut
+        self.fadeInCurve = fadeInCurve; self.fadeOutCurve = fadeOutCurve
     }
 }
 
@@ -131,16 +157,33 @@ nonisolated enum VideoResolver {
     // MARK: Q6 / Q7 — the one place
 
     /// Where a mute (Q7) and a fade (Q6) act on a picture. `nil` hides the picture; the number is a
-    /// factor multiplied along the way down. Called with the time as seen BY the group (before its
-    /// fold), the way the plan's pseudo-code orders it.
+    /// factor (an OPACITY) multiplied along the way down. The curve is the sound's: the fade's gain IS
+    /// the opacity (`WaveformShaping.fadeEnvelope`, `FadeCurve`), so what is drawn, what is heard and
+    /// what is seen come from one definition.
     enum Presence {
-        static func group(_ g: VideoGroupWindow, at localTime: Double) -> Double? {
-            g.isMuted ? nil : 1
+        /// `time` is the timeline time as seen BY the group (before its own fold, the way the plan's
+        /// pseudo-code orders it): a looping group does not replay its fade-in at every turn. An
+        /// infinite group has no window, hence no fade.
+        static func group(_ g: VideoGroupWindow, at time: Double) -> Double? {
+            guard !g.isMuted else { return nil }
+            guard !g.isInfinite else { return 1 }
+            return WaveformShaping.fadeEnvelope(localTime: time - g.start, duration: g.duration,
+                                                fadeIn: g.fadeIn, fadeOut: g.fadeOut,
+                                                curveIn: g.fadeInCurve, curveOut: g.fadeOutCurve)
         }
+        /// `localTime` is the time inside the picture's window (0 = its start), before its own loop
+        /// fold and whatever its direction: a reversed picture still fades in at the entry of its window.
         static func picture(_ p: VideoPictureEntry, at localTime: Double) -> Double? {
-            p.isMuted ? nil : 1
+            guard !p.isMuted else { return nil }
+            return WaveformShaping.fadeEnvelope(localTime: localTime, duration: p.duration,
+                                                fadeIn: p.fadeIn, fadeOut: p.fadeOut,
+                                                curveIn: p.fadeInCurve, curveOut: p.fadeOutCurve)
         }
     }
+
+    /// Below this opacity (1/255: the least step of an 8-bit alpha) a picture is not drawn, and does
+    /// not count among the `maxLayers` — otherwise a picture beginning its fade-in would hide a visible one.
+    static let invisibleOpacity = 1.0 / 255.0
 
     // MARK: The fold of a looping group
 
@@ -197,7 +240,7 @@ nonisolated enum VideoResolver {
     static func layers(at t: Double, in index: VideoObjectIndex) -> [VideoLayer] {
         var visible: [(entry: VideoPictureEntry, layer: VideoLayer, order: Int)] = []
         for (i, e) in index.entries.enumerated() {
-            if let l = layer(of: e, at: t) { visible.append((e, l, i)) }
+            if let l = layer(of: e, at: t), l.opacity > invisibleOpacity { visible.append((e, l, i)) }
         }
         guard !visible.isEmpty else { return [] }
         // Front first: lane path ascending; a prefix before its extension; then the index order, so
