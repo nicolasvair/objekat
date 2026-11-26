@@ -12,6 +12,7 @@
 //         ../objekat/Shared/LoopRetrim.swift \
 //         ../objekat/SoundObject/MidiSequenceWindow.swift \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Video/VideoFacet.swift \
 //         ../objekat/SoundObject/RecordInputs.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \

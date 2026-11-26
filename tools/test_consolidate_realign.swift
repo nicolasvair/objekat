@@ -50,6 +50,7 @@
 //         ../objekat/SoundObject/SendMarkerAudit.swift \
 //         ../objekat/SoundObject/SendPosition.swift \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Video/VideoFacet.swift \
 //         ../objekat/Timeline/ClipEditZonesOverlay.swift \
 //         ../objekat/Shared/Compat/CompatPolicy.swift \
 //         ../objekat/SoundObject/InputChains.swift \

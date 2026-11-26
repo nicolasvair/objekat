@@ -7,6 +7,7 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Video/VideoFacet.swift \
 //         ../objekat/SoundObject/MidiSequenceWindow.swift \
 //         ../objekat/Shared/ClipEditZone.swift \
 //         ../objekat/SoundObject/InputChains.swift \

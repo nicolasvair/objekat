@@ -6,7 +6,7 @@
 //
 //     cd tools && swiftc -parse-as-library \
 //         ../objekat/Video/VideoAudioRule.swift ../objekat/Video/EngineLikeAudioReader.swift \
-//         ../objekat/Video/VideoProbe.swift ../objekat/Video/VideoAudioExtract.swift \
+//         ../objekat/Video/VideoProbe.swift ../objekat/Video/VideoAudioExtract.swift ../objekat/Shared/Compat/CompatClock.swift \
 //         make_video_fixtures.swift test_video_audio_align.swift -o /tmp/valign && /tmp/valign
 //
 // Exit: 0 if every assertion passes, 1 otherwise. Files live in a temporary folder, a few hundred

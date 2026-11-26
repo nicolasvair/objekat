@@ -11,6 +11,7 @@
 //
 //     swiftc -parse-as-library \
 //         ../objekat/SoundObject/SoundObject.swift \
+//         ../objekat/Video/VideoFacet.swift \
 //         ../objekat/Inspector/Synoptic/SynopticGraph.swift \
 //         ../objekat/Inspector/Synoptic/SynopticWidthFlow.swift \
 //         ../objekat/SoundObject/ChannelPick.swift \
