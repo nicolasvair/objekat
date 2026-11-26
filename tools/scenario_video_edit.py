@@ -11,7 +11,8 @@
   * a plugin and a send are REFUSED on the picture object (and accepted on the audio child);
   * the picture object can be cut and trimmed alone, undone and redone, and the sound is not touched.
 
-Not in V1 (no thumbnails, fades, mute of the picture, reverse, `Reunir`): not tested here.
+Not in V1 (no thumbnails, reverse, `Reunir`): not tested here. The fades and the silence of the picture
+(mute, stem mute, solo) are in `scenario_video_fade_mute.py`.
 
 Exit: 0 if every assertion passes, 1 otherwise.
 """
