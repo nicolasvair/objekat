@@ -14,7 +14,9 @@ import UniformTypeIdentifiers
 //
 // What V0 measured and this honours: a single `CIContext` on the Metal queue with
 // `cacheIntermediates = false`; the layers composed BOTTOM first; CoreImage renders into a texture
-// UPSIDE DOWN, so the finished image is flipped once, here, and nowhere else.
+// UPSIDE DOWN, so the finished image is flipped once, here, and nowhere else. That holds for a texture
+// WE made, and only for one: the preview composes into such a texture and copies it onto the drawable
+// (`encode(_:intoDrawable:commandBuffer:)`), never into the drawable itself.
 //
 // OPACITY (Q6, fades of the picture objects) is honoured here and nowhere else, in the ENCODED space
 // (sRGB numbers, what an editor's dissolve does: a mid-grey 128 at 0.5 over black is 64) and not in
@@ -100,11 +102,50 @@ nonisolated final class VideoComposer: @unchecked Sendable {
             .transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height))
     }
 
-    /// Encodes the graph on `commandBuffer` (not committed) into `texture`.
+    /// Encodes the graph on `commandBuffer` (not committed) into `texture`. `texture` must be one of
+    /// OURS (made by `device.makeTexture`): see `encode(_:intoDrawable:commandBuffer:)` for a drawable.
     func encode(_ inputs: [Input], into texture: MTLTexture, commandBuffer: MTLCommandBuffer) {
         let size = CGSize(width: texture.width, height: texture.height)
         context.render(image(for: inputs, size: size), to: texture, commandBuffer: commandBuffer,
                        bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
+    }
+
+    // MARK: Into a drawable
+
+    /// The texture the preview composes into before the copy onto the drawable (display thread only).
+    private var stage: MTLTexture?
+    private let stageLock = NSLock()
+
+    /// Encodes the graph into a `CAMetalLayer` drawable's texture: composed into a texture of our own
+    /// (`encode(_:into:)`, the very path of `renderStill`), then COPIED onto the drawable.
+    ///
+    /// Never `context.render` straight into the drawable: CoreImage does not orient a drawable's texture
+    /// the way it orients one of ours. Measured (2026-11-26, M1 Pro, macOS 15): the same graph rendered
+    /// into a drawable of a `framebufferOnly = false` layer came out UPSIDE DOWN, where it is upright in
+    /// a texture made by `makeTexture` — so the one flip `image(for:size:)` applies was right for the
+    /// stills and wrong for the window (and a `framebufferOnly` drawable is not even written: magenta).
+    /// A blit is a plain copy, row 0 onto row 0: the window shows exactly what `video.render_frame`
+    /// writes. Cost: one copy of the drawable per presented frame, on the GPU.
+    func encode(_ inputs: [Input], intoDrawable target: MTLTexture, commandBuffer: MTLCommandBuffer) {
+        stageLock.lock()
+        if stage == nil || stage!.width != target.width || stage!.height != target.height
+            || stage!.pixelFormat != target.pixelFormat {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: target.pixelFormat,
+                                                                width: target.width, height: target.height,
+                                                                mipmapped: false)
+            desc.usage = [.renderTarget, .shaderWrite, .shaderRead]
+            desc.storageMode = .private
+            stage = device.makeTexture(descriptor: desc)
+        }
+        let staged = stage
+        stageLock.unlock()
+        // One queue, encoded in order: the next frame's composition cannot start before this copy has
+        // read the stage, so a single stage is enough.
+        guard let staged else { return }   // no texture to stage into: keep the previous picture
+        encode(inputs, into: staged, commandBuffer: commandBuffer)
+        guard let blit = commandBuffer.makeBlitCommandEncoder() else { return }
+        blit.copy(from: staged, to: target)
+        blit.endEncoding()
     }
 
     /// Compiles the CoreImage graph once, off the render path: the first composition of a session costs

@@ -208,7 +208,7 @@ nonisolated final class VideoDisplay: NSObject, @unchecked Sendable {
         hasPresented = true
 
         guard let cb = composer.queue.makeCommandBuffer() else { return }
-        composer.encode(prepared.inputs, into: drawable.texture, commandBuffer: cb)
+        composer.encode(prepared.inputs, intoDrawable: drawable.texture, commandBuffer: cb)
         cb.present(drawable)
         cb.commit()
     }
