@@ -1801,6 +1801,14 @@ struct OBJPendingStateReassert {
     juce::MemoryBlock desired;      // chunk binaire attendu (décodé de savedTree)
     juce::String      name;         // pour les logs (l'instance peut disparaître entre-temps)
     int               ticks = 0;
+    // Ré-affirmation d'un CHANGEMENT DE LARGEUR (setChannelLayoutVariant:) : `desired` est l'état d'AVANT
+    // le changement, ce qui devient FAUX dès qu'une main (éditeur du plugin, `plugin.set_param`) règle un
+    // paramètre dans l'intervalle — la ré-appliquer l'écraserait (un réglage fait juste après l'insertion
+    // d'un plugin sautait). Une retouche constatée (`*touched`, posée par `touchMirror`) ANNULE donc la
+    // ré-affirmation. nullptr pour les ré-affirmations du chargement / de l'annulation, qui n'ont pas
+    // cette difficulté (leur état voulu est la vérité du modèle).
+    std::shared_ptr<bool>             touched;
+    std::shared_ptr<OBJParamMirror>   touchMirror;
 };
 
 static constexpr int kObjStateReassertIntervalMs = 250;
@@ -2104,6 +2112,9 @@ struct OBJExportLoadScope {
 // Met un plugin externe fraîchement créé en file d'attente de ré-affirmation d'état. Sans effet
 // pour un built-in, ou si l'arbre ne porte aucun état à restaurer.
 - (void)schedulePluginStateReassert:(te::Plugin::Ptr)plugin fromTree:(juce::ValueTree)tree;
+// Idem pour un changement de largeur : une retouche d'un paramètre pendant l'attente ANNULE la ré-affirmation.
+- (void)schedulePluginStateReassert:(te::Plugin::Ptr)plugin fromTree:(juce::ValueTree)tree
+                  cancelOnUserEdit:(BOOL)cancelOnUserEdit;
 - (void)tickPluginStateReasserts;
 // Idem, mais en synchrone, sur le clone d'Edit d'un rendu offline (pas le temps d'attendre).
 - (void)forcePluginStatesForRenderClone:(te::Edit&)clone;
@@ -8387,6 +8398,9 @@ static void objClearARAState(te::WaveAudioClip& clip) {
 
     const auto params = it->second->getAutomatableParameters();
     if (index >= 0 && index < params.size()) {
+        // Une main : l'état qu'une ré-affirmation de changement de largeur attend encore est périmé.
+        for (auto& pending : _pendingStateReasserts)
+            if (pending.plugin == it->second && pending.touched) *pending.touched = true;
         // Une écriture de l'HÔTE (inspecteur, éditeur intégré, API) : c'est une main, le mirror
         // d'un groupe lié la rediffuse (@see -linkChangeIsUserOriginated:). La notification arrive
         // de façon asynchrone, d'où une fenêtre et pas un drapeau.
@@ -8630,6 +8644,11 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
 // UNE SEULE FOIS s'il diffère. Un plugin qui a correctement restauré sort de la file sans rien subir.
 
 - (void)schedulePluginStateReassert:(te::Plugin::Ptr)plugin fromTree:(juce::ValueTree)tree {
+    [self schedulePluginStateReassert:plugin fromTree:tree cancelOnUserEdit:NO];
+}
+
+- (void)schedulePluginStateReassert:(te::Plugin::Ptr)plugin fromTree:(juce::ValueTree)tree
+                  cancelOnUserEdit:(BOOL)cancelOnUserEdit {
     if (!plugin) return;
     auto* ext = dynamic_cast<te::ExternalPlugin*>(plugin.get());
     if (!ext) return;                                   // built-in Tracktion : jamais concerné
@@ -8645,6 +8664,17 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
                                                 [&](const OBJPendingStateReassert& r) { return r.plugin == plugin; }),
                                  _pendingStateReasserts.end());
     _pendingStateReasserts.push_back({ plugin, tree, std::move(desired), name, 0 });
+
+    if (cancelOnUserEdit) {
+        // Une MAIN, c'est : une écriture de l'hôte (-setPluginParam:, qui sert l'inspecteur, l'éditeur intégré
+        // et l'API) ou la saisie d'un knob dans l'éditeur natif du plugin (début de geste, relayé par
+        // Tracktion). Ce n'est PAS un changement de valeur vu sur le paramètre : un AU qui se ré-initialise
+        // renormalise ses paramètres de lui-même (AULowpass : son Cutoff, 0,3158 → 0,2901 au premier bloc).
+        auto touched = std::make_shared<bool>(false);
+        _pendingStateReasserts.back().touched = touched;
+        _pendingStateReasserts.back().touchMirror = std::make_shared<OBJParamMirror>(
+            plugin, [](int, float) {}, [touched](int) { *touched = true; });
+    }
 
     if (!_stateReassertTimer) {
         _stateReassertTimer = std::make_unique<OBJCallbackTimer>();
@@ -8679,13 +8709,21 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
         // jamais préparé. On le lâche tout de suite — notre Ptr est sa dernière référence.
         if (!ext->state.getParent().isValid()) { it = _pendingStateReasserts.erase(it); continue; }
 
+        // Une main a réglé un paramètre depuis le changement de largeur : l'état voulu (celui d'AVANT) est
+        // périmé, le ré-appliquer écraserait ce réglage. On renonce — sans toucher à l'instance — et la
+        // suite (baseline des groupes liés) est celle d'une ré-affirmation réglée.
+        const bool editedByHand = it->touched && *it->touched;
+        if (editedByHand)
+            NSLog(@"[OBJ] état plugin : '%s' retouché depuis le changement de largeur — ré-affirmation abandonnée",
+                  it->name.toRawUTF8());
+
         auto* pi = ext->getAudioPluginInstance();
         juce::MemoryBlock now;
-        if (pi) now = objReadInstanceState(*pi);
+        if (pi && !editedByHand) now = objReadInstanceState(*pi);
 
         // Pas d'instance (formats à chargement async) ou état illisible (= unité pas encore
         // initialisée, exactement le symptôme qui nous intéresse) : on repassera.
-        if (!pi || now.getSize() == 0) {
+        if (!editedByHand && (!pi || now.getSize() == 0)) {
             if (++it->ticks <= kObjStateReassertMaxTicks) { ++it; continue; }
             NSLog(@"[OBJ] état plugin : '%s' n'a jamais rendu son état — abandon",
                   it->name.toRawUTF8());
@@ -8694,7 +8732,7 @@ static float objDbToLinear(double db) { return (float) std::pow(10.0, db / 20.0)
             continue;
         }
 
-        if (now != it->desired) {
+        if (!editedByHand && now != it->desired) {
             // La restauration de Tracktion n'a pas pris : on la refait maintenant que l'instance
             // est préparée. Une seule tentative, quel qu'en soit le résultat — pas de boucle qui
             // risquerait d'écraser un réglage fait entre-temps par l'utilisateur.
@@ -9908,11 +9946,12 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
 
     // `setBusesLayout` a déjà écrit le nouveau `layout` dans l'arbre (flushBusesLayoutToValueTree).
     // L'arbre à ré-affirmer porte ce layout ET le chunk d'avant : la ré-application ne ramène jamais
-    // l'ancienne largeur.
+    // l'ancienne largeur. Une main qui règle un paramètre avant l'application (`cancelOnUserEdit`) ANNULE
+    // cette ré-affirmation : l'état d'avant est alors périmé, et le ré-appliquer écraserait le réglage.
     if (stateBefore.toString().isNotEmpty()) {
         juce::ValueTree wanted = ext->state.createCopy();
         wanted.setProperty(te::IDs::state, stateBefore, nullptr);
-        [self schedulePluginStateReassert:it->second fromTree:wanted];
+        [self schedulePluginStateReassert:it->second fromTree:wanted cancelOnUserEdit:YES];
     }
 
     // Les fils de sidechain dépendent du nombre d'entrées : on les repose pour la nouvelle largeur.

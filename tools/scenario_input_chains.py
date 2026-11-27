@@ -146,9 +146,6 @@ def e9(c, level, fxp, instp, dev):
     check("M1 the instance is mounted", wait_loaded(pid))
     row = input_row()
     check("M1 input.list: host_id and fx_count", row["host_id"] == host and row["fx_count"] == 1, row)
-    # The plugin's width is decided once it is loaded (a brief re-allocation that re-asserts its state):
-    # let that settle before touching a parameter.
-    c.send("wait_idle", {"timeout_ms": 60000}); time.sleep(1.5)   # + the state re-assertion that follows
     k = cutoff_index(pid)
     check("M1 the AU answers its parameters (a Cutoff)", k is not None)
     c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.003})
@@ -276,7 +273,6 @@ def e9(c, level, fxp, instp, dev):
     check("M7 the FX instance is mounted", wait_loaded(fpid))
     row = next(d for d in c.send("input.list.midi_inputs")["midi_inputs"] if d["id"] == dev)
     check("M7 input.list.midi_inputs: fx_count 1, still heard", row["fx_count"] == 1 and row["heard"] is True, row)
-    c.send("wait_idle", {"timeout_ms": 60000}); time.sleep(1.5)   # the width decided at insertion + its state re-assertion settle first
     k7 = cutoff_index(fpid)
     c.send("plugin.set_param", {"plugin": fpid, "index": k7, "value": 0.003})
     time.sleep(0.5)
@@ -569,7 +565,6 @@ def e11(c, instp, dev):
     host = c.send("input.host", {"first": 0})["host_id"]
     pid = c.send("plugin.add", {"host": host, **LPF})["plugin"]["id"]
     loaded(pid)
-    c.send("wait_idle", {"timeout_ms": 60000}); time.sleep(1.5)   # the width decided at insertion + its state re-assertion settle first
     k, _ = cutoff(pid)
     c.send("plugin.set_param", {"plugin": pid, "index": k, "value": 0.003})
     time.sleep(0.3)

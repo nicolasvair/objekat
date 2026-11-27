@@ -197,12 +197,6 @@ try:
         def add_plugin(host, ident):
             p = send("plugin.add", {"host": host, "identifier": ident})["plugin"]["id"]
             wait_loaded(host, p)
-            send("wait_idle", {"timeout_ms": 60000})
-            # The width of a new plugin is decided once it is loaded (@see EditViewModel+InsertionWidth); when it
-            # changes (here: the pick the reverb left on the cable makes the signal mono), the engine re-asserts
-            # the plugin's state a moment later and overwrites a parameter set in that window (the cutoff set
-            # to its top, which the undo/redo checks then measured). Let it settle before touching parameters.
-            time.sleep(1.5)
             return p
 
         def fresh(name, lead=False):
