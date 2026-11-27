@@ -196,20 +196,27 @@ extension EditViewModel {
     /// The identity of a NEW bin: an explicit name is the user's (`userNamed`, follows nobody);
     /// otherwise the source's name made unique, and the source remembered. No source and no name:
     /// "FX link N".
-    func newFXLinkIdentity(explicitName: String?, source: UUID?) -> (name: String, source: UUID?, userNamed: Bool) {
+    ///
+    /// `sourceName`: the source's displayed name when the CALLER already holds the object, for the moments
+    /// when `find(id:)` cannot see it any more — a cut GROUP is taken out of `items` before its plugins
+    /// are copied (@see `_splitInternal`, case 3), and a bin named from the model alone came out as
+    /// "FX link N". The source id is kept all the same: the bin still follows the object's renaming.
+    func newFXLinkIdentity(explicitName: String?, source: UUID?,
+                           sourceName: String? = nil) -> (name: String, source: UUID?, userNamed: Bool) {
         if let explicitName {
             let trimmed = explicitName.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return (trimmed, nil, true) }
         }
-        if let source, let base = fxLinkSourceName(of: source) {
+        let held = sourceName.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        if let source, let base = fxLinkSourceName(of: source) ?? held {
             return (Self.uniqueName(base, avoiding: fxLinkNamesInUse(base: base)), source, false)
         }
         return (uniqueFXLinkName(nil), nil, false)
     }
 
     /// A new bin, named after `source` (or as the user said). Not registered.
-    func makeFXLink(name: String?, source: UUID?, plugins: [ObjectPlugin]) -> FXLink {
-        let identity = newFXLinkIdentity(explicitName: name, source: source)
+    func makeFXLink(name: String?, source: UUID?, sourceName: String? = nil, plugins: [ObjectPlugin]) -> FXLink {
+        let identity = newFXLinkIdentity(explicitName: name, source: source, sourceName: sourceName)
         var link = FXLink(name: identity.name, plugins: plugins)
         link.nameSourceID = identity.source
         link.userNamed = identity.userNamed
