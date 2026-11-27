@@ -71,8 +71,11 @@ STEREO = os.path.join(WORK, "stereo.wav")
 write_wav(MONO, 1)
 write_wav(STEREO, 2)
 
-proc = subprocess.Popen([BIN, "--headless", "--api", "--no-recent", "--language=en", "--socket=" + SOCK],
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+# --virtual-audio: a card input to put a chain on (no real card is touched).
+proc = subprocess.Popen([BIN, "--headless", "--api", "--no-recent", "--language=en", "--virtual-audio=in:2",
+                         "--socket=" + SOCK],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        env=dict(os.environ, OBJ_SKIP_REAL_CARD="1"))
 try:
     for _ in range(160):
         if os.path.exists(SOCK):
@@ -186,6 +189,62 @@ try:
         check("the new bin plugin is stereo on the MONO host too (the other member is stereo)",
               shape(layouts(a, ia[0])) == (2, 2) and shape(layouts(b, ib[0])) == (2, 2),
               (layouts(a, ia[0]), layouts(b, ib[0])))
+
+        # ---------------------------------------------------------------- a send's mini-chain
+        section("a send's mini-chain: stereo (the tapped copy is a pair), whatever the sender")
+        fresh("send")
+        m = send("object.add", {"path": MONO, "lane": 0, "start": 0.0})["id"]
+        aux = send("aux.create", {"start": 0.0, "end": 3.0, "lane": 2})["id"]
+        send("send.create", {"id": m, "aux": aux})
+        send("send.set_level", {"id": m, "aux": aux, "db": 0.0})
+        row = [r for r in send("send.list", {"id": m})["sends"] if r["aux"] == aux][0]
+        sh = row.get("chain_host")
+        check("send.list gives the send's chain_host", sh is not None, row)
+        if sh:
+            sp = add(sh, AU_LOWPASS)
+            check("AULowpass on the mini-chain of a MONO sender is 2 -> 2", shape(layouts(sh, sp)) == (2, 2),
+                  layouts(sh, sp))
+
+        # ---------------------------------------------------------------- a channel choice on the cable
+        section("a channel choice (L / R / C) on the cable that enters the plugin: mono")
+        fresh("pick")
+        s = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        send("chain.set_cable", {"host": s, "index": 0, "choice": "left"})     # the file's own choice, at the head
+        p1 = add(s, AU_LOWPASS)
+        check("head of a stereo clip set to Left: the plugin is 1 -> 1", shape(layouts(s, p1)) == (1, 1),
+              layouts(s, p1))
+        fresh("pick2")
+        s = send("object.add", {"path": STEREO, "lane": 0, "start": 0.0})["id"]
+        p1 = add(s, AU_LOWPASS)
+        check("(control: no choice, the first plugin is 2 -> 2)", shape(layouts(s, p1)) == (2, 2))
+        send("chain.set_cable", {"host": s, "index": 1, "choice": "sum"})      # a pick on the cable after it
+        p2 = add(s, AU_REVERB2)
+        check("a Sum pick before the next plugin: it is 1 -> 1", shape(layouts(s, p2)) == (1, 1),
+              layouts(s, p2))
+
+        # ---------------------------------------------------------------- an input chain
+        section("a card input's chain follows the input: mono input -> mono, pair -> stereo")
+        fresh("inputs")
+        try:
+            send("input.enable")
+            hm = send("input.host", {"first": 0, "count": 1})["host_id"]
+            pm = add(hm, AU_LOWPASS)
+            check("AULowpass on a MONO card input is 1 -> 1", shape(layouts(hm, pm)) == (1, 1), layouts(hm, pm))
+            fresh("inputs2")   # the pair on its own (a mono and a pair on the same channels exclude each other)
+            send("input.enable")
+            hr = send("input.host", {"first": 0, "count": 2})
+            print("       (input.host pair: %s)" % {k: hr.get(k) for k in ("mounted", "live", "kind")})
+            if not hr.get("live"):
+                # The virtual card does not bring a PAIR live (input.host answers live: false): the plugin
+                # would never be instantiated. Said, not failed — the mono half above is the proof that the
+                # chain follows the input; the pair is the same code path with count 2.
+                print("       (skipped: the virtual card's input pair is not live; stereo input NOT exercised)")
+            else:
+                ps = add(hr["host_id"], AU_LOWPASS)
+                check("AULowpass on a STEREO card input is 2 -> 2", shape(layouts(hr["host_id"], ps)) == (2, 2),
+                      layouts(hr["host_id"], ps))
+        except ObjekatError as e:
+            check("the input chains could be driven (needs the virtual input device)", False, e.message)
 
         # ---------------------------------------------------------------- during playback
         section("during playback: applied at once, the transport goes on")

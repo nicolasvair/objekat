@@ -65,6 +65,11 @@ extension EditViewModel {
     /// (the file is read once per path, @see ClipChannels), a stereo pair for everything else — a group, an
     /// aux, a MIDI clip's instrument, a bus.
     func sourceChannelWidth(hostID: UUID) -> Int {
+        // A card input's chain is fed with what the input IS: a mono input (one card channel, key "3") is one
+        // wire, a pair (key "1-2") two (@see InputRef.key, `registerAudioInputHost(first:count:)`).
+        if let key = inputChains.audioKey(ofHost: hostID), let ref = InputChains.inputRef(forKey: key) {
+            return SynopticWidthFlow.sourceWidth(fileChannels: ref.count)
+        }
         guard let o = find(id: hostID), case .clip(let path, _, _, _, _) = o.kind else {
             return SynopticWidthFlow.sourceWidth(fileChannels: nil)
         }

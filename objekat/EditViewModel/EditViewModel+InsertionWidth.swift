@@ -11,8 +11,10 @@ import Foundation
 //   • a plugin that REFUSES the width keeps its own (a stereo-only plugin on a mono signal: what follows
 //     is then counted stereo, by the ordinary width arithmetic — @see SynopticWidthFlow);
 //   • a group, an aux, a consolidated object (even one holding a single mono object), a MIDI clip's
-//     instrument: stereo. A send's mini-chain is not measured (its tapped copy is a stereo pair, and
-//     `cableInfos` says nothing for it): the plugin keeps its own width;
+//     instrument, a send's mini-chain (its tapped copy is a stereo pair): stereo. A card input's chain
+//     follows the input itself: a mono input (one card channel) is mono, a pair is stereo;
+//   • a choice of channel (L / R / C) laid on the cable that enters the plugin counts: the signal it
+//     receives is mono, so is the plugin;
 //   • an FX link: if ONE member of the link is stereo at that point, ALL the linked instances are stereo
 //     (`setChannelVariant` moves the whole link group together, and the definition carries the width);
 //   • a default preset that carries a width: the width decided here wins;
@@ -91,9 +93,16 @@ extension EditViewModel {
     /// (after its channel choice and the plugins above) for a clip. nil = not measurable here.
     private func incomingWidth(of pluginID: UUID, on host: UUID) -> Int? {
         if let o = find(id: host), o.isGroup || o.isAux || o.isConsolidateInstance { return 2 }
+        // A send's mini-chain: the tapped copy is a stereo pair.
+        if isSendChainHost(host) { return 2 }
         guard let infos = cableInfos(host: host),
               let info = infos.first(where: { $0.entering == pluginID })
         else { return nil }
+        // A choice of channel (L / R / C) laid on the cable that enters the plugin — a pick, or the file's own
+        // choice at the head of a stereo clip — makes the signal the plugin receives MONO.
+        // (`widthIn` is the width BEFORE that choice; an inherited fold of the plugin itself is not one.)
+        if info.widthIn >= 2, info.explicit, !info.inert, info.choice != .stereo,
+           info.pickID != nil || info.fileLevel { return 1 }
         return info.widthIn
     }
 
