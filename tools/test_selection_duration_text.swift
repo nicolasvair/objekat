@@ -37,26 +37,26 @@ enum SelectionDurationTextTest {
     check(0.0504,    "50,4 ms")
     check(0.0999,    "99,9 ms")
     check(0.09994,   "99,9 ms")
-    check(0.09996,   "100ms")       // rounds up to 100,0 -> whole-millisecond path, never "100,0 ms"
+    check(0.09996,   "100 ms")       // rounds up to 100,0 -> whole-millisecond path, never "100,0 ms"
     // From 100 ms up to the second: whole milliseconds only (unchanged).
-    check(0.1,       "100ms")
-    check(0.1004,    "100ms")
-    check(0.5,       "500ms")
-    check(0,         "0ms")
-    check(-1,        "0ms")
-    check(.nan,      "0ms")
+    check(0.1,       "100 ms")
+    check(0.1004,    "100 ms")
+    check(0.5,       "500 ms")
+    check(0,         "0 ms")
+    check(-1,        "0 ms")
+    check(.nan,      "0 ms")
     // Seconds + milliseconds, never a decimal.
-    check(24.5,      "24s 500ms")
-    check(24.05,     "24s 050ms")
+    check(24.5,      "24s 500 ms")
+    check(24.05,     "24s 050 ms")
     check(24,        "24s")
     check(1,         "1s")
     check(1.0004,    "1s")
-    check(0.9996,    "1s")          // rounds up across the second, never "1000ms"
-    check(59.9996,   "1 mn 00s")    // ... and across the minute, never "59s 1000ms"
+    check(0.9996,    "1s")          // rounds up across the second, never "1000 ms"
+    check(59.9996,   "1 mn 00s")    // ... and across the minute, never "59s 1000 ms"
     // Minutes: localised prefix + seconds on two digits.
     check(60,        "1 mn 00s")
-    check(64.5,      "1 mn 04s 500ms")
-    check(125.007,   "2 mn 05s 007ms")
+    check(64.5,      "1 mn 04s 500 ms")
+    check(125.007,   "2 mn 05s 007 ms")
     check(3600,      "60 mn 00s")
 
     print("\n\(total - fails.count)/\(total) passed")
