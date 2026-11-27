@@ -1145,6 +1145,9 @@ enum CommandAdapters {
             // that set is what multi-object operations really work on.
             "effective_ids": .array(vm.effectiveSelectedIDs.map { .string($0.uuidString) }),
             "count": .int(vm.selectedIDs.count),
+            // How many times a click has asked for the inspector to come forward without the selection
+            // changing (a click on an object under a time selection that already selected it).
+            "inspector_requests": .int(vm.inspectorRequests),
         ]
         // The insertion caret: the display row a plain click laid it on, and its instant. Reported
         // beside the range because it is the state the bare ↑ / ↓ move when nothing is selected.

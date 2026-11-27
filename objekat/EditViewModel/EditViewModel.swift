@@ -1116,6 +1116,16 @@ final class EditViewModel {
     /// nothing changed, so it cannot go stale.
     @PerceptionIgnored var selectionRestoredByTabSwitch: Set<UUID>? = nil
 
+    /// Counts the clicks that ask for the inspector to come forward even though the SELECTION did not change.
+    /// The panel brings the "Object" tab forward when the selection becomes a new, non-empty set
+    /// (@see ContentView) — which a click on an object inside a time selection that already enclosed it
+    /// does not: the range had selected it, the click selects the same set, nothing changes and the panel
+    /// stays on whatever tab it was left on. The click bumps this instead, and the view reacts to it.
+    var inspectorRequests: Int = 0
+
+    /// The click on an object (a body click) while a time selection existed asks to see that object.
+    func requestInspector() { inspectorRequests &+= 1 }
+
     /// A snapshot of the left panel, written into the project document.
     var currentLeftPanel: LeftPanelState { LeftPanelState(width: leftPanelWidth, tab: leftPanelTab) }
 

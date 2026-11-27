@@ -146,6 +146,11 @@ struct ContentView: View {
             guard !new.isEmpty, new != old, !fromList, !fromTabSwitch else { return }
             viewModel.leftPanelTab = .objet
         }
+        // A click on an object under a time selection that already selected it changes no selection, hence no
+        // "new selection" above: it asks for the inspector by this counter instead.
+        .onChangeCompat(of: viewModel.inspectorRequests) { _, _ in
+            viewModel.leftPanelTab = .objet
+        }
         .onChangeCompat(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
         }
