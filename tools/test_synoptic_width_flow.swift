@@ -204,6 +204,37 @@ struct WidthFlowTest {
             check(t.inputOf[b.id] == 1 && t.outputOf[b.id] == 1, "a transparent plugin passes the width through")
         }
 
+        // --- the warning: a mono (1 -> 1) plugin fed stereo ---------------------------------------
+        do {
+            let a = plugin("a"), b = plugin("b"), c = plugin("c")
+            let root = SynopticNode.series([.plugin(a), .plugin(b), .plugin(c)])
+            // stereo file: the 1 -> 1 plugin warns, the 1 -> 2 one (not asked) does not, a stereo one neither
+            let f = SynopticWidthFlow.compute(root: root, sourceWidth: 2,
+                                              channels: [a.id: mono, b.id: monoStereo, c.id: stereo])
+            check(f.stereoFoldedByMono == [a.id], "stereo into a 1 -> 1 plugin: it warns, and only it")
+            // mono file (stereo -> mono direction): no warning anywhere
+            let g = SynopticWidthFlow.compute(root: .series([.plugin(a)]), sourceWidth: 1, channels: [a.id: stereo])
+            check(g.stereoFoldedByMono.isEmpty, "mono signal into a stereo plugin: no warning")
+            // ... but what a stereo plugin then hands on IS stereo: a mono plugin after it warns
+            let g2 = SynopticWidthFlow.compute(root: .series([.plugin(a), .plugin(b)]), sourceWidth: 1,
+                                               channels: [a.id: stereo, b.id: mono])
+            check(g2.stereoFoldedByMono == [b.id], "a stereo plugin on a mono signal makes what follows stereo")
+            // an all-mono chain on a mono file: none
+            let h = SynopticWidthFlow.compute(root: root, sourceWidth: 1,
+                                              channels: [a.id: mono, b.id: mono, c.id: mono])
+            check(h.stereoFoldedByMono.isEmpty, "mono into mono: no warning")
+            // a pick laid on the cable that enters it (L / R / C): the signal is mono, no warning
+            var picked = SynopticNode.series([.plugin(a), .plugin(b), .plugin(c)])
+            picked.cablePicks = [0: .left]
+            let p = SynopticWidthFlow.compute(root: picked, sourceWidth: 2,
+                                              channels: [a.id: mono, b.id: mono, c.id: mono])
+            check(p.stereoFoldedByMono.isEmpty, "a choice of channel before the plugin: it is fed mono, no warning")
+            // bypassed: it folds nothing
+            let off = plugin("off", enabled: false)
+            let q = SynopticWidthFlow.compute(root: .series([.plugin(off)]), sourceWidth: 2, channels: [off.id: mono])
+            check(q.stereoFoldedByMono.isEmpty, "a bypassed mono plugin does not warn")
+        }
+
         // --- bypass, grey, bin off -------------------------------------------------------------
         do {
             let a = plugin("a", enabled: false), b = plugin("b", greyed: true), c = plugin("c")
