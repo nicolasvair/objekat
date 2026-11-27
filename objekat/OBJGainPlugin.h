@@ -137,36 +137,22 @@ public:
         // mais le canal droit reste vide, et le clip ne sortait que par la gauche. On recopie
         // donc le gauche à droite AVANT le gain, ce qui centre le mono et rend le pan opérant.
         //
-        // Deux sources d'information, dans cet ordre :
-        //   • le nombre de canaux que le GRAPHE déclare à l'entrée de ce fader. C'est un fait
-        //     dur, disponible à toute profondeur d'imbrication et sans dépendre d'aucune
-        //     résolution de clip : `createNodeForPlugin` appelle
-        //     `getNumOutputChannelsGivenInputs (incomingChannels)`
-        //     (tracktion_EditNodeBuilder.cpp) AVANT de construire le PluginNode, dont le
-        //     constructeur déclenche cet `initialise` — l'ordre est garanti, la valeur est là.
-        //     Et comme `getBusses()` ne déclare aucun canal requis, rien n'élargit le buffer en
-        //     amont : un fichier mono arrive bien ici avec 1 canal ;
-        //   • à défaut, la configuration de canaux du clip porteur. Elle reste nécessaire quand
-        //     un FX en amont a déjà élargi le buffer à deux canaux dont le droit est vide.
+        // Une seule source d'information : le nombre de canaux que le GRAPHE déclare à l'entrée
+        // de ce fader. C'est un fait dur, disponible à toute profondeur d'imbrication et sans
+        // dépendre d'aucune résolution de clip : `createNodeForPlugin` appelle
+        // `getNumOutputChannelsGivenInputs (incomingChannels)` (tracktion_EditNodeBuilder.cpp)
+        // AVANT de construire le PluginNode, dont le constructeur déclenche cet `initialise` —
+        // l'ordre est garanti, la valeur est là. Et comme `getBusses()` ne déclare aucun canal
+        // requis, rien n'élargit le buffer en amont : un fichier mono arrive bien ici avec 1 canal.
         //
-        // Pourquoi le relevé du graphe passe en premier — l'ordre vient d'un bug, mais il se
-        // justifie sans lui : `getOwnerClip()` ne résolvait rien dès qu'un clip était enfoui
-        // dans DEUX ContainerClips ou plus (grouper deux groupes dans un troisième renvoyait
-        // alors tous les monos à gauche), parce que `Plugin::getOwnerClip()` délègue à
-        // `findClipForID (Edit&, EditItemID)`, qui ne descendait QU'UN niveau de container.
-        // Corrigé dans le moteur vendored le 2026-08-13 (`engine-patches/3.5/0027`) : la
-        // recherche est désormais récursive, et le second test redevient fiable à toute
-        // profondeur. Il reste second : le graphe dit ce qui ENTRE vraiment dans ce fader, le
-        // clip ne dit que ce qu'il y avait à la source.
-        //
-        // Un ContainerClip est EXCLU du second test : un bus (groupe ou aux) n'a pas de fichier
-        // source, sa « configuration de canaux » ne dit rien de ce qui le traverse — s'y fier
-        // repliait le stéréo d'un groupe sur son canal gauche.
+        // Il y avait une seconde source (la configuration de canaux du clip porteur, « le fichier
+        // est mono »). Elle est SUPPRIMÉE (2026-11-27) : elle repliait sur le canal gauche toute
+        // sortie stéréo d'un plugin placé sur un fichier mono (un plugin 2→2, une réverb…), alors
+        // que ce signal-là est réellement stéréo. C'est désormais la largeur RÉELLE du signal qui
+        // décide ; un plugin interne qui élargit 1→2 recopie lui-même le gauche à droite
+        // (OBJWindowFadePlugin), de sorte qu'aucun plugin en aval n'ait besoin de le deviner
+        // d'après le fichier.
         sourceIsMono = (numInputChannels == 1);
-        if (! sourceIsMono)
-            if (auto* clip = dynamic_cast<AudioClipBase*> (getOwnerClip()))
-                if (dynamic_cast<ContainerClip*> (clip) == nullptr)
-                    sourceIsMono = clip->getActiveChannelConfiguration().getNumChannels() == 1;
 
         currentSampleRate = info.sampleRate;
         smoothedGainL.reset (info.sampleRate, rampSeconds);

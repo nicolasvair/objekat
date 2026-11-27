@@ -254,6 +254,9 @@ final class EditViewModel {
     /// the model, so the document must stay in place for as long as one runs (`tabSwitchBlocker`,
     /// `Quiescence`). The cancel switches are kept by job so that `video.import_cancel` stops them all.
     var videoImportsInFlight = 0
+    /// Width decisions waiting for a freshly inserted plugin to finish loading (@see EditViewModel+InsertionWidth);
+    /// `Quiescence` reports them so a script's `wait_idle` covers the decision.
+    var insertionWidthsPending = 0
     var videoImportCancels: [UUID: VideoImportCancel] = [:]
     /// What the hand's HUD would show: the file being imported and how far its audio has got (0...1).
     var videoImportName: String? = nil

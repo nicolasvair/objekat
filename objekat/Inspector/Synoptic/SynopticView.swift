@@ -589,6 +589,7 @@ struct SynopticView: View {
             onDropPlugin: actions.onDrop.map { f in { payload, flags in f(.beforeCard(c.plugin.id), payload, flags) } },
             onDropSend: actions.onSendDrop.map { f in { payload in f(.place(.beforeCard(c.plugin.id)), payload) } },
             sidechainBadge: isStage ? nil : actions.sidechainBadge?(c.plugin.id),
+            monoFoldWarning: !isStage && widthFlow.stereoFoldedByMono.contains(c.plugin.id),
             // A gain stage's faces read and write their values through the bound view (@see
             // SynopticGainStageControls); a plugin card ignores it.
             actions: actions
@@ -607,11 +608,11 @@ struct SynopticView: View {
                 Toggle(Self.variantTitle(e.variant), isOn: Binding(
                     get: { e.isCurrent },
                     set: { _ in if !e.isCurrent { actions.onSetChannelVariant?(id, e.variant) } }))
-                .disabled(!e.supported || m.blockedByPlayback)
+                .disabled(!e.supported || m.blockedByRecording)
             } }
-            if m.blockedByPlayback || m.linkedCount > 0 || !m.exact {
+            if m.blockedByRecording || m.linkedCount > 0 || !m.exact {
                 Divider()
-                if m.blockedByPlayback { Text(L("synoptic.menu.channels.playing")) }
+                if m.blockedByRecording { Text(L("synoptic.menu.channels.recording")) }
                 if m.linkedCount > 0 { Text(L("synoptic.menu.channels.linked", m.linkedCount)) }
                 if !m.exact { Text(L("synoptic.menu.channels.approximate")) }
             }

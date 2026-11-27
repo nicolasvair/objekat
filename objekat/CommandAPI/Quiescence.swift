@@ -67,6 +67,9 @@ enum Quiescence {
             if vm.isImportingVideo {
                 reasons.append("video import running (\(vm.videoImportsInFlight))")
             }
+            if vm.insertionWidthsPending > 0 {
+                reasons.append("plugin width decision (\(vm.insertionWidthsPending))")
+            }
             if vm.isScanning {
                 reasons.append("plugin scan")
             }

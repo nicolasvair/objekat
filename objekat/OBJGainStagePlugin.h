@@ -134,11 +134,9 @@ public:
 
     void initialise (const PluginInitialisationInfo& info) override
     {
+        // The REAL width of the signal decides (no "the file is mono" fallback: it folded to the left
+        // channel any stereo output of a plugin sitting on a mono file). @see ObjGainPlugin::initialise
         sourceIsMono = (numInputChannels == 1);
-        if (! sourceIsMono)
-            if (auto* clip = dynamic_cast<AudioClipBase*> (getOwnerClip()))
-                if (dynamic_cast<ContainerClip*> (clip) == nullptr)
-                    sourceIsMono = clip->getActiveChannelConfiguration().getNumChannels() == 1;
 
         currentSampleRate = info.sampleRate;
         smoothedGainL.reset (info.sampleRate, rampSeconds);

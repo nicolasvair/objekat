@@ -27,6 +27,9 @@ struct SynopticCardView: View {
     var onDropSend: ((_ payload: SendDragPayload) -> Void)? = nil
     /// This plugin's sidechain key, said in a tooltip behind a small glyph (nil = none).
     var sidechainBadge: SidechainBadge? = nil
+    /// This plugin is in MONO (1 -> 1) and is fed a STEREO signal: it folds it. A small warning tag says so
+    /// (@see SynopticWidthFlow.stereoFoldedByMono).
+    var monoFoldWarning: Bool = false
 
     /// The bound view's actions — read ONLY by a gain stage's faces (@see SynopticGainStageControls): its
     /// values (`gainStageValues`), its writes (`onSetGainStage`, `onBeginGainEdit`) and the automation row a
@@ -116,6 +119,20 @@ struct SynopticCardView: View {
                     .offset(x: 4, y: 14)
                     .help(L("synoptic.card.trims.help.comp", PluginExpertBar.dbText(plugin.trimInDb),
                             PluginExpertBar.dbText(plugin.trimOutDb), PluginExpertBar.dbText(plugin.trimCompDb)))
+            }
+        }
+        // The warning of a mono plugin fed stereo, OUTSIDE the card, above its top-right corner.
+        .overlay(alignment: .topTrailing) {
+            if monoFoldWarning {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color.orange)
+                    .padding(.horizontal, 4)
+                    .frame(height: 13)
+                    .background(Capsule().fill(Color(nsColor: .controlBackgroundColor)))
+                    .overlay(Capsule().strokeBorder(Color.orange.opacity(0.6), lineWidth: 1))
+                    .offset(x: -4, y: -15)
+                    .help(L("synoptic.card.monoFold.warning"))
             }
         }
         // The sidechain key, OUTSIDE the card: a small tag hanging above its top-left corner, in the

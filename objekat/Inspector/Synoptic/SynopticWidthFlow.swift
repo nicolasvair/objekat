@@ -228,6 +228,12 @@ struct SynopticWidthFlow: Equatable {
     /// For each id `adaptations` holds a MERGE under (a card's node or its plugin): the plugin's own id,
     /// the one a fold is set on.
     var mergePlugin: [UUID: UUID] = [:]
+    /// The plugins in MONO (1 -> 1) that are fed a STEREO signal they fold (a file replaced mono -> stereo, a
+    /// choice of channel taken off, a card moved, an input changed): the card says so in a warning tag. The
+    /// width of a plugin is decided once, at insertion (@see EditViewModel+InsertionWidth), so nothing else
+    /// tells the hand the chain changed under it. Not the other way round (a stereo plugin on a mono signal is
+    /// not a warning), and not a 1 -> 2 plugin.
+    var stereoFoldedByMono: Set<UUID> = []
     /// The width of the audio file (or of a bus's input), the file's channel choice when it can take one
     /// (a stereo audio file), and the width the chain ends with.
     var sourceWidth: Int = 2
@@ -424,6 +430,7 @@ struct SynopticWidthFlow: Equatable {
                     if case .merge = a {
                         flow.mergePlugin[p.id] = p.id
                         flow.mergePlugin[node.id] = p.id
+                        if ch.inputs == 1 && ch.outputs <= 1 { flow.stereoFoldedByMono.insert(p.id) }
                     }
                 }
             }
