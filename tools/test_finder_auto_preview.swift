@@ -101,6 +101,42 @@ func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
           near(A.endPoint(pointI: 2, pointO: 2, playerDuration: 6), 6))
     check("remaining never negative", near(A.remaining(pointI: 5, pointO: 0, playerDuration: 3), 0))
 
+    // ── The end of a preview whose head was placed by a click or a scrub ───────────────────
+    check("head inside I–O: it ends at O", near(A.endPoint(from: 2, pointO: 5, playerDuration: 9), 5))
+    check("head inside I–O: remaining = O - head", near(A.remaining(from: 2, pointO: 5, playerDuration: 9), 3))
+    check("head BEFORE I (outside I–O): it still ends at O", near(A.endPoint(from: 0.5, pointO: 5, playerDuration: 9), 5))
+    check("head PAST O: it ends at the end of the file", near(A.endPoint(from: 6, pointO: 5, playerDuration: 9), 9))
+    check("head PAST O: remaining = file end - head", near(A.remaining(from: 6, pointO: 5, playerDuration: 9), 3))
+    check("head exactly ON O: the end of the file (O is no longer ahead)",
+          near(A.endPoint(from: 5, pointO: 5, playerDuration: 9), 9))
+    check("head at the very end: nothing left", near(A.remaining(from: 9, pointO: 5, playerDuration: 9), 0))
+    check("head beyond the file: never negative", near(A.remaining(from: 12, pointO: 5, playerDuration: 9), 0))
+    check("the point-I forms agree with the head forms",
+          near(A.remaining(pointI: 1, pointO: 3.5, playerDuration: 9), A.remaining(from: 1, pointO: 3.5, playerDuration: 9))
+          && near(A.endPoint(pointI: 2, pointO: 2, playerDuration: 6), A.endPoint(from: 2, pointO: 2, playerDuration: 6)))
+
+    // ── Where a point of the waveform lands in the file ────────────────────────────────────
+    check("headTime: the left edge is 0", near(A.headTime(x: 0, width: 200, duration: 10), 0))
+    check("headTime: the middle is half the duration", near(A.headTime(x: 100, width: 200, duration: 10), 5))
+    check("headTime: the right edge is the duration", near(A.headTime(x: 200, width: 200, duration: 10), 10))
+    check("headTime: left of the waveform clamps to 0", near(A.headTime(x: -30, width: 200, duration: 10), 0))
+    check("headTime: right of the waveform clamps to the duration", near(A.headTime(x: 999, width: 200, duration: 10), 10))
+    check("headTime: an empty waveform or an unknown duration is 0",
+          near(A.headTime(x: 50, width: 0, duration: 10), 0) && near(A.headTime(x: 50, width: 200, duration: 0), 0))
+    check("headTime: NaN is 0", near(A.headTime(x: .nan, width: 200, duration: 10), 0))
+
+    // ── Previous / next: folders are passed over ───────────────────────────────────────────
+    //                          0      1     2      3      4     5
+    let rows: [Bool] = [true, false, true, true, false, false]    // dir, file, dir, dir, file, file
+    check("next from a file skips the folders in between", A.adjacentFileIndex(isDirectory: rows, from: 1, step: 1) == 4)
+    check("previous from a file skips the folders in between", A.adjacentFileIndex(isDirectory: rows, from: 4, step: -1) == 1)
+    check("next from the file right before another is that file", A.adjacentFileIndex(isDirectory: rows, from: 4, step: 1) == 5)
+    check("next from the last file: nowhere", A.adjacentFileIndex(isDirectory: rows, from: 5, step: 1) == nil)
+    check("previous from the first file (only a folder above): nowhere", A.adjacentFileIndex(isDirectory: rows, from: 1, step: -1) == nil)
+    check("a current row that does not exist: nowhere", A.adjacentFileIndex(isDirectory: rows, from: 9, step: 1) == nil)
+    check("a zero step: nowhere", A.adjacentFileIndex(isDirectory: rows, from: 1, step: 0) == nil)
+    check("a list of folders only: nowhere", A.adjacentFileIndex(isDirectory: [true, true, false], from: 2, step: -1) == nil)
+
     print("\n\(total - fails.count)/\(total) ok")
     exit(fails.isEmpty ? 0 : 1)
 } }

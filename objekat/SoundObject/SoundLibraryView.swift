@@ -184,9 +184,17 @@ final class SoundLibraryViewModel {
     var pointS: Double = 0
     private var selectedDuration: Double = 0
 
-    // Preview player
-    private var player: AVAudioPlayer? = nil
+    // Preview player. `player` is read by the playhead's own redraw (outside any observation
+    // tracking) and only ever changes together with `isPlaying`, hence not observed.
+    @PerceptionIgnored private var player: AVAudioPlayer? = nil
     var isPlaying: Bool = false
+    /// Where the mini player's head stands in the file, in seconds, while NOT playing: where a click or a
+    /// scrub put it, or where the sound stopped. nil = no head (a file just selected). While playing the
+    /// head is the player's own position (@see `livePlayerTime`), read at each frame by the view.
+    private(set) var previewHead: Double? = nil
+    /// The stop timer of the sound that is up (point O, or the end of the file) — cancelled and re-armed at
+    /// every move of the head, since its delay was computed for the position the head has just left.
+    @PerceptionIgnored private var stopTask: Task<Void, Never>? = nil
     /// Bumped by every `stopPreview`: the stop timer of a preview only cuts the preview it was armed
     /// for (@see FinderAutoPreview.timerApplies). Without it, the timer of a preview stopped by hand
     /// cut the NEXT one at the first one's end.
@@ -779,6 +787,7 @@ final class SoundLibraryViewModel {
     }
 
     private func resetIOSForDuration(_ dur: Double) {
+        previewHead = nil
         selectedDuration = dur
         pointI = 0
         pointO = dur
@@ -804,40 +813,102 @@ final class SoundLibraryViewModel {
 
     /// `byHand`: the preview was launched by the hand (the second click on a file, the play button) and not
     /// by the automatic mode itself — only that turns the mode on.
-    private func startPreview(node: SoundLibraryNode, byHand: Bool) {
+    /// `start`: where the sound begins, in seconds of the file — nil = point I (the play button, an arrow).
+    /// A click in the waveform gives it, and may give an instant OUTSIDE I–O.
+    private func startPreview(node: SoundLibraryNode, byHand: Bool, from start: Double? = nil) {
         stopPreview(.automatic)   // one file giving way to the next: the mode is neither started nor ended by it
         guard let p = try? AVAudioPlayer(contentsOf: node.url) else { return }
         autoPreviewMode.started(byHand: byHand)
         // Plays out of the SAME audio device as the engine (the toolbar choice) — without this,
         // AVAudioPlayer plays on the default system device. nil (not found) ⇒ the system default.
         if let uid = AudioOutputDevice.shared.uid { p.currentDevice = uid }
-        p.currentTime = pointI
+        p.volume = Float(ObjekatPreferences.shared.previewVolume)
+        let from = start.map { min(max($0, 0), max(p.duration, 0)) } ?? pointI
+        p.currentTime = from
         p.play()
         player = p
         isPlaying = true
-        // An automatic stop at point O — or at the end of the file when the length is not known yet
-        // (pointO is 0 until the media has loaded). The timer only cuts the preview it was armed for.
-        let remaining = FinderAutoPreview.remaining(pointI: pointI, pointO: pointO,
-                                                    playerDuration: p.duration)
+        previewHead = from
+        armPreviewStop(from: from)
+    }
+
+    /// An automatic stop at point O when it lies ahead of `start` — otherwise at the end of the file, which
+    /// is also what the player reports when the length is not known yet (pointO is 0 until the media has
+    /// loaded). Arming bumps the generation, so the timer of the position the head has just left can no
+    /// longer cut the sound; the new one only cuts the preview it was armed for.
+    private func armPreviewStop(from start: Double) {
+        stopTask?.cancel()
+        stopTask = nil
+        guard let p = player else { return }
+        let end = FinderAutoPreview.endPoint(from: start, pointO: pointO, playerDuration: p.duration)
+        let remaining = max(0, end - start)
+        previewGen &+= 1
         let gen = previewGen
-        Task {
+        stopTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard let self else { return }
                 if FinderAutoPreview.timerApplies(armed: gen, current: self.previewGen), self.isPlaying {
-                    self.stopPreview(.automatic)   // the end of the file: the mode stays ("locked")
+                    self.stopPreview(.automatic, head: end)   // the end: the mode stays ("locked")
                 }
             }
         }
     }
 
+    /// The hand puts the head at `time` in the mini player's waveform — a click, then every step of a
+    /// drag (the scrub). The sound that is playing follows the head (no restart: a continuous scrub);
+    /// a silent player starts there, inside I–O or not. Either way the stop timer is re-armed for the new
+    /// position.
+    func placeHead(node: SoundLibraryNode, at time: Double) {
+        if isPlaying, let p = player {
+            let t = min(max(time, 0), max(p.duration, 0))
+            p.currentTime = t
+            previewHead = t
+            armPreviewStop(from: t)
+        } else {
+            startPreview(node: node, byHand: true, from: time)
+        }
+    }
+
+    /// The player's own position, for the playhead's per-frame redraw. nil when nothing plays.
+    func livePlayerTime() -> Double? { isPlaying ? player?.currentTime : nil }
+
+    /// The previous / next file of the shown rows, folders passed over — nil at either end of the list.
+    func adjacentFile(_ step: Int) -> SoundLibraryNode? {
+        let rows = displayedRows
+        guard let id = selectedID, let i = rows.firstIndex(where: { $0.id == id }),
+              let j = FinderAutoPreview.adjacentFileIndex(isDirectory: rows.map(\.isDirectory),
+                                                          from: i, step: step) else { return nil }
+        return rows[j]
+    }
+
+    /// The previous (−1) / next (+1) button: selects that file as an arrow would, and if a sound was
+    /// playing, plays the new one from its point I.
+    func stepFile(_ step: Int) {
+        guard let node = adjacentFile(step) else { return }
+        let wasPlaying = isPlaying
+        focusCursor(on: node)    // stops the sound without ending the mode, resets I / O / S
+        if wasPlaying { startPreview(node: node, byHand: false) }
+    }
+
+    /// The slider moved: the sound that is playing follows (the level itself lives in the preferences).
+    func applyPreviewVolume() {
+        player?.volume = Float(ObjekatPreferences.shared.previewVolume)
+    }
+
     /// Stops the sound and cancels what was planned. `.explicit` (the default: a stop button, the view going
     /// away, a folder left) also turns the automatic preview mode off; `.automatic` (the end of the file, a
-    /// change of file) leaves it as it was.
-    func stopPreview(_ stop: FinderAutoPreview.Stop = .explicit) {
+    /// change of file) leaves it as it was. `head`: where the sound ended, when the caller knows better than
+    /// the player (a player that has just reached the end of the file reads 0).
+    func stopPreview(_ stop: FinderAutoPreview.Stop = .explicit, head: Double? = nil) {
         autoPreviewMode.stopped(stop)
         previewGen &+= 1
         autoPreviewTask?.cancel()
         autoPreviewTask = nil
+        stopTask?.cancel()
+        stopTask = nil
+        if let p = player { previewHead = head ?? (p.isPlaying ? p.currentTime : previewHead) }
         player?.stop()
         player = nil
         isPlaying = false
@@ -965,7 +1036,7 @@ struct SoundLibraryView: View {
                 if let node = vm.selectedNode {
                     Divider()
                     SoundLibraryMiniPlayerView(node: node, vm: vm)
-                        .frame(height: 90)
+                        .frame(height: 106)
                 }
             }
         }
@@ -1331,20 +1402,31 @@ struct MiniWaveformView: View {
 
 // MARK: - Mini player with I/O/S handles
 
+/// The mini player of the Finder tab: the waveform of the file selected, its three handles (I, O, S),
+/// a head, and one transport row.
+///
+/// The WAVEFORM is the transport's surface: a click puts the head there AND plays from it, a drag
+/// scrubs (the sound follows the hand), inside I–O or not. The handles sit ABOVE that surface, so a
+/// hand that aims at I, O or S still gets the handle. Previous / next sit beside play / stop and
+/// pass over the folders; the level slider is the app's one preview level (@see
+/// `ObjekatPreferences.previewVolume`). The panel can be 250 pt wide: the transport and the I / S / O
+/// readings are on two rows for that reason.
 private struct SoundLibraryMiniPlayerView: View {
     let node: SoundLibraryNode
     var vm: SoundLibraryViewModel
 
-    // Drag states for the handles
-    @State private var draggingI = false
-    @State private var draggingO = false
-    @State private var draggingS = false
-
     var body: some View { WithPerceptionTracking { perceivedBody } }
 
     @ViewBuilder private var perceivedBody: some View {
+        // Read here, inside the tracked body: a `Binding(get:)` or a `TimelineView` closure is
+        // evaluated by SwiftUI OUTSIDE it, where the Perception backport would see nothing.
+        let volume = ObjekatPreferences.shared.previewVolume
+        let playing = vm.isPlaying
+        let restHead = vm.previewHead
+        let hasPrevious = vm.adjacentFile(-1) != nil
+        let hasNext = vm.adjacentFile(1) != nil
         VStack(spacing: 0) {
-            // Waveform with handles
+            // Waveform with its handles
             GeometryReader { geo in WithPerceptionTracking {
                 let w = geo.size.width
                 let h = geo.size.height
@@ -1379,6 +1461,31 @@ private struct SoundLibraryMiniPlayerView: View {
                         }
                     }
 
+                    // The transport surface: a click places the head and plays, a drag scrubs. Under
+                    // the handles (they come after it in this stack), so they keep their priority.
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .gesture(DragGesture(minimumDistance: 0)
+                            .onChanged { v in
+                                vm.placeHead(node: node, at: FinderAutoPreview.headTime(x: v.location.x, width: w, duration: dur))
+                            }
+                            // No `onEnded`: the mouse-down already placed the head (and started the sound);
+                            // placing it again at the mouse-up would restart a sound that has just ended.
+                            )
+
+                    // The head: the player's own position, redrawn while playing; where it stopped otherwise.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { _ in
+                        let t: Double? = playing ? vm.livePlayerTime() : restHead
+                        if let t {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.95))
+                                .frame(width: 1.5, height: h)
+                                .offset(x: min(max(t / dur, 0), 1) * w - 0.75)
+                        }
+                    }
+                    .frame(width: w, height: h, alignment: .topLeading)
+                    .allowsHitTesting(false)
+
                     // Handle I (yellow, left)
                     handleLine(x: vm.pointI / dur * w, height: h, color: .yellow, label: "I")
                         .gesture(DragGesture(minimumDistance: 1)
@@ -1403,20 +1510,50 @@ private struct SoundLibraryMiniPlayerView: View {
             .background(Color(nsColor: .underPageBackgroundColor))
             .clipped()
 
-            // Controls: play/stop plus the I/O/S values
-            HStack(spacing: 8) {
-                Button(action: { vm.togglePreview(node: node) }) {
-                    Image(systemName: vm.isPlaying ? "stop.fill" : "play.fill")
-                        .font(.system(size: 10))
+            VStack(spacing: 2) {
+                // Transport: previous / play-stop / next, then the level
+                HStack(spacing: 8) {
+                    Button(action: { vm.stepFile(-1) }) {
+                        Image(systemName: "backward.end.fill").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasPrevious)
+                    .help(L("library.player.previous"))
+
+                    Button(action: { vm.togglePreview(node: node) }) {
+                        Image(systemName: playing ? "stop.fill" : "play.fill")
+                            .font(.system(size: 10))
+                            .frame(width: 12)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { vm.stepFile(1) }) {
+                        Image(systemName: "forward.end.fill").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasNext)
+                    .help(L("library.player.next"))
+
+                    Image(systemName: "speaker.wave.2.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                    Slider(value: Binding(get: { volume },
+                                          set: { ObjekatPreferences.shared.previewVolume = $0
+                                                 vm.applyPreviewVolume() }),
+                           in: 0...1)
+                        .controlSize(.mini)
+                        .frame(minWidth: 40)
+                        .help(L("library.player.volume"))
                 }
-                .buttonStyle(.plain)
                 .foregroundStyle(.primary)
 
-                Spacer()
-
-                Group {
+                // The I / S / O readings
+                HStack(spacing: 0) {
                     iosLabel("I", time: vm.pointI, color: .yellow)
+                    Spacer(minLength: 4)
                     iosLabel("S", time: vm.pointI + vm.pointS, color: .cyan)
+                    Spacer(minLength: 4)
                     iosLabel("O", time: vm.pointO, color: .yellow)
                 }
             }

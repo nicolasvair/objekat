@@ -16,6 +16,14 @@ final class ObjekatPreferences {
         didSet { UserDefaults.standard.set(soundLibraryFolder, forKey: Self.soundLibraryFolderKey) }
     }
 
+    /// The level of the Finder tab's mini player (the preview of a sound before it is imported), 0…1.
+    /// One level for the whole app, kept from one launch to the next: it is a listening preference,
+    /// not a project's.
+    var previewVolume: Double {
+        didSet { UserDefaults.standard.set(previewVolume, forKey: Self.previewVolumeKey) }
+    }
+    private static let previewVolumeKey = "pref.previewVolume"
+
     private static let soundLibraryFolderKey = "pref.soundLibraryFolder"
     /// The old name. To be removed when nobody comes from a version that wrote it any more.
     private static let legacySoundLibraryFolderKey = "pref.sonoth\u{00E8}queFolder"
@@ -44,6 +52,8 @@ final class ObjekatPreferences {
     static let diagnosticLogKey = "pref.diagnosticLog"
 
     private init() {
+        previewVolume = (UserDefaults.standard.object(forKey: Self.previewVolumeKey) as? Double)
+            .map { min(max($0, 0), 1) } ?? 1
         soundLibraryFolder = UserDefaults.standard.string(forKey: Self.soundLibraryFolderKey)
             ?? UserDefaults.standard.string(forKey: Self.legacySoundLibraryFolderKey)
             ?? ""
