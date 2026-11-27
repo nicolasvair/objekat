@@ -1110,8 +1110,8 @@ extension CommandRegistry {
         for (name, verb) in [("edit.copy", "⌘C"), ("edit.cut", "⌘X"), ("edit.paste", "⌘V")] {
             register(name,
                      summary: "\(verb), as the keyboard does it: the surface that holds the keyboard "
-                            + "(plugin chain, automation band, piano roll notes, time selection, "
-                            + "objects) takes it. Answers `branch`: plugins | automation | "
+                            + "(send cards, plugin chain, automation band, piano roll notes, time selection, "
+                            + "objects) takes it. Answers `branch`: sends | plugins | automation | "
                             + "automation_caret | midi_notes | time_selection | objects | none.",
                      undo: .handled) { _ in
                 let vm = try CommandContext.shared.requireViewModel()

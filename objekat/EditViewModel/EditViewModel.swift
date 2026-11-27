@@ -223,6 +223,20 @@ final class EditViewModel {
     /// live instances. Beside the objects' clipboard, not inside it — a chain fragment is not an
     /// object, and ⌘V has to know which of the two it is pasting.
     var pluginClipboard: [ObjectPlugin] = []
+    /// The send CARDS selected in the signal view (their aux ids) and the object they leave (the one the
+    /// view shows). Exclusive with the plugin selection, and for the same reason it is not with `selectedIDs`:
+    /// the object selection is what SHOWS the cards. While `selectedSendSenderID` is set the cards hold the
+    /// keyboard (⌫ ⌘C ⌘V), and the first click back in the timeline gives it back
+    /// (@see clearPluginSelection, which lets go of this one too). @see EditViewModel+SendClipboard
+    var selectedSendAuxIDs: Set<UUID> = []
+    var selectedSendSenderID: UUID? = nil
+    /// What ⌘C put aside from a send's cards: level, switch, position, mini-chain and level curve.
+    /// Kept on the view-model, like the other clipboards, so that it survives a change of tab.
+    var sendClipboard: SendClipboard? = nil
+    /// True while the SENDS are the last thing copied (every other copy puts it back to false): what lets a
+    /// ⌘V in the timeline, over several selected objects, land the sends on all of them
+    /// (@see performPasteShortcut).
+    var sendClipboardIsLive = false
     /// The objects whose BAKE (a background render) is UNDER WAY: a soft lock. The sub-tree
     /// stays live and playable, but creating/opening/detaching/dissolving is blocked while
     /// the render runs. Emptied in the render's completion. See EditViewModel+Bake.
@@ -408,6 +422,8 @@ final class EditViewModel {
     @PerceptionIgnored var nativeEditorHosts: [UUID: UUID] = [:]
     /// The send brought forward by the Send tool (a drag/hover on a knob) — drives the visual accent.
     var sendToolFocus: SendFocus? = nil
+    /// The last click of the Send tool on a knob column (@see SendToolTap). Not observed: no view draws it.
+    @PerceptionIgnored var sendToolLastTap: SendToolTap? = nil
     /// The cheatsheet shown (a tool key or a modifier held ~0.6 s); nil = hidden.
     /// See ShortcutCheatsheet / CheatsheetHold.
     var cheatsheet: CheatsheetContext? = nil
@@ -422,8 +438,6 @@ final class EditViewModel {
     // MARK: - Audio bridge (sidechain) — @see EditViewModel+Bridge
     //
     // What the last sync derived, for the UI and the API. DERIVED, never saved, never in an undo
-    /// The last click of the Send tool on a knob column (@see SendToolTap). Not observed: no view draws it.
-    @PerceptionIgnored var sendToolLastTap: SendToolTap? = nil
     // snapshot: `BridgeScope.plan` recomputes it from the model at every sync.
 
     /// The scope / cycle / rank plan of the current model.

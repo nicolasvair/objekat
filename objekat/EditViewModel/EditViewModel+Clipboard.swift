@@ -261,6 +261,7 @@ extension EditViewModel {
     /// Always stores (absStart, displayLane) — a uniform space, with no knowledge of the group.
     func copySelected() {
         guard !selectedIDs.isEmpty else { return }
+        sendClipboardIsLive = false     // a newer copy: ⌘V no longer means the sends
 
         // The content root of an open consolidated object is not copied alone (E7); the stage is,
         // as the CLOSED instance it stands for (@see itemsFoldingOpenSessions).
@@ -554,6 +555,7 @@ extension EditViewModel {
     /// Copies the fragments in the time selection (display lanes).
     func copyTimeSelection() {
         guard let sel = timeSelection else { return }
+        sendClipboardIsLive = false     // a newer copy: ⌘V no longer means the sends
         let lo = sel.timeRange.lowerBound
         let hi = sel.timeRange.upperBound
         let fragments = makeTimeSelectionFragments(lo: lo, hi: hi, lanes: sel.lanes)

@@ -48,6 +48,7 @@ extension EditViewModel {
     /// while the hand was plainly in the signal view. A click in the timeline gives everything
     /// back (@see clearPluginSelection).
     func setPluginSelection(_ ids: Set<UUID>, host: UUID) {
+        clearSendSelection()                 // the two selections hold the keyboard one at a time
         selectedPluginHostID = host
         selectedPluginIDs = ids
     }
@@ -71,6 +72,7 @@ extension EditViewModel {
     /// canvas: while cards are selected they own ⌫ ⌘C ⌘V ⌘D, and a hand that goes back to the
     /// objects must not have to guess which of the two a key will reach.
     func clearPluginSelection() {
+        clearSendSelection()                 // the send cards give the keyboard back at the same doors
         guard !selectedPluginIDs.isEmpty || selectedPluginHostID != nil else { return }
         selectedPluginIDs = []
         selectedPluginHostID = nil
@@ -204,6 +206,7 @@ extension EditViewModel {
     func copySelectedPluginsToClipboard() -> Int {
         let selected = orderedSelectedPlugins()
         guard !selected.isEmpty else { return 0 }
+        sendClipboardIsLive = false     // a newer copy: ⌘V no longer means the sends
         pluginClipboard = selected.map { independentCopy(of: $0) }
         return pluginClipboard.count
     }

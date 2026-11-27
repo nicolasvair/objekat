@@ -212,6 +212,7 @@ extension EditViewModel {
     func clearObjectBoundTransientState() {
         selectedPluginIDs = []
         selectedPluginHostID = nil
+        clearSendSelection()
         selectedCrossfade = nil
         renamingID = nil
         clearInputsAndStemTransientState()

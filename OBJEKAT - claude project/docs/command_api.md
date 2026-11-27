@@ -930,6 +930,14 @@ make to an aux OUTSIDE that group; the group's fader, FX and fades do not act on
 | `send.retarget` | `id` + `aux` + `to` → re-aims the send at another aux (the card's "Change target..."): same level, switch, position (marker included), automation lane and touch order. Refused with the reason when the sender has no send to `aux` (`not_found`), when `to` is not an aux, when `to` already has a send from this object, or when the scope / the plan refuses it (`invalid_state`) |
 | `send.set_level` / `send.adjust_level` / `send.enable` | unchanged contracts. `set_level` and `enable` are the machine's doors: they store a send even when it is refused (it stays in the model, silent, `status: refused`); the HAND's doors (the Aux tool, the signal view's rows, the inspector) beep and lay nothing |
 
+| `send.select` | `id` [+ `auxes`, `mode`] → selects send CARDS of an object in the signal view (`replace` default · `add` · `toggle` · `range`: from the cards held to the first of `auxes`, in the sender's order of sends) and gives them the keyboard (⌫ ⌘C ⌘V). Exclusive with the plugin cards' selection (`plugin.select` lets the send cards go and the other way round). `auxes` empty = nothing chosen, the cards still hold the keyboard |
+| `send.selection` / `send.deselect` | the cards selected (`id` = their sender, `auxes` in the sender's order, `count`, `has_keyboard`, `clipboard`, `clipboard_live`) / clears them and gives the keyboard back to the timeline |
+| `send.copy` | ⌘C on the selected cards: level, switch, POSITION (post / pre-fader, input, chain marker), the mini-chain's plugins (a deep copy, live states) and the level's CURVE go on a send clipboard of their own (the plugins' own curves do not). `invalid_state` when no card is selected |
+| `send.paste` | [`ids`] → ⌘V of the send clipboard onto `ids` (default: the objects selected): each send is laid towards its aux, and one that already goes there is OVERWRITTEN (level, switch, position, plugins under fresh ids, level curve). Ignored: a target the plan refuses (`sendCreationRefusal`), an aux the project does not hold (a clipboard from another tab), an aux or a picture. `laid` = how many sends were laid over all the targets (0 = nothing done, no undo point); ONE undo point for the whole paste |
+| `send.remove_selected` | ⌫ on the selected send cards: deletes them in ONE undo step (entry, marker, level curve, plugins) and gives the keyboard back; `invalid_state` when none is selected. `removed` = how many |
+| `send.reset_level` | `id`, `aux` → the Send tool's DOUBLE CLICK: the send goes back to -inf (`sendResetDb`), and so does that send of every other selected object (the drag's reach); a send under a curve is left alone. `changed` = whether anything moved; ONE undo point |
+| `send.reset_selected` | ⌫ with the Send tool: EVERY send of the selected objects goes to -inf (the objects stay; an automated send is left alone). `reset` = how many sends moved; ONE undo point, none when nothing moved |
+
 A send created by a hand starts at -inf. A send whose aux is deleted is purged with its automation, in the
 same undo point (and at load). An older session opens with its sends exactly as they were: the ones once
 silent because out of scope now SOUND (nothing is disabled at migration).
@@ -2109,12 +2117,21 @@ leave straight); it is not reachable from the API.
 
 **The edit shortcuts.** `edit.copy` / `edit.cut` / `edit.paste` are ⌘C / ⌘X / ⌘V through the same door as the
 keyboard and the Edit menu (`performCopyShortcut` …): whichever surface holds the keyboard takes the key, and
-`branch` says which one did — `plugins` | `automation` | `automation_caret` | `midi_notes` | `time_selection` |
+`branch` says which one did — `sends` | `plugins` | `automation` | `automation_caret` | `midi_notes` | `time_selection` |
 `objects` | `none`. `automation_caret` is ⌘V after a plain click in a band (a caret on the row, nothing traced) with a
 passage of automation copied: it lays the passage at the cursor (snapped like a paste), on the row whose window
 holds the cursor, instead of pasting the OBJECT clipboard. A zone over a band's lane but outside its object's
 window still belongs to the band for ⌫ / ⌘C / ⌘X (it must not fall through to the objects), it just reaches no row.
 One undo point per paste.
+
+**Send cards (signal view) and the Send tool.** The cards of an object's sends are selected like the plugin cards
+(`send.select`), and then hold the keyboard: ⌫ deletes them (`removeSelectedSends`, ONE undo step, then the keyboard
+goes back), ⌘C copies them (`branch: sends`), ⌘V pastes onto the selected objects; ⌘X and ⌘D are dead keys there.
+The sends are also pasted from the TIMELINE when they are the last thing copied (every other copy ends that: the
+`clipboard_live` of `send.selection`) and objects are selected, the Send tool apart. In the timeline's Send tool, a
+double click on a knob column sets the send to -∞ (`sendResetDb`, the signal view's reset too), like the drag it acts on
+the selected objects that send to that aux, a send under a curve is left alone, and the pair leaves ONE undo point;
+⌫ with that tool sets EVERY send of the selected objects to -∞ (one undo step) instead of deleting the objects.
 
 **Notes in the piano roll (⌘X / ⌘C / ⌘V on notes).** The notes have their own clipboard, apart from the objects':
 the context decides which one ⌘V reads. `midi_notes` is the branch when notes are selected, **or when a piano roll
