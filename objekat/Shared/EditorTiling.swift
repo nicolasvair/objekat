@@ -52,6 +52,9 @@ struct EditorTiling {
 
     // MARK: Pure geometry
 
+    /// How long a batch stays one after it began: a native editor that never comes (instance in
+    /// error, no GUI) must not keep it alive for ever.
+    static let batchLifetime: TimeInterval = 8
     static let defaultGap: CGFloat = 8
     static let defaultStackStep: CGFloat = 28
 

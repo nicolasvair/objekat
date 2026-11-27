@@ -177,6 +177,19 @@ struct Main {
         // The tabs' order.
         check(PluginCategoryPalette.ordered(used: [1, 4, 9], order: []) == [1, 4, 9], "no order given: ascending")
         check(PluginCategoryPalette.ordered(used: [1, 4, 9], order: [9, 7, 1]) == [9, 1, 4], "the hand's order, unused colours skipped, new ones last")
+
+        // The "+" shortcut offers the NAMED colours only, in the tabs' order — empty or not.
+        check(PluginCategoryPalette.shortcutCategories(names: [:], order: [3, 1]).isEmpty, "no colour named: no shortcut")
+        check(PluginCategoryPalette.shortcutCategories(names: [4: "Dyn", 1: "Space"], order: [4, 2, 1]) == [4, 1],
+              "named colours, in the tabs' order")
+        check(PluginCategoryPalette.shortcutCategories(names: [4: "Dyn", 1: "Space"], order: []) == [1, 4],
+              "no order given: ascending")
+        check(PluginCategoryPalette.shortcutCategories(names: [4: "Dyn", 1: "Space"], order: [4]) == [4, 1],
+              "a colour the order does not know comes last")
+        check(PluginCategoryPalette.shortcutCategories(names: [2: "  \n ", 3: "Ok"], order: [2, 3]) == [3],
+              "a blank name counts for nothing")
+        check(PluginCategoryPalette.shortcutCategories(names: [-1: "Neg", PluginCategoryPalette.count: "Out", 0: "Ok"], order: []) == [0],
+              "an index outside the palette counts for nothing")
         check(PluginCategoryPalette.moved([9, 1, 4], from: 0, to: 2) == [1, 4, 9], "first tab dropped last")
         check(PluginCategoryPalette.moved([9, 1, 4], from: 2, to: 0) == [4, 9, 1], "last tab dropped first")
         check(PluginCategoryPalette.moved([9, 1, 4], from: 1, to: 1) == [9, 1, 4], "dropped where it was")

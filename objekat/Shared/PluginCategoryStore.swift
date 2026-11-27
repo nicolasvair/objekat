@@ -9,9 +9,10 @@ import Perception
 /// flat dictionary `"<format>|<identifier>" → [palette index]` (an entry written when a plugin had
 /// ONE category is a bare index, and is still read).
 ///
-/// The store also remembers the two other things the browser keeps from one opening to the next:
-/// the ORDER the hand gave the colour tabs (`categoryOrder`) and which external formats are shown
-/// (`showsAU`, `showsVST3`).
+/// The store also remembers the other things the browser keeps from one opening to the next:
+/// the ORDER the hand gave the colour tabs (`categoryOrder`), the NAME the hand gave a colour
+/// (`categoryNames`: a colour is nameless until it is told — empty = no name) and which external
+/// formats are shown (`showsAU`, `showsVST3`).
 ///
 /// The key is `formatName + "|" + identifier`: NEVER `AvailablePlugin.id`, a UUID regenerated at
 /// every parse of the scan (@see SynopticModelMapping — the same pair identifies a plugin there).
@@ -49,18 +50,24 @@ final class PluginCategoryStore {
     }
 
     static let categoryOrderKey = "pluginBrowser.categoryOrder"
+    /// `"<palette index>" → name` (a dictionary property list has string keys only).
+    static let categoryNamesKey = "pluginBrowser.categoryNames"
+    /// The longest a category's name is kept (what a tab's tooltip and a palette chip can say).
+    static let maxNameLength = 40
     static let showsAUKey = "pluginBrowser.showsAU"
     static let showsVST3Key = "pluginBrowser.showsVST3"
 
     /// The ephemeral world, one dictionary per defaults key, shared by every store of the process.
     nonisolated(unsafe) private static var ephemeral: [String: [String: [Int]]] = [:]
     nonisolated(unsafe) private static var ephemeralAdded: [String: [Int]] = [:]
+    nonisolated(unsafe) private static var ephemeralNames: [String: [Int: String]] = [:]
     nonisolated(unsafe) private static var ephemeralFormats: [String: [Bool]] = [:]
 
     /// Test door: forgets what the ephemeral world holds for `key`.
     static func resetEphemeral(for key: String = defaultsKey) {
         ephemeral.removeValue(forKey: key)
         ephemeralAdded.removeValue(forKey: key)
+        ephemeralNames.removeValue(forKey: key)
         ephemeralFormats.removeValue(forKey: key)
     }
 
@@ -71,6 +78,10 @@ final class PluginCategoryStore {
     /// The colour tabs' order as the hand left it (@see PluginCategoryPalette.ordered). A colour
     /// that is not in it comes after those that are.
     private(set) var categoryOrder: [Int]
+
+    /// The names the hand gave to colours: `palette index → name`, never empty, trimmed, at most
+    /// `maxNameLength` long. A colour with no entry has no name (@see `setCategoryName`).
+    private(set) var categoryNames: [Int: String]
 
     /// Which external formats the browser lists. Never both false (@see `setShows`).
     private(set) var showsAU: Bool
@@ -92,12 +103,14 @@ final class PluginCategoryStore {
         if ephemeral {
             self.entries = Self.ephemeral[storageKey] ?? [:]
             self.categoryOrder = Self.ephemeralAdded[storageKey] ?? []
+            self.categoryNames = Self.ephemeralNames[storageKey] ?? [:]
             let f = Self.ephemeralFormats[storageKey] ?? [true, true]
             self.showsAU = f[0]; self.showsVST3 = f[1]
         } else {
             self.entries = Self.sanitized(defaults.dictionary(forKey: storageKey))
             let order = (defaults.array(forKey: Self.categoryOrderKey) ?? []).compactMap(Self.index)
             self.categoryOrder = order.reduce(into: [Int]()) { if !$0.contains($1) { $0.append($1) } }
+            self.categoryNames = Self.sanitizedNames(defaults.dictionary(forKey: Self.categoryNamesKey))
             // An absent key means "shown": `bool(forKey:)` would answer false for it.
             let au = defaults.object(forKey: Self.showsAUKey) as? Bool ?? true
             let vst = defaults.object(forKey: Self.showsVST3Key) as? Bool ?? true
@@ -128,6 +141,26 @@ final class PluginCategoryStore {
         return out
     }
 
+    /// Only a non-negative index with a non-blank string survives a reading (a hand-edited or corrupted
+    /// entry is dropped instead of being trusted); the name is cleaned as `setCategoryName` would.
+    private static func sanitizedNames(_ raw: [String: Any]?) -> [Int: String] {
+        var out: [Int: String] = [:]
+        for (k, v) in raw ?? [:] {
+            guard let i = Int(k), i >= 0, let text = v as? String else { continue }
+            let name = cleanedName(text)
+            if !name.isEmpty { out[i] = name }
+        }
+        return out
+    }
+
+    /// A name as it is kept: edges trimmed, line breaks turned into spaces (it is said on one line),
+    /// cut to `maxNameLength`. Empty stays empty (= no name).
+    static func cleanedName(_ text: String) -> String {
+        let oneLine = text.components(separatedBy: .newlines).joined(separator: " ")
+        let trimmed = oneLine.trimmingCharacters(in: .whitespaces)
+        return String(trimmed.prefix(maxNameLength)).trimmingCharacters(in: .whitespaces)
+    }
+
     // MARK: Reading
 
     func colorIndices(format: String, identifier: String) -> [Int] {
@@ -140,6 +173,9 @@ final class PluginCategoryStore {
     }
 
     func colorIndex(forKey key: String) -> Int? { entries[key]?.first }
+
+    /// The name the hand gave to the colour `index`; nil when it has none.
+    func categoryName(_ index: Int) -> String? { categoryNames[index] }
 
     // MARK: Writing
 
@@ -175,6 +211,20 @@ final class PluginCategoryStore {
         categoryOrder = order
         if isEphemeral { Self.ephemeralAdded[storageKey] = order }
         else { defaults.set(order, forKey: Self.categoryOrderKey) }
+    }
+
+    /// Names the colour `index` — or takes its name back when `name` is empty (blank included). A
+    /// negative index is no colour. Writes the storage only if the name actually changes.
+    func setCategoryName(_ name: String, for index: Int) {
+        guard index >= 0 else { return }
+        let clean = Self.cleanedName(name)
+        guard categoryNames[index] != (clean.isEmpty ? nil : clean) else { return }
+        if clean.isEmpty { categoryNames.removeValue(forKey: index) } else { categoryNames[index] = clean }
+        if isEphemeral { Self.ephemeralNames[storageKey] = categoryNames }
+        else {
+            defaults.set(Dictionary(uniqueKeysWithValues: categoryNames.map { (String($0.key), $0.value) }),
+                         forKey: Self.categoryNamesKey)
+        }
     }
 
     /// Shows or hides the AudioUnits / the VST3s. Hiding the last format shown brings the other one

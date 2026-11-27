@@ -12399,6 +12399,29 @@
         }
       }
     },
+    "menu.context.rename": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renombrar…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renommer…"
+          }
+        }
+      }
+    },
     "menu.context.repairFromFolder": {
       "extractionState": "manual",
       "localizations": {

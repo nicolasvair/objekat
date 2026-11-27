@@ -5,8 +5,10 @@ import Perception
 
 /// The circle a "+" of the signal view draws while it is dragged (@see PlusSectorsView — the same drawing,
 /// scaled up), with its sixteen zones: eight directions of 45°, each NEAR (inside the 80 pt circle) and FAR
-/// (beyond it). Under it a PALETTE — the built-in actions, the colour categories the plugins carry, then the
-/// effects of the catalogue (an instrument has no place in an FX chain) — whose items are DRAGGED onto a zone:
+/// (beyond it). Under it a PALETTE — the built-in actions, the NAMED colour categories, then the
+/// effects of the catalogue (an instrument has no place in an FX chain) — whose items are DRAGGED onto a zone
+/// (a colour category is offered by its NAME: one the hand has not named is not there, and a zone already
+/// bound to a colour whose name was taken off keeps working — only the palette's chip is gone):
 ///
 ///  - dropped on a zone, an item replaces what the zone held (an item may sit on several zones);
 ///  - a zone's item dragged onto another zone MOVES there, the two exchanging what they held;
@@ -20,8 +22,11 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
     var viewModel: EditViewModel
     /// The effects the palette lists (the browser's search and formats already applied).
     let plugins: [AvailablePlugin]
-    /// The colour categories that hold a plugin, in the order of their tabs.
+    /// The colour categories the palette offers: the NAMED ones only, in the order of their tabs (a named
+    /// colour with no plugin in it is there all the same — @see PluginCategoryPalette.shortcutCategories).
     let categories: [Int]
+    /// Their names, by palette index.
+    let categoryNames: [Int: String]
     /// The browser's search pill, laid above the palette's plugins.
     @ViewBuilder var searchRow: () -> SearchRow
 
@@ -309,15 +314,30 @@ struct PluginBrowserPlusPage<SearchRow: View>: View {
             .help(PlusShortcutText.helpDescription(.plugin(PlusPluginRef(p))))
     }
 
-    /// A colour category: its dot alone (a category has no name, its tab is a colour).
+    /// A colour category: its dot and its name, dressed like the other chips of the palette. Only a NAMED
+    /// category gets here (@see `categories`), but a name taken off since the page was drawn leaves the dot.
     private func categoryItem(_ i: Int) -> some View {
-        Circle()
-            .fill(ObjekatPalette.pluginCategory(i))
-            .frame(width: 14, height: 14)
-            .frame(width: 22, height: 22)
-            .contentShape(Rectangle())
-            .gesture(carryGesture(.category(i), from: nil, scale: currentScale))
-            .help(PlusShortcutText.helpDescription(.category(i)))
+        HStack(spacing: 5) {
+            Circle()
+                .fill(ObjekatPalette.pluginCategory(i))
+                .frame(width: 10, height: 10)
+            if let name = categoryNames[i] {
+                Text(verbatim: name)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Color.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, 7)
+        .frame(height: 22)
+        .background(RoundedRectangle(cornerRadius: 5)
+            .fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 5)
+            .strokeBorder(Color.secondary.opacity(0.35)))
+        .contentShape(Rectangle())
+        .gesture(carryGesture(.category(i), from: nil, scale: currentScale))
+        .help(PlusShortcutText.helpDescription(.category(i)))
     }
 
     /// The circle's scale as drawn (read back from its frame: the palette has no GeometryReader of its own).

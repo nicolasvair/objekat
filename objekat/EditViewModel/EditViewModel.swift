@@ -525,6 +525,7 @@ final class EditViewModel {
                     return PluginPresetMenu.titleBarView(viewModel: self, plugin: plugin)
                 }
             }
+            wireEditorFrameMemory()
             engine?.setPluginEditorAccessoryProvider { [weak self] key in
                 MainActor.assumeIsolated {
                     guard let self, let plugin = UUID(uuidString: key),
@@ -573,6 +574,11 @@ final class EditViewModel {
     /// exists once its instance is loaded, so its size is not known before. nil = no batch: a
     /// single editor opens where it always did (@see openPluginEditors).
     @PerceptionIgnored var editorTiling: EditorTiling? = nil
+
+    /// Where each plugin editor window was when it last closed: the TOP-LEFT corner, in screen
+    /// coordinates. Outside observation (nothing draws it) and outside the document (it is the
+    /// working session's layout, not the project's), gone with the process. @see EditViewModel+EditorFrames.
+    @PerceptionIgnored var editorTopLefts: [UUID: CGPoint] = [:]
 
     /// The names and ranges of the automatable parameters, by plugin (@see pluginParamInfos). A PURE cache:
     /// outside observation, because it fills lazily FROM the rendering — an automation
