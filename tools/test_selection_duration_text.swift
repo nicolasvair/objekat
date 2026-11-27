@@ -22,11 +22,20 @@ func check(_ d: Double, _ expected: String) {
 @main
 enum SelectionDurationTextTest {
   static func main() {
-    // Below the second: whole milliseconds only.
+    // Below 10 ms: one decimal with a comma, always shown.
+    check(0.0053,    "5,3 ms")
+    check(0.001,     "1,0 ms")
+    check(0.0004,    "0,4 ms")
+    check(0.00004,   "0,0 ms")
+    check(0.0099,    "9,9 ms")
+    check(0.00996,   "10ms")        // rounds up to 10,0 -> whole-millisecond path, never "10,0 ms"
+    check(0.00995,   "10ms")
+    check(0.00994,   "9,9 ms")
+    // From 10 ms up to the second: whole milliseconds only (unchanged).
+    check(0.01,      "10ms")
+    check(0.0104,    "10ms")
     check(0.5,       "500ms")
     check(0.0504,    "50ms")
-    check(0.001,     "1ms")
-    check(0.0004,    "0ms")
     check(0,         "0ms")
     check(-1,        "0ms")
     check(.nan,      "0ms")
