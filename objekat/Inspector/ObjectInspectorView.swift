@@ -48,11 +48,16 @@ struct ObjectInspectorView: View {
     var body: some View { WithPerceptionTracking { perceivedBody } }
 
     @ViewBuilder private var perceivedBody: some View {
+        // WHAT it is about is `inspectorTargetIDs`, the one door: the selection, or — with none — the
+        // object a click on the time half of its block named (@see EditViewModel.inspectedID). A
+        // single object's controls are addressed by its id, so an inspected object acts on itself
+        // alone; the several-objects column only ever shows a selection (a target of 2+ IS one).
+        let target = viewModel.inspectorTargetIDs
         HStack(spacing: 0) {
             Group {
-                if viewModel.selectedIDs.count > 1 {
+                if target.count > 1 {
                     multiSelectionContent
-                } else if let id = viewModel.selectedID,
+                } else if let id = target.first,
                           let obj = viewModel.find(id: id) {
                     singleObjectColumns(id: id, obj: obj)
                 } else {

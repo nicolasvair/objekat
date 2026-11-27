@@ -33,6 +33,10 @@ struct ProjectDocument: Codable {
     /// height, scroll position). All optional: an earlier project leaves them at nil and the
     /// view keeps its default values. See `ViewportState`.
     var viewport: ViewportState?
+    /// The left panel's width and active tab. Purely visual, like the viewport (changing them never marks
+    /// the project modified). nil/absent ⇒ a project from before the field: the app's last used width and the
+    /// default tab. See `LeftPanelState`.
+    var leftPanel: LeftPanelState?
     /// The rows of the marker band — named points and regions, laid on showable/hideable layers.
     /// Purely visual: nothing here reaches the engine. nil/absent ⇒ none. See `MarkerLane`.
     var markerLanes: [MarkerLane]?
@@ -61,7 +65,7 @@ struct ProjectDocument: Codable {
     enum CodingKeys: String, CodingKey {
         case schemaNote = "_readme"
         case version, items, stems, tempo, timeSigNumerator, timeSigDenominator
-        case gridMode, snapEnabled, viewport, markerLanes, comments, fxLinks, canvasSettings, recordInputs, inputChains, midiSequences
+        case gridMode, snapEnabled, viewport, leftPanel, markerLanes, comments, fxLinks, canvasSettings, recordInputs, inputChains, midiSequences
         // The Swift identifier is "consolidated" (@see plan_consolidate.md); the JSON key stays
         // "objectDefinitions" — every session on disk already carries the registry under that
         // key (cas E7: rename the code, never the key).
@@ -76,6 +80,7 @@ struct ProjectDocument: Codable {
          snapEnabled: Bool? = nil,
          consolidateDefinitions: [ConsolidateDefinition]? = nil,
          viewport: ViewportState? = nil,
+         leftPanel: LeftPanelState? = nil,
          markerLanes: [MarkerLane]? = nil,
          comments: [TimelineComment]? = nil,
          fxLinks: [FXLink]? = nil,
@@ -93,6 +98,7 @@ struct ProjectDocument: Codable {
         self.snapEnabled = snapEnabled
         self.consolidateDefinitions = consolidateDefinitions
         self.viewport = viewport
+        self.leftPanel = leftPanel
         self.markerLanes = markerLanes
         self.comments = comments
         self.fxLinks = fxLinks

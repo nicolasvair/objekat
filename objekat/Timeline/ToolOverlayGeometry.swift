@@ -29,9 +29,23 @@ enum ToolOverlayGeometry {
 
     static func isNarrow(blockWidth: Double) -> Bool { blockWidth < narrowBlockWidth }
 
-    // MARK: - Volume: three zones across the block's VISIBLE span
+    // MARK: - Volume: three zones in a PAD, centred in the block's VISIBLE span
 
-    /// The zones are fractions of the VISIBLE span's width (@see `visibleSpan`), left to right:
+    /// The three zones (mute / ± / level) live in a PAD at most `volumePadMaxWidth` wide, CENTRED in
+    /// the block's visible span (@see `visibleSpan`): a very wide clip does not stretch its controls
+    /// across the screen, and what one can see is what answers — the pad's pixels are the zones'
+    /// pixels, for the drawing, the click, the drag, the wheel and the help alike. The veil stays
+    /// the whole block's. A visible span narrower than the cap IS the pad (nothing changes there:
+    /// a narrow clip, a block cut by the viewport).
+    static let volumePadMaxWidth: Double = 240
+
+    /// The pad inside a visible span of `spanWidth`, `x` being local to the span's left edge.
+    static func volumePad(spanWidth: Double) -> (x: Double, width: Double) {
+        let w = max(0, min(spanWidth, volumePadMaxWidth))
+        return ((max(0, spanWidth) - w) / 2, w)
+    }
+
+    /// The zones are fractions of the PAD's width, left to right:
     /// mute 0…0.4, ± 1 dB 0.4…0.6, level drag 0.6…1.
     static let volumeMuteFraction: Double = 0.4
     static let volumeStepFraction: Double = 0.2
@@ -43,10 +57,14 @@ enum ToolOverlayGeometry {
 
     enum VolumeZone: Equatable { case mute, step, drag }
 
-    /// The zone under `localX` (px from the visible span's left edge), `spanWidth` being its width.
-    static func volumeZone(localX: Double, spanWidth: Double) -> VolumeZone {
-        if localX < spanWidth * volumeMuteFraction { return .mute }
-        if localX < spanWidth * volumeDragStart { return .step }
+    /// The zone under `localX` (px from the visible span's left edge), `spanWidth` being the span's
+    /// width — or nil OUTSIDE the pad (the veil's margins answer nothing).
+    static func volumeZone(localX: Double, spanWidth: Double) -> VolumeZone? {
+        let pad = volumePad(spanWidth: spanWidth)
+        let x = localX - pad.x
+        if x < 0 || x > pad.width { return nil }
+        if x < pad.width * volumeMuteFraction { return .mute }
+        if x < pad.width * volumeDragStart { return .step }
         return .drag
     }
 
@@ -56,12 +74,13 @@ enum ToolOverlayGeometry {
         localY < blockHeight * 0.5 ? 1 : -1
     }
 
-    /// The rich layer's columns, in px. The dividers are 1 px each and eat 2 px of the ± and the
-    /// level columns, so the three add up to `spanWidth − 2` (the divider widths being the rest).
+    /// The rich layer's columns, in px, `padWidth` being the PAD's (@see `volumePad`). The dividers
+    /// are 1 px each and eat 2 px of the ± and the level columns, so the three add up to
+    /// `padWidth − 2` (the divider widths being the rest).
     static let volumeDividerWidth: Double = 1
-    static func volumeMuteColumnWidth(spanWidth: Double) -> Double { spanWidth * volumeMuteFraction }
-    static func volumeStepColumnWidth(spanWidth: Double) -> Double { spanWidth * volumeStepFraction - 2 }
-    static func volumeDragColumnWidth(spanWidth: Double) -> Double { spanWidth * volumeDragFraction - 2 }
+    static func volumeMuteColumnWidth(padWidth: Double) -> Double { padWidth * volumeMuteFraction }
+    static func volumeStepColumnWidth(padWidth: Double) -> Double { padWidth * volumeStepFraction - 2 }
+    static func volumeDragColumnWidth(padWidth: Double) -> Double { padWidth * volumeDragFraction - 2 }
 
     /// What a block draws under the Volume tool. The minimal veil (just the level) shows on a
     /// selected block and on any narrow one; the full one (mute / ± / level) only under the hover,

@@ -56,6 +56,7 @@ final class EditViewModel {
             featureBadgeMapCache = nil
             chainSilencedCache = nil
             videoObjectIndexCache = nil
+            if inspectedID != nil { scheduleInspectedPrune() }
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
             // pass per run-loop turn, and an unchanged topology costs one comparison.
@@ -117,6 +118,9 @@ final class EditViewModel {
     var selectedIDs: Set<UUID> = [] {
         didSet {
             multiSelectionCache = nil
+            // The inspector follows the selection as soon as there is one: the object it was showing
+            // on its own (@see inspectedID) steps aside.
+            if !selectedIDs.isEmpty && inspectedID != nil { inspectedID = nil }
             if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] }
             if !araSynced.isEmpty { notifyARASelectionIfNeeded() }
         }
@@ -1119,6 +1123,59 @@ final class EditViewModel {
     /// apply from one project to another). Neither `projectURL` nor `items` is enough: the URL changes
     /// before the content is in place, and a project can be reopened on the same URL.
     var projectLoadToken: Int = 0
+
+    // MARK: - The left panel (persisted with the project)
+    //
+    // Its width and its active tab. A plain stored pair, NOT a project edit: nothing here marks the project
+    // modified (it is the viewport's own doctrine), and the width is written by the divider's drag and read
+    // by the panel's fixed-width column — a split view used to keep it to itself, where nothing could read
+    // or save it (@see Shared/LeftPanelLayout).
+
+    var leftPanelWidth: Double = LeftPanelLayout.resolved(
+        saved: nil, appWidth: ObjekatPreferences.shared.leftPanelWidth).width
+    var leftPanelTab: LeftPanelTabID = LeftPanelLayout.defaultTab
+
+    /// The selection a tab switch has just put back. Selecting an object brings the inspector forward, which
+    /// must not happen for a selection that merely RETURNS with its document: the tab the panel was left on
+    /// is the one that comes back. Compared and consumed by the view's `onChange` on `selectedIDs`, like the
+    /// list's own selection (@see ContentView.listMadeSelection) — equal to the current selection when
+    /// nothing changed, so it cannot go stale.
+    @PerceptionIgnored var selectionRestoredByTabSwitch: Set<UUID>? = nil
+
+    /// Counts the clicks that ask for the inspector to come forward even though the SELECTION did not change.
+    /// The panel brings the "Object" tab forward when the selection becomes a new, non-empty set
+    /// (@see ContentView) — which a click on an object inside a time selection that already enclosed it
+    /// does not: the range had selected it, the click selects the same set, nothing changes and the panel
+    /// stays on whatever tab it was left on. The click bumps this instead, and the view reacts to it.
+    var inspectorRequests: Int = 0
+
+    /// The click on an object (a body click) while a time selection existed asks to see that object.
+    func requestInspector() { inspectorRequests &+= 1 }
+
+    /// The object the inspector shows while NOTHING is selected: the one a click on the TIME half of
+    /// its block was aimed at. That click keeps its own meaning (the caret, the range gone, the head
+    /// moved, the selection empty) and merely names the object it landed on, so the inspector can show
+    /// it without the object being selected — ⌫, ⌘C, ⌘X, ⌘D, ⌘V and ↑ / ↓ stay the caret's.
+    ///
+    /// It is a RESIDUE of a click, never a second selection: any non-empty selection erases it
+    /// (`selectedIDs.didSet`), so does a click in an empty lane (`clearSelection`), a project change
+    /// (`performTeardown`, `parkProject`, a new project) and the object leaving the model
+    /// (`scheduleInspectedPrune`, which `items.didSet` arms). Only the click on the time half sets it
+    /// (`handleLaneClick`), and what READS it is `inspectorTargetIDs` — ONE door, never this field.
+    var inspectedID: UUID? = nil
+
+    /// Armed by `items.didSet` while an object is inspected; one pass per run-loop turn.
+    @PerceptionIgnored var inspectedPrunePending = false
+
+    /// A snapshot of the left panel, written into the project document.
+    var currentLeftPanel: LeftPanelState { LeftPanelState(width: leftPanelWidth, tab: leftPanelTab) }
+
+    /// Puts a (resolved) state on the panel — a load, a tab switch, a new project. Never marks the project
+    /// modified.
+    func applyLeftPanel(_ state: LeftPanelState) {
+        if leftPanelWidth != state.width { leftPanelWidth = state.width }
+        if leftPanelTab != state.tab { leftPanelTab = state.tab }
+    }
 
     /// A snapshot of the current view, written into the project document.
     var currentViewport: ViewportState {

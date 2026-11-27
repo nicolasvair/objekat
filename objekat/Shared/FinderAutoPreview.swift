@@ -18,6 +18,10 @@ import Foundation
 ///   the cursor has moved on (or onto a folder) by the time it elapses;
 /// - the stop timer of a preview that has been stopped meanwhile must NOT cut the next one: every
 ///   stop bumps a GENERATION, and a timer only acts on the generation it was armed in;
+/// - a click or a scrub in the mini player's waveform can place the head ANYWHERE, inside I–O or
+///   not: the sound then ends at point O if the head is before it, at the end of the file otherwise,
+///   and that end is RE-ARMED at every move of the head (a stop timer armed for the old position
+///   would cut the sound at the wrong instant);
 /// - the file's length may not be known yet (the mini player's `pointO` is 0 until the media has
 ///   loaded): the end then comes from the player itself, never "now".
 enum FinderAutoPreview {
@@ -61,14 +65,45 @@ enum FinderAutoPreview {
     /// generation of the preview that is up, bumped by every stop).
     static func timerApplies(armed: Int, current: Int) -> Bool { armed == current }
 
-    /// Where the preview ends, in seconds of the file: point O when the hand (or the file's length)
-    /// has set one after point I, otherwise the end of the file as the player reports it.
-    static func endPoint(pointI: Double, pointO: Double, playerDuration: Double) -> Double {
-        pointO > pointI ? pointO : playerDuration
+    /// Where a preview that STARTS (or whose head is placed) at `start` ends, in seconds of the file:
+    /// point O when it lies after `start`, otherwise the end of the file as the player reports it.
+    /// That one rule covers the play button (`start` = point I), a click inside I–O (up to O), a click
+    /// before I (up to O) and a click past O (to the end of the file).
+    static func endPoint(from start: Double, pointO: Double, playerDuration: Double) -> Double {
+        pointO > start ? pointO : playerDuration
     }
 
-    /// How long the stop timer waits: from point I to the end. Never negative.
+    /// How long the stop timer waits: from `start` to the end. Never negative.
+    static func remaining(from start: Double, pointO: Double, playerDuration: Double) -> Double {
+        max(0, endPoint(from: start, pointO: pointO, playerDuration: playerDuration) - start)
+    }
+
+    /// The same, for a preview that starts at point I.
+    static func endPoint(pointI: Double, pointO: Double, playerDuration: Double) -> Double {
+        endPoint(from: pointI, pointO: pointO, playerDuration: playerDuration)
+    }
+
     static func remaining(pointI: Double, pointO: Double, playerDuration: Double) -> Double {
-        max(0, endPoint(pointI: pointI, pointO: pointO, playerDuration: playerDuration) - pointI)
+        remaining(from: pointI, pointO: pointO, playerDuration: playerDuration)
+    }
+
+    /// The instant of the file a point of the waveform stands for: `x` px from its left edge, the
+    /// waveform being `width` px wide for `duration` seconds. Clamped to the file.
+    static func headTime(x: Double, width: Double, duration: Double) -> Double {
+        guard width > 0, duration > 0, x.isFinite else { return 0 }
+        return min(max(x / width, 0), 1) * duration
+    }
+
+    /// The row the previous / next button goes to: the nearest FILE from `current` in the direction
+    /// of `step` (+1 / −1), folders passed over (never entered, never stopped on). nil at either end
+    /// of the list, or when `current` is not a row.
+    static func adjacentFileIndex(isDirectory: [Bool], from current: Int, step: Int) -> Int? {
+        guard step != 0, isDirectory.indices.contains(current) else { return nil }
+        var i = current + (step > 0 ? 1 : -1)
+        while isDirectory.indices.contains(i) {
+            if !isDirectory[i] { return i }
+            i += step > 0 ? 1 : -1
+        }
+        return nil
     }
 }

@@ -21,7 +21,6 @@ struct ContentView: View {
     private var viewModel: EditViewModel { session.viewModel }
     @State private var outputDevices: [String] = []
     @State private var selectedDevice: String = ""
-    @State private var leftPanelTab: LeftPanelTab = .liste
     /// The Finder tab's state, owned here so that it outlives the tab: the `switch` below removes the
     /// view from the hierarchy at every change of tab, and a `@State` inside it went with it.
     @State private var soundLibrary = SoundLibraryViewModel()
@@ -29,9 +28,10 @@ struct ContentView: View {
     /// (@see FirstClickThrough). A token in a `@State`, removed in `.onDisappear`.
     @State private var firstClickMonitor: Any? = nil
 
-    /// The left panel's tabs. The inspector is a tab of its own ("Object") — it used to be docked
-    /// under the list with a draggable separator; it now gets the panel's whole height.
-    enum LeftPanelTab { case objet, liste, sons, entrees }
+    // The left panel's tabs (`LeftPanelTabID`) and its width live in the view-model, which saves them with the
+    // project (@see EditViewModel.leftPanelTab / leftPanelWidth). The inspector is a tab of its own
+    // ("Object") — it used to be docked under the list with a draggable separator; it now gets the
+    // panel's whole height.
 
     /// The selection the LIST itself just made (a click or an arrow in it), or nil. Selecting an
     /// object brings the "Object" tab forward on its own — except when the selection comes from
@@ -74,59 +74,44 @@ struct ContentView: View {
 
             Divider()
 
-            HSplitView {
-                VStack(spacing: 0) {
-                    // Tab switcher: project list / sound library / object inspector
-                    HStack(spacing: 0) {
-                        tabButton(L("panel.tab.object"), tab: .objet)
-                        tabButton(L("panel.tab.list"), tab: .liste)
-                        tabButton(L("panel.tab.sounds"), tab: .sons)
-                        tabButton(L("panel.tab.inputs"), tab: .entrees)
-                    }
-                    .frame(height: 28)
-                    Divider()
+            // The panel is a FIXED-width column and the divider a handle of ours, instead of a split view: the
+            // width is a number we hold, save and restore, and a freshly built layout has nothing to guess
+            // (@see Shared/LeftPanelLayout). `GeometryReader`'s closure is evaluated outside the tracked
+            // body, hence the explicit `WithPerceptionTracking` inside it.
+            GeometryReader { geo in WithPerceptionTracking {
+                let container = geo.size.width
+                let storedWidth = viewModel.leftPanelWidth
+                HStack(spacing: 0) {
+                    leftPanelColumn
+                        .frame(width: LeftPanelLayout.clampedWidth(storedWidth, containerWidth: container))
 
-                    Group {
-                        switch leftPanelTab {
-                        case .liste: SoundObjectListView(viewModel: viewModel,
-                                                         onOwnSelection: { listMadeSelection = $0 })
-                        case .sons:  SoundLibraryView(vm: soundLibrary)
-                                        .onAppear {
-                                            // Removing a slot that holds a folder asks first, through the
-                                            // view-model's dialogue policy.
-                                            soundLibrary.confirm = { [viewModel] title, info, yes, no in
-                                                viewModel.confirm(title, info, yes: yes, no: no)
-                                            }
-                                        }
-                        case .objet: ObjectInspectorView(viewModel: viewModel)
-                        case .entrees: InputsPanelView(viewModel: viewModel)
-                        }
-                    }
+                    LeftPanelDivider(width: storedWidth,
+                                     containerWidth: container,
+                                     onDrag: { viewModel.leftPanelWidth = $0 },
+                                     onEnd: { ObjekatPreferences.shared.leftPanelWidth = $0 })
+
+                    TimelineView(
+                        viewModel: viewModel,
+                        playheadPosition: { session.playheadPosition },
+                        selectionCursor: viewModel.cursorPosition,
+                        isPlaying: session.isPlaying,
+                        isPaused: session.pausedAt != nil,
+                        onTogglePlayback: { if session.isPlaying { session.stop() } else { session.play() } },
+                        onTogglePause: { session.togglePause() },
+                        onToggleRecord: { session.toggleRecording() },
+                        onMoveCursor: { t in
+                            viewModel.cursorPosition = max(0, t)
+                        },
+                        onJumpPlayhead: { t in session.jumpPlayhead(to: t) },
+                        onReturnToZero: { session.returnToZero() }
+                    )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                    })
+                    .frame(minWidth: 420)
                 }
-                .frame(minWidth: 250, maxWidth: 720)
-
-                TimelineView(
-                    viewModel: viewModel,
-                    playheadPosition: { session.playheadPosition },
-                    selectionCursor: viewModel.cursorPosition,
-                    isPlaying: session.isPlaying,
-                    isPaused: session.pausedAt != nil,
-                    onTogglePlayback: { if session.isPlaying { session.stop() } else { session.play() } },
-                    onTogglePause: { session.togglePause() },
-                    onToggleRecord: { session.toggleRecording() },
-                    onMoveCursor: { t in
-                        viewModel.cursorPosition = max(0, t)
-                    },
-                    onJumpPlayhead: { t in session.jumpPlayhead(to: t) },
-                    onReturnToZero: { session.returnToZero() }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .simultaneousGesture(TapGesture().onEnded {
-                    NSApp.keyWindow?.makeFirstResponder(nil)
-                })
-                .frame(minWidth: 420)
-            }
+            } }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // The progress overlay of a project load (step 6, project_load_progress_plan): drawn
             // on top of the content zone only — the transport bar above stays legible, if inert
@@ -155,8 +140,16 @@ struct ContentView: View {
         .onChangeCompat(of: viewModel.selectedIDs) { old, new in
             let fromList = listMadeSelection == new
             listMadeSelection = nil
-            guard !new.isEmpty, new != old, !fromList else { return }
-            leftPanelTab = .objet
+            // A selection that merely RETURNS with its document (a tab switch) keeps the panel tab it was left on.
+            let fromTabSwitch = viewModel.selectionRestoredByTabSwitch == new
+            viewModel.selectionRestoredByTabSwitch = nil
+            guard !new.isEmpty, new != old, !fromList, !fromTabSwitch else { return }
+            viewModel.leftPanelTab = .objet
+        }
+        // A click on an object under a time selection that already selected it changes no selection, hence no
+        // "new selection" above: it asks for the inspector by this counter instead.
+        .onChangeCompat(of: viewModel.inspectorRequests) { _, _ in
+            viewModel.leftPanelTab = .objet
         }
         .onChangeCompat(of: viewModel.seekRequest) { _, _ in
             session.applyPendingSeekRequest()
@@ -231,21 +224,58 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - The left panel's column
+
+    /// The tab strip and the active tab's content. Called from inside the tracked region of the layout above.
+    @ViewBuilder
+    private var leftPanelColumn: some View {
+        VStack(spacing: 0) {
+            // Tab switcher: project list / sound library / object inspector
+            HStack(spacing: 0) {
+                tabButton(L("panel.tab.object"), tab: .objet)
+                tabButton(L("panel.tab.list"), tab: .liste)
+                tabButton(L("panel.tab.sounds"), tab: .sons)
+                tabButton(L("panel.tab.inputs"), tab: .entrees)
+            }
+            .frame(height: 28)
+            Divider()
+
+            Group {
+                switch viewModel.leftPanelTab {
+                case .liste: SoundObjectListView(viewModel: viewModel,
+                                                 onOwnSelection: { listMadeSelection = $0 })
+                case .sons:  SoundLibraryView(vm: soundLibrary)
+                                .onAppear {
+                                    // Removing a slot that holds a folder asks first, through the
+                                    // view-model's dialogue policy.
+                                    soundLibrary.confirm = { [viewModel] title, info, yes, no in
+                                        viewModel.confirm(title, info, yes: yes, no: no)
+                                    }
+                                }
+                case .objet: ObjectInspectorView(viewModel: viewModel)
+                case .entrees: InputsPanelView(viewModel: viewModel)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     // MARK: - Left tab switcher
 
     @ViewBuilder
-    private func tabButton(_ label: String, tab: LeftPanelTab) -> some View {
-        Button(action: { leftPanelTab = tab }) {
+    private func tabButton(_ label: String, tab: LeftPanelTabID) -> some View {
+        let active = viewModel.leftPanelTab == tab
+        return Button(action: { viewModel.leftPanelTab = tab }) {
             Text(label)
-                .font(.system(size: 11, weight: leftPanelTab == tab ? .semibold : .regular))
-                .foregroundStyle(leftPanelTab == tab ? Color.primary : Color.secondary)
+                .font(.system(size: 11, weight: active ? .semibold : .regular))
+                .foregroundStyle(active ? Color.primary : Color.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Without contentShape, `.plain` only makes the text's glyphs clickable:
                 // the whole rectangle of the tab has to answer the click.
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(leftPanelTab == tab ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.15) : Color.clear)
+        .background(active ? Color(nsColor: .selectedContentBackgroundColor).opacity(0.15) : Color.clear)
     }
 
 }

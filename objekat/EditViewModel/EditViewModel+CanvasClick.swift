@@ -100,15 +100,24 @@ extension EditViewModel {
             return
         }
 
-        // The upper half: time. The selection goes, the cursor comes.
+        // The upper half: time. The selection goes, the cursor comes — and the inspector is shown the
+        // object the click landed on, without that object being selected (@see `inspectedID`): the
+        // click itself is unchanged.
         guard inBody else {
             clearSelection()
             onMoveCursor(tapTime)
+            inspect(item.id)
             return
         }
 
         // The body: the object.
+        // The behaviour of the click is unchanged (the range goes, the cursor follows the object, as before);
+        // what it did NOT do is show the object: a range that enclosed it had already selected it, the click
+        // selects the same set, and the panel's "new selection" rule stays silent. A click that leaves the
+        // object selected while a range existed therefore asks for the inspector explicitly.
+        let hadTimeSelection = timeSelection != nil
         timeSelection = nil
+        defer { if hadTimeSelection, selectedIDs.contains(item.id) { requestInspector() } }
         if item.isGroup, isDoubleTap {
             doubleClickGroup(id: item.id)
         } else if cmd {

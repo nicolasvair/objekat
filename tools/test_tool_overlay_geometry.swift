@@ -36,9 +36,10 @@ enum ToolOverlayGeometryTest {
     check("50 px is not narrow (the rule is strictly under 50)", !G.isNarrow(blockWidth: 50))
     check("2 px (the minimum block) is narrow", G.isNarrow(blockWidth: 2))
 
-    // MARK: - Volume zones: 0…0.4 mute, 0.4…0.6 step, 0.6…1 drag
+    // MARK: - Volume zones: a pad (at most 240 px) centred in the visible span; inside it
+    //         0…0.4 mute, 0.4…0.6 step, 0.6…1 drag; nil outside
 
-    // A 100 px span makes every boundary a whole number.
+    // A 100 px span (under the cap: the pad IS the span) makes every boundary a whole number.
     check("0 px → mute", G.volumeZone(localX: 0, spanWidth: 100) == .mute)
     check("39.999 px → mute", G.volumeZone(localX: 39.999, spanWidth: 100) == .mute)
     check("40 px → step (the boundary belongs to the next zone)",
@@ -48,19 +49,21 @@ enum ToolOverlayGeometryTest {
           G.volumeZone(localX: 60, spanWidth: 100) == .drag,
           "0.4 + 0.2 is 0.6000000000000001 — the edge is spelled out for that reason")
     check("100 px → drag", G.volumeZone(localX: 100, spanWidth: 100) == .drag)
+    check("just past the span → nothing", G.volumeZone(localX: 100.001, spanWidth: 100) == nil)
+    check("before the span → nothing", G.volumeZone(localX: -0.001, spanWidth: 100) == nil)
 
-    // The same boundaries on a width where the products are not whole.
-    for w in [37.0, 133.3, 900.0, 4321.5] {
+    // The same boundaries on widths (under the cap) where the products are not whole.
+    for w in [37.0, 133.3, 199.9, 240.0] {
         let zero = G.volumeZone(localX: w * 0.4, spanWidth: w)
         let six  = G.volumeZone(localX: w * 0.6, spanWidth: w)
         check("width \(w): the 0.4 edge is the step's first pixel", zero == .step)
         check("width \(w): the 0.6 edge is the drag's first pixel", six == .drag)
     }
 
-    // The drag gesture's guard used to read `localX >= span.width * 0.6`; the zone must agree
-    // with it on every pixel, including the ones just either side.
+    // Under the cap the zone agrees with the old inline tests (`x >= w * 0.6`, `x < w * 0.4`)
+    // on every pixel — clips narrower than 240 px are unchanged.
     var agree = true
-    for w in [50.0, 99.0, 250.0, 1234.5] {
+    for w in [2.0, 50.0, 99.0, 239.5, 240.0] {
         var x = 0.0
         while x <= w {
             let legacyDrag = x >= w * 0.6
@@ -70,7 +73,44 @@ enum ToolOverlayGeometryTest {
             x += 0.25
         }
     }
-    check("the zone agrees with the legacy inline tests at quarter-pixel steps", agree)
+    check("under the cap the zone agrees with the legacy inline tests at quarter-pixel steps", agree)
+
+    // The pad: at most 240 px, centred in the visible span.
+    check("pad of a 100 px span is the span", G.volumePad(spanWidth: 100) == (x: 0, width: 100))
+    check("pad of a 240 px span is the span", G.volumePad(spanWidth: 240) == (x: 0, width: 240))
+    check("pad of a 1000 px span: 240 px, centred (380 px in)",
+          G.volumePad(spanWidth: 1000) == (x: 380, width: 240))
+    check("pad of a 241 px span: 240 px, half a pixel in",
+          G.volumePad(spanWidth: 241) == (x: 0.5, width: 240))
+    check("pad of an empty span is empty", G.volumePad(spanWidth: 0) == (x: 0, width: 0))
+
+    // A 1000 px span: the pad runs 380…620 → mute 380…476, step 476…524, drag 524…620.
+    let wide = 1000.0
+    check("wide: the left margin answers nothing", G.volumeZone(localX: 0, spanWidth: wide) == nil)
+    check("wide: just before the pad answers nothing", G.volumeZone(localX: 379.999, spanWidth: wide) == nil)
+    check("wide: the pad's first pixel is mute", G.volumeZone(localX: 380, spanWidth: wide) == .mute)
+    check("wide: 475.999 is still mute", G.volumeZone(localX: 475.999, spanWidth: wide) == .mute)
+    check("wide: 476 (380 + 0.4 × 240) is the step's first pixel",
+          G.volumeZone(localX: 476, spanWidth: wide) == .step)
+    check("wide: 523.999 is still step", G.volumeZone(localX: 523.999, spanWidth: wide) == .step)
+    check("wide: 524 (380 + 0.6 × 240) is the drag's first pixel",
+          G.volumeZone(localX: 524, spanWidth: wide) == .drag)
+    check("wide: the pad's last pixel is drag", G.volumeZone(localX: 620, spanWidth: wide) == .drag)
+    check("wide: just past the pad answers nothing", G.volumeZone(localX: 620.001, spanWidth: wide) == nil)
+    check("wide: the right margin answers nothing", G.volumeZone(localX: 999, spanWidth: wide) == nil)
+
+    // The zones are the pad's, so the drawing (columns from `volumePad`) and the hit-test agree
+    // on a whole pad of any span width: the mute column ends where the step zone begins.
+    var padAgree = true
+    for w in [300.0, 777.7, 4321.5] {
+        let pad = G.volumePad(spanWidth: w)
+        let mw = G.volumeMuteColumnWidth(padWidth: pad.width)
+        if G.volumeZone(localX: pad.x + mw - 0.001, spanWidth: w) != .mute { padAgree = false }
+        if G.volumeZone(localX: pad.x + mw, spanWidth: w) != .step { padAgree = false }
+        if G.volumeZone(localX: pad.x - 0.001, spanWidth: w) != nil { padAgree = false }
+        if G.volumeZone(localX: pad.x + pad.width + 0.001, spanWidth: w) != nil { padAgree = false }
+    }
+    check("the pad's edges and the mute column's edge are the zones' edges at any width", padAgree)
 
     // The ± zone: top half raises, bottom half lowers.
     check("± zone, top of the block → +1", G.volumeStepDirection(localY: 0, blockHeight: 80) == 1)
@@ -78,13 +118,16 @@ enum ToolOverlayGeometryTest {
     check("± zone, the middle itself → −1", G.volumeStepDirection(localY: 40, blockHeight: 80) == -1)
     check("± zone, bottom → −1", G.volumeStepDirection(localY: 80, blockHeight: 80) == -1)
 
-    // The rich layer's columns.
-    check("mute column is 40 % of the span", G.volumeMuteColumnWidth(spanWidth: 200) == 80)
-    check("± column is 20 % less the two divider px", G.volumeStepColumnWidth(spanWidth: 200) == 38)
-    check("drag column is 40 % less the two divider px", G.volumeDragColumnWidth(spanWidth: 200) == 78)
-    check("the three columns plus two 1 px dividers fill the span less 2",
-          G.volumeMuteColumnWidth(spanWidth: 200) + G.volumeStepColumnWidth(spanWidth: 200)
-          + G.volumeDragColumnWidth(spanWidth: 200) + 2 * G.volumeDividerWidth == 198)
+    // The rich layer's columns (a 200 px pad here).
+    check("mute column is 40 % of the pad", G.volumeMuteColumnWidth(padWidth: 200) == 80)
+    check("± column is 20 % less the two divider px", G.volumeStepColumnWidth(padWidth: 200) == 38)
+    check("drag column is 40 % less the two divider px", G.volumeDragColumnWidth(padWidth: 200) == 78)
+    check("the three columns plus two 1 px dividers fill the pad less 2",
+          G.volumeMuteColumnWidth(padWidth: 200) + G.volumeStepColumnWidth(padWidth: 200)
+          + G.volumeDragColumnWidth(padWidth: 200) + 2 * G.volumeDividerWidth == 198)
+    check("a 240 px pad: 96 + 46 + 94 columns",
+          G.volumeMuteColumnWidth(padWidth: 240) == 96 && G.volumeStepColumnWidth(padWidth: 240) == 46
+          && G.volumeDragColumnWidth(padWidth: 240) == 94)
 
     // MARK: - Volume plan: who shows what
 

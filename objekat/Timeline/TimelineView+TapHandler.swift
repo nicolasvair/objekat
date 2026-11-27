@@ -380,7 +380,9 @@ extension TimelineView {
         let localX = point.x - span.x
         let localY = point.y - hitByY
 
-        let zone = ToolOverlayGeometry.volumeZone(localX: localX, spanWidth: span.width)
+        // Outside the pad (the veil's margins around the controls) the click selects and nothing more:
+        // the visible zone is the clickable one.
+        guard let zone = ToolOverlayGeometry.volumeZone(localX: localX, spanWidth: span.width) else { return }
         if zone == .mute {
             viewModel.edit { viewModel.toggleMuteSelected() }
             return
@@ -400,7 +402,8 @@ extension TimelineView {
 
     /// What the zone under the pointer says, or nil if there is nothing to say. The Volume tool's
     /// three zones are the SAME as `handleVolumeTap`'s and the drag's (0…40 % mute,
-    /// 40…60 % ± 1 dB, 60…100 % level) — hence sharing `visibleSpan`.
+    /// 40…60 % ± 1 dB, 60…100 % level, of a pad of at most 240 px centred in the visible span, and
+    /// nothing outside it) — hence sharing `visibleSpan`.
     ///
     /// Resolved geometrically, like everything else: no sublayer of the timeline is hit-testable
     /// (everything is `allowsHitTesting(false)`), so a `.help` laid on a block layer would never
@@ -434,9 +437,10 @@ extension TimelineView {
                                scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
         let localX = point.x - span.x
         switch ToolOverlayGeometry.volumeZone(localX: localX, spanWidth: span.width) {
-        case .mute: return L("help.mute.zone")
-        case .step: return L("help.volume.clickZone")
-        case .drag: return L("help.volume.dragZone")
+        case .mute?: return L("help.mute.zone")
+        case .step?: return L("help.volume.clickZone")
+        case .drag?: return L("help.volume.dragZone")
+        case nil: return nil
         }
     }
 

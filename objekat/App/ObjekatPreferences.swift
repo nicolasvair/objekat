@@ -16,6 +16,25 @@ final class ObjekatPreferences {
         didSet { UserDefaults.standard.set(soundLibraryFolder, forKey: Self.soundLibraryFolderKey) }
     }
 
+    /// The level of the Finder tab's mini player (the preview of a sound before it is imported), 0…1.
+    /// One level for the whole app, kept from one launch to the next: it is a listening preference,
+    /// not a project's.
+    var previewVolume: Double {
+        didSet { UserDefaults.standard.set(previewVolume, forKey: Self.previewVolumeKey) }
+    }
+    private static let previewVolumeKey = "pref.previewVolume"
+
+    /// The last width the hand gave the left panel, nil until it has ever done so. A NEW project (and a
+    /// project saved before the panel's width was kept in the file) starts from it, so the layout one
+    /// arranged follows from project to project instead of snapping back to the factory width. Written
+    /// when a drag of the divider ENDS, never by a load.
+    var leftPanelWidth: Double? {
+        didSet {
+            if let w = leftPanelWidth { UserDefaults.standard.set(w, forKey: Self.leftPanelWidthKey) }
+        }
+    }
+    private static let leftPanelWidthKey = "pref.leftPanelWidth"
+
     private static let soundLibraryFolderKey = "pref.soundLibraryFolder"
     /// The old name. To be removed when nobody comes from a version that wrote it any more.
     private static let legacySoundLibraryFolderKey = "pref.sonoth\u{00E8}queFolder"
@@ -44,6 +63,9 @@ final class ObjekatPreferences {
     static let diagnosticLogKey = "pref.diagnosticLog"
 
     private init() {
+        leftPanelWidth = UserDefaults.standard.object(forKey: Self.leftPanelWidthKey) as? Double
+        previewVolume = (UserDefaults.standard.object(forKey: Self.previewVolumeKey) as? Double)
+            .map { min(max($0, 0), 1) } ?? 1
         soundLibraryFolder = UserDefaults.standard.string(forKey: Self.soundLibraryFolderKey)
             ?? UserDefaults.standard.string(forKey: Self.legacySoundLibraryFolderKey)
             ?? ""

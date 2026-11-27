@@ -135,6 +135,8 @@ extension EditViewModel {
         // `projectDocument` captures the bus chains' states itself.
         let doc = projectDocument(items: itemsWithCapturedPluginStates(),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
+        // What the inspector was showing on its own belongs to the document leaving.
+        inspectedID = nil
         // The document is leaving: a file-change scan in flight answers about it, and nothing may
         // be applied until the next load has finished (`performFinalize` lifts this).
         fileChanges.epoch &+= 1
@@ -177,6 +179,9 @@ extension EditViewModel {
         undoStack = parked.undoStack
         redoStack = parked.redoStack
 
+        // The selection comes back WITH its tab: the inspector must not be brought forward over the panel tab
+        // this document was left on (@see `selectionRestoredByTabSwitch`).
+        selectionRestoredByTabSwitch = parked.selectedIDs
         selectedIDs = parked.selectedIDs
         cursorPosition = parked.cursorPosition
         caretLane = parked.caretLane

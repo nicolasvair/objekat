@@ -184,9 +184,17 @@ final class SoundLibraryViewModel {
     var pointS: Double = 0
     private var selectedDuration: Double = 0
 
-    // Preview player
-    private var player: AVAudioPlayer? = nil
+    // Preview player. `player` is read by the playhead's own redraw (outside any observation
+    // tracking) and only ever changes together with `isPlaying`, hence not observed.
+    @PerceptionIgnored private var player: AVAudioPlayer? = nil
     var isPlaying: Bool = false
+    /// Where the mini player's head stands in the file, in seconds, while NOT playing: where a click or a
+    /// scrub put it, or where the sound stopped. nil = no head (a file just selected). While playing the
+    /// head is the player's own position (@see `livePlayerTime`), read at each frame by the view.
+    private(set) var previewHead: Double? = nil
+    /// The stop timer of the sound that is up (point O, or the end of the file) — cancelled and re-armed at
+    /// every move of the head, since its delay was computed for the position the head has just left.
+    @PerceptionIgnored private var stopTask: Task<Void, Never>? = nil
     /// Bumped by every `stopPreview`: the stop timer of a preview only cuts the preview it was armed
     /// for (@see FinderAutoPreview.timerApplies). Without it, the timer of a preview stopped by hand
     /// cut the NEXT one at the first one's end.
@@ -779,6 +787,7 @@ final class SoundLibraryViewModel {
     }
 
     private func resetIOSForDuration(_ dur: Double) {
+        previewHead = nil
         selectedDuration = dur
         pointI = 0
         pointO = dur
@@ -804,40 +813,102 @@ final class SoundLibraryViewModel {
 
     /// `byHand`: the preview was launched by the hand (the second click on a file, the play button) and not
     /// by the automatic mode itself — only that turns the mode on.
-    private func startPreview(node: SoundLibraryNode, byHand: Bool) {
+    /// `start`: where the sound begins, in seconds of the file — nil = point I (the play button, an arrow).
+    /// A click in the waveform gives it, and may give an instant OUTSIDE I–O.
+    private func startPreview(node: SoundLibraryNode, byHand: Bool, from start: Double? = nil) {
         stopPreview(.automatic)   // one file giving way to the next: the mode is neither started nor ended by it
         guard let p = try? AVAudioPlayer(contentsOf: node.url) else { return }
         autoPreviewMode.started(byHand: byHand)
         // Plays out of the SAME audio device as the engine (the toolbar choice) — without this,
         // AVAudioPlayer plays on the default system device. nil (not found) ⇒ the system default.
         if let uid = AudioOutputDevice.shared.uid { p.currentDevice = uid }
-        p.currentTime = pointI
+        p.volume = Float(ObjekatPreferences.shared.previewVolume)
+        let from = start.map { min(max($0, 0), max(p.duration, 0)) } ?? pointI
+        p.currentTime = from
         p.play()
         player = p
         isPlaying = true
-        // An automatic stop at point O — or at the end of the file when the length is not known yet
-        // (pointO is 0 until the media has loaded). The timer only cuts the preview it was armed for.
-        let remaining = FinderAutoPreview.remaining(pointI: pointI, pointO: pointO,
-                                                    playerDuration: p.duration)
+        previewHead = from
+        armPreviewStop(from: from)
+    }
+
+    /// An automatic stop at point O when it lies ahead of `start` — otherwise at the end of the file, which
+    /// is also what the player reports when the length is not known yet (pointO is 0 until the media has
+    /// loaded). Arming bumps the generation, so the timer of the position the head has just left can no
+    /// longer cut the sound; the new one only cuts the preview it was armed for.
+    private func armPreviewStop(from start: Double) {
+        stopTask?.cancel()
+        stopTask = nil
+        guard let p = player else { return }
+        let end = FinderAutoPreview.endPoint(from: start, pointO: pointO, playerDuration: p.duration)
+        let remaining = max(0, end - start)
+        previewGen &+= 1
         let gen = previewGen
-        Task {
+        stopTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+            guard !Task.isCancelled else { return }
             await MainActor.run {
+                guard let self else { return }
                 if FinderAutoPreview.timerApplies(armed: gen, current: self.previewGen), self.isPlaying {
-                    self.stopPreview(.automatic)   // the end of the file: the mode stays ("locked")
+                    self.stopPreview(.automatic, head: end)   // the end: the mode stays ("locked")
                 }
             }
         }
     }
 
+    /// The hand puts the head at `time` in the mini player's waveform — a click, then every step of a
+    /// drag (the scrub). The sound that is playing follows the head (no restart: a continuous scrub);
+    /// a silent player starts there, inside I–O or not. Either way the stop timer is re-armed for the new
+    /// position.
+    func placeHead(node: SoundLibraryNode, at time: Double) {
+        if isPlaying, let p = player {
+            let t = min(max(time, 0), max(p.duration, 0))
+            p.currentTime = t
+            previewHead = t
+            armPreviewStop(from: t)
+        } else {
+            startPreview(node: node, byHand: true, from: time)
+        }
+    }
+
+    /// The player's own position, for the playhead's per-frame redraw. nil when nothing plays.
+    func livePlayerTime() -> Double? { isPlaying ? player?.currentTime : nil }
+
+    /// The previous / next file of the shown rows, folders passed over — nil at either end of the list.
+    func adjacentFile(_ step: Int) -> SoundLibraryNode? {
+        let rows = displayedRows
+        guard let id = selectedID, let i = rows.firstIndex(where: { $0.id == id }),
+              let j = FinderAutoPreview.adjacentFileIndex(isDirectory: rows.map(\.isDirectory),
+                                                          from: i, step: step) else { return nil }
+        return rows[j]
+    }
+
+    /// The previous (−1) / next (+1) button: selects that file as an arrow would, and if a sound was
+    /// playing, plays the new one from its point I.
+    func stepFile(_ step: Int) {
+        guard let node = adjacentFile(step) else { return }
+        let wasPlaying = isPlaying
+        focusCursor(on: node)    // stops the sound without ending the mode, resets I / O / S
+        if wasPlaying { startPreview(node: node, byHand: false) }
+    }
+
+    /// The slider moved: the sound that is playing follows (the level itself lives in the preferences).
+    func applyPreviewVolume() {
+        player?.volume = Float(ObjekatPreferences.shared.previewVolume)
+    }
+
     /// Stops the sound and cancels what was planned. `.explicit` (the default: a stop button, the view going
     /// away, a folder left) also turns the automatic preview mode off; `.automatic` (the end of the file, a
-    /// change of file) leaves it as it was.
-    func stopPreview(_ stop: FinderAutoPreview.Stop = .explicit) {
+    /// change of file) leaves it as it was. `head`: where the sound ended, when the caller knows better than
+    /// the player (a player that has just reached the end of the file reads 0).
+    func stopPreview(_ stop: FinderAutoPreview.Stop = .explicit, head: Double? = nil) {
         autoPreviewMode.stopped(stop)
         previewGen &+= 1
         autoPreviewTask?.cancel()
         autoPreviewTask = nil
+        stopTask?.cancel()
+        stopTask = nil
+        if let p = player { previewHead = head ?? (p.isPlaying ? p.currentTime : previewHead) }
         player?.stop()
         player = nil
         isPlaying = false
@@ -965,7 +1036,7 @@ struct SoundLibraryView: View {
                 if let node = vm.selectedNode {
                     Divider()
                     SoundLibraryMiniPlayerView(node: node, vm: vm)
-                        .frame(height: 90)
+                        .frame(height: 106)
                 }
             }
         }
@@ -1331,99 +1402,194 @@ struct MiniWaveformView: View {
 
 // MARK: - Mini player with I/O/S handles
 
+/// The mini player of the Finder tab: the waveform of the file selected, its three handles (I, O, S),
+/// a head, and one transport row.
+///
+/// The WAVEFORM is the transport's surface: a click puts the head there AND plays from it, a drag
+/// scrubs (the sound follows the hand), inside I–O or not. The handles sit ABOVE that surface, so a
+/// hand that aims at I, O or S still gets the handle. Previous / next sit beside play / stop and
+/// pass over the folders; the level slider is the app's one preview level (@see
+/// `ObjekatPreferences.previewVolume`). The panel can be 250 pt wide: the transport and the I / S / O
+/// readings are on two rows for that reason.
 private struct SoundLibraryMiniPlayerView: View {
     let node: SoundLibraryNode
     var vm: SoundLibraryViewModel
 
-    // Drag states for the handles
-    @State private var draggingI = false
-    @State private var draggingO = false
-    @State private var draggingS = false
-
     var body: some View { WithPerceptionTracking { perceivedBody } }
 
     @ViewBuilder private var perceivedBody: some View {
+        // Read here, inside the tracked body: a `Binding(get:)` or a `TimelineView` closure is
+        // evaluated by SwiftUI OUTSIDE it, where the Perception backport would see nothing.
+        let volume = ObjekatPreferences.shared.previewVolume
+        let playing = vm.isPlaying
+        let restHead = vm.previewHead
+        let hasPrevious = vm.adjacentFile(-1) != nil
+        let hasNext = vm.adjacentFile(1) != nil
         VStack(spacing: 0) {
-            // Waveform with handles
-            GeometryReader { geo in WithPerceptionTracking {
-                let w = geo.size.width
-                let h = geo.size.height
-                let dur = max(node.duration, 0.01)
+            waveformArea(playing: playing, restHead: restHead)
+            transportArea(playing: playing, volume: volume, hasPrevious: hasPrevious, hasNext: hasNext)
+        }
+    }
 
-                ZStack(alignment: .topLeading) {
-                    // Full-width waveform background
-                    PerceivedCanvas { ctx, size in
-                        // Outside I–O: darkened
-                        let xi = vm.pointI / dur * Double(size.width)
-                        let xo = vm.pointO / dur * Double(size.width)
-                        ctx.fill(Path(CGRect(x: 0, y: 0, width: xi, height: size.height)),
-                                 with: .color(.black.opacity(0.25)))
-                        ctx.fill(Path(CGRect(x: xo, y: 0, width: size.width - xo, height: size.height)),
-                                 with: .color(.black.opacity(0.25)))
+    /// The waveform, its handles, the transport surface and the head. A function of its own (and not part
+    /// of `perceivedBody`) so that the compiler type-checks the two halves of the player separately.
+    @ViewBuilder
+    private func waveformArea(playing: Bool, restHead: Double?) -> some View {
+        GeometryReader { geo in WithPerceptionTracking {
+            waveformContent(w: geo.size.width, h: geo.size.height, playing: playing, restHead: restHead)
+        } }
+        .frame(height: 52)
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .clipped()
+    }
 
-                        // Waveform
-                        let peaks = node.peaks
-                        guard !peaks.isEmpty else { return }
-                        let step = size.width / Double(peaks.count)
-                        let mid = size.height / 2
-                        for (i, peak) in peaks.enumerated() {
-                            let x = Double(i) * step + step / 2
-                            let amp = Double(peak) * mid * 0.85
-                            let inRegion = (Double(i) / Double(peaks.count) * dur) >= vm.pointI
-                                       && (Double(i) / Double(peaks.count) * dur) <= vm.pointO
-                            var p = Path()
-                            p.move(to: CGPoint(x: x, y: mid - amp))
-                            p.addLine(to: CGPoint(x: x, y: mid + amp))
-                            ctx.stroke(p, with: .color(inRegion ? .accentColor : .accentColor.opacity(0.3)),
-                                       lineWidth: max(1, step - 0.5))
-                        }
-                    }
+    /// The layers of the waveform, bottom to top: the drawing, the transport surface (a click places the head
+    /// and plays, a drag scrubs), the head, then the three handles — which come last, hence keep their priority.
+    @ViewBuilder
+    private func waveformContent(w: Double, h: Double, playing: Bool, restHead: Double?) -> some View {
+        let dur: Double = max(node.duration, 0.01)
+        ZStack(alignment: .topLeading) {
+            waveformCanvas(dur: dur)
+            transportSurface(w: w, dur: dur)
+            playhead(w: w, h: h, dur: dur, playing: playing, restHead: restHead)
+            handles(w: w, h: h, dur: dur)
+        }
+    }
 
-                    // Handle I (yellow, left)
-                    handleLine(x: vm.pointI / dur * w, height: h, color: .yellow, label: "I")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setI((v.location.x / w) * dur) }
-                            .onEnded { v in vm.setI((v.location.x / w) * dur) })
+    private func waveformCanvas(dur: Double) -> some View {
+        PerceivedCanvas { ctx, size in
+            // Outside I–O: darkened
+            let xi: Double = vm.pointI / dur * Double(size.width)
+            let xo: Double = vm.pointO / dur * Double(size.width)
+            ctx.fill(Path(CGRect(x: 0, y: 0, width: xi, height: size.height)),
+                     with: .color(.black.opacity(0.25)))
+            ctx.fill(Path(CGRect(x: xo, y: 0, width: size.width - xo, height: size.height)),
+                     with: .color(.black.opacity(0.25)))
 
-                    // Handle O (yellow, right)
-                    handleLine(x: vm.pointO / dur * w, height: h, color: .yellow, label: "O")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setO((v.location.x / w) * dur) }
-                            .onEnded { v in vm.setO((v.location.x / w) * dur) })
+            // Waveform
+            let peaks = node.peaks
+            guard !peaks.isEmpty else { return }
+            let count = Double(peaks.count)
+            let step: Double = size.width / count
+            let mid: Double = size.height / 2
+            let lineWidth: Double = max(1, step - 0.5)
+            for (i, peak) in peaks.enumerated() {
+                let x: Double = Double(i) * step + step / 2
+                let amp: Double = Double(peak) * mid * 0.85
+                let time: Double = Double(i) / count * dur
+                let inRegion: Bool = time >= vm.pointI && time <= vm.pointO
+                var p = Path()
+                p.move(to: CGPoint(x: x, y: mid - amp))
+                p.addLine(to: CGPoint(x: x, y: mid + amp))
+                ctx.stroke(p, with: .color(inRegion ? .accentColor : .accentColor.opacity(0.3)),
+                           lineWidth: lineWidth)
+            }
+        }
+    }
 
-                    // Handle S (cyan, sync)
-                    let sAbsolute = vm.pointI + vm.pointS
-                    handleLine(x: sAbsolute / dur * w, height: h, color: .cyan, label: "S")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setS((v.location.x / w) * dur - vm.pointI) }
-                            .onEnded { v in vm.setS((v.location.x / w) * dur - vm.pointI) })
-                }
-            } }
-            .frame(height: 52)
-            .background(Color(nsColor: .underPageBackgroundColor))
-            .clipped()
+    /// A click places the head and plays, a drag scrubs. No `onEnded`: the mouse-down already placed the head
+    /// (and started the sound); placing it again at the mouse-up would restart a sound that has just ended.
+    private func transportSurface(w: Double, dur: Double) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    let t: Double = FinderAutoPreview.headTime(x: v.location.x, width: w, duration: dur)
+                    vm.placeHead(node: node, at: t)
+                })
+    }
 
-            // Controls: play/stop plus the I/O/S values
+    /// The head: the player's own position, redrawn while playing; where it stopped otherwise.
+    private func playhead(w: Double, h: Double, dur: Double, playing: Bool, restHead: Double?) -> some View {
+        SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { _ in
+            headLine(w: w, h: h, dur: dur, time: playing ? vm.livePlayerTime() : restHead)
+        }
+        .frame(width: w, height: h, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func headLine(w: Double, h: Double, dur: Double, time: Double?) -> some View {
+        if let time {
+            let fraction: Double = min(max(time / dur, 0), 1)
+            Rectangle()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 1.5, height: h)
+                .offset(x: fraction * w - 0.75)
+        }
+    }
+
+    /// I (yellow, left), O (yellow, right) and S (cyan, sync).
+    @ViewBuilder
+    private func handles(w: Double, h: Double, dur: Double) -> some View {
+        let sAbsolute: Double = vm.pointI + vm.pointS
+        handleLine(x: vm.pointI / dur * w, height: h, color: .yellow, label: "I")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setI((v.location.x / w) * dur) }
+                .onEnded { v in vm.setI((v.location.x / w) * dur) })
+        handleLine(x: vm.pointO / dur * w, height: h, color: .yellow, label: "O")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setO((v.location.x / w) * dur) }
+                .onEnded { v in vm.setO((v.location.x / w) * dur) })
+        handleLine(x: sAbsolute / dur * w, height: h, color: .cyan, label: "S")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setS((v.location.x / w) * dur - vm.pointI) }
+                .onEnded { v in vm.setS((v.location.x / w) * dur - vm.pointI) })
+    }
+
+    /// Previous / play-stop / next, the level, and the I / S / O readings.
+    @ViewBuilder
+    private func transportArea(playing: Bool, volume: Double, hasPrevious: Bool, hasNext: Bool) -> some View {
+        VStack(spacing: 2) {
+            // Transport: previous / play-stop / next, then the level
             HStack(spacing: 8) {
-                Button(action: { vm.togglePreview(node: node) }) {
-                    Image(systemName: vm.isPlaying ? "stop.fill" : "play.fill")
-                        .font(.system(size: 10))
+                Button(action: { vm.stepFile(-1) }) {
+                    Image(systemName: "backward.end.fill").font(.system(size: 10))
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.primary)
+                .disabled(!hasPrevious)
+                .help(L("library.player.previous"))
 
-                Spacer()
-
-                Group {
-                    iosLabel("I", time: vm.pointI, color: .yellow)
-                    iosLabel("S", time: vm.pointI + vm.pointS, color: .cyan)
-                    iosLabel("O", time: vm.pointO, color: .yellow)
+                Button(action: { vm.togglePreview(node: node) }) {
+                    Image(systemName: playing ? "stop.fill" : "play.fill")
+                        .font(.system(size: 10))
+                        .frame(width: 12)
                 }
+                .buttonStyle(.plain)
+
+                Button(action: { vm.stepFile(1) }) {
+                    Image(systemName: "forward.end.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasNext)
+                .help(L("library.player.next"))
+
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+                Slider(value: Binding(get: { volume },
+                                      set: { ObjekatPreferences.shared.previewVolume = $0
+                                             vm.applyPreviewVolume() }),
+                       in: 0...1)
+                    .controlSize(.mini)
+                    .frame(minWidth: 40)
+                    .help(L("library.player.volume"))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .foregroundStyle(.primary)
+
+            // The I / S / O readings
+            HStack(spacing: 0) {
+                iosLabel("I", time: vm.pointI, color: .yellow)
+                Spacer(minLength: 4)
+                iosLabel("S", time: vm.pointI + vm.pointS, color: .cyan)
+                Spacer(minLength: 4)
+                iosLabel("O", time: vm.pointO, color: .yellow)
+            }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder

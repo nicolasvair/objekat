@@ -1985,7 +1985,7 @@ extension TimelineView {
             guard let item = hitItem, !GroupInstrumentRule.isEmptyClip(item) else { return }
             let bx = hitAbsStart * pixelsPerSecond
             let bw = max(item.duration * pixelsPerSecond, 2)
-            // The drag zone (the right 40%) bounded by the visible portion — aligned on the clamped rendering.
+            // The drag zone (the right 40 % of the pad centred in the visible portion) — aligned on the rendering.
             let span = visibleSpan(blockX: bx, blockWidth: bw,
                                    scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
             guard ToolOverlayGeometry.volumeZone(localX: p.x - span.x, spanWidth: span.width) == .drag
