@@ -94,6 +94,12 @@ struct PluginBrowserView: View {
         nonmutating set { chosenPage = newValue }
     }
     @State private var outsideClickMonitor: Any? = nil
+    /// The colour whose name is being typed (its tab's popover is open).
+    @State private var renamingCategory: Int? = nil
+    /// The colour tab on screen (nil on any other page). Mirrored here, in the view's own state, for the ⌘R
+    /// monitor below: a monitor outlives the renders that made it and must not read the derived pages.
+    @State private var shownCategoryTab: Int? = nil
+    @State private var renameKeyMonitor: Any? = nil
     /// The colour tab being dragged along the bar (its place in the row, the hand's travel).
     @State private var colourDrag: (from: Int, dx: CGFloat)? = nil
 
@@ -183,7 +189,9 @@ struct PluginBrowserView: View {
                 // The circle, then the palette its zones are filled from by drag and drop.
                 PluginBrowserPlusPage(viewModel: viewModel,
                                       plugins: listedSections.filter { $0.kind != .ara }.flatMap(\.plugins),
-                                      categories: usedCategories) { searchRow }
+                                      categories: PluginCategoryPalette.shortcutCategories(
+                                          names: categories.categoryNames, order: categories.categoryOrder),
+                                      categoryNames: categories.categoryNames) { searchRow }
             }
             Divider()
             footer
@@ -220,10 +228,22 @@ struct PluginBrowserView: View {
                 dismiss()
                 return nil
             }
+            // ⌘R on a colour tab names it. The timeline's key monitor lets every key through while the
+            // browser is open (@see TimelineKeyHandler, `pluginBrowserOpen`), so ⌘R has to be answered here.
+            shownCategoryTab = categoryTab(of: currentPage)
+            renameKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard Self.isRenameShortcut(event), event.window?.sheetParent != nil,
+                      renamingCategory == nil, let tab = shownCategoryTab else { return event }
+                renamingCategory = tab
+                return nil
+            }
         }
+        .onChangeCompat(of: currentPage) { _, now in shownCategoryTab = categoryTab(of: now) }
         .onDisappear {
             if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
             outsideClickMonitor = nil
+            if let renameKeyMonitor { NSEvent.removeMonitor(renameKeyMonitor) }
+            renameKeyMonitor = nil
             viewModel.setPluginEditorsFloating(true)
             viewModel.pluginBrowserOpen = false
         }
@@ -254,9 +274,13 @@ struct PluginBrowserView: View {
                     tabCapsule(.all) { Text(L("pluginBrowser.tab.all")) }
                     let tabs = usedCategories
                     ForEach(Array(tabs.enumerated()), id: \.element) { position, index in WithPerceptionTracking {
-                        tabCapsule(.plugins(.category(index)), help: L("pluginBrowser.tab.colour.help")) {
+                        // The tooltip is the colour's NAME when the hand gave it one.
+                        tabCapsule(.plugins(.category(index)),
+                                   help: categories.categoryName(index) ?? L("pluginBrowser.tab.colour.help")) {
                             Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 9, height: 9)
                         }
+                        .overlay(RightClickMenuOverlay(menu: { categoryTabMenu(index) }))
+                        .popover(isPresented: renamingBinding(index), arrowEdge: .bottom) { categoryRenamePopover(index) }
                         .offset(x: colourTabOffset(position, count: tabs.count))
                         .zIndex(colourDrag?.from == position ? 1 : 0)
                         .gesture(colourTabDrag(position, tabs: tabs))
@@ -333,6 +357,56 @@ struct PluginBrowserView: View {
                 categories.setCategoryOrder(PluginCategoryPalette.moved(tabs, from: position, to: target))
                 refocusSearch()
             }
+    }
+
+    // MARK: Naming a colour (right click on its tab, or ⌘R on it)
+
+    /// The colour a page stands for, nil for any other page ("All", FX link, send, "+").
+    private func categoryTab(of page: PluginBrowserPage) -> Int? {
+        if case .plugins(.category(let index)) = page { return index }
+        return nil
+    }
+
+    /// ⌘R alone, whatever the layout (the letter, not the key code: @see TimelineKeyHandler).
+    private static func isRenameShortcut(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
+            && event.charactersIgnoringModifiers?.lowercased() == "r"
+    }
+
+    private func renamingBinding(_ index: Int) -> Binding<Bool> {
+        Binding(get: { renamingCategory == index },
+                set: { if !$0 && renamingCategory == index { renamingCategory = nil } })
+    }
+
+    /// The tab's context menu: "Rename…" (the same as ⌘R once the colour is the tab on screen).
+    private func categoryTabMenu(_ index: Int) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        // The item holds its proxy (`representedObject` is strong, an item's target is weak).
+        let proxy = MenuActionProxy { renamingCategory = index }
+        let item = NSMenuItem(title: L("pluginBrowser.tab.colour.rename"),
+                              action: #selector(MenuActionProxy.run), keyEquivalent: "r")
+        item.keyEquivalentModifierMask = .command
+        item.target = proxy
+        item.representedObject = proxy
+        menu.addItem(item)
+        return menu
+    }
+
+    /// The inline field of the rename: Return or leaving it keeps what was typed (an empty name takes the
+    /// name back), Esc drops it. The store cuts it down to a name (@see PluginCategoryStore.cleanedName).
+    private func categoryRenamePopover(_ index: Int) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(ObjekatPalette.pluginCategory(index)).frame(width: 10, height: 10)
+            MarkerRenameField(initial: categories.categoryName(index) ?? "",
+                              font: .system(size: 12), commitsOnFocusLoss: true) { value in
+                if let value { categories.setCategoryName(value, for: index) }
+                if renamingCategory == index { renamingCategory = nil }
+                refocusSearch()
+            }
+            .frame(width: 180)
+        }
+        .padding(10)
     }
 
     private func select(_ target: PluginBrowserPage) {

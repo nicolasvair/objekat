@@ -14147,6 +14147,29 @@
         }
       }
     },
+    "pluginBrowser.tab.colour.rename": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rename…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renombrar…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Renommer…"
+          }
+        }
+      }
+    },
     "pluginBrowser.tab.fxLink": {
       "extractionState": "manual",
       "localizations": {

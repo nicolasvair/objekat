@@ -85,6 +85,17 @@ enum PluginCategoryPalette {
         return known + used.sorted().filter { !known.contains($0) }
     }
 
+    /// The categories the "+" shortcut offers: the NAMED ones only (a colour with no name is a tab one can
+    /// sort plugins with, not something to bind a direction to), in the tabs' order — a named colour that
+    /// holds no plugin any more is offered all the same, after the others if `order` does not know it.
+    /// `names` is the store's `palette index → name`; a blank name or an index out of the palette counts
+    /// for nothing.
+    static func shortcutCategories(names: [Int: String], order: [Int]) -> [Int] {
+        let named = names.filter { $0.key >= 0 && $0.key < count
+                                   && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return ordered(used: Array(named.keys), order: order)
+    }
+
     /// `tabs` with the tab at `from` taken out and put back at `to` (an index in the row WITHOUT it,
     /// @see TabReorder.targetIndex).
     static func moved(_ tabs: [Int], from: Int, to: Int) -> [Int] {
