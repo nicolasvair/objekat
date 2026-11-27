@@ -36,14 +36,19 @@ struct ToolVolumeLayer: View {
                     ZStack(alignment: .topLeading) {
                         // A full-block veil: it signals volume mode over the whole clip.
                         Color.black.opacity(ToolOverlayGeometry.volumeFullVeilOpacity)
-                        // The controls (mute / ± / level) bounded by the block's visible portion.
+                        // The controls (mute / ± / level): a pad centred in the block's visible portion.
                         GeometryReader { geo in
-                            let sx = span?.x ?? 0
-                            let sw = span?.width ?? geo.size.width
+                            let spanX = span?.x ?? 0
+                            let spanW = span?.width ?? geo.size.width
+                            // The controls sit in a PAD of at most 240 px, centred in the visible
+                            // span (@see ToolOverlayGeometry.volumePad) — the veil stays whole.
+                            let pad = ToolOverlayGeometry.volumePad(spanWidth: spanW)
+                            let sx = spanX + pad.x
+                            let sw = pad.width
                             ZStack(alignment: .topLeading) {
                                 if object.isMuted {
                                     Color.red.opacity(ToolOverlayGeometry.volumeMuteTintOpacity)
-                                        .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(spanWidth: sw))
+                                        .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(padWidth: sw))
                                 }
                                 HStack(spacing: 0) {
                                     // — Mute (40%) —
@@ -56,7 +61,7 @@ struct ToolVolumeLayer: View {
                                         }
                                         .foregroundStyle(object.isMuted ? Color.red : Color.white.opacity(0.6))
                                     }
-                                    .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(spanWidth: sw))
+                                    .frame(width: ToolOverlayGeometry.volumeMuteColumnWidth(padWidth: sw))
 
                                     Rectangle().fill(Color.white.opacity(0.2))
                                         .frame(width: ToolOverlayGeometry.volumeDividerWidth)
@@ -73,7 +78,7 @@ struct ToolVolumeLayer: View {
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                                     }
-                                    .frame(width: ToolOverlayGeometry.volumeStepColumnWidth(spanWidth: sw))
+                                    .frame(width: ToolOverlayGeometry.volumeStepColumnWidth(padWidth: sw))
 
                                     Rectangle().fill(Color.white.opacity(0.2))
                                         .frame(width: ToolOverlayGeometry.volumeDividerWidth)
@@ -89,7 +94,7 @@ struct ToolVolumeLayer: View {
                                                 .foregroundStyle(Color.white.opacity(0.4))
                                         }
                                     }
-                                    .frame(width: ToolOverlayGeometry.volumeDragColumnWidth(spanWidth: sw))
+                                    .frame(width: ToolOverlayGeometry.volumeDragColumnWidth(padWidth: sw))
                                 }
                                 .frame(width: sw)
                             }

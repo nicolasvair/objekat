@@ -351,9 +351,9 @@ func drawVolumeVeilMinimal(_ ctx: GraphicsContext, size: CGSize, volume: Float, 
                     maxWidth: s.width - 4, minScale: 0.5)
 }
 
-/// The Volume tool's FULL veil — the hovered block: an 80 % veil and three zones across the visible
-/// `span`, mute (40 %), ± 1 dB (20 %) and level (40 %), the red tint over the mute zone when the
-/// object is muted. The zones are `ToolOverlayGeometry.volumeZone`'s, which the gestures read.
+/// The Volume tool's FULL veil — the hovered block: an 80 % veil and three zones in a pad of at most
+/// 240 px centred in the visible `span`, mute (40 %), ± 1 dB (20 %) and level (40 %), the red tint
+/// over the mute zone when the object is muted. The zones are `ToolOverlayGeometry.volumeZone`'s, which the gestures read.
 func drawVolumeVeilFull(_ ctx: GraphicsContext, size: CGSize, volume: Float, isMuted: Bool,
                         muteLabel: String,
                         span: (x: Double, width: Double)? = nil,
@@ -363,22 +363,26 @@ func drawVolumeVeilFull(_ ctx: GraphicsContext, size: CGSize, volume: Float, isM
     c.fill(Path(CGRect(origin: .zero, size: size)),
            with: .color(.black.opacity(ToolOverlayGeometry.volumeFullVeilOpacity)))
 
-    let sw = s.width
-    let mw = ToolOverlayGeometry.volumeMuteColumnWidth(spanWidth: sw)
-    let stepW = ToolOverlayGeometry.volumeStepColumnWidth(spanWidth: sw)
-    let dragW = ToolOverlayGeometry.volumeDragColumnWidth(spanWidth: sw)
+    // The pad the zones live in (@see ToolOverlayGeometry.volumePad): `padX` is its left edge in the
+    // block's coordinates, `sw` its width.
+    let pad = ToolOverlayGeometry.volumePad(spanWidth: s.width)
+    let padX = s.x + pad.x
+    let sw = pad.width
+    let mw = ToolOverlayGeometry.volumeMuteColumnWidth(padWidth: sw)
+    let stepW = ToolOverlayGeometry.volumeStepColumnWidth(padWidth: sw)
+    let dragW = ToolOverlayGeometry.volumeDragColumnWidth(padWidth: sw)
     let div = ToolOverlayGeometry.volumeDividerWidth
     let h = size.height
 
     // The mute zone's red tint, over the mute column's 40 %.
     if isMuted {
-        c.fill(Path(CGRect(x: s.x, y: 0, width: mw, height: h)),
+        c.fill(Path(CGRect(x: padX, y: 0, width: mw, height: h)),
                with: .color(.red.opacity(ToolOverlayGeometry.volumeMuteTintOpacity)))
     }
 
-    // The three columns plus two dividers add up to the span less 2: the row they form is
-    // centred in the span, which shifts it by one pixel (as the layer's HStack does).
-    var x = s.x + (sw - (mw + div + stepW + div + dragW)) / 2
+    // The three columns plus two dividers add up to the pad less 2: the row they form is
+    // centred in the pad, which shifts it by one pixel (as the layer's HStack does).
+    var x = padX + (sw - (mw + div + stepW + div + dragW)) / 2
     let divider = Color.white.opacity(0.2)
 
     // — Mute (40 %) —

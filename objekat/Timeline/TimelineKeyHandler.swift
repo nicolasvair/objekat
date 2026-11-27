@@ -286,7 +286,7 @@ extension TimelineView {
                 if vm.automationLineWheelReadout != nil { vm.automationLineWheelReadout = nil }
             }
 
-            // MARK: Volume scroll (deltaY, the ≥ 60% right zone)
+            // MARK: Volume scroll (deltaY, the level zone: the pad's right 40 %)
             if vm.activeTool == .toolVolume {
                 guard let entry = vm.laneEntries.first(where: { e in
                     let bx = e.absStart * pps
@@ -298,7 +298,12 @@ extension TimelineView {
                 let item = entry.item
                 let bx   = entry.absStart * pps
                 let bw   = max(item.duration * pps, 2)
-                guard (pos.x - bx) >= bw * 0.6 else { return event }
+                // The level zone of the pad centred in the block's VISIBLE span — the very zone the
+                // drawing, the click and the drag read (@see ToolOverlayGeometry.volumeZone).
+                let span = visibleSpan(blockX: bx, blockWidth: bw,
+                                       scrollOffsetX: scrollOffsetX, viewportWidth: viewportWidth)
+                guard ToolOverlayGeometry.volumeZone(localX: pos.x - span.x, spanWidth: span.width) == .drag
+                else { return event }
 
                 // ⇧ = fine: one notch is a tenth of a dB (@see FineAdjust). A mouse's ⇧ + wheel
                 // arrives as a SIDEWAYS scroll (deltaY 0): read the delta that carries the notch.
