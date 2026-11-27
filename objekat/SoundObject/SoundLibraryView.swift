@@ -1426,141 +1426,170 @@ private struct SoundLibraryMiniPlayerView: View {
         let hasPrevious = vm.adjacentFile(-1) != nil
         let hasNext = vm.adjacentFile(1) != nil
         VStack(spacing: 0) {
-            // Waveform with its handles
-            GeometryReader { geo in WithPerceptionTracking {
-                let w = geo.size.width
-                let h = geo.size.height
-                let dur = max(node.duration, 0.01)
-
-                ZStack(alignment: .topLeading) {
-                    // Full-width waveform background
-                    PerceivedCanvas { ctx, size in
-                        // Outside I–O: darkened
-                        let xi = vm.pointI / dur * Double(size.width)
-                        let xo = vm.pointO / dur * Double(size.width)
-                        ctx.fill(Path(CGRect(x: 0, y: 0, width: xi, height: size.height)),
-                                 with: .color(.black.opacity(0.25)))
-                        ctx.fill(Path(CGRect(x: xo, y: 0, width: size.width - xo, height: size.height)),
-                                 with: .color(.black.opacity(0.25)))
-
-                        // Waveform
-                        let peaks = node.peaks
-                        guard !peaks.isEmpty else { return }
-                        let step = size.width / Double(peaks.count)
-                        let mid = size.height / 2
-                        for (i, peak) in peaks.enumerated() {
-                            let x = Double(i) * step + step / 2
-                            let amp = Double(peak) * mid * 0.85
-                            let inRegion = (Double(i) / Double(peaks.count) * dur) >= vm.pointI
-                                       && (Double(i) / Double(peaks.count) * dur) <= vm.pointO
-                            var p = Path()
-                            p.move(to: CGPoint(x: x, y: mid - amp))
-                            p.addLine(to: CGPoint(x: x, y: mid + amp))
-                            ctx.stroke(p, with: .color(inRegion ? .accentColor : .accentColor.opacity(0.3)),
-                                       lineWidth: max(1, step - 0.5))
-                        }
-                    }
-
-                    // The transport surface: a click places the head and plays, a drag scrubs. Under
-                    // the handles (they come after it in this stack), so they keep their priority.
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0)
-                            .onChanged { v in
-                                vm.placeHead(node: node, at: FinderAutoPreview.headTime(x: v.location.x, width: w, duration: dur))
-                            }
-                            // No `onEnded`: the mouse-down already placed the head (and started the sound);
-                            // placing it again at the mouse-up would restart a sound that has just ended.
-                            )
-
-                    // The head: the player's own position, redrawn while playing; where it stopped otherwise.
-                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { _ in
-                        let t: Double? = playing ? vm.livePlayerTime() : restHead
-                        if let t {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.95))
-                                .frame(width: 1.5, height: h)
-                                .offset(x: min(max(t / dur, 0), 1) * w - 0.75)
-                        }
-                    }
-                    .frame(width: w, height: h, alignment: .topLeading)
-                    .allowsHitTesting(false)
-
-                    // Handle I (yellow, left)
-                    handleLine(x: vm.pointI / dur * w, height: h, color: .yellow, label: "I")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setI((v.location.x / w) * dur) }
-                            .onEnded { v in vm.setI((v.location.x / w) * dur) })
-
-                    // Handle O (yellow, right)
-                    handleLine(x: vm.pointO / dur * w, height: h, color: .yellow, label: "O")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setO((v.location.x / w) * dur) }
-                            .onEnded { v in vm.setO((v.location.x / w) * dur) })
-
-                    // Handle S (cyan, sync)
-                    let sAbsolute = vm.pointI + vm.pointS
-                    handleLine(x: sAbsolute / dur * w, height: h, color: .cyan, label: "S")
-                        .gesture(DragGesture(minimumDistance: 1)
-                            .onChanged { v in vm.setS((v.location.x / w) * dur - vm.pointI) }
-                            .onEnded { v in vm.setS((v.location.x / w) * dur - vm.pointI) })
-                }
-            } }
-            .frame(height: 52)
-            .background(Color(nsColor: .underPageBackgroundColor))
-            .clipped()
-
-            VStack(spacing: 2) {
-                // Transport: previous / play-stop / next, then the level
-                HStack(spacing: 8) {
-                    Button(action: { vm.stepFile(-1) }) {
-                        Image(systemName: "backward.end.fill").font(.system(size: 10))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!hasPrevious)
-                    .help(L("library.player.previous"))
-
-                    Button(action: { vm.togglePreview(node: node) }) {
-                        Image(systemName: playing ? "stop.fill" : "play.fill")
-                            .font(.system(size: 10))
-                            .frame(width: 12)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: { vm.stepFile(1) }) {
-                        Image(systemName: "forward.end.fill").font(.system(size: 10))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!hasNext)
-                    .help(L("library.player.next"))
-
-                    Image(systemName: "speaker.wave.2.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                    Slider(value: Binding(get: { volume },
-                                          set: { ObjekatPreferences.shared.previewVolume = $0
-                                                 vm.applyPreviewVolume() }),
-                           in: 0...1)
-                        .controlSize(.mini)
-                        .frame(minWidth: 40)
-                        .help(L("library.player.volume"))
-                }
-                .foregroundStyle(.primary)
-
-                // The I / S / O readings
-                HStack(spacing: 0) {
-                    iosLabel("I", time: vm.pointI, color: .yellow)
-                    Spacer(minLength: 4)
-                    iosLabel("S", time: vm.pointI + vm.pointS, color: .cyan)
-                    Spacer(minLength: 4)
-                    iosLabel("O", time: vm.pointO, color: .yellow)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color(nsColor: .windowBackgroundColor))
+            waveformArea(playing: playing, restHead: restHead)
+            transportArea(playing: playing, volume: volume, hasPrevious: hasPrevious, hasNext: hasNext)
         }
+    }
+
+    /// The waveform, its handles, the transport surface and the head. A function of its own (and not part
+    /// of `perceivedBody`) so that the compiler type-checks the two halves of the player separately.
+    @ViewBuilder
+    private func waveformArea(playing: Bool, restHead: Double?) -> some View {
+        GeometryReader { geo in WithPerceptionTracking {
+            waveformContent(w: geo.size.width, h: geo.size.height, playing: playing, restHead: restHead)
+        } }
+        .frame(height: 52)
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .clipped()
+    }
+
+    /// The layers of the waveform, bottom to top: the drawing, the transport surface (a click places the head
+    /// and plays, a drag scrubs), the head, then the three handles — which come last, hence keep their priority.
+    @ViewBuilder
+    private func waveformContent(w: Double, h: Double, playing: Bool, restHead: Double?) -> some View {
+        let dur: Double = max(node.duration, 0.01)
+        ZStack(alignment: .topLeading) {
+            waveformCanvas(dur: dur)
+            transportSurface(w: w, dur: dur)
+            playhead(w: w, h: h, dur: dur, playing: playing, restHead: restHead)
+            handles(w: w, h: h, dur: dur)
+        }
+    }
+
+    private func waveformCanvas(dur: Double) -> some View {
+        PerceivedCanvas { ctx, size in
+            // Outside I–O: darkened
+            let xi: Double = vm.pointI / dur * Double(size.width)
+            let xo: Double = vm.pointO / dur * Double(size.width)
+            ctx.fill(Path(CGRect(x: 0, y: 0, width: xi, height: size.height)),
+                     with: .color(.black.opacity(0.25)))
+            ctx.fill(Path(CGRect(x: xo, y: 0, width: size.width - xo, height: size.height)),
+                     with: .color(.black.opacity(0.25)))
+
+            // Waveform
+            let peaks = node.peaks
+            guard !peaks.isEmpty else { return }
+            let count = Double(peaks.count)
+            let step: Double = size.width / count
+            let mid: Double = size.height / 2
+            let lineWidth: Double = max(1, step - 0.5)
+            for (i, peak) in peaks.enumerated() {
+                let x: Double = Double(i) * step + step / 2
+                let amp: Double = Double(peak) * mid * 0.85
+                let time: Double = Double(i) / count * dur
+                let inRegion: Bool = time >= vm.pointI && time <= vm.pointO
+                var p = Path()
+                p.move(to: CGPoint(x: x, y: mid - amp))
+                p.addLine(to: CGPoint(x: x, y: mid + amp))
+                ctx.stroke(p, with: .color(inRegion ? .accentColor : .accentColor.opacity(0.3)),
+                           lineWidth: lineWidth)
+            }
+        }
+    }
+
+    /// A click places the head and plays, a drag scrubs. No `onEnded`: the mouse-down already placed the head
+    /// (and started the sound); placing it again at the mouse-up would restart a sound that has just ended.
+    private func transportSurface(w: Double, dur: Double) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { v in
+                    let t: Double = FinderAutoPreview.headTime(x: v.location.x, width: w, duration: dur)
+                    vm.placeHead(node: node, at: t)
+                })
+    }
+
+    /// The head: the player's own position, redrawn while playing; where it stopped otherwise.
+    private func playhead(w: Double, h: Double, dur: Double, playing: Bool, restHead: Double?) -> some View {
+        SwiftUI.TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !playing)) { _ in
+            headLine(w: w, h: h, dur: dur, time: playing ? vm.livePlayerTime() : restHead)
+        }
+        .frame(width: w, height: h, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
+    private func headLine(w: Double, h: Double, dur: Double, time: Double?) -> some View {
+        if let time {
+            let fraction: Double = min(max(time / dur, 0), 1)
+            Rectangle()
+                .fill(Color.white.opacity(0.95))
+                .frame(width: 1.5, height: h)
+                .offset(x: fraction * w - 0.75)
+        }
+    }
+
+    /// I (yellow, left), O (yellow, right) and S (cyan, sync).
+    @ViewBuilder
+    private func handles(w: Double, h: Double, dur: Double) -> some View {
+        let sAbsolute: Double = vm.pointI + vm.pointS
+        handleLine(x: vm.pointI / dur * w, height: h, color: .yellow, label: "I")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setI((v.location.x / w) * dur) }
+                .onEnded { v in vm.setI((v.location.x / w) * dur) })
+        handleLine(x: vm.pointO / dur * w, height: h, color: .yellow, label: "O")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setO((v.location.x / w) * dur) }
+                .onEnded { v in vm.setO((v.location.x / w) * dur) })
+        handleLine(x: sAbsolute / dur * w, height: h, color: .cyan, label: "S")
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { v in vm.setS((v.location.x / w) * dur - vm.pointI) }
+                .onEnded { v in vm.setS((v.location.x / w) * dur - vm.pointI) })
+    }
+
+    /// Previous / play-stop / next, the level, and the I / S / O readings.
+    @ViewBuilder
+    private func transportArea(playing: Bool, volume: Double, hasPrevious: Bool, hasNext: Bool) -> some View {
+        VStack(spacing: 2) {
+            // Transport: previous / play-stop / next, then the level
+            HStack(spacing: 8) {
+                Button(action: { vm.stepFile(-1) }) {
+                    Image(systemName: "backward.end.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasPrevious)
+                .help(L("library.player.previous"))
+
+                Button(action: { vm.togglePreview(node: node) }) {
+                    Image(systemName: playing ? "stop.fill" : "play.fill")
+                        .font(.system(size: 10))
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { vm.stepFile(1) }) {
+                    Image(systemName: "forward.end.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasNext)
+                .help(L("library.player.next"))
+
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 4)
+                Slider(value: Binding(get: { volume },
+                                      set: { ObjekatPreferences.shared.previewVolume = $0
+                                             vm.applyPreviewVolume() }),
+                       in: 0...1)
+                    .controlSize(.mini)
+                    .frame(minWidth: 40)
+                    .help(L("library.player.volume"))
+            }
+            .foregroundStyle(.primary)
+
+            // The I / S / O readings
+            HStack(spacing: 0) {
+                iosLabel("I", time: vm.pointI, color: .yellow)
+                Spacer(minLength: 4)
+                iosLabel("S", time: vm.pointI + vm.pointS, color: .cyan)
+                Spacer(minLength: 4)
+                iosLabel("O", time: vm.pointO, color: .yellow)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder
