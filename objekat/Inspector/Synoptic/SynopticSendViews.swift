@@ -79,7 +79,7 @@ struct SynopticSendRow: View {
                          onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
                          onReset: {
                              actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
+                             actions.onSetSendLevel?(send.id, sendResetDb)
                          })
                 .opacity(send.enabled ? 1 : 0.5)
                 .automationLocked(send.isAutomated)
@@ -187,7 +187,7 @@ struct SendCardView: View {
                          onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
                          onReset: {
                              actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
+                             actions.onSetSendLevel?(send.id, sendResetDb)
                          })
                 .opacity(send.enabled ? 1 : 0.5)
                 .automationLocked(send.isAutomated)

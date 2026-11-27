@@ -694,6 +694,9 @@ extension TimelineView {
                 }
             case 53:  // Escape
                 // The HELD-KEY chords come first, ahead of every other branch of Esc: holding a key
+                } else if vm.activeTool == .toolAux {
+                    // The Send tool: ⌫ puts every send of the selected objects back to -∞ (the objects stay).
+                    DispatchQueue.main.async { vm.resetSelectedObjectsSends() }   // internal undo push
                 // while pressing Esc is an explicit combination, whereas the branches below answer a
                 // bare Esc by what the app happens to be in the middle of. In particular the
                 // cancellation of a consolidated object's edit rolls back, which is not something to

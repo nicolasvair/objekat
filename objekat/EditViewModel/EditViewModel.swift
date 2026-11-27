@@ -422,6 +422,8 @@ final class EditViewModel {
     // MARK: - Audio bridge (sidechain) — @see EditViewModel+Bridge
     //
     // What the last sync derived, for the UI and the API. DERIVED, never saved, never in an undo
+    /// The last click of the Send tool on a knob column (@see SendToolTap). Not observed: no view draws it.
+    @PerceptionIgnored var sendToolLastTap: SendToolTap? = nil
     // snapshot: `BridgeScope.plan` recomputes it from the model at every sync.
 
     /// The scope / cycle / rank plan of the current model.

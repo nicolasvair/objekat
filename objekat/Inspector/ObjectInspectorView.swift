@@ -553,8 +553,8 @@ struct ObjectInspectorView: View {
                     relSend[aux.id] = new
                 },
                 onReset: {
-                    viewModel.edit { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: sendMinDb) }
-                    relSend[aux.id] = Double(sendMinDb); sendRelative[aux.id] = false
+                    viewModel.edit { viewModel.setSendLevelSelected(toAux: aux.id, levelDb: sendResetDb) }
+                    relSend[aux.id] = Double(sendResetDb); sendRelative[aux.id] = false
                 }
             )
             .opacity(enabledCount > 0 ? 1 : 0.5)
