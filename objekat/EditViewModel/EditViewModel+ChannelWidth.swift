@@ -75,7 +75,7 @@ extension EditViewModel {
 
     /// The instances that change together with `pluginID`: the OTHER ACTIVE members of its link group (an FX
     /// link's mirrors included — their `linkGroupID` is the definition's id). A detached member is on its own.
-    private func channelGroupPeers(of pluginID: UUID, on host: UUID) -> [(plugin: UUID, host: UUID)] {
+    func channelGroupPeers(of pluginID: UUID, on host: UUID) -> [(plugin: UUID, host: UUID)] {
         guard let me = hostedPlugin(pluginID, of: host), let gid = me.linkGroupID else { return [] }
         return allPluginRefs()
             .filter { $0.plugin.linkGroupID == gid && $0.plugin.id != pluginID }
@@ -154,8 +154,13 @@ extension EditViewModel {
     /// FX-link decision: the change is applied to EVERY active member of the plugin's link group, or to none
     /// (the menu greys a variant one of them cannot take): a mirror left in another width would make the
     /// bin sound different from one host to the next.
+    ///
+    /// `recordUndo` false and `duringPlayback` true are the door of the width DECIDED AT INSERTION
+    /// (@see EditViewModel+InsertionWidth): the change belongs to the insertion's own undo step, and is
+    /// applied at once even while the transport runs (a brief audio cut, @see OBJEngineCore).
     @discardableResult
-    func setChannelVariant(_ variant: ChannelVariant, pluginID: UUID, host: UUID) -> ChannelChangeOutcome {
+    func setChannelVariant(_ variant: ChannelVariant, pluginID: UUID, host: UUID,
+                           recordUndo: Bool = true, duringPlayback: Bool = false) -> ChannelChangeOutcome {
         guard let engine else { return .refused(reason: "no_engine") }
         guard let menu = channelMenuState(pluginID: pluginID, host: host) else {
             return .refused(reason: "not_external")
@@ -163,20 +168,21 @@ extension EditViewModel {
         guard let entry = menu.entries.first(where: { $0.variant == variant }) else {
             return .refused(reason: "bad_variant")
         }
-        if menu.blockedByPlayback { return .refused(reason: "playing") }
+        if menu.blockedByPlayback && !duringPlayback { return .refused(reason: "playing") }
         if entry.isCurrent && menu.linkedCount == 0 { return .unchanged }
         if !entry.supported { return .refused(reason: "unsupported") }
 
         let members = [(plugin: pluginID, host: host)]
             + channelGroupPeers(of: pluginID, on: host)
 
-        pushUndo()
+        if recordUndo { pushUndo() }
         let depth = undoStack.count
         var changed = 0
         var failure: String?
         for m in members {
             let r = engine.setChannelLayout(variant: variant.rawValue, forPlugin: m.plugin.uuidString,
-                                            forObjectID: engineHostKey(m.host).uuidString)
+                                            forObjectID: engineHostKey(m.host).uuidString,
+                                            allowDuringPlayback: duringPlayback)
             if (r["ok"] as? NSNumber)?.boolValue == true {
                 if (r["changed"] as? NSNumber)?.boolValue == true { changed += 1 }
             } else {
@@ -201,7 +207,7 @@ extension EditViewModel {
                 fxLinks[i].plugins[k].stateXML = xml
             }
             isDirty = true
-        } else if undoStack.count == depth {
+        } else if recordUndo && undoStack.count == depth {
             // Nothing moved: the point we took has nothing to bring back.
             undoStack.removeLast()
         }

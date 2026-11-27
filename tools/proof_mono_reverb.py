@@ -50,6 +50,11 @@ try:
             if r.get("loaded"):
                 break
             time.sleep(0.25)
+        send("wait_idle", {"timeout_ms": 60000})
+        # Since the width is decided at insertion (mono signal -> the plugin is put in 1 -> 1), the proof asks for
+        # the stereo variant explicitly: the bug was about a plugin that REALLY outputs a stereo signal.
+        send("plugin.set_channel_layout", {"host": obj, "plugin": pl, "variant": "stereo"})
+        r = send("plugin.channel_layouts", {"host": obj, "plugin": pl})
         print("reverb layout:", r.get("current"), r.get("inputs"), "->", r.get("outputs"))
         out = os.path.join(WORK, "out.wav")
         j = send("export.run", {"format": "wav", "sample_rate": 48000, "bit_depth": 24, "dithering": False,

@@ -678,6 +678,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
                                                        forPlugin:(NSString* _Nonnull)pluginKey
                                                      forObjectID:(NSString* _Nullable)hostKey
     NS_SWIFT_NAME(setChannelLayout(variant:forPlugin:forObjectID:));
+// Same, with the playing refusal lifted on request (`allowDuringPlayback` YES): the width DECIDED AT A PLUGIN'S
+// INSERTION (EditViewModel+InsertionWidth) is applied at once even while the transport runs — it stops, the
+// bus changes, and playback resumes at the same position (a brief audio cut). Still refused (`playing`)
+// during a recording. The menu and the API keep the version above.
+- (NSDictionary<NSString*, id>* _Nonnull)setChannelLayoutVariant:(NSString* _Nonnull)variant
+                                                       forPlugin:(NSString* _Nonnull)pluginKey
+                                                     forObjectID:(NSString* _Nullable)hostKey
+                                             allowDuringPlayback:(BOOL)allowDuringPlayback
+    NS_SWIFT_NAME(setChannelLayout(variant:forPlugin:forObjectID:allowDuringPlayback:));
 // MARK: The audio bridge (sidechain) — docs/plan_sidechain.md §5.8. The model decides what is routed
 // (EditViewModel+Bridge); these lay it down in ONE transaction per sync, on the main thread:
 // beginBridgeSync, the ensure/set calls for every active route, commitBridgeSync (clears what the

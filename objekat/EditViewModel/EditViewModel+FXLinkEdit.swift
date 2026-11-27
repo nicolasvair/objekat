@@ -823,6 +823,9 @@ extension EditViewModel {
             updateFXLink(linkID) { $0.plugins.removeAll { $0.id == d.id } }
             return nil
         }
+        // The width of the new instances, decided ONCE: stereo for all as soon as one member's signal is
+        // (@see EditViewModel+InsertionWidth).
+        decideWidthAtInsertion(definitionID: d.id)
         return d.id
     }
 

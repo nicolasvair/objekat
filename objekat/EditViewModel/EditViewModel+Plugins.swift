@@ -394,6 +394,7 @@ extension EditViewModel {
         } else if plug.isBuiltIn {
             openBuiltInPluginEditor(plug: plug)
         } else {
+            decideWidthAtInsertion(pluginID: plug.id, host: objectID)   // mono/stereo, once (@see EditViewModel+InsertionWidth)
             openPluginEditor(objectID: objectID, pluginID: plug.id)
         }
         isDirty = true
