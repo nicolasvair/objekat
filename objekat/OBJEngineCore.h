@@ -750,6 +750,15 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // the window is created; its `frame.size.width` is the width it takes. nil = none.
 - (void)setPluginEditorTitleAccessoryProvider:(NSView* _Nullable (^ _Nullable)(NSString* _Nonnull pluginKey))provider;
 
+// Where a native editor window REOPENS. Asked once the window exists, with its size in points: return
+// YES and fill `origin` (AppKit coordinates, the window frame's origin) to put it there, NO to leave it
+// where the engine placed it (centred, cascaded below the editors already open). nil = never asked.
+- (void)setPluginEditorPlacementProvider:(BOOL (^ _Nullable)(NSString* _Nonnull pluginKey, NSSize size, NSPoint* _Nonnull origin))provider;
+
+// Told the frame (AppKit coordinates) a native editor window had at the instant it goes away, however
+// it goes: its close button, the plugin removed, the editors closed for a tab switch. nil = nobody told.
+- (void)setPluginEditorFrameRecorder:(void (^ _Nullable)(NSString* _Nonnull pluginKey, NSRect frame))recorder;
+
 // Ferme l'éditeur natif du plugin (si ouvert).
 - (void)closePluginEditor:(NSString*)pluginKey;
 

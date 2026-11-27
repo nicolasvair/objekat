@@ -775,22 +775,32 @@ extension EditViewModel {
         }
         let controller = BuiltInPluginEditorWindowController(plug: plug, viewModel: self) { [weak self] in
             guard let self else { return }
+            // Where it closes is where it will reopen (@see EditViewModel+EditorFrames).
+            if let frame = self.builtInEditorWindows[plug.id]?.window?.frame {
+                self.rememberEditorFrame(pluginID: plug.id, frame: frame)
+            }
             self.builtInEditorWindows[plug.id] = nil
             if self.openEditorPluginID == plug.id { self.openEditorPluginID = nil }
             self.endPluginParamTouchWatch(plug.id)
             self.editorDidClose(plugin: plug.id)
         }
         controller.window?.level = .floating
-        // Every built-in window is born at the same place: one that would land exactly on top
-        // of another already open (several editors opened at once — a multiple selection) is
-        // shifted down and right until it shows its own title bar.
         if let window = controller.window {
-            let taken = builtInEditorWindows.values.compactMap { $0.window?.frame.origin }
-            var origin = window.frame.origin
-            while taken.contains(where: { abs($0.x - origin.x) < 2 && abs($0.y - origin.y) < 2 }) {
-                origin.x += 24; origin.y -= 24
+            if let remembered = rememberedEditorOrigin(pluginID: plug.id, size: window.frame.size) {
+                // It has been open before: back where it was (the mosaic, when one is under way,
+                // takes precedence — @see rememberedEditorOrigin).
+                window.setFrameOrigin(remembered)
+            } else {
+                // Every other built-in window is born at the same place: one that would land exactly
+                // on top of another already open (several editors opened at once — a multiple
+                // selection) is shifted down and right until it shows its own title bar.
+                let taken = builtInEditorWindows.values.compactMap { $0.window?.frame.origin }
+                var origin = window.frame.origin
+                while taken.contains(where: { abs($0.x - origin.x) < 2 && abs($0.y - origin.y) < 2 }) {
+                    origin.x += 24; origin.y -= 24
+                }
+                window.setFrameOrigin(origin)
             }
-            window.setFrameOrigin(origin)
         }
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -838,7 +848,7 @@ extension EditViewModel {
         guard var tiling = editorTiling else { return }
         // A native editor that never comes (instance in error, no GUI) must not keep the batch
         // alive forever: past this delay, a later opening is an ordinary one.
-        if ProcessInfo.processInfo.systemUptime - tiling.startedAt > 8 { editorTiling = nil; return }
+        if ProcessInfo.processInfo.systemUptime - tiling.startedAt > EditorTiling.batchLifetime { editorTiling = nil; return }
         guard tiling.pending.contains(pluginID), tiledEditorWindow(pluginID) != nil else { return }
         tiling.pending.remove(pluginID)
         // A window closed meanwhile simply drops out of the arrangement.

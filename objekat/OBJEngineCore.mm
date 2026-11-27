@@ -1067,9 +1067,16 @@ static NSView* (^gPluginEditorAccessoryProvider)(NSString*) = nil;
 // La vue posée à DROITE de la barre de titre d'un éditeur natif (le menu des presets, @see
 // -setPluginEditorTitleAccessoryProvider:). Même régime : un seul fournisseur, l'app.
 static NSView* (^gPluginEditorTitleAccessoryProvider)(NSString*) = nil;
+// Où une fenêtre d'éditeur ROUVRE (@see -setPluginEditorPlacementProvider:) et où elle s'est
+// fermée (@see -setPluginEditorFrameRecorder:). Même régime : un seul destinataire, l'app.
+static BOOL (^gPluginEditorPlacementProvider)(NSString*, NSSize, NSPoint*) = nil;
+static void (^gPluginEditorFrameRecorder)(NSString*, NSRect) = nil;
 
 struct OBJPluginEditorWindow : public juce::DocumentWindow {
     std::function<void()> onClose;
+    // La clé de CE plugin (l'UUID en chaîne), posée par l'ouvreur juste après la construction :
+    // c'est elle que le destructeur rend à l'app avec le cadre où la fenêtre se ferme.
+    std::string editorKey;
     juce::Colour accentColour;
     // LookAndFeel dédié à CETTE fenêtre (la barre de titre JUCE ne lit pas la
     // `backgroundColour` du constructeur, elle vient du LookAndFeel actif) — teint la barre de
@@ -1145,6 +1152,18 @@ struct OBJPluginEditorWindow : public juce::DocumentWindow {
     }
 
     ~OBJPluginEditorWindow() override {
+        // Le cadre où la fenêtre PART, rendu à l'app pour qu'elle rouvre au même endroit. Ici et
+        // non dans le callback de fermeture : une fenêtre s'en va aussi sans lui (un plugin
+        // retiré, un onglet quitté, l'effacement direct de `_editorWindows`), et c'est le
+        // destructeur que tous ces chemins ont en commun. Le pair natif existe encore à ce stade
+        // (le corps du destructeur dérivé tourne AVANT celui de Component).
+        if (gPluginEditorFrameRecorder && !editorKey.empty()) {
+            if (auto* peer = getPeer()) {
+                NSView* view = (__bridge NSView*) peer->getNativeHandle();
+                NSWindow* nsw = view.window;
+                if (nsw) gPluginEditorFrameRecorder([NSString stringWithUTF8String:editorKey.c_str()], nsw.frame);
+            }
+        }
         if (titleAccessory) titleAccessory->setView(nullptr);
         // Le LookAndFeel dédié se détruit avant le sous-objet Component (ordre C++ : membres
         // avant bases) — le détacher ici évite que Component ne garde un pointeur pendouillant
@@ -2850,6 +2869,16 @@ static BOOL gOBJAudioDisabled = NO;
 - (void)setPluginEditorTitleAccessoryProvider:(NSView* (^)(NSString*))provider {
     if (gPluginEditorTitleAccessoryProvider) [gPluginEditorTitleAccessoryProvider release];
     gPluginEditorTitleAccessoryProvider = [provider copy];
+}
+
+- (void)setPluginEditorPlacementProvider:(BOOL (^)(NSString*, NSSize, NSPoint*))provider {
+    if (gPluginEditorPlacementProvider) [gPluginEditorPlacementProvider release];
+    gPluginEditorPlacementProvider = [provider copy];
+}
+
+- (void)setPluginEditorFrameRecorder:(void (^)(NSString*, NSRect))recorder {
+    if (gPluginEditorFrameRecorder) [gPluginEditorFrameRecorder release];
+    gPluginEditorFrameRecorder = [recorder copy];
 }
 
 // App passée à l'arrière-plan : on masque les éditeurs visibles et on retient lesquels, pour ne
@@ -10211,10 +10240,27 @@ static bool objPrepareForEditor(te::ExternalPlugin& ext, te::Engine& engine) {
         [engineRef updateLinkStateTimer];
         if (engineRef.onEditorVisibilityChanged) engineRef.onEditorVisibilityChanged(nsKey, NO);
     }, floating, accent);
-    // Chaque fenêtre naît CENTRÉE : plusieurs éditeurs ouverts d'un coup (sélection multiple)
+    win->editorKey = pk;
+    // Une fenêtre qui a déjà été ouverte rouvre OÙ ELLE ÉTAIT, sur le même écran (l'app rend un
+    // cadre ramené dans une zone visible, et dit non pendant la pose d'une mosaïque : c'est elle
+    // qui place alors, @see EditorTiling). Placée tout de suite, dans le tour de boucle qui la
+    // crée : rien n'est encore peint à l'ancien endroit.
+    bool placedFromMemory = false;
+    if (gPluginEditorPlacementProvider) {
+        if (auto* peer = win->getPeer()) {
+            NSView* view = (__bridge NSView*) peer->getNativeHandle();
+            NSWindow* nsw = view.window;
+            NSPoint origin = NSZeroPoint;
+            if (nsw && gPluginEditorPlacementProvider(pluginKey, nsw.frame.size, &origin)) {
+                [nsw setFrameOrigin:origin];
+                placedFromMemory = true;
+            }
+        }
+    }
+    // Sinon, chaque fenêtre naît CENTRÉE : plusieurs éditeurs ouverts d'un coup (sélection multiple)
     // s'empileraient au même endroit. Celle qui tomberait pile sur une autre déjà ouverte (même
     // coin ou même centre) descend en cascade jusqu'à montrer sa propre barre de titre.
-    {
+    if (!placedFromMemory) {
         auto& open = _editorWindows;
         auto overlaps = [&open](const juce::Rectangle<int>& r) {
             for (auto& kv : open) {
