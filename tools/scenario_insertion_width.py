@@ -260,14 +260,15 @@ try:
         check("the transport is still playing", send("transport.state").get("playing") is True,
               send("transport.state"))
         send("transport.stop")
-        # the hand's own door still refuses while playing
+        # the hand's own door goes through during playback too (brief cut, the transport resumes)
         send("transport.play")
         time.sleep(0.3)
-        try:
-            send("plugin.set_channel_layout", {"host": m, "plugin": lp, "variant": "stereo"})
-            check("plugin.set_channel_layout still refuses while playing", False, "it went through")
-        except ObjekatError as e:
-            check("plugin.set_channel_layout still refuses while playing", e.code == "invalid_state", e.message)
+        r = send("plugin.set_channel_layout", {"host": m, "plugin": lp, "variant": "stereo"})
+        check("plugin.set_channel_layout goes through while playing", r.get("changed") is True, r)
+        time.sleep(0.4)
+        check("... and the transport is still playing", send("transport.state").get("playing") is True,
+              send("transport.state"))
+        check("... in the new width", shape(layouts(m, lp)) == (2, 2), layouts(m, lp))
         send("transport.stop")
 finally:
     proc.terminate()

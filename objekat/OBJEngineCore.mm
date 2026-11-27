@@ -9846,13 +9846,6 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
 - (NSDictionary<NSString*, id>*)setChannelLayoutVariant:(NSString*)variant
                                               forPlugin:(NSString*)pluginKey
                                             forObjectID:(NSString*)hostKey {
-    return [self setChannelLayoutVariant:variant forPlugin:pluginKey forObjectID:hostKey allowDuringPlayback:NO];
-}
-
-- (NSDictionary<NSString*, id>*)setChannelLayoutVariant:(NSString*)variant
-                                              forPlugin:(NSString*)pluginKey
-                                            forObjectID:(NSString*)hostKey
-                                    allowDuringPlayback:(BOOL)allowDuringPlayback {
     auto fail = [](NSString* reason) -> NSDictionary* { return @{ @"ok": @NO, @"reason": reason }; };
     if (!pluginKey || !variant || !_edit) return fail(@"bad_params");
     const std::string pk([pluginKey UTF8String]);
@@ -9873,20 +9866,20 @@ static std::map<std::string, OBJWidthProbe>& objWidthProbeCache() {
         return @{ @"ok": @YES, @"changed": @NO, @"inputs": @(nin), @"outputs": @(nout), @"current": variant };
 
     // Le changement libère puis ré-alloue le contexte de lecture (ScopedRenderStatus) : en pleine
-    // lecture il l'arrêterait. On refuse plutôt que de couper le son sous la main.
+    // lecture il l'arrêterait. Pendant un ENREGISTREMENT on refuse (l'arrêter le terminerait) ; en
+    // simple lecture il est accepté avec une brève coupure (voir PlaybackResume plus bas).
     auto& transport = _edit->getTransport();
-    if (transport.isPlaying() && (!allowDuringPlayback || _recordingActive || transport.isRecording()))
-        return fail(@"playing");
+    if (transport.isPlaying() && (_recordingActive || transport.isRecording()))
+        return fail(@"recording");
 
     // Refus déjà constaté pour cette instance et cette variante : pas la peine d'insister.
     const std::string refusalKey = pk + "|" + std::string([variant UTF8String]);
     if (objLayoutRefusals().count(refusalKey) || !objVariantSupported(*proc, nin, nout))
         return fail(@"unsupported");
 
-    // Largeur décidée À L'INSERTION d'un plugin, en pleine lecture : on accepte une brève coupure.
-    // Le transport est arrêté, la largeur appliquée, puis la lecture reprend à la MÊME position (garde
-    // RAII : toutes les sorties qui suivent, refus compris, relancent la lecture). Le menu et l'API
-    // gardent le refus (`allowDuringPlayback` NO).
+    // Changement de largeur EN LECTURE (menu Canaux, API, largeur décidée à l'insertion) : une brève
+    // coupure. Le transport est arrêté, la largeur appliquée, puis la lecture reprend à la MÊME
+    // position (garde RAII : toutes les sorties qui suivent, refus compris, relancent la lecture).
     struct PlaybackResume {
         te::TransportControl& tc;
         te::TimePosition pos;

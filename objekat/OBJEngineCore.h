@@ -672,21 +672,12 @@ typedef NS_ENUM(NSInteger, OBJAutomationTarget) {
 // (which writes the new `layout` into the plugin's tree), re-asserts the state behind (the existing deferred
 // mechanism), re-lays a keyed plugin's sidechain wires and rebuilds the graph. {ok, changed, inputs, outputs,
 // current} or {ok: NO, reason}: bad_params, unknown_plugin, foreign_host, not_external, bad_variant, not_loaded,
-// playing (the change frees the playback context, which stops playback: refused while it runs), unsupported,
+// recording (the change frees the playback context, which stops playback: while it merely PLAYS, the transport is stopped, the bus changed and playback resumed at the same position — a brief cut — but a recording is never stopped: refused), unsupported,
 // refused. The model's `stateXML` is NOT updated here (EditViewModel+ChannelWidth does it, with the undo point).
 - (NSDictionary<NSString*, id>* _Nonnull)setChannelLayoutVariant:(NSString* _Nonnull)variant
                                                        forPlugin:(NSString* _Nonnull)pluginKey
                                                      forObjectID:(NSString* _Nullable)hostKey
     NS_SWIFT_NAME(setChannelLayout(variant:forPlugin:forObjectID:));
-// Same, with the playing refusal lifted on request (`allowDuringPlayback` YES): the width DECIDED AT A PLUGIN'S
-// INSERTION (EditViewModel+InsertionWidth) is applied at once even while the transport runs — it stops, the
-// bus changes, and playback resumes at the same position (a brief audio cut). Still refused (`playing`)
-// during a recording. The menu and the API keep the version above.
-- (NSDictionary<NSString*, id>* _Nonnull)setChannelLayoutVariant:(NSString* _Nonnull)variant
-                                                       forPlugin:(NSString* _Nonnull)pluginKey
-                                                     forObjectID:(NSString* _Nullable)hostKey
-                                             allowDuringPlayback:(BOOL)allowDuringPlayback
-    NS_SWIFT_NAME(setChannelLayout(variant:forPlugin:forObjectID:allowDuringPlayback:));
 // MARK: The audio bridge (sidechain) — docs/plan_sidechain.md §5.8. The model decides what is routed
 // (EditViewModel+Bridge); these lay it down in ONE transaction per sync, on the main thread:
 // beginBridgeSync, the ensure/set calls for every active route, commitBridgeSync (clears what the

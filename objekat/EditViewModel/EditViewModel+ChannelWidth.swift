@@ -5,7 +5,8 @@ import Foundation
 // The view-model's half of the channel-width feature: it reads what the engine reports for a plugin's main
 // bus (`pluginChannelInfo`), answers the "Channels" submenu of a card, and applies a change as ONE undo step.
 // The arithmetic of widths along a chain is `SynopticWidthFlow` (pure); the engine's door is
-// `OBJEngineCore.setChannelLayout` (which frees the playback context, so it is refused while playing).
+// `OBJEngineCore.setChannelLayout` (which frees the playback context: while playing, the transport is stopped, the bus changed and playback
+// resumed at the same position — a brief cut; a RECORDING is never stopped, the change is refused then).
 //
 // The width is part of the plugin's STATE (the binary `layout` property of its tree), so it persists with the
 // `stateXML` the model already keeps, and undoing it goes through the same patch path as any state change
@@ -25,8 +26,9 @@ struct ChannelMenuState: Equatable {
     /// NO = the `supported` flags are best-effort (a VST3 once the playback context is allocated): a
     /// refusal met at application is remembered by the engine, and the entry is greyed from then on.
     var exact: Bool
-    /// Playback runs: the change frees the playback context, so the entries are shown greyed.
-    var blockedByPlayback: Bool
+    /// A recording runs: the change would stop it, so the entries are shown greyed. (Plain playback does not
+    /// block: the engine cuts the sound for a moment and resumes at the same position.)
+    var blockedByRecording: Bool
     /// How many OTHER instances change with this one (an FX link's mirrors).
     var linkedCount: Int
 }
@@ -105,7 +107,7 @@ extension EditViewModel {
             // Not loaded yet: the entries are there, none can be taken.
             return ChannelMenuState(channels: PluginChannels(inputs: 0, outputs: 0),
                                     entries: ChannelVariant.allCases.map { .init(variant: $0, supported: false, isCurrent: false) },
-                                    exact: true, blockedByPlayback: false, linkedCount: 0)
+                                    exact: true, blockedByRecording: false, linkedCount: 0)
         }
 
         var exact = (d["exact"] as? NSNumber)?.boolValue ?? false
@@ -143,10 +145,9 @@ extension EditViewModel {
             entries: ChannelVariant.allCases.map {
                 .init(variant: $0, supported: supported[$0] ?? false, isCurrent: $0 == current)
             },
-            // The OBSERVED running flag first: read in a view's body, it rebuilds the menu at the stop (the
-            // engine's own flag is not observable, and alone it left the menu built during playback greyed
-            // for ever — the bug of 20 October 2026). The engine is still asked, for a run not started here.
-            exact: exact, blockedByPlayback: isTransportRunning || isTransportPlaying, linkedCount: peers.count)
+            // The OBSERVED recording flag first (read in a view's body, it rebuilds the menu when the recording
+            // stops); the engine is still asked, for a recording not started here.
+            exact: exact, blockedByRecording: isRecording || engine.isRecordingNow(), linkedCount: peers.count)
     }
 
     // MARK: Applying
@@ -160,12 +161,13 @@ extension EditViewModel {
     /// (the menu greys a variant one of them cannot take): a mirror left in another width would make the
     /// bin sound different from one host to the next.
     ///
-    /// `recordUndo` false and `duringPlayback` true are the door of the width DECIDED AT INSERTION
-    /// (@see EditViewModel+InsertionWidth): the change belongs to the insertion's own undo step, and is
-    /// applied at once even while the transport runs (a brief audio cut, @see OBJEngineCore).
+    /// While the transport PLAYS the change is applied at once, with a brief audio cut (the transport stops,
+    /// the bus changes, playback resumes at the same position, @see OBJEngineCore); during a RECORDING it is
+    /// refused (`recording`). `recordUndo` false is the door of the width DECIDED AT INSERTION
+    /// (@see EditViewModel+InsertionWidth): the change belongs to the insertion's own undo step.
     @discardableResult
     func setChannelVariant(_ variant: ChannelVariant, pluginID: UUID, host: UUID,
-                           recordUndo: Bool = true, duringPlayback: Bool = false) -> ChannelChangeOutcome {
+                           recordUndo: Bool = true) -> ChannelChangeOutcome {
         guard let engine else { return .refused(reason: "no_engine") }
         guard let menu = channelMenuState(pluginID: pluginID, host: host) else {
             return .refused(reason: "not_external")
@@ -173,7 +175,7 @@ extension EditViewModel {
         guard let entry = menu.entries.first(where: { $0.variant == variant }) else {
             return .refused(reason: "bad_variant")
         }
-        if menu.blockedByPlayback && !duringPlayback { return .refused(reason: "playing") }
+        if menu.blockedByRecording { return .refused(reason: "recording") }
         if entry.isCurrent && menu.linkedCount == 0 { return .unchanged }
         if !entry.supported { return .refused(reason: "unsupported") }
 
@@ -186,8 +188,7 @@ extension EditViewModel {
         var failure: String?
         for m in members {
             let r = engine.setChannelLayout(variant: variant.rawValue, forPlugin: m.plugin.uuidString,
-                                            forObjectID: engineHostKey(m.host).uuidString,
-                                            allowDuringPlayback: duringPlayback)
+                                            forObjectID: engineHostKey(m.host).uuidString)
             if (r["ok"] as? NSNumber)?.boolValue == true {
                 if (r["changed"] as? NSNumber)?.boolValue == true { changed += 1 }
             } else {
@@ -303,7 +304,7 @@ extension EditViewModel {
         guard case .refused(let reason) = setChannelVariant(variant, pluginID: pluginID, host: host) else { return }
         let key: String
         switch reason {
-        case "playing":                 key = "channels.refused.playing"
+        case "recording":               key = "channels.refused.recording"
         case "unsupported", "refused":  key = "channels.refused.unsupported"
         case "not_loaded":              key = "channels.refused.notLoaded"
         default:                        key = "channels.refused.generic"

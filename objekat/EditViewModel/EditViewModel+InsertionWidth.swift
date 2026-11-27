@@ -31,8 +31,8 @@ import Foundation
 // reports it (`insertionWidthsPending`) so a script's `wait_idle` covers it.
 //
 // DURING PLAYBACK the change is applied at once, with a brief audio cut (the transport stops, the bus is
-// changed, the transport resumes at the same position — @see OBJEngineCore). It used to be refused; the
-// menu's and the API's own doors keep refusing, only this one lifts it.
+// changed, the transport resumes at the same position — @see OBJEngineCore), like the Channels menu's and the
+// API's own doors since 27 November 2026. Only a RECORDING refuses it.
 
 extension EditViewModel {
 
@@ -118,7 +118,7 @@ extension EditViewModel {
         // Nothing could be measured (a send's mini-chain): the plugin keeps its own width.
         guard measured else { return }
         let outcome = setChannelVariant(stereo ? .stereo : .mono, pluginID: pluginID, host: host,
-                                        recordUndo: false, duringPlayback: true)
+                                        recordUndo: false)
         Diag.log(.plug, "largeur à l'insertion « \(stereo ? "stéréo" : "mono") » plugin=\(Diag.short(pluginID)) → \(outcome)")
     }
 }

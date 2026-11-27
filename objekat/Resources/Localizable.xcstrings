@@ -1428,25 +1428,25 @@
         }
       }
     },
-    "channels.refused.playing": {
+    "channels.refused.recording": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Playback is running, and changing the channels would stop it. Stop playback and try again."
+            "value": "A recording is running, and changing the channels would stop it. Stop recording and try again."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "La reproducción está en curso y cambiar los canales la detendría. Detén la reproducción e inténtalo de nuevo."
+            "value": "Hay una grabación en curso y cambiar los canales la detendría. Detén la grabación e inténtalo de nuevo."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "La lecture est en cours et changer les canaux l’arrêterait. Arrêtez la lecture puis réessayez."
+            "value": "Un enregistrement est en cours et changer les canaux l’arrêterait. Arrêtez l’enregistrement puis réessayez."
           }
         }
       }
@@ -20748,25 +20748,25 @@
         }
       }
     },
-    "synoptic.menu.channels.playing": {
+    "synoptic.menu.channels.recording": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Stop playback to change the channels"
+            "value": "Stop recording to change the channels"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Detén la reproducción para cambiar los canales"
+            "value": "Detén la grabación para cambiar los canales"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Arrêtez la lecture pour changer les canaux"
+            "value": "Arrêtez l’enregistrement pour changer les canaux"
           }
         }
       }

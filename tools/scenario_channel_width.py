@@ -329,8 +329,8 @@ try:
         check("undo: both members stereo again",
               layouts(a, ia)["current"] == "stereo" and layouts(b, ib)["current"] == "stereo")
 
-        # ═══════════════════════════════════════════════════════════════ refused while playing
-        section("refused while the transport plays")
+        # ═══════════════════════════════════════════════════════════════ applied while playing
+        section("applied while the transport plays (brief cut), refused only while recording")
         _, obj = fresh(name="playing")
         lp = add_plugin(obj, AU_LOWPASS)
         wait_loaded(obj, lp)
@@ -338,13 +338,15 @@ try:
         time.sleep(0.4)
         playing = send("transport.state").get("playing")
         check("the transport plays", playing is True, send("transport.state"))
-        check("channel_layouts says so", layouts(obj, lp)["playing"] is True)
-        refused(lambda: set_layout(obj, lp, "mono"), "a change while playing is invalid_state / playing",
-                "invalid_state", "playing")
+        check("channel_layouts reports it is not refused", layouts(obj, lp)["recording"] is False)
+        check("a change while playing goes through", set_layout(obj, lp, "mono")["changed"] is True)
+        time.sleep(0.4)
+        check("the transport is still playing", send("transport.state").get("playing") is True,
+              send("transport.state"))
+        check("the width changed", layouts(obj, lp)["current"] == "mono")
         send("transport.stop")
         time.sleep(0.2)
-        check("nothing changed", layouts(obj, lp)["current"] == "stereo")
-        check("once stopped it goes through", set_layout(obj, lp, "mono")["changed"] is True)
+        check("still mono once stopped", layouts(obj, lp)["current"] == "mono")
 
         # ═══════════════════════════════════════════════════════════════ a plugin with a sidechain input
         # FabFilter Pro-Q 3 (AU) refuses a mono main bus beside a STEREO sidechain bus: probing "mono" with

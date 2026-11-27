@@ -165,7 +165,8 @@ extension CommandRegistry {
                  refusal met when applying is remembered and shows as `supported: false` afterwards. \
                  `linked` is how many OTHER instances change together with this one (an FX link's \
                  mirrors): a variant is `supported` only if EVERY member takes it. \
-                 `playing` true = the change would be refused now. Reads only. Instruments (a MIDI \
+                 `playing` is the transport's state (the change is applied during playback, with a brief cut); \
+                 `recording` true = the change would be refused now (a recording is never stopped). Reads only. Instruments (a MIDI \
                  object's virtual instrument) are not supported: only leaf plugins of a chain.
                  """,
                  params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
@@ -178,7 +179,8 @@ extension CommandRegistry {
             try CommandAdapters.requirePlugin(pluginID, on: host, in: vm)
             var payload: [String: JSONValue] = ["host": .string(host.uuidString),
                                                 "plugin": .string(pluginID.uuidString),
-                                                "playing": .bool(vm.isTransportPlaying)]
+                                                "playing": .bool(vm.isTransportPlaying),
+                                                "recording": .bool(vm.isRecording || engine.isRecordingNow())]
             guard let info = engine.pluginChannelInfo(pluginID.uuidString, probeVariants: true) else {
                 throw CommandError(code: .invalid_state,
                                    message: "plugin \(pluginID.uuidString) has no engine instance yet")
@@ -237,9 +239,10 @@ extension CommandRegistry {
                  Applies to EVERY active member of the plugin's link group, or to none (`instances` says \
                  how many changed). One undo step. `bad_params`: unknown variant, a built-in plugin, or a \
                  variant the plugin does not accept (`details.reason`: `not_external`, `bad_variant`, \
-                 `unsupported`, `refused`). `invalid_state`: the transport is PLAYING (changing the bus \
-                 frees the playback context — stop first, `details.reason` `playing`) or the instance is \
-                 still loading (`not_loaded`). Already in that variant: `changed` false, no undo step. \
+                 `unsupported`, `refused`). `invalid_state`: a RECORDING is running (it is never stopped, \
+                 `details.reason` `recording`) or the instance is still loading (`not_loaded`). While the \
+                 transport PLAYS the change is applied at once with a brief audio cut (the transport stops, \
+                 the bus changes, playback resumes at the same position). Already in that variant: `changed` false, no undo step. \
                  Answers `{ok, changed, instances, variant, inputs, outputs}`.
                  """,
                  params: [ParamSpec("host", "uuid", "Object or stem carrying the plugin."),
@@ -265,9 +268,9 @@ extension CommandRegistry {
             case .refused(let reason):
                 let details = JSONValue.object(["reason": .string(reason)])
                 switch reason {
-                case "playing":
+                case "recording":
                     throw CommandError(code: .invalid_state,
-                                       message: "playback is running: changing the channels would stop it. Stop the transport first",
+                                       message: "a recording is running: changing the channels would stop it",
                                        details: details)
                 case "not_loaded":
                     throw CommandError(code: .invalid_state,
