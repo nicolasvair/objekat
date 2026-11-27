@@ -633,6 +633,26 @@ private struct StemColorMenuOverlay: NSViewRepresentable {
     private func bind(_ v: RightClickCaptureView) {
         v.menuProvider = { _ in
             let menu = NSMenu(title: "")
+            // "Rename…": the name is typed in the stem's popover (⌘R's own door), so the item opens it and
+            // then asks the shortcut's route to put the field up. The Main has no name to change.
+            if stemID != viewModel.mainStemID {
+                // The item holds its proxy (`representedObject` is strong, an item's target is weak).
+                let proxy = MenuActionProxy { [weak viewModel] in
+                    guard let viewModel else { return }
+                    viewModel.openStemPopoverID = stemID
+                    if viewModel.performRenameShortcut() != .stem(stemID) {
+                        // Something else claimed ⌘R meanwhile (a plugin bin the signal view holds): the menu
+                        // was aimed at this stem all the same.
+                        viewModel.renamingStemID = stemID
+                    }
+                }
+                let item = NSMenuItem(title: L("menu.context.rename"),
+                                      action: #selector(MenuActionProxy.run), keyEquivalent: "")
+                item.target = proxy
+                item.representedObject = proxy
+                menu.addItem(item)
+                menu.addItem(.separator())
+            }
             let current = viewModel.stems.first(where: { $0.id == stemID })?.colorIndex
             let swatchItem = NSMenuItem()
             swatchItem.view = ColorSwatchGridView(currentColorIndex: current,

@@ -384,7 +384,7 @@ struct PluginBrowserView: View {
         menu.autoenablesItems = false
         // The item holds its proxy (`representedObject` is strong, an item's target is weak).
         let proxy = MenuActionProxy { renamingCategory = index }
-        let item = NSMenuItem(title: L("pluginBrowser.tab.colour.rename"),
+        let item = NSMenuItem(title: L("menu.context.rename"),
                               action: #selector(MenuActionProxy.run), keyEquivalent: "r")
         item.keyEquivalentModifierMask = .command
         item.target = proxy
