@@ -465,6 +465,13 @@ struct SynopticBoundView: View {
                 viewModel.setSendPositionFromHand(from: objectID, to: auxID, EditViewModel.sendPosition(of: slot))
             },
             sendDragProvider: { sendDragProvider($0) },
+            sendCardSelected: { aux in
+                viewModel.selectedSendSenderID == objectID && viewModel.selectedSendAuxIDs.contains(aux)
+            },
+            onSendCardClick: { aux, flags, order in
+                selectedInstrumentID = nil
+                viewModel.clickSendCard(aux, sender: objectID, flags: flags, order: order)
+            },
             sendTargetSections: { viewModel.sendTargetSections(for: objectID, retargeting: $0) },
             onCreateSend: { aux, slot in
                 viewModel.createSendFromHand(from: objectID, to: aux, at: EditViewModel.sendPosition(of: slot))

@@ -150,6 +150,12 @@ struct SynopticActions {
     var onMoveSend: ((_ aux: UUID, _ slot: SynopticSendSlot) -> Void)? = nil
     /// The card of the send towards `aux` is taken in the hand (nil = cards are not draggable).
     var sendDragProvider: ((UUID) -> NSItemProvider)? = nil
+    /// Is the card of the send towards `aux` in the selection of send cards? (Reads empty as soon as the
+    /// selection belongs to another object.)
+    var sendCardSelected: ((_ aux: UUID) -> Bool)? = nil
+    /// A click on a send card: plain = that card alone, ⌘ = toggle, ⇧ = the range, in `order` (the cards as
+    /// the view lays them, top to bottom). The selection is the view-model's: the cards then hold ⌫ ⌘C ⌘V.
+    var onSendCardClick: ((_ aux: UUID, _ flags: NSEvent.ModifierFlags, _ order: [UUID]) -> Void)? = nil
     /// The sections of the "Send to…" menu for this object (`retargeting`: the aux of the card whose target is
     /// being changed, left out). Asked when the menu is OPENED, never while rendering.
     var sendTargetSections: ((_ retargeting: UUID?) -> [SendTargetMenu.Section])? = nil

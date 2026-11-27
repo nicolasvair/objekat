@@ -367,6 +367,10 @@ struct PluginRack: Codable, Equatable {
 /// The send level considered to be -∞ (a silent send). At or below it, the send is
 /// treated as off on the UI side and is not wired to the engine.
 let sendMinDb: Float = -60.0
+/// The level a send goes back to when the hand RESETS it: the signal view's level box (double click, ⌫),
+/// the inspector's, the timeline Send tool's double click and its ⌫. ONE constant for all of them, so
+/// that the doors cannot drift apart: a reset is -∞.
+let sendResetDb: Float = sendMinDb
 /// A send's gain ceiling (dB).
 let sendMaxDb: Float = 6.0
 

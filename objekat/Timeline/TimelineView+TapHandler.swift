@@ -162,7 +162,7 @@ extension TimelineView {
             return
         }
         if viewModel.activeTool == .toolAux {
-            handleSendTap(at: point)
+            handleSendTap(at: point, isDoubleTap: isDoubleTap)
             return
         }
         // FX: the mini signal view drawn inside the block (@see FXStripLayout) — its power buttons
@@ -469,12 +469,34 @@ extension TimelineView {
         }
     }
 
-    // MARK: - Send tap (on/off plus focus)
+    // MARK: - Send tap (on/off plus focus, double click = reset)
 
-    func handleSendTap(at point: CGPoint) {
+    /// A click with the Send tool. Plain: the send is brought forward, and the BOTTOM of the column is its
+    /// on/off button. DOUBLE click on a column: the send goes back to -∞ (`sendResetDb`) — the signal view's
+    /// level box does the same — and the double toggle it used to make is gone: the first click of the
+    /// pair may have flipped the switch, and it is taken back (its undo point withdrawn with it), so the
+    /// pair leaves ONE undo point, the reset's. It acts like the drag: the objects selected that send to
+    /// that aux; a send under a curve resets nothing (@see `resetSendLevelFromHand`).
+    func handleSendTap(at point: CGPoint, isDoubleTap: Bool = false) {
         guard point.y > rulerHeight else { return }
         guard let hit = sendRowHit(at: point) else { return }
         viewModel.sendToolFocus = SendFocus(objectID: hit.clipID, auxID: hit.auxID)
+
+        let previous = viewModel.sendToolLastTap
+        viewModel.sendToolLastTap = nil
+        if isDoubleTap, let previous, previous.objectID == hit.clipID, previous.auxID == hit.auxID {
+            // The first click's own edit (a switch flipped, a send born) goes back — only if it is still
+            // the last thing that happened, so that nothing else is swallowed with it.
+            if previous.pushedUndo,
+               viewModel.undoPushCount == previous.pushCount,
+               viewModel.undoStack.count == previous.undoDepth {
+                viewModel.takeBackLastUndoPoint()
+            }
+            viewModel.resetSendLevelFromHand(grabbed: hit.clipID, toAux: hit.auxID)
+            return
+        }
+
+        let pushesBefore = viewModel.undoPushCount
         // The bottom of the column = the on/off button; elsewhere = merely focusing.
         let localY = point.y - hit.by
         if ToolOverlayGeometry.sendToggleHit(localY: localY, blockHeight: blockHeight) {
@@ -490,6 +512,10 @@ extension TimelineView {
                 viewModel.edit { viewModel.setSendEnabled(from: hit.clipID, to: hit.auxID, enabled: !on) }
             }
         }
+        viewModel.sendToolLastTap = SendToolTap(objectID: hit.clipID, auxID: hit.auxID,
+                                                pushedUndo: viewModel.undoPushCount != pushesBefore,
+                                                pushCount: viewModel.undoPushCount,
+                                                undoDepth: viewModel.undoStack.count)
     }
 }
 

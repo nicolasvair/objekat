@@ -67,7 +67,8 @@ extension EditViewModel {
                 defByLeaf[leaf.id] = d.id
             }
             // Named after the object it was copied FROM (the original: `object`), and following it.
-            link = makeFXLink(name: nil, source: object.id, plugins: defs)
+            // `object.displayName`, not only the model's reading: a cut group is no longer in `items`.
+            link = makeFXLink(name: nil, source: object.id, sourceName: object.displayName, plugins: defs)
             fxLinks.append(link)
             fxPendingSources[object.id, default: []].append(
                 FXPendingSource(linkID: link.id, pairs: run.map { ($0.id, defByLeaf[$0.id]!) }))

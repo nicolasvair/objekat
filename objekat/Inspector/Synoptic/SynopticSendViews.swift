@@ -79,7 +79,7 @@ struct SynopticSendRow: View {
                          onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
                          onReset: {
                              actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
+                             actions.onSetSendLevel?(send.id, sendResetDb)
                          })
                 .opacity(send.enabled ? 1 : 0.5)
                 .automationLocked(send.isAutomated)
@@ -134,6 +134,10 @@ struct AddSendButton: View {
 struct SendCardView: View {
     let send: SynopticSend
     let actions: SynopticActions
+    /// The send cards of the view, top to bottom: what ⇧ + click reads its range in.
+    var order: [UUID] = []
+
+    private var isSelected: Bool { actions.sendCardSelected?(send.id) ?? false }
 
     private var isSilent: Bool { send.levelDb <= sendMinDb }
     private var isRouted: Bool { send.enabled && !isSilent && send.refusal == nil }
@@ -173,6 +177,8 @@ struct SendCardView: View {
                 Spacer(minLength: 2)
             }
             .contentShape(Rectangle())
+            // A click on the grip chooses the card (the level, the switch, the menu and the cross keep theirs).
+            .onTapGesture { actions.onSendCardClick?(send.id, NSEvent.modifierFlags, order) }
             .onDragIf(actions.sendDragProvider.map { f in { f(send.id) } }) {
                 SendDragPreview(name: send.name, live: isRouted)
             }
@@ -187,7 +193,7 @@ struct SendCardView: View {
                          onChange: { actions.onSetSendLevel?(send.id, Float($0)) },
                          onReset: {
                              actions.onBeginSendEdit?()
-                             actions.onSetSendLevel?(send.id, sendMinDb)
+                             actions.onSetSendLevel?(send.id, sendResetDb)
                          })
                 .opacity(send.enabled ? 1 : 0.5)
                 .automationLocked(send.isAutomated)
@@ -228,9 +234,12 @@ struct SendCardView: View {
             .help(L("synoptic.send.remove.help"))
         }
         .padding(.horizontal, 7)
-        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 7).fill(isSelected
+            ? Color.accentColor.opacity(0.18) : Color(nsColor: .controlBackgroundColor)))
         .overlay(RoundedRectangle(cornerRadius: 7)
-            .strokeBorder((isRouted ? Color.accentColor : Color.secondary).opacity(isRouted ? 0.55 : 0.3), lineWidth: 1)
+            .strokeBorder(isSelected ? Color.accentColor
+                          : (isRouted ? Color.accentColor : Color.secondary).opacity(isRouted ? 0.55 : 0.3),
+                          lineWidth: isSelected ? 2 : 1)
             .allowsHitTesting(false))
         .opacity(send.refusal == nil ? 1 : 0.55)
         .contextMenu { sendMenuItems }

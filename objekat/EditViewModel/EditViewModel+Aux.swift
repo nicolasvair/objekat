@@ -327,6 +327,49 @@ extension EditViewModel {
         isDirty = true
     }
 
+    /// The Send tool's DOUBLE CLICK on a knob column (@see `sendResetDb`): the send goes back to -∞, the way
+    /// the signal view's level box does on a double click. It acts like the DRAG does: the object grabbed
+    /// joins the selection if it was not in it, and the reset applies to every selected object that sends
+    /// to that aux — except those whose send is under a CURVE (the curve is what is heard; a grabbed send
+    /// that is automated resets nothing at all, @see `selectedSendersWithFreeLevel`).
+    ///
+    /// ONE undo point, taken before the first change and withdrawn when nothing moved (a send already at
+    /// -∞ and off). Returns true when something changed.
+    @discardableResult
+    func resetSendLevelFromHand(grabbed objectID: UUID, toAux auxID: UUID) -> Bool {
+        if !selectedIDs.contains(objectID) { select(objectID, additive: false) }
+        guard !isAutomated(.send(auxID: auxID), on: objectID) else { return false }
+        let targets = selectedSendersWithFreeLevel(toAux: auxID).filter { id in
+            guard let e = sendEntry(from: id, to: auxID) else { return false }
+            return e.levelDb > sendResetDb || e.enabled
+        }
+        guard !targets.isEmpty else { return false }
+        pushUndo()
+        for id in targets { setSendLevel(from: id, to: auxID, levelDb: sendResetDb) }
+        isDirty = true
+        return true
+    }
+
+    /// ⌫ with the Send tool active: EVERY send of the selected objects goes back to -∞ (instead of the
+    /// objects being deleted). Sends under a curve are left alone, as everywhere a hand sets a level. ONE
+    /// undo point for the whole gesture, none when nothing was to be reset. Returns how many sends moved.
+    @discardableResult
+    func resetSelectedObjectsSends() -> Int {
+        var jobs: [(sender: UUID, aux: UUID)] = []
+        for id in selectedIDs {
+            guard let o = find(id: id), !o.isAux, !o.isPicture else { continue }
+            for s in o.sends where (s.levelDb > sendResetDb || s.enabled)
+                && !isAutomated(.send(auxID: s.auxID), on: o) {
+                jobs.append((id, s.auxID))
+            }
+        }
+        guard !jobs.isEmpty else { return 0 }
+        pushUndo()
+        for j in jobs { setSendLevel(from: j.sender, to: j.aux, levelDb: sendResetDb) }
+        isDirty = true
+        return jobs.count
+    }
+
     /// Turns the send towards `auxID` on/off over the whole selection.
     func setSendEnabledSelected(toAux auxID: UUID, enabled: Bool) {
         for id in selectedSenders(toAux: auxID) where !enabled || handMayCreateSend(from: id, to: auxID) {

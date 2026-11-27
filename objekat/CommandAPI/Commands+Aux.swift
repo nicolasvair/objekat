@@ -317,6 +317,144 @@ extension CommandRegistry {
                             "routed": .bool(vm.sendStatus(from: id, to: auxID, using: vm.sendStatusNow()) == .active)])
         }
 
+        // MARK: Selecting, copying and pasting the send cards (the signal view's gestures)
+
+        register("send.select",
+                 summary: "Selects send cards of an object (and gives the cards the keyboard: ⌫ ⌘C ⌘V). "
+                        + "Exclusive with the plugin cards' selection. `mode`: replace (default) | add | "
+                        + "toggle | range (from the cards already held to the first of `auxes`, in the "
+                        + "sender's order of sends). Absent or empty `auxes`: selects nothing but the cards "
+                        + "still take the keyboard.",
+                 params: [ParamSpec("id", "uuid", "Sending object."),
+                          ParamSpec("auxes", "uuid[]", required: false, "The sends to select, by aux."),
+                          ParamSpec("mode", "string", required: false, "replace | add | toggle | range.")],
+                 undo: .none) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            guard let object = vm.find(id: id) else {
+                throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+            }
+            guard !object.isAux else {
+                throw CommandError(code: .invalid_state, message: "an aux has no send cards")
+            }
+            let auxes = p.raw["auxes"] == nil ? [] : try p.uuids("auxes")
+            for a in auxes where !object.sends.contains(where: { $0.auxID == a }) {
+                throw CommandError(code: .not_found, message: "no send from \(id.uuidString) to \(a.uuidString)")
+            }
+            let held = vm.selectedSendSenderID == id ? vm.selectedSendAuxIDs : []
+            switch try p.string("mode", or: "replace") {
+            case "replace": vm.setSendSelection(Set(auxes), sender: id)
+            case "add":     vm.setSendSelection(held.union(auxes), sender: id)
+            case "toggle":  vm.setSendSelection(held.symmetricDifference(auxes), sender: id)
+            case "range":
+                guard let first = auxes.first else {
+                    throw CommandError(code: .bad_params, message: "'range' needs the aux clicked in `auxes`")
+                }
+                vm.clickSendCard(first, sender: id, flags: .shift, order: object.sends.map(\.auxID))
+            default:
+                throw CommandError(code: .bad_params, message: "unknown mode (replace · add · toggle · range)")
+            }
+            return .object(["id": .string(id.uuidString),
+                            "auxes": .array(vm.orderedSelectedSendAuxIDs().map { .string($0.uuidString) }),
+                            "count": .int(vm.orderedSelectedSendAuxIDs().count)])
+        }
+
+        register("send.selection",
+                 summary: "The send cards selected (in their sender's order of sends), whether they hold the "
+                        + "keyboard, and what the send clipboard holds.",
+                 params: []) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            var out: [String: JSONValue] = [
+                "auxes": .array(vm.orderedSelectedSendAuxIDs().map { .string($0.uuidString) }),
+                "count": .int(vm.orderedSelectedSendAuxIDs().count),
+                "has_keyboard": .bool(vm.sendSurfaceHasKeyboard),
+                "clipboard": .int(vm.sendClipboard?.entries.count ?? 0),
+                "clipboard_live": .bool(vm.sendClipboardIsLive)]
+            out["id"] = vm.selectedSendSenderID.map { .string($0.uuidString) } ?? .null
+            return .object(out)
+        }
+
+        register("send.deselect",
+                 summary: "Clears the send card selection and gives the keyboard back to the timeline.",
+                 params: [], undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            vm.clearSendSelection()
+            return .object(["id": .null, "count": .int(0)])
+        }
+
+        register("send.remove_selected",
+                 summary: "⌫ on the selected send cards: deletes them in ONE undo step (entry, marker, level "
+                        + "curve, plugins) and gives the keyboard back. `invalid_state` when none is selected.",
+                 params: [], undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let n = vm.removeSelectedSends()
+            guard n > 0 else {
+                throw CommandError(code: .invalid_state, message: "no send card selected")
+            }
+            return .object(["removed": .int(n)])
+        }
+
+        register("send.reset_level",
+                 summary: "The Send tool's DOUBLE CLICK on a knob column: the send of `id` towards `aux` goes back "
+                        + "to -inf (`sendResetDb`), and so does that send of every other selected object (the "
+                        + "drag's reach; `id` joins the selection if it was not in it). A send under a curve "
+                        + "resets nothing. ONE undo step. `changed` = whether anything moved.",
+                 params: [ParamSpec("id", "uuid", "The object grabbed."),
+                          ParamSpec("aux", "uuid", "Receiving aux.")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            let id = try p.uuid("id")
+            let auxID = try p.uuid("aux")
+            try CommandAdapters.checkSendPair(id, auxID, in: vm)
+            return .object(["changed": .bool(vm.resetSendLevelFromHand(grabbed: id, toAux: auxID))])
+        }
+
+        register("send.reset_selected",
+                 summary: "⌫ with the Send tool: EVERY send of the selected objects goes back to -inf (the objects "
+                        + "stay; a send under a curve is left alone). ONE undo step, none when nothing moved. "
+                        + "`reset` = how many sends moved.",
+                 params: [], undo: .handled) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            return .object(["reset": .int(vm.resetSelectedObjectsSends())])
+        }
+
+        register("send.copy",
+                 summary: "⌘C on the selected send cards: level, switch, position, the mini-chain's plugins "
+                        + "(deep copy, live states) and the level's curve go on the send clipboard.",
+                 params: [], undo: .none) { _ in
+            let vm = try CommandContext.shared.requireViewModel()
+            let n = vm.copySelectedSends()
+            guard n > 0 else {
+                throw CommandError(code: .invalid_state, message: "no send card selected")
+            }
+            return .object(["copied": .int(n), "clipboard": .int(vm.sendClipboard?.entries.count ?? 0)])
+        }
+
+        register("send.paste",
+                 summary: "⌘V of the send clipboard onto `ids` (default: the objects selected). Each send is laid "
+                        + "towards its aux; one that already goes there is OVERWRITTEN (level, switch, position, "
+                        + "plugins with fresh ids, level curve). A target the plan refuses, an aux the project "
+                        + "does not hold and an aux or picture target are ignored. ONE undo step. `laid` = how many "
+                        + "sends were laid over all the targets; 0 is a no-op (no undo point).",
+                 params: [ParamSpec("ids", "uuid[]", required: false, "Objects to paste onto (default: the selection.)")],
+                 undo: .handled) { p in
+            let vm = try CommandContext.shared.requireViewModel()
+            guard vm.sendClipboard != nil else {
+                throw CommandError(code: .invalid_state, message: "the send clipboard is empty")
+            }
+            let laid: Int
+            if p.raw["ids"] != nil {
+                let ids = try p.uuids("ids")
+                for id in ids where vm.find(id: id) == nil {
+                    throw CommandError(code: .not_found, message: "unknown object: \(id.uuidString)")
+                }
+                laid = vm.pasteSends(onto: ids)
+            } else {
+                laid = vm.pasteSendsOntoSelection()
+            }
+            return .object(["laid": .int(laid)])
+        }
+
         #if DEBUG
         register("debug.selection_send_scope",
                  summary: """

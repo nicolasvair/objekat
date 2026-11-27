@@ -56,6 +56,7 @@ extension EditViewModel {
         guard !selectedMidiNoteIDs.isEmpty else { return }
         let byClip = selectedMidiNotesByClip()
         guard !byClip.isEmpty else { return }
+        sendClipboardIsLive = false     // a newer copy: ⌘V no longer means the sends
 
         var collected: [MidiNote] = []
         var sourceClipID: UUID? = nil

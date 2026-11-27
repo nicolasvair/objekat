@@ -111,6 +111,11 @@ extension EditViewModel {
             }
         }
         update(id: objectID) { $0 = $0.retargetingSend(from: old, to: new) }
+        // A selected CARD follows its send to the new aux.
+        if selectedSendSenderID == objectID, selectedSendAuxIDs.contains(old) {
+            selectedSendAuxIDs.remove(old)
+            selectedSendAuxIDs.insert(new)
+        }
         if hadMarker { recompileForSendMarker(objectID) }
         syncSendEngine(objectID: objectID, auxID: old)       // the old pair is gone: its tap is torn down
         syncSendEngine(objectID: objectID, auxID: new)

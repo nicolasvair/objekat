@@ -28,6 +28,16 @@ extension EditViewModel {
         applySnapshot(snapshot, live: live)
     }
 
+    /// Gives the last undo point back as if the gesture it covered had never happened: the state goes back
+    /// and NO redo point is left behind (undoing would make one, and a redo of a gesture the hand
+    /// withdrew itself is a ghost). For a gesture that is replaced by another before the hand has let go —
+    /// the first click of a double click.
+    func takeBackLastUndoPoint() {
+        guard !undoStack.isEmpty else { return }
+        undo()
+        _ = redoStack.popLast()
+    }
+
     func edit(_ action: () -> Void, from function: StaticString = #function,
               file: StaticString = #fileID, line: UInt = #line) {
         let itemsBefore = items, dirtyBefore = isDirty

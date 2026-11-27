@@ -214,6 +214,20 @@ struct SendFocus: Equatable {
     let auxID: UUID
 }
 
+/// The last click the Send tool took on a knob column, kept for ONE reason: a double click is two clicks,
+/// and the first may have already flipped the switch (an undo point pushed). The second click reads this to
+/// take the first back before it resets the level (@see TimelineView.handleSendTap).
+struct SendToolTap: Equatable {
+    let objectID: UUID
+    let auxID: UUID
+    /// The click pushed an undo point.
+    let pushedUndo: Bool
+    /// `undoPushCount` and the stack's depth right after it: the point is still the last one only if both
+    /// are unchanged.
+    let pushCount: Int
+    let undoDepth: Int
+}
+
 /// One send, as a pair: the sender (an object or a group) and the aux it feeds.
 struct SendKey: Hashable {
     let sender: UUID

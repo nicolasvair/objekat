@@ -51,6 +51,8 @@ extension EditViewModel {
     enum EditShortcutBranch: String {
         /// The signal view's chain fragment.
         case plugins
+        /// The signal view's send cards (⌘C, ⌘V; ⌘X is a dead key there).
+        case sends
         /// A passage of automation, on the zone or the loose points selected.
         case automation
         /// A passage of automation laid at the CARET of a band (⌘V only).
@@ -68,6 +70,12 @@ extension EditViewModel {
     /// ⌘X.
     @discardableResult
     func performCutShortcut() -> EditShortcutBranch {
+        // The send cards hold the keyboard and are deleted, never moved: ⌘X is a dead key there, and not a
+        // cut of the OBJECT the hand is plainly not pointing at.
+        if sendSurfaceHasKeyboard {
+            return .none
+        }
+        sendClipboardIsLive = false
         if automationSurfaceHasKeyboard {
             cutAutomationSelection()       // the automation band (internal undo push)
             return .automation
@@ -87,6 +95,12 @@ extension EditViewModel {
     /// ⌘C.
     @discardableResult
     func performCopyShortcut() -> EditShortcutBranch {
+        // The send cards of the signal view (exclusive with the plugin cards).
+        if sendSurfaceHasKeyboard {
+            copySelectedSends()                // nothing chosen: the clipboard is left as it was
+            return .sends
+        }
+        sendClipboardIsLive = false
         if pluginSurfaceHasKeyboard {
             copySelectedPluginsToClipboard()   // the signal view
             return .plugins
@@ -109,6 +123,21 @@ extension EditViewModel {
     /// ⌘V.
     @discardableResult
     func performPasteShortcut() -> EditShortcutBranch {
+        // The send cards hold the keyboard: the sends copied go onto the objects selected (the one the signal
+        // view shows, which is the whole selection while it shows anything).
+        if sendSurfaceHasKeyboard, sendClipboard != nil {
+            pasteSendsOntoSelection()          // internal undo push
+            return .sends
+        }
+        // The sends are the LAST thing copied and objects are selected in the timeline (several, perhaps:
+        // the signal view shows none then): ⌘V lays the sends on all of them. Not with the Send tool, whose
+        // ⌘V stays the objects' paste, and not over a surface that holds the keyboard for another paste.
+        if sendClipboardIsLive, sendClipboard != nil, !selectedIDs.isEmpty, activeTool != .toolAux,
+           selectedPluginHostID == nil, !automationSurfaceHasKeyboard, !pasteGoesToMidiNotes,
+           timeSelection == nil {
+            pasteSendsOntoSelection()          // internal undo push
+            return .sends
+        }
         // The signal view holds the keyboard ⇒ the chain fragment goes into ITS chain, after the last
         // selected card or at the end when none is chosen.
         if let host = selectedPluginHostID, !pluginClipboard.isEmpty {

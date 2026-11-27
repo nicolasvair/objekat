@@ -876,6 +876,46 @@ try:
               and auto[0]["name_source"] == C0 and auto[0]["user_named"] is False, str(auto))
         cmd("object.rename", id=C0, name="Ride"); idle()
         check("...which follows the ORIGINAL's renaming", nm(auto[0]["id"]) == "Ride")
+
+        # AN OBJECT WITHOUT A LABEL: the bin takes the name the object DISPLAYS (its file's name), never
+        # "FX link N", and still follows the object (`name_source`). The group is the case that used to fail:
+        # a cut group is taken out of the model before its plugins are copied, so the name was looked up
+        # on an object that was no longer there.
+        def display_name(oid):
+            return [o for o in cmd("object.list")["objects"] if o["id"] == oid][0]["name"]
+
+        def bin_hosting(oid):
+            return [l for l in cmd("fxlink.list")["links"] if any(m["host"] == oid for m in l["members"])]
+
+        U = cmd("object.add", path=BIP, lane=8, start=0)["id"]
+        two_plugins(U)
+        cmd("object.split_at", ids=[U], seconds=0.3); idle()
+        ub = bin_hosting(U)
+        check("a split of an UNLABELLED clip names the bin after its displayed name (the file's)",
+              len(ub) == 1 and ub[0]["name"].startswith(display_name(U)) and not ub[0]["name"].startswith("FX link")
+              and ub[0]["name_source"] == U and ub[0]["user_named"] is False, str(ub))
+
+        UA = cmd("object.add", path=BIP, lane=9, start=0)["id"]
+        UB = cmd("object.add", path=BIP, lane=10, start=0)["id"]
+        UG = cmd("group.create", ids=[UA, UB])["id"]
+        two_plugins(UG)
+        group_name = display_name(UG)
+        cmd("object.split_at", ids=[UG], seconds=0.3, window_only=True); idle()      # the scissors tool's cut
+        gb = bin_hosting(UG)
+        check("the scissors on an UNLABELLED group name the bin after the group's displayed name",
+              len(gb) == 1 and gb[0]["name"].startswith(group_name) and not gb[0]["name"].startswith("FX link")
+              and gb[0]["name_source"] == UG and gb[0]["user_named"] is False, "%s | %s" % (group_name, gb))
+        cmd("object.rename", id=UG, name="Pad"); idle()
+        check("...and that bin follows the group's renaming", nm(gb[0]["id"]) == "Pad")
+
+        UH = cmd("object.add", path=BIP, lane=11, start=0)["id"]
+        UI = cmd("object.add", path=BIP, lane=12, start=0)["id"]
+        UJ = cmd("group.create", ids=[UH, UI])["id"]
+        two_plugins(UJ)
+        cmd("object.split_at", ids=[UJ], seconds=0.3); idle()                           # the deep cut
+        jb = bin_hosting(UJ)
+        check("the deep cut of an unlabelled group names its bin the same way",
+              len(jb) == 1 and not jb[0]["name"].startswith("FX link") and jb[0]["name_source"] == UJ, str(jb))
         D0 = named(cmd("object.add", path=BIP, lane=7, start=0)["id"], "Ride")
         two_plugins(D0)
         cmd("object.duplicate", ids=[D0]); idle()

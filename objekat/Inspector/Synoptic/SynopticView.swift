@@ -318,7 +318,7 @@ struct SynopticView: View {
             ForEach(d.sendCards) { c in WithPerceptionTracking {
                 // The column's drop layer first (under the cards and the line, never their ancestor).
                 SendColumnDropView(placement: c, actions: actions)
-                SendCardView(send: c.send, actions: actions)
+                SendCardView(send: c.send, actions: actions, order: d.sendCards.map { $0.send.id })
                     .frame(width: c.lineRect.width, height: c.lineRect.height)
                     .position(x: c.lineRect.midX, y: c.lineRect.midY)
                 ForEach(c.chain.cards) { card in WithPerceptionTracking {

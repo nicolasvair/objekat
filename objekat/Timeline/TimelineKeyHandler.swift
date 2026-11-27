@@ -639,6 +639,11 @@ extension TimelineView {
                 if vm.pluginSurfaceHasKeyboard {
                     DispatchQueue.main.async { vm.removeSelectedPlugins() }   // internal undo push
                 }
+                // The same claim for the SEND cards of the signal view (exclusive with the plugin cards'):
+                // ⌫ takes the sends selected, in ONE undo step — and a dead key when none is chosen.
+                else if vm.sendSurfaceHasKeyboard {
+                    DispatchQueue.main.async { vm.removeSelectedSends() }     // internal undo push
+                }
                 // An AUTOMATION band: points selected ⇒ ⌫ takes the points, not the object. Its
                 // place relative to the MIDI branch below is never arbitrated in practice — the
                 // two selections are held exclusive by `setAutomationPointSelection`, so both can
@@ -689,6 +694,9 @@ extension TimelineView {
                     DispatchQueue.main.async { vm.edit { vm.resetVolumeSelected() } }
                 } else if vm.activeTool == .toolPan {
                     DispatchQueue.main.async { vm.edit { vm.resetPanSelected() } }
+                } else if vm.activeTool == .toolAux {
+                    // The Send tool: ⌫ puts every send of the selected objects back to -∞ (the objects stay).
+                    DispatchQueue.main.async { vm.resetSelectedObjectsSends() }   // internal undo push
                 } else {
                     DispatchQueue.main.async { vm.edit { vm.removeSelected() } }
                 }
@@ -925,6 +933,9 @@ extension TimelineView {
                         DispatchQueue.main.async {
                             if vm.pluginSurfaceHasKeyboard {
                                 vm.duplicateSelectedPlugins()     // the signal view (internal undo push)
+                            } else if vm.sendSurfaceHasKeyboard {
+                                // The send cards hold the keyboard and have no ⌘D: a dead key, not a
+                                // duplication of the OBJECTS the hand is plainly not pointing at.
                             } else if !vm.selectedMidiNoteIDs.isEmpty {
                                 vm.duplicateSelectedMidiNotes()   // the piano-roll context (internal undo push)
                             } else {

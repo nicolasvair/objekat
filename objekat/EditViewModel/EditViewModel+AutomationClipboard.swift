@@ -71,6 +71,7 @@ extension EditViewModel {
     @discardableResult
     func copyAutomationSelection() -> Bool {
         guard let t = automationTarget() else { return false }
+        sendClipboardIsLive = false     // a newer copy: ⌘V no longer means the sends
         let zoned = !automationRowsInTimeSelection().isEmpty
         let taken = selectedAutomationPoints
 
