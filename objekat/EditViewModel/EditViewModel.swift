@@ -1098,6 +1098,34 @@ final class EditViewModel {
     /// before the content is in place, and a project can be reopened on the same URL.
     var projectLoadToken: Int = 0
 
+    // MARK: - The left panel (persisted with the project)
+    //
+    // Its width and its active tab. A plain stored pair, NOT a project edit: nothing here marks the project
+    // modified (it is the viewport's own doctrine), and the width is written by the divider's drag and read
+    // by the panel's fixed-width column — a split view used to keep it to itself, where nothing could read
+    // or save it (@see Shared/LeftPanelLayout).
+
+    var leftPanelWidth: Double = LeftPanelLayout.resolved(
+        saved: nil, appWidth: ObjekatPreferences.shared.leftPanelWidth).width
+    var leftPanelTab: LeftPanelTabID = LeftPanelLayout.defaultTab
+
+    /// The selection a tab switch has just put back. Selecting an object brings the inspector forward, which
+    /// must not happen for a selection that merely RETURNS with its document: the tab the panel was left on
+    /// is the one that comes back. Compared and consumed by the view's `onChange` on `selectedIDs`, like the
+    /// list's own selection (@see ContentView.listMadeSelection) — equal to the current selection when
+    /// nothing changed, so it cannot go stale.
+    @PerceptionIgnored var selectionRestoredByTabSwitch: Set<UUID>? = nil
+
+    /// A snapshot of the left panel, written into the project document.
+    var currentLeftPanel: LeftPanelState { LeftPanelState(width: leftPanelWidth, tab: leftPanelTab) }
+
+    /// Puts a (resolved) state on the panel — a load, a tab switch, a new project. Never marks the project
+    /// modified.
+    func applyLeftPanel(_ state: LeftPanelState) {
+        if leftPanelWidth != state.width { leftPanelWidth = state.width }
+        if leftPanelTab != state.tab { leftPanelTab = state.tab }
+    }
+
     /// A snapshot of the current view, written into the project document.
     var currentViewport: ViewportState {
         ViewportState(pixelsPerSecond: pixelsPerSecond, blockHeight: blockHeight,

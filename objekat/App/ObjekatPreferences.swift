@@ -24,6 +24,17 @@ final class ObjekatPreferences {
     }
     private static let previewVolumeKey = "pref.previewVolume"
 
+    /// The last width the hand gave the left panel, nil until it has ever done so. A NEW project (and a
+    /// project saved before the panel's width was kept in the file) starts from it, so the layout one
+    /// arranged follows from project to project instead of snapping back to the factory width. Written
+    /// when a drag of the divider ENDS, never by a load.
+    var leftPanelWidth: Double? {
+        didSet {
+            if let w = leftPanelWidth { UserDefaults.standard.set(w, forKey: Self.leftPanelWidthKey) }
+        }
+    }
+    private static let leftPanelWidthKey = "pref.leftPanelWidth"
+
     private static let soundLibraryFolderKey = "pref.soundLibraryFolder"
     /// The old name. To be removed when nobody comes from a version that wrote it any more.
     private static let legacySoundLibraryFolderKey = "pref.sonoth\u{00E8}queFolder"
@@ -52,6 +63,7 @@ final class ObjekatPreferences {
     static let diagnosticLogKey = "pref.diagnosticLog"
 
     private init() {
+        leftPanelWidth = UserDefaults.standard.object(forKey: Self.leftPanelWidthKey) as? Double
         previewVolume = (UserDefaults.standard.object(forKey: Self.previewVolumeKey) as? Double)
             .map { min(max($0, 0), 1) } ?? 1
         soundLibraryFolder = UserDefaults.standard.string(forKey: Self.soundLibraryFolderKey)

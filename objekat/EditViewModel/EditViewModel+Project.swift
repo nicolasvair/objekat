@@ -263,6 +263,7 @@ extension EditViewModel {
                         snapEnabled: snapEnabled,
                         consolidateDefinitions: defs.isEmpty ? nil : defs,
                         viewport: currentViewport,
+                        leftPanel: currentLeftPanel,
                         markerLanes: markerLanes.isEmpty ? nil : markerLanes,
                         comments: comments.isEmpty ? nil : comments,
                         fxLinks: fxLinksDoc(for: items, stems: capturedStems),
@@ -432,6 +433,8 @@ extension EditViewModel {
         refreshDiskUsage()       // no folder any more: clears the gauge
         pendingViewRestore = nil
         pendingNewProjectFrame = true
+        // The left panel: the width the hand last gave it, on the default tab (@see LeftPanelLayout).
+        applyLeftPanel(LeftPanelLayout.resolved(saved: nil, appWidth: ObjekatPreferences.shared.leftPanelWidth))
         // Empties the missing-file verdict with the rest: the paths of the project just closed
         // belong to nothing any more, and a stale entry would have `project.missing_files` report
         // broken files in an empty project. Costs nothing here — there are no clips left to ask

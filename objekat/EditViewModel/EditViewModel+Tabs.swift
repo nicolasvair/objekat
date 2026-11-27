@@ -177,6 +177,9 @@ extension EditViewModel {
         undoStack = parked.undoStack
         redoStack = parked.redoStack
 
+        // The selection comes back WITH its tab: the inspector must not be brought forward over the panel tab
+        // this document was left on (@see `selectionRestoredByTabSwitch`).
+        selectionRestoredByTabSwitch = parked.selectedIDs
         selectedIDs = parked.selectedIDs
         cursorPosition = parked.cursorPosition
         caretLane = parked.caretLane

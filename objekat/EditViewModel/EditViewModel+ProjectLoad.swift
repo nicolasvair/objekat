@@ -250,6 +250,10 @@ extension EditViewModel {
             blockHeight     = max(16, vp.blockHeight)
             pendingViewRestore = vp
         }
+        // The left panel: what the file carries, otherwise (a project from before the field) the width the
+        // hand last gave the panel and the default tab.
+        applyLeftPanel(LeftPanelLayout.resolved(saved: doc.leftPanel,
+                                                appWidth: ObjekatPreferences.shared.leftPanelWidth))
 
         if !fixed.stems.isEmpty {
             stems = fixed.stems
