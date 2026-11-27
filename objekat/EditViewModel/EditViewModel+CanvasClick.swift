@@ -100,10 +100,13 @@ extension EditViewModel {
             return
         }
 
-        // The upper half: time. The selection goes, the cursor comes.
+        // The upper half: time. The selection goes, the cursor comes — and the inspector is shown the
+        // object the click landed on, without that object being selected (@see `inspectedID`): the
+        // click itself is unchanged.
         guard inBody else {
             clearSelection()
             onMoveCursor(tapTime)
+            inspect(item.id)
             return
         }
 

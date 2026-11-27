@@ -135,6 +135,8 @@ extension EditViewModel {
         // `projectDocument` captures the bus chains' states itself.
         let doc = projectDocument(items: itemsWithCapturedPluginStates(),
                                   consolidateDefinitions: Array(consolidateDefinitions.values))
+        // What the inspector was showing on its own belongs to the document leaving.
+        inspectedID = nil
         // The document is leaving: a file-change scan in flight answers about it, and nothing may
         // be applied until the next load has finished (`performFinalize` lifts this).
         fileChanges.epoch &+= 1

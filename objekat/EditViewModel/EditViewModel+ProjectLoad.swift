@@ -185,6 +185,7 @@ extension EditViewModel {
         items = []
         stems = []
         selectedIDs = []
+        inspectedID = nil
         undoStack = []
         redoStack = []
     }

@@ -199,9 +199,58 @@ extension EditViewModel {
     func clearSelection() {
         selectedCrossfade = nil
         selectedIDs = []
+        // An empty click lets go of what the inspector was showing on its own as well: the click on the
+        // time half of an object, which also comes through here, names it again right after.
+        inspectedID = nil
         timeSelection = nil
         selectedAnnotations = []
         clearAutomationPointSelection()
+    }
+
+    // MARK: - The inspector's target
+
+    /// WHAT THE INSPECTOR SHOWS AND ACTS ON — the one door.
+    ///
+    /// The selection when there is one; otherwise the object a click on the time half of its block
+    /// named (`inspectedID`), if it is still in the model; otherwise nothing. Everything in the
+    /// inspector that decides which object(s) it is about reads THIS, and nothing else does: the
+    /// timeline's keys and tools keep reading `selectedIDs` (⌫, ⌘C, ⌘X, ⌘D, ⌘V, ↑ / ↓ belong to the
+    /// caret and to what is selected, whatever the inspector happens to show).
+    ///
+    /// A single object's controls are already addressed by id (the synoptic's callbacks all take the
+    /// object they were built for), so an inspected object needs no second path through them: with an
+    /// empty selection, they act on it alone.
+    var inspectorTargetIDs: Set<UUID> {
+        if !selectedIDs.isEmpty { return selectedIDs }
+        guard let id = inspectedID, find(id: id) != nil else { return [] }
+        return [id]
+    }
+
+    /// The object the inspector is showing on its own — nil when the selection speaks, or when the
+    /// inspected object has left the model (read at once, before `scheduleInspectedPrune` forgets it).
+    var inspectedObjectID: UUID? {
+        guard selectedIDs.isEmpty, let id = inspectedID, find(id: id) != nil else { return nil }
+        return id
+    }
+
+    /// A click on the time half of an object's block: the caret and the range are the click's, the
+    /// inspector is shown that object, and the Object tab comes forward.
+    func inspect(_ id: UUID) {
+        inspectedID = id
+        requestInspector()
+    }
+
+    /// The inspected object leaves with the object: forgotten at the end of the run-loop turn that
+    /// removed it (a drag writes `items` at every frame — one pass for all of them), so an undo that
+    /// brings it back does not bring the outline and the panel with it.
+    func scheduleInspectedPrune() {
+        guard !inspectedPrunePending else { return }
+        inspectedPrunePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.inspectedPrunePending = false
+            if let id = self.inspectedID, self.find(id: id) == nil { self.inspectedID = nil }
+        }
     }
 
     /// The effective IDs for multi-item operations: excludes any item one of whose direct

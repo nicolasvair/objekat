@@ -56,6 +56,7 @@ final class EditViewModel {
             featureBadgeMapCache = nil
             chainSilencedCache = nil
             videoObjectIndexCache = nil
+            if inspectedID != nil { scheduleInspectedPrune() }
             if laneEntriesRebuildDepth == 0 { rebuildLaneEntries() }
             // The audio bridge: a route can have appeared, moved or lost its source. Coalesced to one
             // pass per run-loop turn, and an unchanged topology costs one comparison.
@@ -117,6 +118,9 @@ final class EditViewModel {
     var selectedIDs: Set<UUID> = [] {
         didSet {
             multiSelectionCache = nil
+            // The inspector follows the selection as soon as there is one: the object it was showing
+            // on its own (@see inspectedID) steps aside.
+            if !selectedIDs.isEmpty && inspectedID != nil { inspectedID = nil }
             if !selectedIDs.isEmpty && !selectedAnnotations.isEmpty { selectedAnnotations = [] }
             if !araSynced.isEmpty { notifyARASelectionIfNeeded() }
         }
@@ -1125,6 +1129,21 @@ final class EditViewModel {
 
     /// The click on an object (a body click) while a time selection existed asks to see that object.
     func requestInspector() { inspectorRequests &+= 1 }
+
+    /// The object the inspector shows while NOTHING is selected: the one a click on the TIME half of
+    /// its block was aimed at. That click keeps its own meaning (the caret, the range gone, the head
+    /// moved, the selection empty) and merely names the object it landed on, so the inspector can show
+    /// it without the object being selected — ⌫, ⌘C, ⌘X, ⌘D, ⌘V and ↑ / ↓ stay the caret's.
+    ///
+    /// It is a RESIDUE of a click, never a second selection: any non-empty selection erases it
+    /// (`selectedIDs.didSet`), so does a click in an empty lane (`clearSelection`), a project change
+    /// (`performTeardown`, `parkProject`, a new project) and the object leaving the model
+    /// (`scheduleInspectedPrune`, which `items.didSet` arms). Only the click on the time half sets it
+    /// (`handleLaneClick`), and what READS it is `inspectorTargetIDs` — ONE door, never this field.
+    var inspectedID: UUID? = nil
+
+    /// Armed by `items.didSet` while an object is inspected; one pass per run-loop turn.
+    @PerceptionIgnored var inspectedPrunePending = false
 
     /// A snapshot of the left panel, written into the project document.
     var currentLeftPanel: LeftPanelState { LeftPanelState(width: leftPanelWidth, tab: leftPanelTab) }

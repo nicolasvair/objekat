@@ -1072,6 +1072,16 @@ struct TimelineView: View {
                     .zIndex(2.7)
                 }
 
+                // The object the inspector is showing ON ITS OWN (a click on the time half of its block
+                // named it, nothing is selected): a light outline, nothing else — no fill, no handle, no
+                // hit. It is not a selection and must not read as one (@see EditViewModel.inspectedID).
+                if let inspected = viewModel.inspectedObjectID,
+                   let entry = viewModel.laneEntry(forID: inspected), isEntryVisible(entry) {
+                    inspectedOutline(entry: entry)
+                        .allowsHitTesting(false)
+                        .zIndex(2.58)
+                }
+
                 // "Choose object" (the Sidechain strip): the aimed block is veiled and says what the
                 // click will do — or, in orange, why it will not.
                 if viewModel.routePick != nil, let aim = sidechainPickHover,
@@ -4467,6 +4477,24 @@ struct TimelineView: View {
 
     /// The veil "Choose object" lays on the block it aims at, in canvas coordinates. An infinite bus
     /// is its whole lane, as the hit-test reads it.
+    /// The outline of the inspected object: a white hairline over a dark one, so it reads on a pale
+    /// block and on a dark one alike, drawn INSIDE the block's own rectangle (the selection's border
+    /// is a colour, thicker, and comes with a fill — the two cannot be taken for each other).
+    private func inspectedOutline(entry: LaneEntry) -> some View {
+        let rect = clipRect(for: entry)
+        let radius = entry.item.blockCornerRadius
+        return ZStack {
+            RoundedRectangle(cornerRadius: radius)
+                .strokeBorder(Color.black.opacity(0.35), lineWidth: 3)
+            RoundedRectangle(cornerRadius: radius)
+                .strokeBorder(Color.white.opacity(0.9), lineWidth: 1.2)
+                .padding(0.9)
+        }
+        .frame(width: rect.width, height: rect.height)
+        .offset(x: rect.minX, y: rect.minY)
+        .frame(width: totalDuration * pixelsPerSecond, height: canvasHeight, alignment: .topLeading)
+    }
+
     private func sidechainPickVeil(entry: LaneEntry, refusal: String?) -> some View {
         let x = entry.item.isInfiniteBus ? 0 : entry.absStart * pixelsPerSecond
         let w = entry.item.isInfiniteBus ? contentWidth : max(entry.item.duration * pixelsPerSecond, 2)

@@ -400,6 +400,7 @@ extension EditViewModel {
         stems = [Stem(id: UUID(), name: "Main", colorIndex: 0, format: .stereo)]
         engine?.setMasterStemKey(mainStemID.uuidString)   // purges the old master rack + a new key
         selectedIDs = []
+        inspectedID = nil
         clearInputsAndStemTransientState()   // the Inputs selection and the stem popover belong to the document replaced
         undoStack = []
         redoStack = []
