@@ -165,7 +165,15 @@ public:
     juce::String getSelectableDescription() override        { return getName(); }
     bool shouldMeasureCpuUsage() const noexcept final       { return false; }
 
-    int getNumOutputChannelsGivenInputs (int numInputs) override    { return juce::jmax (2, numInputs); }
+    int getNumOutputChannelsGivenInputs (int numInputs) override
+    {
+        // Relevé au passage (comme ObjGain) : combien de canaux arrivent RÉELLEMENT ici. Ce plugin
+        // déclare au moins 2 canaux en sortie : sur un signal mono il élargit 1 -> 2 et doit
+        // recopier lui-même le gauche à droite (voir applyToBuffer) — personne en aval ne devine
+        // plus « le fichier est mono » (2026-11-27).
+        inputWasMono.store (numInputs == 1);
+        return juce::jmax (2, numInputs);
+    }
 
     // Un bus audio de chaque côté, sans exigence de nombre de canaux : comme VCA,
     // LevelMeter ou AuxSend. Pur virtuel depuis tracktion 3.5.
@@ -188,6 +196,12 @@ public:
 
         if (fc.destBuffer == nullptr)
             return;
+
+        // Élargissement 1 -> 2 : le canal droit est vide, on y recopie le gauche AVANT l'enveloppe
+        // (jamais dans applyEnvelope, que l'envoi appelle sur sa propre copie déjà stéréo).
+        if (inputWasMono.load() && isEnabled() && fc.destBuffer->getNumChannels() > 1)
+            fc.destBuffer->copyFrom (1, fc.bufferStartSample, *fc.destBuffer, 0, fc.bufferStartSample,
+                                     fc.bufferNumSamples);
 
         applyEnvelope (*fc.destBuffer, fc.bufferStartSample, fc.bufferNumSamples, fc.editTime);
         applyDryGate  (*fc.destBuffer, fc.bufferStartSample, fc.bufferNumSamples);
@@ -276,6 +290,7 @@ public:
     juce::CachedValue<bool>   dryGate;
 
 private:
+    std::atomic<bool> inputWasMono { false };   // relevé par getNumOutputChannelsGivenInputs (graphe)
     std::atomic<double> renderSampleRate { 44100.0 };
     juce::SmoothedValue<float> dryLevel { 1.0f };   // audio thread only (initialise / applyToBuffer)
 
